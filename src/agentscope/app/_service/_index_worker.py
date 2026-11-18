@@ -25,19 +25,31 @@ import contextlib
 import mimetypes
 from concurrent.futures import ProcessPoolExecutor
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
+
+from pydantic import ValidationError
 
 from ..._logging import logger
+from ...rag import ApproxTokenChunker
 
 if TYPE_CHECKING:
     from ..rag.blob_store import BlobStoreBase
     from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
-    from ..storage import StorageBase
+    from ..storage import KnowledgeBaseRecord, StorageBase
     from ...rag import ChunkerBase, ParserBase, Section
 
 # Read blob bytes in chunks bounded so the worker never holds the whole
 # file in memory at once even when the parser is byte-oriented.
 _READ_CHUNK = 1 << 20  # 1 MiB
+
+# What a multipart client sends when it has no opinion about the type.
+_GENERIC_MEDIA_TYPE = "application/octet-stream"
+
+
+def _filename_extension(filename: str) -> str:
+    """Return the lower-cased extension of ``filename``, ``""`` if none."""
+    _, dot, suffix = filename.rpartition(".")
+    return f".{suffix}".lower() if dot and suffix else ""
 
 
 def _build_parser_registry(
@@ -115,11 +127,12 @@ class IndexWorker:
         blob_store: "BlobStoreBase",
         knowledge_base_manager: "KnowledgeBaseManagerBase",
         parsers: "list[ParserBase] | dict[str, ParserBase]",
-        chunker: "ChunkerBase",
         node_id: str,
+        chunkers: "list[type[ChunkerBase]] | None" = None,
         max_concurrency: int = 4,
         lease_ttl: timedelta = timedelta(seconds=90),
         parser_executor: ProcessPoolExecutor | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the worker.
 
@@ -146,13 +159,15 @@ class IndexWorker:
                   declare.
 
                 Same registry the upload service uses, passed in by DI.
-            chunker (`ChunkerBase`):
-                The shared chunker.
             node_id (`str`):
                 Stable identifier for this worker process.  Used as
                 ``processing_node`` on the lease so the sweeper can
                 tell whose work expired.  Typically
                 ``f"{hostname}:{pid}:{uuid}"``.
+            chunkers (`list[type[ChunkerBase]] | None`, optional):
+                The chunker classes that can be rebuilt from a knowledge
+                base's ``chunker_config``.  Defaults to
+                ``[ApproxTokenChunker]``.
             max_concurrency (`int`, defaults to ``4``):
                 Maximum number of documents processed concurrently by
                 this worker.  Higher values trade memory for
@@ -169,12 +184,33 @@ class IndexWorker:
                 third-party byte-oriented parsers.  Injected so a
                 single pool can be shared across the app (built in
                 lifespan).
+            **kwargs (`Any`):
+                Deprecated. ``chunker`` (a shared chunker instance) is
+                still accepted for backward compatibility; only its
+                class is used.
         """
+        chunker_classes = list(chunkers or [ApproxTokenChunker])
+        if "chunker" in kwargs:
+            logger.warning(
+                "The `chunker` argument of IndexWorker is deprecated, "
+                "use `chunkers` instead.",
+            )
+            legacy_cls = type(kwargs.pop("chunker"))
+            if legacy_cls not in chunker_classes:
+                chunker_classes.append(legacy_cls)
+        if kwargs:
+            logger.warning(
+                "Ignoring unknown IndexWorker arguments: %s",
+                sorted(kwargs),
+            )
+
         self._storage = storage
         self._blob_store = blob_store
         self._manager = knowledge_base_manager
         self._parsers_by_media_type = _build_parser_registry(parsers)
-        self._chunker = chunker
+        self._chunkers_by_type = {
+            cls.chunker_type: cls for cls in chunker_classes
+        }
         self._node_id = node_id
         self._lease_ttl = lease_ttl
         self._sem = asyncio.Semaphore(max_concurrency)
@@ -271,6 +307,15 @@ class IndexWorker:
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
             await pipeline_task
+        except asyncio.CancelledError:
+            pipeline_task.cancel()
+            heartbeat_task.cancel()
+            await asyncio.gather(
+                pipeline_task,
+                heartbeat_task,
+                return_exceptions=True,
+            )
+            raise
         except Exception as exc:  # noqa: BLE001 — terminal error sink
             await self._mark_error(
                 user_id,
@@ -326,15 +371,68 @@ class IndexWorker:
             )
             return
 
-        data = record.data
-        media_type = (
-            data.content_type or mimetypes.guess_type(data.filename)[0]
+        if record.status == "ready":
+            # The lease prevents concurrent work, not late duplicates.
+            # Re-indexing requires resetting the status to pending.
+            logger.debug(
+                "Skipping %s — already indexed; ignoring duplicate task.",
+                document_id,
+            )
+            return
+
+        kb_record = await self._manager.get_knowledge_base(
+            user_id,
+            knowledge_base_id,
         )
+        if kb_record is None:
+            logger.warning(
+                "Knowledge base %s vanished before processing document %s.",
+                knowledge_base_id,
+                document_id,
+            )
+            return
+        chunker = self._resolve_chunker_from_record(kb_record)
+
+        data = record.data
+        media_type = data.content_type or None
+        if media_type:
+            media_type = media_type.split(";", 1)[0].strip().lower() or None
+        parser = (
+            self._parsers_by_media_type.get(media_type) if media_type else None
+        )
+        if parser is None and media_type in (None, _GENERIC_MEDIA_TYPE):
+            guessed_type = mimetypes.guess_type(data.filename)[0]
+            parser = (
+                self._parsers_by_media_type.get(guessed_type)
+                if guessed_type
+                else None
+            )
+            if parser is not None:
+                media_type = guessed_type
+            else:
+                # Platform MIME tables may lack Office formats. Only
+                # infer a type from declarations when it is unambiguous.
+                extension = _filename_extension(data.filename)
+                matches = []
+                for known, candidate in self._parsers_by_media_type.items():
+                    extensions = getattr(
+                        candidate,
+                        "supported_extensions",
+                        None,
+                    )
+                    if (
+                        extension
+                        and extensions
+                        and extension in extensions()
+                        and candidate.supported_media_types == [known]
+                    ):
+                        matches.append((known, candidate))
+                if len(matches) == 1:
+                    media_type, parser = matches[0]
         if not media_type:
             raise ValueError(
                 f"Cannot determine media type for {data.filename!r}.",
             )
-        parser = self._parsers_by_media_type.get(media_type)
         if parser is None:
             raise ValueError(
                 f"No parser registered for media type {media_type!r}.",
@@ -346,6 +444,8 @@ class IndexWorker:
             knowledge_base_id,
             document_id,
             "parsing",
+            # Clear stale errors; None leaves the stored value unchanged.
+            error="" if getattr(data, "error", None) else None,
         )
         file_bytes = await self._read_blob(data.blob_uri)
         sections = await self._parse(parser, file_bytes, data.filename)
@@ -357,7 +457,7 @@ class IndexWorker:
             document_id,
             "chunking",
         )
-        chunks = await self._chunker.chunk(sections)
+        chunks = await chunker.chunk(sections)
 
         # ---- indexing ----
         await self._storage.update_knowledge_document_status(
@@ -370,6 +470,19 @@ class IndexWorker:
             user_id,
             knowledge_base_id,
         )
+        # A retry re-runs the whole pipeline. Records are keyed by
+        # (document_id, chunk_index), so re-inserting overwrites in
+        # place — but a re-parse that yields fewer chunks would leave
+        # the old tail behind, so drop the previous vectors first.
+        #
+        # The trade-off: between this delete and the insert below the
+        # document is unsearchable, where before it kept a complete but
+        # stale set; and a first-time index pays a no-op delete. The
+        # narrow alternative — insert, then drop only
+        # ``chunk_index >= len(chunks)`` — needs a vector-store API that
+        # deletes by more than ``document_id``, which is not worth a new
+        # abstract method for a retry-only window.
+        await knowledge.delete_document(document_id)
         await knowledge.insert_document(
             chunks=chunks,
             document_id=document_id,
@@ -406,6 +519,42 @@ class IndexWorker:
             file_bytes,
             filename,
         )
+
+    def _resolve_chunker_from_record(
+        self,
+        kb_record: "KnowledgeBaseRecord",
+    ) -> "ChunkerBase":
+        """Resolve the chunker from a pre-fetched KB record.
+
+        Instantiates the matching chunker class using the record's
+        ``chunker_config``.  Falls back to
+        :class:`~agentscope.rag.ApproxTokenChunker` for legacy
+        records that predate per-KB chunker support
+        (``chunker_config`` is ``None``).
+        """
+        cfg = kb_record.data.chunker_config
+        if cfg is not None:
+            chunker_cls = self._chunkers_by_type.get(cfg.type)
+            if chunker_cls is None:
+                logger.warning(
+                    "Unknown chunker type %r on KB %s — "
+                    "falling back to ApproxTokenChunker.",
+                    cfg.type,
+                    kb_record.id,
+                )
+                return ApproxTokenChunker()
+            try:
+                return chunker_cls(
+                    parameters=chunker_cls.Parameters(**cfg.parameters),
+                )
+            except (ValidationError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "Invalid chunker parameters on KB %s: %s — "
+                    "falling back to ApproxTokenChunker.",
+                    kb_record.id,
+                    exc,
+                )
+        return ApproxTokenChunker()
 
     async def _read_blob(self, blob_uri: str) -> bytes:
         """Stream the blob into memory in bounded chunks.

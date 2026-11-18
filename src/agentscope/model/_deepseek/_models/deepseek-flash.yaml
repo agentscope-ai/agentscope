@@ -1,0 +1,24 @@
+name: deepseek-flash
+label: DeepSeek Flash
+status: active
+# Release date source: https://api-docs.deepseek.com/updates/
+release_date: 2026-09-10
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 384000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 384000

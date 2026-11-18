@@ -47,13 +47,15 @@ class XAIChatModel(ChatModelBase):
         )
         """The maximum number of tokens to generate."""
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
-                "Whether to enable reasoning for models that support "
-                "extended thinking (e.g. ``grok-3-mini``). Use "
-                "reasoning_effort to control the depth of reasoning."
+                "None and True forward reasoning_effort when it is set. "
+                "If reasoning_effort is unset, neither adds reasoning "
+                "parameters; the provider default applies. False raises "
+                "ValueError before making a request because this adapter "
+                "does not support disabling thinking."
             ),
         )
 
@@ -64,8 +66,8 @@ class XAIChatModel(ChatModelBase):
                 "Controls the depth of reasoning for models that support "
                 "extended thinking (e.g. ``grok-3-mini``). Set to "
                 "``'low'``, ``'medium'``, or ``'high'`` to enable reasoning "
-                "with the corresponding effort level. ``None`` disables "
-                "reasoning."
+                "with the corresponding effort level. When None, no "
+                "reasoning effort is sent."
             ),
         )
 
@@ -185,6 +187,13 @@ class XAIChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
+        if self.parameters.thinking_enable is False:
+            raise ValueError(
+                "The xAI SDK does not support disabling thinking. "
+                "Set thinking_enable to None or True and use "
+                "reasoning_effort to control reasoning depth.",
+            )
+
         from xai_sdk import AsyncClient
 
         client = AsyncClient(
@@ -206,10 +215,7 @@ class XAIChatModel(ChatModelBase):
             create_kwargs["temperature"] = self.parameters.temperature
         if self.parameters.top_p is not None:
             create_kwargs["top_p"] = self.parameters.top_p
-        if (
-            self.parameters.thinking_enable
-            and self.parameters.reasoning_effort
-        ):
+        if self.parameters.reasoning_effort is not None:
             create_kwargs[
                 "reasoning_effort"
             ] = self.parameters.reasoning_effort
@@ -381,7 +387,7 @@ class XAIChatModel(ChatModelBase):
             u = last_response.usage
             trailing.usage = ChatUsage(
                 input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                output_tokens=u.completion_tokens + u.reasoning_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     u,
@@ -433,7 +439,7 @@ class XAIChatModel(ChatModelBase):
             u = response.usage
             usage = ChatUsage(
                 input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                output_tokens=u.completion_tokens + u.reasoning_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     u,

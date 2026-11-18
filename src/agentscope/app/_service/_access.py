@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal, TypeVar, overload
+from typing import Any, Literal, TypeVar, cast, overload
 
 from fastapi import HTTPException, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    model_validator,
+)
 
 from ..access import (
     ResourceAccessPolicyBase,
@@ -16,6 +21,7 @@ from ..access import (
 )
 from ..storage import (
     AgentRecord,
+    ChunkerConfig,
     CredentialRecord,
     EmbeddingModelConfig,
     KnowledgeBaseRecord,
@@ -31,9 +37,8 @@ from ..storage import (
 class AgentView(AgentRecord):
     """Agent record + viewer-relative ``editable``.
 
-    Subclasses :class:`AgentRecord` so the wire format is a strict
-    superset of the historical response (one extra top-level field);
-    old clients ignore ``editable`` transparently.
+    Subclasses :class:`AgentRecord` so the stored agent data keeps its
+    declared response schema, with one extra top-level field.
     """
 
     editable: bool = Field(
@@ -60,6 +65,23 @@ class CredentialView(CredentialRecord):
     )
 
 
+class KnowledgeBaseStatusCounts(BaseModel):
+    """Documents of one knowledge base, counted by indexing status.
+
+    Built from a :class:`collections.Counter` keyed by
+    ``KnowledgeDocumentStatus``; a status without a field here is
+    ignored rather than raising, so adding a lifecycle state cannot
+    break the list endpoint.
+    """
+
+    pending: int = 0
+    parsing: int = 0
+    chunking: int = 0
+    indexing: int = 0
+    ready: int = 0
+    error: int = 0
+
+
 class KnowledgeBaseView(BaseModel):
     """Flat, viewer-facing projection of a knowledge base.
 
@@ -71,8 +93,10 @@ class KnowledgeBaseView(BaseModel):
     nesting of those fields under :attr:`KnowledgeBaseRecord.data`
     (introduced so the SQL backend can serialise a single JSON column)
     must not leak into the HTTP response, so :meth:`_lift_data_payload`
-    lifts them back up. ``user_id`` and the opaque ``collection_name``
-    are dropped (pydantic ignores the surplus keys).
+    lifts them back up. The record's ``user_id`` is kept as
+    :attr:`owner_id` for server-side reads but excluded from the wire
+    shape; the opaque ``collection_name`` is dropped outright (pydantic
+    ignores the surplus key).
     """
 
     id: str = Field(description="The knowledge base id.")
@@ -84,12 +108,52 @@ class KnowledgeBaseView(BaseModel):
     embedding_model_config: EmbeddingModelConfig = Field(
         description="Embedding model configuration pinned at creation.",
     )
+    chunker_config: ChunkerConfig | None = Field(
+        default=None,
+        description=(
+            "Chunker configuration pinned at creation. ``None`` for "
+            "legacy records created before per-KB chunker support."
+        ),
+    )
     created_at: datetime = Field(description="Creation timestamp.")
     updated_at: datetime = Field(description="Last-update timestamp.")
     editable: bool = Field(
         description=(
             "Whether the current viewer may modify this knowledge base."
         ),
+    )
+    owner_id: str = Field(
+        validation_alias=AliasChoices("owner_id", "user_id"),
+        exclude=True,
+        description=(
+            "The owning user id, carried for server-side reads (shared "
+            "viewers must query the owner's storage) and excluded from "
+            "the wire shape."
+        ),
+    )
+    document_count: int = Field(
+        default=0,
+        description="Number of documents registered in the knowledge base.",
+    )
+    chunk_count: int = Field(
+        default=0,
+        description=(
+            "Total indexed chunks across all documents, summed from the "
+            "per-document records."
+        ),
+    )
+    credential_name: str | None = Field(
+        default=None,
+        description=(
+            "Display name of the credential behind "
+            "``embedding_model_config.credential_id``, resolved against "
+            "the owner so shared viewers see it too. ``None`` when the "
+            "credential has been deleted."
+        ),
+    )
+    status_counts: KnowledgeBaseStatusCounts = Field(
+        default_factory=KnowledgeBaseStatusCounts,
+        description="Documents broken down by indexing status.",
     )
 
     @model_validator(mode="before")
@@ -120,6 +184,13 @@ class KnowledgeBaseView(BaseModel):
         for key, value in obj["data"].items():
             merged.setdefault(key, value)
         return merged
+
+
+ResourceKindValue = Literal["credential", "agent", "knowledge_base"]
+ResourceView = CredentialView | AgentView | KnowledgeBaseView
+ResourceViewList = (
+    list[CredentialView] | list[AgentView] | list[KnowledgeBaseView]
+)
 
 
 # ---------------------------------------------------------------------
@@ -161,7 +232,7 @@ class ResourceAccessService:
     async def list_resource(
         self,
         viewer_id: str,
-        kind: Literal[ResourceKind.CREDENTIAL],
+        kind: Literal["credential"],
     ) -> list[CredentialView]:
         ...
 
@@ -169,7 +240,7 @@ class ResourceAccessService:
     async def list_resource(
         self,
         viewer_id: str,
-        kind: Literal[ResourceKind.AGENT],
+        kind: Literal["agent"],
     ) -> list[AgentView]:
         ...
 
@@ -177,15 +248,23 @@ class ResourceAccessService:
     async def list_resource(
         self,
         viewer_id: str,
-        kind: Literal[ResourceKind.KNOWLEDGE_BASE],
+        kind: Literal["knowledge_base"],
     ) -> list[KnowledgeBaseView]:
+        ...
+
+    @overload
+    async def list_resource(
+        self,
+        viewer_id: str,
+        kind: ResourceKind,
+    ) -> ResourceViewList:
         ...
 
     async def list_resource(
         self,
         viewer_id: str,
-        kind: ResourceKind,
-    ) -> list[BaseModel]:
+        kind: ResourceKind | ResourceKindValue,
+    ) -> ResourceViewList:
         """List resources of ``kind`` visible to ``viewer_id``.
 
         The result merges the viewer's own records (always ``editable``)
@@ -195,9 +274,10 @@ class ResourceAccessService:
         :meth:`resolve_credential` should be used when the raw payload
         is required for runtime provider calls.
         """
-        if kind is ResourceKind.CREDENTIAL:
+        resource_kind = ResourceKind(kind)
+        if resource_kind is ResourceKind.CREDENTIAL:
             own = await self._storage.list_credentials(viewer_id)
-        elif kind is ResourceKind.AGENT:
+        elif resource_kind is ResourceKind.AGENT:
             own = [
                 record
                 for record in await self._storage.list_agents(viewer_id)
@@ -206,17 +286,17 @@ class ResourceAccessService:
         else:
             own = await self._storage.list_knowledge_bases(viewer_id)
 
-        views: list[BaseModel] = [
+        views: list[ResourceView] = [
             self._build_view(record, viewer_id, True) for record in own
         ]
         seen = {(record.user_id, record.id) for record in own}
 
-        for ref in await self._list_refs(viewer_id, kind):
+        for ref in await self._list_refs(viewer_id, resource_kind):
             key = (ref.owner_id, ref.resource_id)
             if key in seen:
                 continue
             record = await self._get_owned(
-                kind,
+                resource_kind,
                 ref.owner_id,
                 ref.resource_id,
             )
@@ -234,7 +314,7 @@ class ResourceAccessService:
                 ),
             )
             seen.add(key)
-        return views
+        return cast(ResourceViewList, views)
 
     # ------------------------------------------------------------------
     # get_resource
@@ -244,7 +324,7 @@ class ResourceAccessService:
     async def get_resource(
         self,
         viewer_id: str,
-        kind: Literal[ResourceKind.CREDENTIAL],
+        kind: Literal["credential"],
         resource_id: str,
     ) -> CredentialView:
         ...
@@ -253,7 +333,7 @@ class ResourceAccessService:
     async def get_resource(
         self,
         viewer_id: str,
-        kind: Literal[ResourceKind.AGENT],
+        kind: Literal["agent"],
         resource_id: str,
     ) -> AgentView:
         ...
@@ -262,17 +342,26 @@ class ResourceAccessService:
     async def get_resource(
         self,
         viewer_id: str,
-        kind: Literal[ResourceKind.KNOWLEDGE_BASE],
+        kind: Literal["knowledge_base"],
         resource_id: str,
     ) -> KnowledgeBaseView:
         ...
 
+    @overload
     async def get_resource(
         self,
         viewer_id: str,
         kind: ResourceKind,
         resource_id: str,
-    ) -> BaseModel:
+    ) -> ResourceView:
+        ...
+
+    async def get_resource(
+        self,
+        viewer_id: str,
+        kind: ResourceKind | ResourceKindValue,
+        resource_id: str,
+    ) -> ResourceView:
         """Get a visible resource by id or raise ``404``.
 
         Returns the viewer-relative view so the caller does not have to
@@ -283,18 +372,23 @@ class ResourceAccessService:
         is masked for shared entries — use :meth:`resolve_credential`
         for runtime provider calls.
         """
-        own = await self._get_owned(kind, viewer_id, resource_id)
+        resource_kind = ResourceKind(kind)
+        own = await self._get_owned(
+            resource_kind,
+            viewer_id,
+            resource_id,
+        )
         if own is not None:
             # Owner-side reads bypass the ``team`` filter on purpose:
             # runtime paths legitimately load the owner's ``source ==
             # "team"`` agents, and we want a single call site.
             return self._build_view(own, viewer_id, True)
 
-        for ref in await self._list_refs(viewer_id, kind):
+        for ref in await self._list_refs(viewer_id, resource_kind):
             if ref.resource_id != resource_id:
                 continue
             record = await self._get_owned(
-                kind,
+                resource_kind,
                 ref.owner_id,
                 ref.resource_id,
             )
@@ -307,7 +401,7 @@ class ResourceAccessService:
                 viewer_id,
                 ref.permission == ResourcePermission.EDIT,
             )
-        raise self._not_found(kind, resource_id)
+        raise self._not_found(resource_kind, resource_id)
 
     # ------------------------------------------------------------------
     # Runtime-only helpers
@@ -352,6 +446,22 @@ class ResourceAccessService:
         ``source == "user"`` agents since team workers are not
         shareable.
         """
+        record = await self.try_resolve_agent(viewer_id, agent_id)
+        if record is None:
+            raise self._not_found(ResourceKind.AGENT, agent_id)
+        return record
+
+    async def try_resolve_agent(
+        self,
+        viewer_id: str,
+        agent_id: str,
+    ) -> AgentRecord | None:
+        """Resolve an agent for runtime use, returning ``None`` when hidden.
+
+        This is the non-raising counterpart of :meth:`resolve_agent` for
+        stale references such as team rosters or toolkit snapshots. Owner
+        reads include team workers; cross-owner refs only resolve user agents.
+        """
         record = await self._storage.get_agent(viewer_id, agent_id)
         if record is not None:
             return record
@@ -365,7 +475,7 @@ class ResourceAccessService:
             )
             if record is not None and record.source != "team":
                 return record
-        raise self._not_found(ResourceKind.AGENT, agent_id)
+        return None
 
     async def resolve_knowledge_base(
         self,
@@ -474,7 +584,7 @@ class ResourceAccessService:
         record: Any,
         viewer_id: str,
         editable: bool,
-    ) -> BaseModel:
+    ) -> ResourceView:
         """Project a raw storage record onto a viewer-relative view.
 
         Credential ``data`` is masked when the viewer is not the owner

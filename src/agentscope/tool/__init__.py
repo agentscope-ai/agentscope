@@ -7,6 +7,10 @@ from ._toolkit import Toolkit
 from ._base import ToolBase, ParamsBase, ToolMiddlewareBase
 from ._adapters import MCPTool, FunctionTool
 from ._builtin import (
+    AskUser,
+    AskUserAnswer,
+    AskUserMetadata,
+    AskUserParams,
     ResetTools,
     Bash,
     PowerShell,
@@ -29,6 +33,10 @@ from ._task import (
 from ._tool_group import ToolGroup
 
 __all__ = [
+    "AskUser",
+    "AskUserAnswer",
+    "AskUserMetadata",
+    "AskUserParams",
     # Basic tool related types and functions
     "ToolChoice",
     "Function",

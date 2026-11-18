@@ -148,8 +148,8 @@ class BubblewrapWorkspaceManager(WorkspaceManagerBase):
         workspace_id: str | None = None,
     ) -> BubblewrapWorkspace:
         """Return an initialized workspace, creating it on cache miss."""
-        if workspace_id is None:
-            workspace_id = self.assign_workspace_id(
+        if not workspace_id:
+            workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,
                 session_id=session_id,

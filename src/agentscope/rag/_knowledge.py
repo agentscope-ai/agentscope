@@ -26,7 +26,7 @@ deployment.
 co-locating multiple logical knowledge bases inside the same physical
 collection — typically multi-tenant deployments where every record
 carries a ``{"tenant_id": "..."}`` payload.  It is set once at
-construction time and **always** applied: search/list never escape
+construction time and **always** applied: search/list/delete never escape
 it, and insert forces it onto every chunk's metadata so a malicious or
 buggy parser cannot rebind a record into another scope.
 """
@@ -113,6 +113,8 @@ class KnowledgeBase:
                 - :meth:`insert_document` forces these keys onto every
                   inserted chunk's metadata, overriding caller-supplied
                   values, so records cannot leak into another scope.
+                - :meth:`delete_document` removes only records matching
+                  both the document id and every filter pair.
 
                 ``None`` disables filtering — the default for
                 deployments where every knowledge base owns its
@@ -128,6 +130,7 @@ class KnowledgeBase:
         # successful ensure_collection so subsequent operations avoid
         # the extra round-trip.
         self._collection_ready = False
+        self._collection_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Read-only accessors
@@ -176,12 +179,16 @@ class KnowledgeBase:
         """
         if self._collection_ready:
             return
-        if not await self._vector_store.has_collection(self._collection):
-            await self._vector_store.create_collection(
-                self._collection,
-                dimensions=self._embedding_model.dimensions,
-            )
-        self._collection_ready = True
+        async with self._collection_lock:
+            # Another caller may have initialized while we waited for I/O.
+            if self._collection_ready:
+                return
+            if not await self._vector_store.has_collection(self._collection):
+                await self._vector_store.create_collection(
+                    self._collection,
+                    dimensions=self._embedding_model.dimensions,
+                )
+            self._collection_ready = True
 
     # ------------------------------------------------------------------
     # Search
@@ -212,11 +219,12 @@ class KnowledgeBase:
                 therefore pass a mixed list without per-KB filtering.
             top_k (`int`, defaults to ``5``):
                 Maximum number of results returned across all queries
-                (after dedup).
+                (after dedup).  Must be at least ``1``.
             score_threshold (`float | None`, optional):
-                Minimum similarity score for a hit to be retained.
-                Only meaningful for similarity metrics where higher is
-                better (cosine / dot-product).  ``None`` disables
+                Minimum :attr:`VectorSearchResult.score` for a hit to
+                be retained.  The scale depends on the store's metric —
+                a distance metric reports negated distances, so the
+                threshold is negative there.  ``None`` disables
                 filtering.
 
         Returns:
@@ -224,7 +232,14 @@ class KnowledgeBase:
                 At most ``top_k`` deduplicated hits ordered by
                 descending similarity score.  Empty when there are no
                 queries the bound embedding model can consume.
+
+        Raises:
+            `ValueError`:
+                If ``top_k`` is not positive.
         """
+        if top_k < 1:
+            raise ValueError("top_k must be positive.")
+
         if not queries:
             return []
 
@@ -295,6 +310,9 @@ class KnowledgeBase:
         3. ``document_metadata`` — document-level fields propagated
            down (filename, media type, upload time, ...).
 
+        Metadata is merged into per-insertion copies; the caller's
+        chunks are left unchanged.
+
         Args:
             chunks (`list[Chunk]`):
                 The pre-chunked document content (already produced by
@@ -326,12 +344,18 @@ class KnowledgeBase:
 
         # Precedence: metadata_filter wins (security boundary), then
         # chunk metadata, then document_metadata.  See docstring.
-        for chunk in chunks:
-            chunk.metadata = {
-                **(document_metadata or {}),
-                **chunk.metadata,
-                **(self._metadata_filter or {}),
-            }
+        chunks = [
+            chunk.model_copy(
+                update={
+                    "metadata": {
+                        **(document_metadata or {}),
+                        **chunk.metadata,
+                        **(self._metadata_filter or {}),
+                    },
+                },
+            )
+            for chunk in chunks
+        ]
 
         response = await self._embedding_model(
             [chunk.content for chunk in chunks],
@@ -355,17 +379,30 @@ class KnowledgeBase:
         return document_id
 
     async def delete_document(self, document_id: str) -> None:
-        """Remove every record for one source document.
+        """Remove every record for one source document within this scope.
+
+        Records must also match :attr:`metadata_filter` when set.
+        Custom vector stores must support scoped deletion; an unsupported
+        filter raises an error instead of falling back to unscoped deletion.
 
         Args:
             document_id (`str`):
                 The source document id whose records should be removed.
         """
         await self.ensure_collection()
-        await self._vector_store.delete(
-            self._collection,
-            document_id,
-        )
+        if self._metadata_filter:
+            await self._vector_store.delete(
+                self._collection,
+                document_id,
+                metadata_filter=self._metadata_filter,
+            )
+        else:
+            # Preserve compatibility with custom stores using the original
+            # delete signature when no scoping is required.
+            await self._vector_store.delete(
+                self._collection,
+                document_id,
+            )
 
     async def list_documents(self) -> list["DocumentSummary"]:
         """List all distinct source documents in this knowledge base.
@@ -380,5 +417,45 @@ class KnowledgeBase:
         await self.ensure_collection()
         return await self._vector_store.list_documents(
             self._collection,
+            metadata_filter=self._metadata_filter,
+        )
+
+    async def list_chunks(
+        self,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+    ) -> list[Chunk]:
+        """List one document's chunks ordered by ``chunk_index``.
+
+        Filtered by :attr:`metadata_filter` when set, so callers only
+        ever see chunks within their own scope.
+
+        Args:
+            document_id (`str`):
+                The source document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip; equals the first
+                returned chunk's ``chunk_index``.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+
+        Returns:
+            `list[Chunk]`:
+                At most ``limit`` chunks ordered by ``chunk_index``
+                ascending.
+
+        Raises:
+            `NotImplementedError`:
+                If the configured vector store does not support chunk
+                listing.
+        """
+        await self.ensure_collection()
+        return await self._vector_store.list_chunks(
+            self._collection,
+            document_id,
+            offset=offset,
+            limit=limit,
             metadata_filter=self._metadata_filter,
         )

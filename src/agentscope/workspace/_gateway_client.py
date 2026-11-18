@@ -85,8 +85,8 @@ class GatewayMCPTool(ToolBase):
                 ``mcp__{mcp}__{tool}`` name and the URL path.
             tool (`mcp.types.Tool`):
                 Raw upstream tool descriptor as returned by the gateway.
-                ``inputSchema`` is forwarded verbatim;
-                ``annotations.readOnlyHint`` drives the permission
+                ``input_schema`` is forwarded verbatim;
+                ``annotations.read_only_hint`` drives the permission
                 policy.
             gateway (`GatewayClient`):
                 Facade dispatching every call through
@@ -102,7 +102,7 @@ class GatewayMCPTool(ToolBase):
         self.name = f"mcp__{mcp_name}__{tool.name}"
         self.description = tool.description or ""
 
-        schema = dict(tool.inputSchema) if tool.inputSchema else {}
+        schema = dict(tool.input_schema) if tool.input_schema else {}
         schema.setdefault("type", "object")
         schema.setdefault("properties", {})
         schema.setdefault("required", [])
@@ -112,8 +112,8 @@ class GatewayMCPTool(ToolBase):
         self.is_external_tool = False
 
         self.is_read_only = False
-        if tool.annotations and hasattr(tool.annotations, "readOnlyHint"):
-            self.is_read_only = tool.annotations.readOnlyHint or False
+        if tool.annotations:
+            self.is_read_only = tool.annotations.read_only_hint or False
 
         self._tool = tool
         self._gateway = gateway
@@ -178,10 +178,11 @@ class GatewayMCPClient(MCPClient):
     from user input via :meth:`GatewayClient.make_client`). The local
     MCP machinery is short-circuited entirely:
 
-    * ``model_post_init`` does nothing (parent's ``_initialize_client``
-      is never called — no stdio context manager is built).
+    * ``model_post_init`` skips local configuration validation; no local
+      transport is constructed by the proxy.
     * ``connect`` registers the MCP on the gateway via ``POST /mcps``.
     * ``close`` deregisters via ``DELETE /mcps/{name}``.
+    * ``set_runtime_headers`` updates the registered live client.
     * ``list_raw_tools`` / ``get_tool`` fetch and wrap upstream tools.
     """
 
@@ -190,9 +191,7 @@ class GatewayMCPClient(MCPClient):
     _session_id: str = PrivateAttr(default="")
 
     def model_post_init(self, __context: Any) -> None:
-        """No-op — the parent builds local stdio/HTTP transport, which
-        the gateway-relayed client does not need.
-        """
+        """Leave configuration validation to the gateway-side MCP client."""
         return
 
     # ── lifecycle ─────────────────────────────────────────────────
@@ -252,6 +251,10 @@ class GatewayMCPClient(MCPClient):
             )
         assert self._gateway is not None
         body = self.model_dump(mode="json")
+        if self._runtime_headers:
+            # model_dump cannot carry them, and the gateway connects to
+            # the MCP server inside this request.
+            body["runtime_headers"] = self._runtime_headers
         status, resp_body = await self._gateway.exec_request(
             "POST",
             "/mcps",
@@ -271,10 +274,23 @@ class GatewayMCPClient(MCPClient):
     async def close(self, ignore_errors: bool = True) -> None:
         """Deregister this MCP via ``DELETE /mcps/{name}``.
 
+        A scoped missing-registration response counts as success, allowing
+        retries after a successful DELETE whose response was lost. Strict
+        failures leave the connection flag set so the request can be retried.
+
         Args:
             ignore_errors (`bool`, defaults to `True`):
-                Suppress "not connected" precondition and gateway
-                4xx/5xx. Mirrors :meth:`MCPClient.close`.
+                Suppress "not connected" precondition, gateway errors,
+                and request exceptions. If `False`, propagate failures
+                without clearing the connection flag.
+
+        Raises:
+            `RuntimeError`:
+                If `ignore_errors` is `False` and the client is not
+                connected or the gateway rejects the removal.
+            `Exception`:
+                If `ignore_errors` is `False`, underlying gateway request
+                exceptions propagate unchanged.
         """
         if not self._is_connected:
             if ignore_errors:
@@ -292,7 +308,24 @@ class GatewayMCPClient(MCPClient):
                     "session_id": self._session_id,
                 },
             )
-            if status >= 400 and not ignore_errors:
+            missing = False
+            if status == 404:
+                try:
+                    data = json.loads(resp_body)
+                    # Match _build_app._lookup in _mcp_gateway_app.py;
+                    # unrelated route/proxy 404s must remain failures.
+                    expected = (
+                        f"{self.name!r} not found for "
+                        f"agent={self._agent_id!r} "
+                        f"session={self._session_id!r}"
+                    )
+                    missing = (
+                        isinstance(data, dict)
+                        and data.get("detail") == expected
+                    )
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+            if status >= 400 and not missing and not ignore_errors:
                 raise RuntimeError(
                     f"gateway failed to remove MCP {self.name!r}: "
                     f"{_safe_detail(status, resp_body)}",
@@ -301,6 +334,58 @@ class GatewayMCPClient(MCPClient):
             if not ignore_errors:
                 raise
         self._is_connected = False
+
+    async def set_runtime_headers(
+        self,
+        headers: dict[str, str],
+    ) -> None:
+        """Replace headers on the registered gateway-side MCP client.
+
+        Unlike a local client, the proxy must already be connected so that
+        the live client exists in the workspace. :meth:`connect` sends them
+        with the registration, so they survive a reconnect.
+
+        Args:
+            headers (`dict[str, str]`):
+                The complete runtime header map. An empty dict clears it.
+
+        Raises:
+            `ValueError`:
+                The gateway rejects an invalid or unsupported header update.
+            `RuntimeError`:
+                The proxy is not connected or the gateway request fails.
+        """
+        if not self._is_connected:
+            raise RuntimeError(
+                f"MCP {self.name!r} is not connected. Call connect() first.",
+            )
+        assert self._gateway is not None
+        status, body = await self._gateway.exec_request(
+            "PUT",
+            f"/mcps/{self.name}/runtime-headers",
+            params={
+                "agent_id": self._agent_id,
+                "session_id": self._session_id,
+            },
+            body={"headers": headers},
+        )
+        if status == 404:
+            raise RuntimeError(
+                f"gateway has no runtime-headers route, or no live client "
+                f"for MCP {self.name!r}: the workspace image may predate "
+                f"the endpoint, or the gateway has restarted",
+            )
+        if status == 400:
+            raise ValueError(
+                f"gateway rejected runtime headers for "
+                f"MCP {self.name!r}: {_safe_detail(status, body)}",
+            )
+        if status >= 400:
+            raise RuntimeError(
+                f"gateway failed to update runtime headers for "
+                f"MCP {self.name!r}: {_safe_detail(status, body)}",
+            )
+        self._runtime_headers = dict(headers)
 
     # ── tool discovery ────────────────────────────────────────────
 

@@ -64,6 +64,9 @@ class SandboxedWorkspaceBase(WorkspaceBase):
     is_alive: bool
     """Inherited lifecycle flag, repeated for file-scoped type checks."""
 
+    _mcp_specs: dict[tuple[str, str], list[MCPClient]]
+    """Inherited MCP declarations, repeated for file-scoped type checks."""
+
     _bootstrap_cmd_timeout: float = 1800.0
     """Per-command timeout applied to every :meth:`_setup_mcp_gateway`
     bootstrap step. Subclasses lower this for lighter base images
@@ -318,7 +321,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         *,
         agent_id: str | None = None,
         session_id: str | None = None,
-    ) -> None:
+    ) -> MCPClient:
         """Register a new MCP server through the in-sandbox gateway.
 
         Args:
@@ -328,6 +331,10 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 The owning agent. ``None`` means the legacy ``""``.
             session_id (`str | None`, optional):
                 The owning session. ``None`` means the legacy ``""``.
+
+        Returns:
+            `MCPClient`:
+                The connected gateway proxy stored by the workspace.
 
         Raises:
             `ValueError`:
@@ -362,6 +369,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             # persisted copy is self-contained.
             self._mcp_specs[(agent_id, session_id)] = [*specs, mcp_client]
             await self._save_mcp_file()
+            return client
 
     async def remove_mcp(
         self,
@@ -371,6 +379,9 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         session_id: str | None = None,
     ) -> None:
         """Deregister an MCP by name, closing it on the gateway.
+
+        Gateway failures propagate without removing the local instance
+        or declaration, so callers can retry the removal.
 
         Args:
             name (`str`):
@@ -383,7 +394,10 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
         Raises:
             `RuntimeError`:
-                If the gateway is not attached.
+                If the gateway is not attached or rejects the removal.
+            `Exception`:
+                Underlying gateway request exceptions propagate unchanged,
+                including backend I/O errors such as `OSError`.
         """
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
@@ -398,12 +412,14 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                     session_id,
                 )
                 return
-            instance = self._mcp_instances.get(
+            live = self._mcp_instances.get(
                 (agent_id, session_id),
                 {},
-            ).pop(name, None)
-            if instance is not None:
-                await self._close_mcp_instance(instance)
+            )
+            instance = live.get(name)
+            if instance is not None and instance.is_connected:
+                await instance.close(ignore_errors=False)
+            live.pop(name, None)
             self._mcp_specs[(agent_id, session_id)] = [
                 m for m in specs if m.name != name
             ]

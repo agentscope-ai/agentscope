@@ -1,6 +1,8 @@
 name: claude-sonnet-5
 label: Claude Sonnet 5
 status: active
+# Release date source: https://platform.claude.com/docs/en/release-notes/overview
+release_date: 2026-06-30
 
 input_types:
   - text/plain
@@ -9,6 +11,7 @@ input_types:
   - image/png
   - image/gif
   - image/webp
+  - application/pdf
 
 output_types:
   - text/plain

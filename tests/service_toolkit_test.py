@@ -9,11 +9,10 @@ Verifies the assembly rules:
 - workspace builtins are always included;
 - the four ``Task*`` planning tools are always included;
 - :class:`ToolStop` (from ``BackgroundTaskManager``) is always included;
+- client external tools are included only when declared for the run;
 - the four ``Schedule*`` tools only when ``session.config.chat_model_config``
   is set (they need a model to fire new runs with);
-- team tools are role-gated by ``agent_record.source``: ``"team"`` →
-  one ``TeamSay`` (worker variant); anything else → the full
-  leader-side toolset of four;
+- team tools are role-gated by the caller-resolved ``team_role``;
 - caller-supplied ``extra_factory`` results land at the end.
 """
 from typing import Any
@@ -25,6 +24,9 @@ from agentscope.app._manager import (
     BackgroundTaskManager,
     SchedulerManager,
 )
+from agentscope.app._client_external_tool import (
+    ClientExternalToolDefinition,
+)
 from agentscope.app._service import ResourceAccessService, get_toolkit
 from agentscope.app.access import DenyAllResourceAccessPolicy
 from agentscope.app.storage import (
@@ -33,10 +35,8 @@ from agentscope.app.storage import (
     ChatModelConfig,
     SessionConfig,
     SessionRecord,
-    TeamData,
-    TeamRecord,
 )
-from agentscope.tool import ToolBase
+from agentscope.tool import AskUser, ToolBase
 
 
 class _FakeWorkspace:
@@ -133,30 +133,11 @@ class _NoOpStorage:
     list — the toolkit tests care about which team tools are attached,
     not about the pool contents; the non-empty case is covered by the
     ``AgentInvite`` tests in ``service_team_tools_test.py``.
-    Additionally, when the session has a ``team_id`` set, ``get_toolkit``
-    calls ``get_team`` to decide leader-vs-worker; the ``team_id_map``
-    constructor arg lets a test inject a lookup so the worker branch
-    can be exercised.
     """
-
-    def __init__(
-        self,
-        team_id_map: dict[str, TeamRecord] | None = None,
-    ) -> None:
-        """Initialize the storage placeholder."""
-        self._teams = team_id_map or {}
 
     async def list_agents(self, _user_id: str) -> list:
         """List agents for a team."""
         return []
-
-    async def get_team(
-        self,
-        _user_id: str,
-        team_id: str,
-    ) -> TeamRecord | None:
-        """Return the team record for ``team_id``."""
-        return self._teams.get(team_id)
 
 
 def _make_access(storage: Any) -> ResourceAccessService:
@@ -233,6 +214,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
+                workspace_manager=FakeWorkspaceManager(),
             ),
             background_task_manager=BackgroundTaskManager(
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -255,6 +237,8 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
         )
         # Background task control present.
         self.assertIn("ToolStop", names)
+        # No client tool is attached without a per-run declaration.
+        self.assertNotIn("AskUser", names)
         # Schedule control present (model_config is set).
         self.assertTrue(
             {
@@ -270,40 +254,36 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
             {"TeamCreate", "AgentCreate", "TeamSay", "TeamDelete"} <= names,
         )
 
-
-class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
-    """A session whose team role is worker only gets ``TeamSay``.
-
-    The worker/leader distinction is now session-level: a session with
-    ``team_id`` set and ``team.session_id != session.id`` is a worker
-    regardless of the agent record's ``source`` (an ``AgentInvite``
-    borrowed session runs on ``source='user'`` but is still a worker)."""
-
-    async def test_worker_only_gets_team_say(self) -> None:
-        """A worker session receives only ``TeamSay`` from the team
-        toolset."""
-        agent = _make_agent(source="team", name="worker")
+    async def test_client_external_tool_is_scoped_to_declaring_run(
+        self,
+    ) -> None:
+        """A validated client tool is attached only when supplied."""
+        agent = _make_agent(source="user")
         session = _make_session(
             user_id="u",
             agent_id=agent.id,
             with_model=True,
-            team_id="t1",
         )
-        # Team exists and its leader session is NOT this one → worker.
-        team = TeamRecord(
-            user_id="u",
-            session_id="leader-sid",
-            data=TeamData(name="team", description="d"),
+        definition = ClientExternalToolDefinition(
+            name="client__choose_option",
+            description="Ask the user to choose.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                },
+                "required": ["question"],
+            },
         )
+
         toolkit = await get_toolkit(
-            storage=_NoOpStorage(
-                team_id_map={"t1": team},
-            ),  # type: ignore[arg-type]
+            storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
             workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
+                workspace_manager=FakeWorkspaceManager(),
             ),
             background_task_manager=BackgroundTaskManager(
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -315,6 +295,128 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
             extra_factory=None,
             middlewares=[],
             resource_access_service=_make_access(_NoOpStorage()),
+            client_external_tools=[definition],
+            client_builtin_tools=["AskUser"],
+        )
+
+        native_tool = await toolkit.get_tool("AskUser")
+        self.assertIsInstance(native_tool, AskUser)
+        self.assertEqual(native_tool.metadata_schema, AskUser.metadata_schema)
+
+        tool = await toolkit.get_tool("client__choose_option")
+        self.assertIsNotNone(tool)
+        self.assertEqual(
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+                "is_external_tool": tool.is_external_tool,
+            },
+            {
+                "name": "client__choose_option",
+                "description": "Ask the user to choose.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string"},
+                    },
+                    "required": ["question"],
+                },
+                "is_external_tool": True,
+            },
+        )
+
+    async def test_client_external_tool_does_not_replace_server_tool(
+        self,
+    ) -> None:
+        """A client definition with a server tool name is rejected."""
+
+        class _ServerTool(_StubTool):
+            name: str = "client__shared_name"
+            description: str = "server implementation"
+            input_schema: dict = {
+                "type": "object",
+                "properties": {},
+            }
+
+        agent = _make_agent(source="user")
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "conflicts with a server tool",
+        ):
+            await get_toolkit(
+                storage=_NoOpStorage(),  # type: ignore[arg-type]
+                workspace=_FakeWorkspace(
+                    tools=[_ServerTool()],
+                ),  # type: ignore[arg-type]
+                workspace_manager=FakeWorkspaceManager(),
+                scheduler_manager=SchedulerManager(
+                    storage=_NoOpStorage(),  # type: ignore[arg-type]
+                    message_bus=_NullBus(),  # type: ignore[arg-type]
+                    workspace_manager=FakeWorkspaceManager(),
+                ),
+                background_task_manager=BackgroundTaskManager(
+                    message_bus=_NullBus(),  # type: ignore[arg-type]
+                ),
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+                user_id="u",
+                agent_record=agent,
+                session_record=session,
+                extra_factory=None,
+                middlewares=[],
+                resource_access_service=_make_access(_NoOpStorage()),
+                client_external_tools=[
+                    ClientExternalToolDefinition(
+                        name="client__shared_name",
+                        description="client implementation",
+                        input_schema={
+                            "type": "object",
+                            "properties": {},
+                        },
+                    ),
+                ],
+            )
+
+
+class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
+    """A session passed ``team_role="worker"`` only gets ``TeamSay``;
+    the role is resolved by the caller, not looked up here."""
+
+    async def test_worker_only_gets_team_say(self) -> None:
+        """A worker session receives only ``TeamSay`` from the team
+        toolset."""
+        agent = _make_agent(source="team", name="worker")
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+            team_id="t1",
+        )
+        toolkit = await get_toolkit(
+            storage=_NoOpStorage(),  # type: ignore[arg-type]
+            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
+            scheduler_manager=SchedulerManager(
+                storage=_NoOpStorage(),  # type: ignore[arg-type]
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+                workspace_manager=FakeWorkspaceManager(),
+            ),
+            background_task_manager=BackgroundTaskManager(
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+            middlewares=[],
+            resource_access_service=_make_access(_NoOpStorage()),
+            team_role="worker",
         )
         names = set(_tool_names(toolkit))
         # Only TeamSay from the team toolset.
@@ -348,6 +450,7 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
+                workspace_manager=FakeWorkspaceManager(),
             ),
             background_task_manager=BackgroundTaskManager(
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -406,6 +509,7 @@ class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
+                workspace_manager=FakeWorkspaceManager(),
             ),
             background_task_manager=BackgroundTaskManager(
                 message_bus=_NullBus(),  # type: ignore[arg-type]

@@ -1,0 +1,464 @@
+# -*- coding: utf-8 -*-
+# pylint: disable=protected-access,wrong-import-position,wrong-import-order
+"""Tests for the issue triage scripts.
+
+What matters here is everything that turns model output — derived from an
+arbitrary stranger's issue text — into something posted under the
+repository's own identity, plus the guards that decide a verdict is not
+trustworthy.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from typing import Any
+from unittest import IsolatedAsyncioTestCase, skipUnless
+from unittest.mock import AsyncMock, patch
+
+import yaml
+
+from agentscope.message import Msg, TextBlock
+from agentscope.permission import PermissionBehavior
+
+sys.path.insert(
+    0,
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts"),
+)
+
+import claim_intent  # noqa: E402
+import issue_triage  # noqa: E402
+
+
+class CommentRenderingTest(IsolatedAsyncioTestCase):
+    """Model text becomes a comment that cannot act on the reader."""
+
+    async def test_mentions_cannot_summon_anyone(self) -> None:
+        """A quoted mention must not notify the person it names."""
+        self.assertEqual(
+            issue_triage._defuse("ping @DavdGao and @qbc2016, not a@b.com"),
+            "ping `@DavdGao` and `@qbc2016`, not a@b.com",
+        )
+
+    async def test_a_quote_survives_a_newline(self) -> None:
+        """A bare newline ends a block quote, so every line carries it."""
+        self.assertEqual(
+            issue_triage._as_quote("first\nsecond"),
+            "> first\n> second",
+        )
+
+    async def test_a_quote_survives_markdown_structure(self) -> None:
+        """Leading Markdown would be read as structure, not as text."""
+        self.assertEqual(
+            issue_triage._as_quote("# shout\n- item\n1. numbered"),
+            "> \\# shout\n> \\- item\n> \\1. numbered",
+        )
+
+    async def test_a_quote_survives_html(self) -> None:
+        """A tracking pixel must arrive as characters, not as an image."""
+        self.assertEqual(
+            issue_triage._as_quote('<img src="x">'),
+            '> &lt;img src="x"&gt;',
+        )
+
+    async def test_a_fence_outgrows_its_content(self) -> None:
+        """Backticks in the text would otherwise close the fence early."""
+        self.assertEqual(
+            issue_triage._as_code("a ``` b ````"),
+            "`````\na ``` b ````\n`````",
+        )
+
+    async def test_a_fence_stays_three_when_it_can(self) -> None:
+        """Ordinary text gets the ordinary fence."""
+        self.assertEqual(
+            issue_triage._as_code("plain"),
+            "```\nplain\n```",
+        )
+
+    async def test_overlong_text_is_cut(self) -> None:
+        """A model that rambles cannot flood the thread."""
+        self.assertEqual(
+            len(issue_triage._defuse("A" * 99999)),
+            4000,
+        )
+
+
+class CommentChoiceTest(IsolatedAsyncioTestCase):
+    """Which verdicts speak, and which let the label speak for them."""
+
+    async def test_a_confirmed_bug_gets_no_comment(self) -> None:
+        """The label says it; a comment would only be noise."""
+        self.assertIsNone(issue_triage._comment("confirmed", "s", "e"))
+
+    async def test_every_other_verdict_explains_itself(self) -> None:
+        """A verdict that asks something of the reporter has to say why."""
+        for verdict in ("invalid", "cannot_reproduce", "needs_info"):
+            with self.subTest(verdict=verdict):
+                body = issue_triage._comment(verdict, "summary", "evidence")
+                self.assertIn("Automated preliminary check", body)
+                self.assertIn("> summary", body)
+                self.assertIn("evidence", body)
+
+    async def test_an_unknown_verdict_says_nothing(self) -> None:
+        """An off-schema verdict must not produce a comment at all."""
+        self.assertIsNone(issue_triage._comment("nonsense", "s", "e"))
+
+
+class DenyRuleTest(IsolatedAsyncioTestCase):
+    """The rules handed to the verifier's permission engine."""
+
+    async def test_the_rules_are_what_they_claim(self) -> None:
+        """Written out in full, so a silent narrowing is visible."""
+        rules = issue_triage._deny_rules()
+        self.assertListEqual(sorted(rules), ["Bash", "Edit", "Write"])
+        self.assertListEqual(
+            [
+                (r.tool_name, r.rule_content, r.behavior, r.source)
+                for name in sorted(rules)
+                for r in rules[name]
+            ],
+            [
+                ("Bash", "git push", PermissionBehavior.DENY, "issueTriage"),
+                ("Bash", "git config", PermissionBehavior.DENY, "issueTriage"),
+                ("Bash", "git commit", PermissionBehavior.DENY, "issueTriage"),
+                ("Edit", "src/**", PermissionBehavior.DENY, "issueTriage"),
+                ("Edit", "tests/**", PermissionBehavior.DENY, "issueTriage"),
+                (
+                    "Edit",
+                    "examples/**",
+                    PermissionBehavior.DENY,
+                    "issueTriage",
+                ),
+                ("Write", "src/**", PermissionBehavior.DENY, "issueTriage"),
+                ("Write", "tests/**", PermissionBehavior.DENY, "issueTriage"),
+                (
+                    "Write",
+                    "examples/**",
+                    PermissionBehavior.DENY,
+                    "issueTriage",
+                ),
+            ],
+        )
+
+
+class PristineCheckoutTest(IsolatedAsyncioTestCase):
+    """A verdict must describe the code as it was, not as the agent left it."""
+
+    def _repo(self, tmp: str) -> str:
+        """A one-commit repository to run the check against."""
+        subprocess.run(["git", "init", "-q", tmp], check=True)
+        for key, value in (("user.email", "t@t"), ("user.name", "t")):
+            subprocess.run(
+                ["git", "-C", tmp, "config", key, value],
+                check=True,
+            )
+        with open(os.path.join(tmp, "a.py"), "w", encoding="utf-8") as f:
+            f.write("original\n")
+        subprocess.run(["git", "-C", tmp, "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", tmp, "commit", "-qm", "init"],
+            check=True,
+        )
+        return tmp
+
+    async def test_an_untouched_checkout_passes(self) -> None:
+        """Nothing to complain about when nothing changed."""
+        # Cleanup is best-effort: Windows refuses to delete the read-only
+        # files git leaves under .git/objects.
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            issue_triage._assert_pristine(self._repo(tmp))
+
+    async def test_a_shell_write_is_caught(self) -> None:
+        """The deny rules cover Write and Edit; a shell can still reach it."""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            repo = self._repo(tmp)
+            with open(os.path.join(repo, "a.py"), "w", encoding="utf-8") as f:
+                f.write("instrumented\n")
+            with self.assertRaises(RuntimeError) as ctx:
+                issue_triage._assert_pristine(repo)
+            self.assertIn("does not describe main", str(ctx.exception))
+
+
+class MissingOutputTest(IsolatedAsyncioTestCase):
+    """What happens when the model does not fill the schema."""
+
+    async def test_triage_refuses_a_reply_without_structure(self) -> None:
+        """Better to fail the run than to label from nothing."""
+        agent = AsyncMock()
+        agent.name = "issue-classifier"
+
+        async def _stream(*_args: object, **_kwargs: object) -> Any:
+            yield Msg(
+                name="a",
+                content=[TextBlock(type="text", text="prose")],
+                role="assistant",
+            )
+
+        agent.reply_stream = _stream
+        with self.assertRaises(RuntimeError) as ctx:
+            await issue_triage._run(
+                agent,
+                "<issue/>",
+                issue_triage.IssueIntent,
+            )
+        self.assertIn("no structured output", str(ctx.exception))
+
+    async def test_a_claim_without_structure_is_not_a_claim(self) -> None:
+        """Silence hands the issue to nobody, which is the safe answer."""
+        msg = Msg(
+            name="a",
+            content=[TextBlock(type="text", text="prose")],
+            role="assistant",
+        )
+        # A directory rather than NamedTemporaryFile: on Windows the script
+        # cannot open a temporary file that the test still holds open.
+        with tempfile.TemporaryDirectory() as tmp:
+            comment = os.path.join(tmp, "comment.md")
+            with open(comment, "w", encoding="utf-8") as f:
+                f.write("I would like to work on this")
+
+            with (
+                patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test"}),
+                patch.object(claim_intent, "DashScopeChatModel"),
+                patch.object(claim_intent, "Agent") as agent_cls,
+                patch.object(
+                    sys,
+                    "argv",
+                    ["x", "--comment-file", comment, "--model", "m"],
+                ),
+            ):
+                agent_cls.return_value.reply = AsyncMock(return_value=msg)
+                with patch("builtins.print") as printed:
+                    await claim_intent.main()
+        self.assertIn(
+            '"wants_to_claim": false',
+            printed.call_args_list[0].args[0],
+        )
+
+
+_NODE_HARNESS = r"""
+const fs = require("fs");
+const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+Object.assign(process.env, payload.env);
+const calls = {
+  listForRepo: [],
+  createComment: [],
+  update: [],
+  outputs: {},
+  notices: [],
+};
+const github = {
+  paginate: async (fn, params) => fn(params),
+  rest: {
+    issues: {
+      listForRepo: async (params) => {
+        calls.listForRepo.push(params);
+        return payload.open;
+      },
+      createComment: async (params) => {
+        calls.createComment.push(params);
+        return {};
+      },
+      update: async (params) => {
+        calls.update.push(params);
+        return {};
+      },
+    },
+  },
+};
+const core = {
+  setOutput: (key, value) => {
+    calls.outputs[key] = value;
+  },
+  notice: (message) => {
+    calls.notices.push(message);
+  },
+};
+const context = payload.context;
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const fn = new AsyncFunction("github", "context", "core", payload.script);
+fn(github, context, core)
+  .then(() => {
+    process.stdout.write(JSON.stringify(calls));
+  })
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+"""
+
+
+@skipUnless(shutil.which("node"), "node is required to test workflow scripts")
+class QuotaWorkflowTest(IsolatedAsyncioTestCase):
+    """Test the workflow's issue quota."""
+
+    def setUp(self) -> None:
+        """Expected calls for an issue below quota."""
+        self.expected = {
+            "listForRepo": [
+                {
+                    "owner": "agentscope-ai",
+                    "repo": "agentscope",
+                    "creator": "reporter",
+                    "state": "open",
+                    "per_page": 100,
+                },
+            ],
+            "createComment": [],
+            "update": [],
+            "outputs": {},
+            "notices": [],
+        }
+
+    @staticmethod
+    def _load_quota_step() -> tuple[dict[str, str], str]:
+        workflow_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            ".github",
+            "workflows",
+            "issue-triage.yml",
+        )
+        with open(workflow_path, encoding="utf-8") as f:
+            workflow = yaml.safe_load(f)
+        env = {k: str(v) for k, v in workflow["env"].items()}
+        script = workflow["jobs"]["quota"]["steps"][0]["with"]["script"]
+        return env, script
+
+    def _run_quota(
+        self,
+        *,
+        action: str,
+        issue_number: int,
+        open_items: list[dict[str, Any]],
+        author: str = "reporter",
+        actor: str = "reporter",
+    ) -> dict[str, Any]:
+        env, script = self._load_quota_step()
+        payload = {
+            "env": env,
+            "script": script,
+            "open": open_items,
+            "context": {
+                "repo": {"owner": "agentscope-ai", "repo": "agentscope"},
+                "actor": actor,
+                "payload": {
+                    "action": action,
+                    "issue": {
+                        "number": issue_number,
+                        "user": {"login": author},
+                    },
+                },
+            },
+        }
+        proc = subprocess.run(
+            ["node", "-e", _NODE_HARNESS],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(proc.stdout)
+
+    def _assert_closed(self, res: dict[str, Any], issue_number: int) -> None:
+        target = {
+            "owner": "agentscope-ai",
+            "repo": "agentscope",
+            "issue_number": issue_number,
+        }
+        self.assertEqual(
+            res,
+            {
+                **self.expected,
+                "createComment": [
+                    {
+                        **target,
+                        "body": (
+                            "Thanks for the report, @reporter. To keep the "
+                            "tracker focused, each account can have at most "
+                            "5 open issues at a time, so this one is closed "
+                            "for now. Once your open issues are resolved, "
+                            "feel free to reopen it."
+                        ),
+                    },
+                ],
+                "update": [
+                    {
+                        **target,
+                        "state": "closed",
+                        "state_reason": "not_planned",
+                    },
+                ],
+                "outputs": {"closed": "true"},
+                "notices": ["Closed: reporter already has 5 open."],
+            },
+        )
+
+    async def test_concurrent_opened_burst_preserves_first_five(self) -> None:
+        """The fifth issue ignores newer issues."""
+        open_items = [{"number": n} for n in (10, 11, 12, 13, 14, 15)]
+        res = self._run_quota(
+            action="opened",
+            issue_number=14,
+            open_items=open_items,
+        )
+        self.assertEqual(res, self.expected)
+
+    async def test_concurrent_opened_burst_closes_sixth(self) -> None:
+        """The sixth issue exceeds quota."""
+        open_items = [{"number": n} for n in (10, 11, 12, 13, 14, 15)]
+        res = self._run_quota(
+            action="opened",
+            issue_number=15,
+            open_items=open_items,
+        )
+        self._assert_closed(res, issue_number=15)
+
+    async def test_reopened_counts_all_other_open_issues(self) -> None:
+        """Reopening counts newer issues too."""
+        open_items = [{"number": n} for n in (5, 20, 21, 22, 23, 24)]
+        res = self._run_quota(
+            action="reopened",
+            issue_number=5,
+            open_items=open_items,
+        )
+        self._assert_closed(res, issue_number=5)
+
+    async def test_reopened_under_limit_stays_open(self) -> None:
+        """Reopening below quota is allowed."""
+        open_items = [{"number": n} for n in (5, 20, 21, 22, 23)]
+        res = self._run_quota(
+            action="reopened",
+            issue_number=5,
+            open_items=open_items,
+        )
+        self.assertEqual(res, self.expected)
+
+    async def test_pull_requests_excluded_from_issue_quota(self) -> None:
+        """Pull requests do not count toward quota."""
+        open_items: list[dict[str, Any]] = [
+            {"number": n} for n in (10, 11, 12, 13, 14)
+        ] + [{"number": n, "pull_request": {}} for n in (1, 2, 3)]
+        res = self._run_quota(
+            action="opened",
+            issue_number=14,
+            open_items=open_items,
+        )
+        self.assertEqual(res, self.expected)
+
+    async def test_maintainer_exempt_from_quota(self) -> None:
+        """Maintainer authors and actors bypass quota."""
+        open_items = [{"number": n} for n in range(1, 10)]
+        for action, issue_number, author, actor in (
+            ("opened", 9, "DavdGao", "reporter"),
+            ("reopened", 1, "reporter", "DavdGao"),
+        ):
+            with self.subTest(action=action, author=author, actor=actor):
+                res = self._run_quota(
+                    action=action,
+                    issue_number=issue_number,
+                    open_items=open_items,
+                    author=author,
+                    actor=actor,
+                )
+                self.assertEqual(res, {**self.expected, "listForRepo": []})

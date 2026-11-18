@@ -13,48 +13,72 @@ that wants them subscribes through the
 """
 import asyncio
 import inspect
-from typing import TYPE_CHECKING
+import json
+from dataclasses import dataclass
+from typing import Literal, TYPE_CHECKING
 
 from fastapi import HTTPException
+from pydantic import BaseModel, Field
 
 from .._bus_ops import (
     abandon_inbox_consumer,
-    enqueue_channel_output,
+    deliver_to_inbox,
     enqueue_run_trigger,
+    finish_active_chat_reply,
     has_pending_inbox_or_release,
     publish_session_event,
+    register_active_chat_reply,
     register_inbox_consumer,
 )
 from ..message_bus import MessageBus, MessageBusKeys
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
-from ..storage import StorageBase, AgentRecord, SessionRecord, SessionSource
+from ..storage import (
+    StorageBase,
+    AgentRecord,
+    SessionNaming,
+    SessionRecord,
+    ChannelOrigin,
+    SOPOrigin,
+)
+from ..storage._utils import _resolve_team_leader
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     InboxMiddleware,
+    SteeringMiddleware,
+    SOPStepSubmitMiddleware,
     StateChangeMiddleware,
     ToolOffloadMiddleware,
+    TeamMemberLoopMiddleware,
 )
 from ...middleware import TTSMiddleware, RAGMiddleware
 from ...rag import KnowledgeBase
+from ...sop import SOPPhase
 from .._types import (
     AgentMiddlewareFactory,
     AgentToolFactory,
     EventProjector,
     SubAgentTemplate,
 )
+from .._client_external_tool import (
+    ClientBuiltinToolName,
+    ClientExternalToolDefinition,
+)
 from ._access import ResourceAccessService
 from ._model import get_model
 from ._tts_model import get_tts_model
 from ._toolkit import get_toolkit
 from ._session_projection import SessionProjection
+from ._sop import SOPService
 from ._projectors import SubagentHitlProjector
 
 from ..._logging import logger
 from ...agent import Agent, ModelConfig
+from ...model import ChatModelBase
 from ...event import (
     AgentEvent,
+    CustomEvent,
     ReplyStartEvent,
     ReplyEndEvent,
     ReplyFinishedReason,
@@ -64,11 +88,60 @@ from ...event import (
 )
 from ._errors import _classify_error, _classify_setup_error
 from ..._utils._common import _generate_id
-from ...message import AssistantMsg, Msg, ToolCallState
+from ...message import AssistantMsg, HintBlock, Msg, UserMsg
 from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
-    from ..channel import ChannelLifecycleDispatcher
+    from ..channel import ChannelClients
+
+
+_CHECKPOINT_LOCK_TTL_SECS = (
+    MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
+)
+
+
+@dataclass(frozen=True)
+class _LeaderContext:
+    """This session leads its team."""
+
+    role: Literal["leader"] = "leader"
+
+
+@dataclass(frozen=True)
+class _WorkerContext:
+    """This session is a worker; its leader is fully resolved."""
+
+    leader_session_id: str
+    leader_agent_id: str
+    leader_name: str
+    role: Literal["worker"] = "worker"
+
+
+_TeamContext = _LeaderContext | _WorkerContext
+
+
+class _SessionTitle(BaseModel):
+    """Structured output of the session auto-naming call."""
+
+    title: str = Field(
+        description=(
+            "A short title for the conversation, written in the same "
+            "language as the user's message, at most eight words, with "
+            "no quotes and no trailing punctuation."
+        ),
+    )
+
+
+_NAMING_PROMPT = (
+    "Give the conversation that opens with the following message a "
+    "short title.\n\n{text}"
+)
+
+# How much of the opening message the naming model sees, and how long
+# the resulting name may be. A name is a sidebar label, not a summary,
+# and a pasted wall of text must not become either.
+_NAMING_INPUT_LIMIT = 2000
+_NAMING_NAME_LIMIT = 60
 
 
 class ChatService:
@@ -100,7 +173,8 @@ class ChatService:
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
         custom_agent_cls: type[Agent] | None = None,
         extra_projectors: list[EventProjector] | None = None,
-        channel_dispatcher: "ChannelLifecycleDispatcher | None" = None,
+        channel_clients: "ChannelClients | None" = None,
+        tool_offload_timeout_secs: float | None = 10.0,
     ) -> None:
         """Initialize chat service.
 
@@ -162,11 +236,11 @@ class ChatService:
                 injection style). Each is invoked once per produced
                 event to mirror a UI feed onto another session; see
                 :class:`~agentscope.app._types.EventProjector`.
-            channel_dispatcher (`ChannelLifecycleDispatcher | None`, \
-optional):
-                The node's channel dispatcher, forwarded to
-                :func:`get_toolkit` so a channel-originated session's
-                agent gets that channel's platform tools.
+            channel_clients (`ChannelClients | None`, optional):
+                Factory for unconnected channel instances, used to give
+                a channel-originated session's agent that channel's
+                platform tools and chat context. Neither needs the long
+                connection, so the run gets them wherever it lands.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
@@ -176,6 +250,9 @@ optional):
         self._access = resource_access_service
         self._knowledge_base_manager = knowledge_base_manager
         self._extra_agent_middlewares = extra_agent_middlewares
+        # ``None`` keeps slow tools inside the same reply instead of offloading
+        # them after the default 10 s cut-off (see #3330).
+        self._tool_offload_timeout_secs = tool_offload_timeout_secs
         # Probed once (the service is built once per lifespan) so legacy
         # three-argument factories keep working without the per-turn cost.
         self._middlewares_take_workspace = False
@@ -191,7 +268,10 @@ optional):
             except (TypeError, ValueError):
                 pass
         self._extra_agent_tools = extra_agent_tools
-        self._channel_dispatcher = channel_dispatcher
+        self._channel_clients = channel_clients
+        self.sop_service: SOPService | None = None
+        """Carries a procedure on after a turn resumes one of its steps.
+        Set by the lifespan, since a SOP service is built on this one."""
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
         self._projection = SessionProjection(message_bus)
@@ -199,6 +279,19 @@ optional):
             SubagentHitlProjector(storage),
             *(extra_projectors or []),
         ]
+        # Queue nudges are detached from completed registry tasks so they
+        # run only after the local run slot is released. Keep strong
+        # references until completion; asyncio's loop retains only weak
+        # references to un-awaited tasks.
+        self._queue_nudge_tasks: set[asyncio.Task] = set()
+
+    async def resolve_agent(
+        self,
+        user_id: str,
+        agent_id: str,
+    ) -> AgentRecord:
+        """Resolve an owned or shared agent for execution and queue checks."""
+        return await self._access.resolve_agent(user_id, agent_id)
 
     async def run(
         self,
@@ -211,6 +304,12 @@ optional):
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None = None,
+        client_external_tools: list[ClientExternalToolDefinition]
+        | None = None,
+        sop_dispatch: str | None = None,
+        client_builtin_tools: list[ClientBuiltinToolName] | None = None,
+        queue_item_id: str | None = None,
+        input_persisted: bool = False,
     ) -> None:
         """Drive a chat run to completion.
 
@@ -250,9 +349,29 @@ optional):
                 - ``UserInterruptEvent``: abort a parked reply — the
                   agent closes pending tool calls with interrupted
                   results and ends the reply (Case B, no reasoning).
+            client_external_tools:
+                External tools supported by the active client for this run.
+            client_builtin_tools:
+                Native external tools enabled by this client for this run.
+            sop_dispatch (`str | None`, optional):
+                ``"<run id>:<step index>"`` when a SOP run dispatched
+                this turn, which gives it a submit tool.
+            queue_item_id (`str | None`, optional):
+                Queue identity for terminal failure reporting.
+            input_persisted (`bool`, optional):
+                Internal queue caller already saved this initial input.
         """
         try:
-            await self._run_impl(user_id, session_id, agent_id, input_msg)
+            await self._run_impl(
+                user_id,
+                session_id,
+                agent_id,
+                input_msg,
+                client_external_tools=client_external_tools,
+                client_builtin_tools=client_builtin_tools,
+                sop_dispatch=sop_dispatch,
+                input_persisted=input_persisted,
+            )
         except Exception as e:
             logger.exception(
                 "ChatService.run failed for user_id=%s session_id=%s "
@@ -262,13 +381,189 @@ optional):
                 agent_id,
                 str(e),
             )
+            if queue_item_id is not None and isinstance(
+                input_msg,
+                (Msg, list),
+            ):
+                messages = (
+                    input_msg
+                    if isinstance(input_msg, list)
+                    else [
+                        input_msg,
+                    ]
+                )
+                try:
+                    event = CustomEvent(
+                        name="chat_input_failed",
+                        value={
+                            "queue_item_id": queue_item_id,
+                            "message_ids": [msg.id for msg in messages],
+                            "message": (
+                                "The queued message could not be processed. "
+                                "Check the server log for details."
+                            ),
+                        },
+                    )
+                    await publish_session_event(
+                        self._message_bus,
+                        session_id,
+                        event.model_dump(mode="json"),
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception(
+                        "Failed to publish queued-input failure for "
+                        "session %s.",
+                        session_id,
+                    )
+
+    def schedule_queue_nudge(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> None:
+        """Schedule and strongly retain a one-shot pending-queue nudge.
+
+        Args:
+            user_id (`str`):
+                User that owns the session queue.
+            session_id (`str`):
+                Session whose pending/in-flight state should be checked.
+            agent_id (`str`):
+                Agent that owns the session queue.
+        """
+
+        async def _nudge_if_pending() -> None:
+            try:
+                pending = await self._message_bus.queue_read(
+                    MessageBusKeys.chat_inputs(session_id),
+                    max_count=1,
+                )
+                claimed = await self._message_bus.registry_exists(
+                    MessageBusKeys.chat_input_inflight_registry(),
+                    session_id,
+                )
+                if pending or claimed:
+                    await enqueue_run_trigger(
+                        self._message_bus,
+                        user_id=user_id,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        kind=MessageBusKeys.WAKEUP_KIND_QUEUED_MESSAGE,
+                    )
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Failed to signal queued chat inputs for session %s.",
+                    session_id,
+                )
+
+        task = asyncio.create_task(
+            _nudge_if_pending(),
+            name=f"chat-queue-nudge:{session_id}",
+        )
+        self._queue_nudge_tasks.add(task)
+        task.add_done_callback(self._queue_nudge_tasks.discard)
+
+    async def _auto_name_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_record: SessionRecord,
+        model: ChatModelBase,
+        trigger_text: str,
+    ) -> None:
+        """Replace a session's placeholder name with a real title.
+
+        A session created from the UI is named after its creation
+        timestamp, which says nothing about what it holds. Once its
+        first reply is on disk, the opening user message is handed to
+        the session's own model for a short title.
+
+        Best-effort by construction. When the model call fails — a
+        misconfigured credential being the usual reason, in which case
+        the reply itself has already failed and been reported — an
+        excerpt of that same message is used, which still beats a
+        timestamp. Nothing is retried and nothing is surfaced to the
+        user: the same broken credential must not be reported twice.
+
+        Either way the name is settled (``naming.auto`` is cleared) so
+        this runs at most once per session, and the session's event
+        stream is told to re-read the session list.
+
+        Args:
+            user_id (`str`):
+                Owner of the session.
+            agent_id (`str`):
+                The agent the session belongs to.
+            session_record (`SessionRecord`):
+                The session to name, as loaded at the start of the run.
+            model (`ChatModelBase`):
+                The session's own chat model, reused for the title.
+            trigger_text (`str`):
+                Text of the user turn that opened the run. Empty when
+                the turn carried no text (an image-only message, or a
+                background wakeup), in which case naming is skipped and
+                left for a later turn.
+        """
+        if not session_record.config.naming.auto or not trigger_text:
+            return
+
+        name = trigger_text[:_NAMING_NAME_LIMIT]
+        try:
+            res = await model.generate_structured_output(
+                messages=[
+                    UserMsg(
+                        name="user",
+                        content=_NAMING_PROMPT.format(
+                            text=trigger_text[:_NAMING_INPUT_LIMIT],
+                        ),
+                    ),
+                ],
+                structured_model=_SessionTitle,
+            )
+            title = str(res.content.get("title") or "").strip()
+            if title:
+                name = title[:_NAMING_NAME_LIMIT]
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(
+                "Auto-naming session %r failed, keeping an excerpt of "
+                "the first message instead: %s",
+                session_record.id,
+                e,
+            )
+
+        try:
+            await self._storage.upsert_session(
+                user_id=user_id,
+                agent_id=agent_id,
+                config=session_record.config.model_copy(
+                    update={"name": name, "naming": SessionNaming(auto=False)},
+                ),
+                session_id=session_record.id,
+            )
+            await publish_session_event(
+                self._message_bus,
+                session_record.id,
+                CustomEvent(name="session_updated", value={}).model_dump(
+                    mode="json",
+                ),
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            # This runs from the run's ``finally``, where a raise would
+            # replace whatever exception is already on its way out. A
+            # session left on its timestamp is not worth that.
+            logger.warning(
+                "Recording the name of session %r failed: %s",
+                session_record.id,
+                e,
+            )
 
     async def _close_failed_reply(
         self,
         session_id: str,
         reply_msg: Msg,
         error: Exception,
-    ) -> None:
+    ) -> str | None:
         """Close a reply that died mid-stream, and say why.
 
         The stream never emitted its terminating ``ReplyEndEvent``, so
@@ -295,7 +590,7 @@ optional):
                 "completed.",
                 session_id,
             )
-            return
+            return None
 
         end_event = ReplyEndEvent(
             session_id=session_id,
@@ -304,7 +599,7 @@ optional):
             error=_classify_error(error),
         )
         reply_msg.append_event(end_event)
-        await publish_session_event(
+        entry_id = await publish_session_event(
             self._message_bus,
             session_id,
             end_event.model_dump(mode="json"),
@@ -314,6 +609,95 @@ optional):
             session_id,
             end_event.error.type if end_event.error else "error",
         )
+        return entry_id
+
+    async def _notify_leader_of_failure(
+        self,
+        user_id: str,
+        team_ctx: "_TeamContext | None",
+        worker_name: str,
+        finished_reason: ReplyFinishedReason,
+        detail: str,
+    ) -> None:
+        """Tell a worker's team leader that the worker stopped early.
+
+        A member reports through ``TeamSay``; a member that failed or
+        was interrupted never got there, so without this the leader
+        waits forever for an answer that is not coming. Delivered as a
+        system reminder in the leader's inbox — not as a team message,
+        because the member did not say this, the framework did — waking
+        the leader when it is idle.
+
+        Best-effort: a failure to notify is logged and dropped rather
+        than replacing the failure being reported.
+
+        Args:
+            user_id (`str`):
+                The owner of both sessions.
+            team_ctx (`_TeamContext | None`):
+                The run's team identity. Anything but a
+                :class:`_WorkerContext` is a no-op — a leader or a
+                team-less session has nobody to report to.
+            worker_name (`str`):
+                The failing member's display name, as the leader knows
+                it from the roster.
+            finished_reason (`ReplyFinishedReason`):
+                How the reply ended, which decides what the leader is
+                asked to consider.
+            detail (`str`):
+                One-line, already-sanitized explanation of the error.
+        """
+        if not isinstance(team_ctx, _WorkerContext):
+            return
+
+        # Error messages come from several sources and only some end in
+        # punctuation; the reminder reads as prose either way.
+        detail = detail.strip()
+        if detail and detail[-1] not in ".!?":
+            detail += "."
+
+        if finished_reason == ReplyFinishedReason.INTERRUPTED:
+            reminder = (
+                f"Team member {worker_name!r} was interrupted mid-task and "
+                f"has stopped. Someone cancelled that run deliberately — "
+                f"possibly the user, who may be working with this member "
+                f"directly. Do not silently re-dispatch it: ask the user "
+                f"what should happen to the task, or ask the member how "
+                f"far it got. Left unresolved, the member is stranded with "
+                f"work nobody is tracking."
+            )
+        else:
+            reminder = (
+                f"Team member {worker_name!r} hit an error while running, "
+                f"so it never called TeamSay to report. Error: {detail} "
+                f"Judge from the error type whether to retry — with this "
+                f"member or a fresh one — or to raise it with the user: "
+                f"invalid credentials or an exhausted quota will fail the "
+                f"same way again. Assume no usable output unless the "
+                f"member reported partial results earlier."
+            )
+
+        try:
+            hint = HintBlock(
+                hint=f"<system-reminder>{reminder}</system-reminder>",
+                source=json.dumps(
+                    {"label": "System", "sublabel": "Reminder"},
+                    ensure_ascii=False,
+                ),
+            )
+            await deliver_to_inbox(
+                self._message_bus,
+                user_id=user_id,
+                session_id=team_ctx.leader_session_id,
+                agent_id=team_ctx.leader_agent_id,
+                payload=hint.model_dump(mode="json"),
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "Failed to notify team leader %r that member %r stopped.",
+                team_ctx.leader_name,
+                worker_name,
+            )
 
     async def _report_failure(
         self,
@@ -321,6 +705,8 @@ optional):
         session_id: str,
         agent_id: str,
         error: Exception,
+        team_ctx: "_TeamContext | None" = None,
+        worker_name: str | None = None,
     ) -> None:
         """Tell the client about a failure that reached no reply.
 
@@ -349,6 +735,12 @@ optional):
                 The agent that was being assembled.
             error (`Exception`):
                 What went wrong while setting the run up.
+            team_ctx (`_TeamContext | None`, optional):
+                The run's team identity; a worker's leader is told the
+                run never happened.
+            worker_name (`str | None`, optional):
+                Display name used in that notification. Defaults to
+                ``agent_id`` when the agent record never loaded.
         """
         try:
             reply_id = _generate_id()
@@ -369,24 +761,42 @@ optional):
                 name=agent_id,
                 content=[],
             )
+            checkpoint_cursor = ""
             for event in (start_event, end_event):
                 reply_msg.append_event(event)
-                await publish_session_event(
+                checkpoint_cursor = await publish_session_event(
                     self._message_bus,
                     session_id,
                     event.model_dump(mode="json"),
                 )
-            await self._storage.upsert_message(
-                user_id,
-                session_id,
-                reply_msg,
-            )
+            async with self._message_bus.acquire_lock(
+                MessageBusKeys.session_event_checkpoint_lock(session_id),
+                ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+            ):
+                await self._storage.upsert_message(
+                    user_id,
+                    session_id,
+                    reply_msg,
+                )
+                await self._message_bus.registry_set(
+                    MessageBusKeys.session_event_checkpoint(session_id),
+                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                    checkpoint_cursor,
+                )
         except Exception:
             logger.exception(
                 "Failed to report a failure for session %r; the original "
                 "error is logged above.",
                 session_id,
             )
+
+        await self._notify_leader_of_failure(
+            user_id,
+            team_ctx,
+            worker_name or agent_id,
+            ReplyFinishedReason.ERROR,
+            _classify_setup_error(error).message,
+        )
 
     async def interrupt(
         self,
@@ -479,18 +889,10 @@ optional):
             `bool`:
                 ``True`` when the run should be skipped.
         """
-        if input_msg is not None or not agent.state.context:
+        if input_msg is not None:
             return False
 
-        last_msg = agent.state.context[-1]
-        if last_msg.role != "assistant" or last_msg.name != agent.name:
-            return False
-
-        awaiting = [
-            tc
-            for tc in last_msg.get_content_blocks("tool_call")
-            if tc.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
-        ]
+        awaiting = agent.state.get_awaiting_tool_calls(agent.name)
         if not awaiting:
             return False
 
@@ -515,312 +917,476 @@ optional):
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None,
+        client_external_tools: list[ClientExternalToolDefinition]
+        | None = None,
+        sop_dispatch: str | None = None,
+        client_builtin_tools: list[ClientBuiltinToolName] | None = None,
+        input_persisted: bool = False,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
-        per-step logic at one extra indentation level."""
+        per-step logic at one extra indentation level.
 
-        # Steps 1-6 assemble the run; step 7 performs it. A failure
-        # here has no reply to attach to, so one is synthesized —
-        # otherwise the client sees a stream that simply stops and is
-        # left saying "unknown error".
-        try:
-            # -----------------------------------------------------------------
-            # 1. Load records + resolve workspace ONCE here, reused below.
-            # Reject missing records up front with a clear error so the
-            # downstream assembly code can rely on non-None values.
-            #
-            # ``resolve_agent`` covers own agents (including team workers,
-            # which the owner runs directly) and cross-owner shared agents
-            # (viewer runs a shared user-source agent). It raises 404 when
-            # the agent is not visible to the caller.
-            # -----------------------------------------------------------------
+        The whole body runs under the distributed session lock: the mutable
+        session record must be loaded only after this run owns the lock,
+        otherwise a waiter can assemble an agent from a snapshot that the
+        preceding holder replaces before releasing the lock."""
+
+        # The run to carry on after the lock, if this turn resumed a step.
+        resumed_sop_run_id: str | None = None
+        interrupted = False
+
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.session_lock(session_id),
+            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+        ):
+            # Bound before the try: an assembly failure reports through
+            # them, and may happen before either is resolved.
+            team_ctx: _TeamContext | None = None
+            worker_name: str = agent_id
+
+            # Steps 1-6 assemble the run; step 7 performs it. A failure
+            # here has no reply to attach to, so one is synthesized —
+            # otherwise the client sees a stream that simply stops and is
+            # left saying "unknown error".
             try:
-                agent_record = await self._access.resolve_agent(
+                # -------------------------------------------------------------
+                # 1. Load records + resolve workspace ONCE here, reused below.
+                # Reject missing records up front with a clear error so the
+                # downstream assembly code can rely on non-None values.
+                #
+                # ``resolve_agent`` covers own agents (including team workers,
+                # which the owner runs directly) and cross-owner shared agents
+                # (viewer runs a shared user-source agent). It raises 404 when
+                # the agent is not visible to the caller.
+                # -------------------------------------------------------------
+                try:
+                    agent_record = await self.resolve_agent(
+                        user_id,
+                        agent_id,
+                    )
+                except HTTPException as exc:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Agent {agent_id!r} not found.",
+                    ) from exc
+                session_record = await self._storage.get_session(
                     user_id,
                     agent_id,
+                    session_id,
                 )
-            except HTTPException as exc:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Agent {agent_id!r} not found.",
-                ) from exc
-            session_record = await self._storage.get_session(
-                user_id,
-                agent_id,
-                session_id,
-            )
-            if session_record is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=(
-                        f"Session {session_id!r} not found for "
-                        f"agent {agent_id!r}."
-                    ),
-                )
-            workspace = await self._workspace_manager.get_workspace(
-                user_id,
-                agent_id,
-                session_id,
-                session_record.config.workspace_id,
-            )
+                if session_record is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            f"Session {session_id!r} not found for "
+                            f"agent {agent_id!r}."
+                        ),
+                    )
+                worker_name = agent_record.data.name
+                if (
+                    isinstance(session_record.origin, SOPOrigin)
+                    and sop_dispatch is None
+                    and isinstance(
+                        input_msg,
+                        (UserConfirmResultEvent, ExternalExecutionResultEvent),
+                    )
+                ):
+                    # Only an answer to the step's parked call resumes it.
+                    sop_dispatch = await self._parked_dispatch(
+                        user_id,
+                        session_id,
+                    )
+                    if sop_dispatch is not None:
+                        resumed_sop_run_id = session_record.origin.sop_run_id
 
-            # Add workspace working directory to the permission context
-            working_dirs = (
-                session_record.state.permission_context.working_directories
-            )
-            if workspace.workdir not in working_dirs:
-                working_dirs[workspace.workdir] = AdditionalWorkingDirectory(
-                    path=workspace.workdir,
-                    source="session",
-                )
-
-            # ----------------------------------------------------------------
-            # 2. Middlewares — framework-supplied first, then caller extras.
-            # Background-tool completions deliver their results via
-            # ``message_bus.inbox_push + enqueue_wakeup``, so the dispatcher
-            # (any process) wakes an idle session — no in-process retrigger
-            # plumbing is needed here.
-            # -----------------------------------------------------------------
-            middlewares: list = [
-                InboxMiddleware(self._message_bus),
-                StateChangeMiddleware(
-                    message_bus=self._message_bus,
-                    session_id=session_id,
-                ),
-                ToolOffloadMiddleware(
-                    bg_manager=self._background_task_manager,
-                    message_bus=self._message_bus,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                ),
-            ]
-            if self._extra_agent_middlewares is not None:
-                factory_args: tuple = (user_id, agent_id, session_id)
-                if self._middlewares_take_workspace:
-                    factory_args += (workspace,)
-                middlewares.extend(
-                    await self._extra_agent_middlewares(*factory_args),
-                )
-
-            # ----------------------------------------------------------------
-            # 2b. TTS middleware — inject when the session has a TTS config.
-            # -----------------------------------------------------------------
-            tts_cfg = session_record.config.tts_model_config
-            if tts_cfg is not None:
-                tts_model = await get_tts_model(
-                    user_id,
-                    tts_cfg,
-                    self._access,
-                )
-                middlewares.append(TTSMiddleware(tts_model))
-
-            # ----------------------------------------------------------------
-            # 2c. Knowledge-base middleware — inject when the session has KBs
-            # attached.  Each KB resolves to its own
-            # :class:`KnowledgeBase` handle
-            # (own embedding model + vector store), so the middleware can
-            # retrieve across heterogeneous KBs in one fan-out.
-            #
-            # Each KB may be either owned by the caller or shared to them
-            # via the resource access policy. We resolve the owner through
-            # ``resolve_knowledge_base`` first and hand the KB manager the
-            # true owner id — its own storage lookups stay owner-scoped
-            # and unaware of sharing.
-            # -----------------------------------------------------------------
-            kb_cfg = session_record.config.knowledge_config
-            if (
-                kb_cfg is not None
-                and kb_cfg.knowledge_base_ids
-                and self._knowledge_base_manager is not None
-            ):
-                knowledges: list[KnowledgeBase] = []
-                for kb_id in kb_cfg.knowledge_base_ids:
-                    try:
-                        kb_record = await self._access.resolve_knowledge_base(
-                            user_id,
-                            kb_id,
-                        )
-                        knowledge = (
-                            await self._knowledge_base_manager.get_knowledge(
-                                kb_record.user_id,
-                                kb_id,
-                            )
-                        )
-                    except Exception:  # pylint: disable=broad-except
-                        # A KB the session referenced was deleted, its
-                        # sharing revoked, or its credential is gone —
-                        # log and skip so the chat turn can still run
-                        # with the remaining KBs.
-                        logger.exception(
-                            "Skipping knowledge base %r for session %r: "
-                            "failed to resolve runtime handle.",
-                            kb_id,
+                # -------------------------------------------------------------
+                # 1b. Resolve the team identity ONCE, before anything that
+                # can fail: a worker whose assembly dies still has to reach
+                # its leader. Downstream consumers reuse this.
+                # -------------------------------------------------------------
+                if session_record.team_id is not None:
+                    team = await self._storage.get_team(
+                        user_id,
+                        session_record.team_id,
+                    )
+                    if team is None:
+                        # Dissolved concurrently, or a stale team_id:
+                        # nothing to be a member of, so run teamless.
+                        logger.warning(
+                            "Session %r points at team %r which no longer "
+                            "exists; running teamless.",
                             session_id,
+                            session_record.team_id,
                         )
-                        continue
-                    knowledges.append(knowledge)
-                if knowledges:
+                    elif team.session_id == session_record.id:
+                        team_ctx = _LeaderContext()
+                    else:
+                        leader = await _resolve_team_leader(
+                            self._storage,
+                            user_id,
+                            team,
+                        )
+                        if leader is None:
+                            # Unreachable while the data is consistent:
+                            # deleting a leader dissolves the team.
+                            raise HTTPException(
+                                status_code=409,
+                                detail=(
+                                    f"Team {team.id!r} has no resolvable "
+                                    f"leader; worker session "
+                                    f"{session_id!r} cannot run."
+                                ),
+                            )
+                        team_ctx = _WorkerContext(
+                            leader_session_id=leader.session_id,
+                            leader_agent_id=leader.agent.id,
+                            leader_name=leader.name,
+                        )
+
+                workspace = await self._workspace_manager.get_workspace(
+                    user_id,
+                    agent_id,
+                    session_id,
+                    session_record.config.workspace_id,
+                )
+
+                # Add workspace working directory to the permission context
+                working_dirs = (
+                    session_record.state.permission_context.working_directories
+                )
+                if workspace.workdir not in working_dirs:
+                    working_dirs[
+                        workspace.workdir
+                    ] = AdditionalWorkingDirectory(
+                        path=workspace.workdir,
+                        source="session",
+                    )
+
+                # -------------------------------------------------------------
+                # 1c. Resolve the channel binding ONCE; the toolkit and the
+                # system-prompt attachment share it.
+                # -------------------------------------------------------------
+                channel_origin = (
+                    session_record.origin
+                    if isinstance(session_record.origin, ChannelOrigin)
+                    else None
+                )
+                channel = (
+                    await self._channel_clients.get(
+                        channel_origin.channel_id,
+                    )
+                    if channel_origin is not None
+                    and self._channel_clients is not None
+                    else None
+                )
+                chat_kind = (
+                    await channel.chat_kind(channel_origin.chat_id)
+                    if channel is not None and channel_origin is not None
+                    else None
+                )
+                # Channel tools that read as the session's user are only
+                # safe in a 1:1 chat. A group session is shared, so one
+                # member's turn would otherwise read with another's
+                # permissions.
+                channel_tools = (
+                    await channel.list_tools(
+                        workspace,
+                        channel_origin.channel_user_id
+                        if chat_kind is ChatKind.PRIVATE
+                        else None,
+                    )
+                    if channel is not None and channel_origin is not None
+                    else []
+                )
+
+                # -------------------------------------------------------------
+                # 2. Middlewares — framework-supplied first, then caller
+                # extras. Background-tool completions deliver their results
+                # via ``message_bus.inbox_push + enqueue_wakeup``, so the
+                # dispatcher (any process) wakes an idle session — no
+                # in-process retrigger plumbing is needed here.
+                # -------------------------------------------------------------
+                middlewares: list = [
+                    SteeringMiddleware(self._message_bus),
+                    InboxMiddleware(self._message_bus),
+                    StateChangeMiddleware(
+                        message_bus=self._message_bus,
+                        session_id=session_id,
+                    ),
+                ]
+                if self._tool_offload_timeout_secs is not None:
                     middlewares.append(
-                        RAGMiddleware(
-                            knowledge_bases=knowledges,
-                            parameters=RAGMiddleware.Parameters(
-                                **(kb_cfg.parameters or {}),
-                            ),
+                        ToolOffloadMiddleware(
+                            bg_manager=self._background_task_manager,
+                            message_bus=self._message_bus,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            timeout_secs=self._tool_offload_timeout_secs,
+                        ),
+                    )
+                # Equip the member middleware for loop control
+                if isinstance(team_ctx, _WorkerContext):
+                    middlewares.append(
+                        TeamMemberLoopMiddleware(
+                            leader_name=team_ctx.leader_name,
                         ),
                     )
 
-            # ----------------------------------------------------------------
-            # 3. Toolkit (workspace tools + planning + ToolStop + schedule +
-            # team + extras + skills + mcps).
-            # -----------------------------------------------------------------
-            toolkit = await get_toolkit(
-                storage=self._storage,
-                workspace=workspace,
-                workspace_manager=self._workspace_manager,
-                scheduler_manager=self._scheduler_manager,
-                background_task_manager=self._background_task_manager,
-                message_bus=self._message_bus,
-                middlewares=middlewares,
-                user_id=user_id,
-                agent_record=agent_record,
-                session_record=session_record,
-                resource_access_service=self._access,
-                extra_factory=self._extra_agent_tools,
-                sub_agent_templates=self._sub_agent_templates,
-                channel_dispatcher=self._channel_dispatcher,
-            )
+                # Only a turn the run asked for must end in a submission;
+                # a person chatting in the same session must not.
+                if sop_dispatch is not None:
+                    middlewares.append(SOPStepSubmitMiddleware())
 
-            # ----------------------------------------------------------------
-            # 4. Model + fallback (resolved from session's config).
-            # -----------------------------------------------------------------
-            model_cfg = session_record.config.chat_model_config
-            if not model_cfg:
-                raise HTTPException(
-                    status_code=404,
-                    detail=(
-                        f"No model configuration found for agent "
-                        f"{agent_id}"
-                    ),
-                )
-            model = await get_model(user_id, model_cfg, self._access)
-
-            fallback_cfg = session_record.config.fallback_chat_model_config
-            fallback_model = (
-                await get_model(user_id, fallback_cfg, self._access)
-                if fallback_cfg is not None
-                else None
-            )
-
-            # ----------------------------------------------------------------
-            # 5. Assemble the Agent.
-            # -----------------------------------------------------------------
-            attachment = f"You're within a session (id={session_id})."
-
-            # Channel-bound sessions: tell the agent which chat it serves.
-            if (
-                session_record.source_channel_id
-                and self._channel_dispatcher is not None
-            ):
-                channel = self._channel_dispatcher.get_local_channel(
-                    session_record.source_channel_id,
-                )
-                if channel is not None:
-                    tools = ", ".join(
-                        t.name for t in await channel.list_tools(workspace)
+                if self._extra_agent_middlewares is not None:
+                    factory_args: tuple = (user_id, agent_id, session_id)
+                    if self._middlewares_take_workspace:
+                        factory_args += (workspace,)
+                    middlewares.extend(
+                        await self._extra_agent_middlewares(*factory_args),
                     )
-                    chat_id = session_record.source_chat_id or ""
-                    kind = await channel.chat_kind(chat_id)
-                    name = await channel.chat_name(chat_id)
+
+                # -------------------------------------------------------------
+                # 2b. TTS middleware — inject when the session has a TTS
+                # config.
+                # -------------------------------------------------------------
+                tts_cfg = session_record.config.tts_model_config
+                if tts_cfg is not None:
+                    tts_model = await get_tts_model(
+                        user_id,
+                        tts_cfg,
+                        self._access,
+                        self._storage,
+                    )
+                    if tts_model is not None:
+                        middlewares.append(
+                            TTSMiddleware(tts_model, continue_on_error=True),
+                        )
+                    else:
+                        await publish_session_event(
+                            self._message_bus,
+                            session_id,
+                            CustomEvent(
+                                name="tts_error",
+                                value={"stage": "configuration"},
+                            ).model_dump(mode="json"),
+                        )
+
+                # -------------------------------------------------------------
+                # 2c. Knowledge-base middleware — inject when the session has
+                # KBs attached.  Each KB resolves to its own
+                # :class:`KnowledgeBase` handle
+                # (own embedding model + vector store), so the middleware can
+                # retrieve across heterogeneous KBs in one fan-out.
+                #
+                # Each KB may be either owned by the caller or shared to them
+                # via the resource access policy. We resolve the owner through
+                # ``resolve_knowledge_base`` first and hand the KB manager the
+                # true owner id — its own storage lookups stay owner-scoped
+                # and unaware of sharing.
+                # -------------------------------------------------------------
+                kb_cfg = session_record.config.knowledge_config
+                if (
+                    kb_cfg is not None
+                    and kb_cfg.knowledge_base_ids
+                    and self._knowledge_base_manager is not None
+                ):
+                    knowledges: list[KnowledgeBase] = []
+                    for kb_id in kb_cfg.knowledge_base_ids:
+                        try:
+                            kb_record = (
+                                await self._access.resolve_knowledge_base(
+                                    user_id,
+                                    kb_id,
+                                )
+                            )
+                            kb_manager = self._knowledge_base_manager
+                            knowledge = await kb_manager.get_knowledge(
+                                kb_record.user_id,
+                                kb_id,
+                            )
+                        except Exception:  # pylint: disable=broad-except
+                            # A KB the session referenced was deleted, its
+                            # sharing revoked, or its credential is gone —
+                            # log and skip so the chat turn can still run
+                            # with the remaining KBs.
+                            logger.exception(
+                                "Skipping knowledge base %r for session %r: "
+                                "failed to resolve runtime handle.",
+                                kb_id,
+                                session_id,
+                            )
+                            continue
+                        knowledges.append(knowledge)
+                    if knowledges:
+                        middlewares.append(
+                            RAGMiddleware(
+                                knowledge_bases=knowledges,
+                                parameters=RAGMiddleware.Parameters(
+                                    **(kb_cfg.parameters or {}),
+                                ),
+                            ),
+                        )
+
+                # -------------------------------------------------------------
+                # 3. Toolkit (workspace tools + planning + ToolStop +
+                # schedule + team + extras + skills + mcps).
+                # -------------------------------------------------------------
+                toolkit = await get_toolkit(
+                    storage=self._storage,
+                    workspace=workspace,
+                    workspace_manager=self._workspace_manager,
+                    scheduler_manager=self._scheduler_manager,
+                    background_task_manager=self._background_task_manager,
+                    message_bus=self._message_bus,
+                    middlewares=middlewares,
+                    user_id=user_id,
+                    agent_record=agent_record,
+                    session_record=session_record,
+                    resource_access_service=self._access,
+                    extra_factory=self._extra_agent_tools,
+                    sub_agent_templates=self._sub_agent_templates,
+                    team_role=team_ctx.role if team_ctx else None,
+                    channel_tools=channel_tools,
+                    client_external_tools=client_external_tools,
+                    client_builtin_tools=client_builtin_tools,
+                    sop_dispatch=sop_dispatch,
+                )
+
+                # -------------------------------------------------------------
+                # 4. Model + fallback (resolved from session's config).
+                # -------------------------------------------------------------
+                model_cfg = session_record.config.chat_model_config
+                if not model_cfg:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            f"No model configuration found for agent "
+                            f"{agent_id}"
+                        ),
+                    )
+                model = await get_model(user_id, model_cfg, self._access)
+
+                fallback_cfg = session_record.config.fallback_chat_model_config
+                fallback_model = (
+                    await get_model(user_id, fallback_cfg, self._access)
+                    if fallback_cfg is not None
+                    else None
+                )
+
+                # -------------------------------------------------------------
+                # 5. Assemble the Agent.
+                # -------------------------------------------------------------
+                attachment = f"You're within a session (id={session_id})."
+
+                # Channel-bound sessions: tell the agent which chat it serves.
+                if channel is not None and channel_origin is not None:
+                    tools = ", ".join(t.name for t in channel_tools)
+                    chat_id = channel_origin.chat_id
+                    name = channel_origin.chat_name or await channel.chat_name(
+                        chat_id,
+                    )
                     where = f' named "{name}"' if name else ""
                     attachment += (
-                        f" This session is bound to a chat{where} on the "
-                        f"{channel.display_name} platform: the messages, "
-                        f"images and files people send there are relayed to "
-                        f"you here, and your replies are delivered back to "
-                        f"that same chat."
+                        f" This session is bound to a chat{where} (id "
+                        f"{chat_id!r}) on the {channel.display_name} "
+                        f"platform: the messages, images and files people "
+                        f"send there are relayed to you here, and your "
+                        f"replies are delivered back to that same chat."
                     )
-                    if kind is ChatKind.GROUP:
+                    if chat_kind is ChatKind.GROUP:
                         attachment += (
-                            " It is a group chat, so messages may come from "
-                            "several different people; each incoming user "
-                            "turn is labelled with its sender."
+                            " It is a group chat, so messages may come "
+                            "from several different people; each incoming "
+                            "user turn is labelled with its sender."
                         )
-                    elif kind is ChatKind.PRIVATE:
+                    elif chat_kind is ChatKind.PRIVATE:
                         attachment += (
-                            " It is a one-to-one private chat with a single "
-                            "user."
+                            " It is a one-to-one private chat with a "
+                            "single user."
                         )
                     if tools:
                         attachment += (
                             f" You also have these {channel.display_name} "
-                            f"tools available: {tools}."
+                            f"tools available: {tools}. Pass this chat's id "
+                            f"as their target to act on this chat."
                         )
 
-            attachment = (
-                f"<system-notification>{attachment}</system-notification>"
-            )
-            system_prompt = (
-                agent_record.data.system_prompt + "\n\n" + attachment
-            )
+                attachment = (
+                    f"<system-notification>{attachment}</system-notification>"
+                )
+                system_prompt = (
+                    agent_record.data.system_prompt + "\n\n" + attachment
+                )
 
-            agent_state = session_record.state
-            agent_state.session_id = session_id
-            agent = self._agent_cls(
-                name=agent_record.data.name,
-                system_prompt=system_prompt,
-                model=model,
-                toolkit=toolkit,
-                model_config=ModelConfig(fallback_model=fallback_model),
-                context_config=agent_record.data.context_config,
-                react_config=agent_record.data.react_config,
-                state=agent_state,
-                middlewares=middlewares,
-                offloader=workspace,
-            )
+                agent_state = session_record.state
+                agent_state.session_id = session_id
+                chat_config = agent_record.data.chat_config
+                agent = self._agent_cls(
+                    name=agent_record.data.name,
+                    system_prompt=system_prompt,
+                    model=model,
+                    toolkit=toolkit,
+                    model_config=ModelConfig(fallback_model=fallback_model),
+                    context_config=chat_config.context_config,
+                    react_config=chat_config.react_config,
+                    state=agent_state,
+                    middlewares=middlewares,
+                    offloader=workspace,
+                )
 
-            if self._skip_parked_wakeup(session_id, agent, input_msg):
+                if self._skip_parked_wakeup(session_id, agent, input_msg):
+                    return
+            except Exception as e:  # pylint: disable=broad-except
+                # Under the session lock, like the reply this run never got
+                # to make: these events share a channel with a live reply's,
+                # so publishing them unserialised would drop a "reply failed"
+                # into the middle of an answer another run is streaming.
+                await self._report_failure(
+                    user_id,
+                    session_id,
+                    agent_id,
+                    e,
+                    team_ctx,
+                    worker_name,
+                )
                 return
-        except Exception as e:  # pylint: disable=broad-except
-            # Under the session lock, like the reply this run never got
-            # to make: these events share a channel with a live reply's,
-            # so publishing them unserialised would drop a "reply failed"
-            # into the middle of an answer another run is streaming.
-            async with self._message_bus.acquire_lock(
-                MessageBusKeys.session_lock(session_id),
-                ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
-            ):
-                await self._report_failure(user_id, session_id, agent_id, e)
-            return
 
-        # --------------------------------------------------------------------
-        # 7. Run the agent inside the distributed session lock
-        # ---------------------------------------------------------------------
-        lock_key = MessageBusKeys.session_lock(session_id)
-        events_key = MessageBusKeys.session_events(session_id)
-        async with self._message_bus.acquire_lock(
-            lock_key,
-            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
-        ):
-            # Channel-bound run: signal the output forwarder so the reply
-            # is streamed back to the platform chat. Covers scheduled /
-            # background wakes, not just inbound channel messages.
+            # ----------------------------------------------------------------
+            # 7. Run the agent (still under the session lock)
+            # -----------------------------------------------------------------
+            # Channel-bound run: start streaming the reply back to the
+            # platform chat. Delivery is plain REST, so this node does it
+            # rather than handing the run to whichever one holds the
+            # channel's connection. Covers scheduled / background wakes,
+            # not just inbound channel messages.
             if (
-                session_record.source == SessionSource.CHANNEL
-                and session_record.source_channel_id
-                and session_record.source_chat_id
+                isinstance(session_record.origin, ChannelOrigin)
+                and self._channel_clients is not None
             ):
-                await enqueue_channel_output(
-                    self._message_bus,
+                await self._channel_clients.deliver(
                     session_id=session_id,
-                    channel_id=session_record.source_channel_id,
-                    chat_id=session_record.source_chat_id,
-                    user_id=user_id,
+                    channel_id=session_record.origin.channel_id,
+                    chat_id=session_record.origin.chat_id,
                     agent_id=agent_id,
                 )
             reply_msg: Msg | None = None
+            active_reply_id: str | None = None
             reply_msgs: list[Msg] = []
+            checkpoint_cursor: str | None = None
             released = False
+
+            # Text of the user turn that opened this run, captured
+            # before the loop reassigns ``input_msg``; auto-naming
+            # reads it once the reply is persisted.
+            trigger_msgs: list[Msg] = []
+            if isinstance(input_msg, Msg):
+                trigger_msgs = [input_msg]
+            elif isinstance(input_msg, list):
+                trigger_msgs = input_msg
+            trigger_text = "\n".join(
+                msg.get_text_content() for msg in trigger_msgs
+            ).strip()
             await register_inbox_consumer(self._message_bus, session_id)
             try:
                 while True:
@@ -832,7 +1398,9 @@ optional):
                         ):
                             # Case A: new reply (user message(s), or
                             # retrigger with empty input)
-                            if isinstance(input_msg, (Msg, list)):
+                            if isinstance(input_msg, (Msg, list)) and not (
+                                input_persisted
+                            ):
                                 input_msgs = (
                                     [input_msg]
                                     if isinstance(input_msg, Msg)
@@ -845,6 +1413,8 @@ optional):
                                         msg,
                                     )
 
+                            # Only the initial queued input was pre-saved.
+                            input_persisted = False
                             async for event in agent.reply_stream(
                                 inputs=input_msg,
                             ):
@@ -860,10 +1430,29 @@ optional):
                                 elif reply_msg is not None:
                                     reply_msg.append_event(event)
                                 try:
-                                    await publish_session_event(
-                                        self._message_bus,
-                                        session_id,
-                                        event.model_dump(mode="json"),
+                                    if isinstance(event, ReplyStartEvent):
+                                        if (
+                                            active_reply_id is not None
+                                            and active_reply_id
+                                            != event.reply_id
+                                        ):
+                                            await finish_active_chat_reply(
+                                                self._message_bus,
+                                                session_id,
+                                                active_reply_id,
+                                            )
+                                        active_reply_id = event.reply_id
+                                        await register_active_chat_reply(
+                                            self._message_bus,
+                                            session_id,
+                                            event.reply_id,
+                                        )
+                                    checkpoint_cursor = (
+                                        await publish_session_event(
+                                            self._message_bus,
+                                            session_id,
+                                            event.model_dump(mode="json"),
+                                        )
                                     )
                                     await self._project_event(
                                         user_id,
@@ -886,6 +1475,7 @@ optional):
                         else:
                             # Case B: continuation (UserConfirmResult
                             #  / ExternalExecResult)
+                            continuation_reply_id = agent.state.reply_id
                             reply_msg = await self._storage.get_message(
                                 user_id,
                                 session_id,
@@ -904,42 +1494,69 @@ optional):
                             elif input_msg:
                                 reply_msg.append_event(input_msg)
 
-                            # Broadcast the applied decision so
-                            # observers that didn't make it (other tabs,
-                            # the channel card) close it.
-                            if isinstance(
-                                input_msg,
-                                (
-                                    UserConfirmResultEvent,
-                                    ExternalExecutionResultEvent,
-                                ),
-                            ):
-                                await publish_session_event(
+                            try:
+                                if (
+                                    active_reply_id is not None
+                                    and active_reply_id
+                                    != continuation_reply_id
+                                ):
+                                    await finish_active_chat_reply(
+                                        self._message_bus,
+                                        session_id,
+                                        active_reply_id,
+                                    )
+                                active_reply_id = continuation_reply_id
+                                await register_active_chat_reply(
                                     self._message_bus,
                                     session_id,
-                                    input_msg.model_dump(mode="json"),
+                                    continuation_reply_id,
                                 )
+                                # Broadcast the applied decision so
+                                # observers that didn't make it (other tabs,
+                                # the channel card) close it.
+                                if isinstance(
+                                    input_msg,
+                                    (
+                                        UserConfirmResultEvent,
+                                        ExternalExecutionResultEvent,
+                                    ),
+                                ):
+                                    checkpoint_cursor = (
+                                        await publish_session_event(
+                                            self._message_bus,
+                                            session_id,
+                                            input_msg.model_dump(mode="json"),
+                                        )
+                                    )
 
-                            # Emit a synthetic REPLY_START so SSE subscribers
-                            # (frontend, channel gateway) can detect the
-                            # continuation without requiring special handling.
-                            #
-                            # IMPORTANT: The frontend SSE handler must
-                            # NOT clear its accumulated message buffer
-                            # upon receiving a
-                            # REPLY_START with the same reply_id as the current
-                            # message. This event signals a continuation (e.g.
-                            # after an approval flow), not a fresh reply.
-                            continuation_start = ReplyStartEvent(
-                                session_id=session_id,
-                                reply_id=agent.state.reply_id,
-                                name=agent_record.data.name,
-                            )
-                            await publish_session_event(
-                                self._message_bus,
-                                session_id,
-                                continuation_start.model_dump(mode="json"),
-                            )
+                                # Emit a synthetic REPLY_START so SSE clients
+                                # can detect the continuation.
+                                #
+                                # IMPORTANT: The frontend SSE handler must
+                                # NOT clear its accumulated message buffer
+                                # upon receiving REPLY_START with the current
+                                # reply_id. This signals a continuation (e.g.
+                                # after an approval flow), not a fresh reply.
+                                continuation_start = ReplyStartEvent(
+                                    session_id=session_id,
+                                    reply_id=continuation_reply_id,
+                                    name=agent_record.data.name,
+                                )
+                                checkpoint_cursor = (
+                                    await publish_session_event(
+                                        self._message_bus,
+                                        session_id,
+                                        continuation_start.model_dump(
+                                            mode="json",
+                                        ),
+                                    )
+                                )
+                            except asyncio.CancelledError:
+                                # Resume the Agent so it closes pending tools
+                                # and emits the interrupted terminal event.
+                                current = asyncio.current_task()
+                                if current is not None:
+                                    current.cancel()
 
                             async for event in agent.reply_stream(
                                 inputs=input_msg,
@@ -950,10 +1567,12 @@ optional):
                                 if reply_msg is not None:
                                     reply_msg.append_event(event)
                                 try:
-                                    await publish_session_event(
-                                        self._message_bus,
-                                        session_id,
-                                        event.model_dump(mode="json"),
+                                    checkpoint_cursor = (
+                                        await publish_session_event(
+                                            self._message_bus,
+                                            session_id,
+                                            event.model_dump(mode="json"),
+                                        )
                                     )
                                     await self._project_event(
                                         user_id,
@@ -981,13 +1600,17 @@ optional):
                                 session_id,
                                 agent_id,
                                 e,
+                                team_ctx,
+                                worker_name,
                             )
                         else:
-                            await self._close_failed_reply(
+                            failure_cursor = await self._close_failed_reply(
                                 session_id,
                                 reply_msg,
                                 e,
                             )
+                            if failure_cursor is not None:
+                                checkpoint_cursor = failure_cursor
 
                         # A failed turn stops the run; whatever is still
                         # queued is handed to a fresh one by the
@@ -1009,6 +1632,11 @@ optional):
                         session_id,
                     ):
                         released = True
+                        break
+
+                    # A parked agent can't take a ``None`` turn; the queued
+                    # payloads are drained once it resumes.
+                    if agent.state.has_awaiting_tool_calls(agent.name):
                         break
                     input_msg = None
 
@@ -1034,25 +1662,81 @@ optional):
                 ):
                     reply_msgs.append(reply_msg)
 
+                interrupted = any(
+                    msg.finished_reason is ReplyFinishedReason.INTERRUPTED
+                    for msg in reply_msgs
+                )
+
                 # All persistence in a single coroutine, shielded from
                 # outer cancellation.  Must complete BEFORE the session
                 # lock is released — otherwise another worker could
                 # acquire the lock and load a stale state from storage
                 # before this write lands.
                 async def _persist() -> None:
-                    for msg in reply_msgs:
-                        await self._storage.upsert_message(
-                            user_id,
-                            session_id,
-                            msg,
-                        )
-                    await self._storage.update_session_state(
-                        user_id=user_id,
-                        agent_id=agent_id,
-                        session_id=session_id,
-                        state=agent.state,
-                    )
-                    await self._message_bus.log_trim(events_key)
+                    try:
+                        async with self._message_bus.acquire_lock(
+                            MessageBusKeys.session_event_checkpoint_lock(
+                                session_id,
+                            ),
+                            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+                        ):
+                            for msg in reply_msgs:
+                                await self._storage.upsert_message(
+                                    user_id,
+                                    session_id,
+                                    msg,
+                                )
+                            await self._storage.update_session_state(
+                                user_id=user_id,
+                                agent_id=agent_id,
+                                session_id=session_id,
+                                state=agent.state,
+                            )
+                            if checkpoint_cursor is not None:
+                                await self._message_bus.registry_set(
+                                    MessageBusKeys.session_event_checkpoint(
+                                        session_id,
+                                    ),
+                                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                                    checkpoint_cursor,
+                                )
+                                await self._message_bus.log_trim(
+                                    MessageBusKeys.session_events(session_id),
+                                    before_id=checkpoint_cursor,
+                                )
+                    finally:
+                        try:
+                            if active_reply_id is not None:
+                                await finish_active_chat_reply(
+                                    self._message_bus,
+                                    session_id,
+                                    active_reply_id,
+                                )
+                        finally:
+                            # A worker whose turn died never reached
+                            # ``TeamSay``. Sent from inside the shielded
+                            # write so an interrupt cannot drop it, and from
+                            # a ``finally`` so a storage failure cannot
+                            # either — the leader has to learn about the
+                            # dead turn even when recording it went wrong.
+                            # COMPLETED / EXCEED_MAX_ITERS stay silent:
+                            # those only escape the member middleware after
+                            # a successful report.
+                            for msg in reply_msgs:
+                                if msg.finished_reason in (
+                                    ReplyFinishedReason.ERROR,
+                                    ReplyFinishedReason.INTERRUPTED,
+                                ):
+                                    await self._notify_leader_of_failure(
+                                        user_id,
+                                        team_ctx,
+                                        worker_name,
+                                        msg.finished_reason,
+                                        msg.error.message
+                                        if msg.error
+                                        else "The turn stopped before it "
+                                        "finished.",
+                                    )
 
                 persist_task = asyncio.create_task(_persist())
                 try:
@@ -1063,6 +1747,71 @@ optional):
                     # propagate to honour asyncio semantics.
                     await persist_task
                     raise
+
+                # Still under the session lock, so this config write
+                # cannot race the next turn's snapshot of it. Skipped on
+                # the cancellation path above — a run being torn down
+                # has no business renaming anything.
+                await self._auto_name_session(
+                    user_id,
+                    agent_id,
+                    session_record,
+                    model,
+                    trigger_text,
+                )
+
+        # Detached, since the rest of the run can be many turns; an
+        # interrupted turn leaves the run where it is.
+        if (
+            resumed_sop_run_id is not None
+            and not interrupted
+            and self.sop_service is not None
+        ):
+            self.sop_service.advance_later(user_id, resumed_sop_run_id)
+
+    async def _parked_dispatch(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> str | None:
+        """The claim of a step parked on this session, if still valid.
+
+        Valid only while the step is parked on this session's half.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            session_id (`str`):
+                The session whose claim to read.
+
+        Returns:
+            `str | None`:
+                ``"<run id>:<step index>"``, or ``None``.
+        """
+        claim = await self._message_bus.registry_get(
+            MessageBusKeys.sop_dispatch(session_id),
+            MessageBusKeys.SOP_DISPATCH_FIELD,
+        )
+        if claim is None:
+            return None
+        sop_run_id, _, step_index = claim.rpartition(":")
+        run = await self._storage.get_sop_run(user_id, sop_run_id)
+        index = int(step_index)
+        if (
+            run is None
+            or index >= len(run.state.steps)
+            or run.state.steps[index].phase is not SOPPhase.AWAITING
+        ):
+            return None
+        step = run.definition.steps[index]
+        ref = (
+            step.executor
+            if run.state.steps[index].submission is None
+            else getattr(step.verifier, "agent", None)
+        )
+        if ref is None or run.sessions.get(ref.session_key) != session_id:
+            return None
+        return claim
 
     async def _project_event(
         self,

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The agentscope serialization module"""
+"""The agentscope package."""
 import warnings
 
 from ._logging import (

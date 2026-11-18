@@ -1,20 +1,31 @@
 import {
+	type ExternalExecutionResultEvent,
+	ReplyFinishedReason,
+} from '@agentscope-ai/agentscope/event';
+import {
 	type ContentBlock,
-	getContentBlocks,
 	type Msg,
+	type TextBlock,
 	type ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
-import { GitBranch } from 'lucide-react';
+import { GitBranch, TriangleAlert } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 
-import { Button } from '../ui/button';
-import { DiffStats } from './tool-renderers/_shared';
 import type { GitStatus } from '@/api';
-import { ASMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
+import type { ChatQueueItem } from '@/api/chat';
+import { ASMessageBubble, SteeringMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
+import { ClientToolsMenu } from '@/components/chat/ClientToolsMenu';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
+import { ExternalExecutionCard } from '@/components/chat/ExternalExecutionCard.tsx';
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
+import { ManualClientToolCard } from '@/components/chat/ManualClientToolCard';
+import { QueuedMessages } from '@/components/chat/QueuedMessages.tsx';
 import { TextInput } from '@/components/chat/TextInput.tsx';
+import { DiffStats } from '@/components/chat/tool-renderers/_shared';
 import { WorkingDirectoryDialog } from '@/components/dialog/WorkingDirectoryDialog';
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
+import { Button } from '@/components/ui/button';
+import { Marker, MarkerContent } from '@/components/ui/marker';
 import {
 	MessageScroller,
 	MessageScrollerButton,
@@ -26,10 +37,41 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
+import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
+import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
+import {
+	getClientExternalToolRegistration,
+	type ClientExternalToolResult,
+} from '@/lib/client-external-tools';
+import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 import { cn } from '@/lib/utils';
 
 /** How long a load may run before it is worth showing a spinner. */
 const SPINNER_DELAY_MS = 150;
+
+/**
+ * A gap this long between two messages gets a marker stamping when the
+ * conversation resumed — long enough that it *was* resumed, rather than
+ * merely paused to read the last reply.
+ */
+const TIME_MARKER_GAP_MS = 10 * 60 * 1000;
+
+/**
+ * Stamp for a resumed conversation. The time alone is enough while the
+ * marker and the message above it share a day; once the gap crosses
+ * midnight the date has to come with it. Both come from `Intl`, so
+ * "Aug 13, 13:03" and "8月13日 13:03" fall out of the active language
+ * rather than out of a hand-written pattern per locale.
+ */
+function markerStamp(at: Date, previous: Date, language: string): string {
+	const sameDay = at.toDateString() === previous.toDateString();
+	return new Intl.DateTimeFormat(language, {
+		...(sameDay ? {} : { month: 'short', day: 'numeric' }),
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false,
+	}).format(at);
+}
 
 interface ChatContentProps {
 	msgs: Msg[];
@@ -41,22 +83,53 @@ interface ChatContentProps {
 	loading?: boolean;
 	/**
 	 * Reply lifecycle phase from ``useMessages`` — forwarded to
-	 * ``TextInput`` so the single send / stop button can pick its
-	 * icon, tooltip, disabled state and click handler from one source.
+	 * ``TextInput`` so it can show a separate Stop action while keeping
+	 * Send available for queued turns and coordinate realtime voice.
 	 */
 	phase: ReplyPhase;
+	/** Number of locally submitted user turns waiting to start. */
+	queuedCount: number;
+	queuedItems: ChatQueueItem[];
+	queueReorderDisabled: boolean;
+	activeReplyId: string | null;
 	disabled: boolean;
-	onSend: (content: ContentBlock[]) => void;
+	onSend: (content: ContentBlock[]) => Promise<void> | void;
 	onUserConfirm: (
 		toolCall: ToolCallBlock,
 		confirm: boolean,
 		replyId: string,
 		rules?: ToolCallBlock['suggested_rules'],
 	) => Promise<void>;
+	onClientExternalToolResult: (
+		toolCall: ToolCallBlock,
+		result: ClientExternalToolResult,
+		replyId: string,
+	) => Promise<void>;
+	onExternalExecutionResult: (event: ExternalExecutionResultEvent) => Promise<void>;
 	autoComplete?: (input: string) => string | null;
 	className?: string;
 	/** Called when the user clicks the stop button. */
 	onInterrupt?: () => void;
+	onUpdateQueued: (itemId: string, text: string) => Promise<void>;
+	onDeleteQueued: (itemId: string) => Promise<void>;
+	onSteerQueued: (itemId: string, replyId: string) => Promise<void>;
+	onMoveQueued: (itemId: string, direction: -1 | 1) => Promise<void>;
+	onReorderQueued: (itemIds: string[]) => Promise<void>;
+	voiceState?: RealtimeConnectionState;
+	onVoiceToggle?: () => void;
+	voiceDisabled?: boolean;
+	/** Audio media types accepted by the selected ASR model. */
+	asrInputTypes?: string[];
+	/** Transcribes one completed browser recording. */
+	onTranscribe?: (file: File) => Promise<string>;
+	/** Whether the selected model uses streaming recognition. */
+	asrRealtime?: boolean;
+	/** Configuration for the realtime ASR browser transport. */
+	realtimeASRConfig?: RealtimeASRConfig | null;
+	/** Whether speech-to-text recording is unavailable. */
+	asrDisabled?: boolean;
+	/** Identity used to discard recording state after context changes. */
+	asrResetKey?: string;
 	/**
 	 * Optional content pinned at the bottom of the chat — between the
 	 * message scroll area and the text input (e.g. pending subagent HITL
@@ -87,12 +160,32 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
 	loading = false,
 	phase,
+	queuedCount,
+	queuedItems,
+	queueReorderDisabled,
+	activeReplyId,
 	disabled,
 	onSend,
 	onUserConfirm,
+	onClientExternalToolResult,
+	onExternalExecutionResult,
 	autoComplete,
 	className,
 	onInterrupt,
+	onUpdateQueued,
+	onDeleteQueued,
+	onSteerQueued,
+	onMoveQueued,
+	onReorderQueued,
+	voiceState,
+	onVoiceToggle,
+	voiceDisabled,
+	asrInputTypes,
+	onTranscribe,
+	asrRealtime,
+	realtimeASRConfig,
+	asrDisabled,
+	asrResetKey,
 	footerSlot,
 	allowedInputTypes,
 	fileProcessor,
@@ -103,11 +196,30 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	git,
 	onRefreshGit,
 }) => {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
+	const { deferredItems, steeringMessages } = useMemo(() => {
+		const deferred: ChatQueueItem[] = [];
+		const steering: Array<{ id: string; content: ContentBlock[] }> = [];
+		for (const item of queuedItems) {
+			if (item.state !== 'steering') {
+				deferred.push(item);
+				continue;
+			}
+			const messages = Array.isArray(item.input) ? item.input : [item.input];
+			for (const message of messages) {
+				steering.push({
+					id: `${item.id}:${message.id}`,
+					content: message.content,
+				});
+			}
+		}
+		return { deferredItems: deferred, steeringMessages: steering };
+	}, [queuedItems]);
+
 	// Only a session that finished loading with nothing in it is empty.
 	// Treating "no messages yet" as empty would flash the greeting over
 	// every session that does have history.
-	const isEmpty = !loading && msgs.length === 0;
+	const isEmpty = !loading && msgs.length === 0 && steeringMessages.length === 0;
 
 	// A spinner that appears and vanishes inside a couple of frames reads
 	// as a flicker, not as feedback — so hold it back until the load has
@@ -123,14 +235,37 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		return () => clearTimeout(timer);
 	}, [loading]);
 
-	const toConfirmedToolCalls = useMemo(() => {
-		if (msgs.length === 0) return [];
+	const pendingHitlCalls = useMemo(() => getPendingHitlCalls(msgs), [msgs]);
+	const toConfirmedToolCalls = pendingHitlCalls.filter((call) => call.kind === 'confirmation');
+	const externalToolCalls = pendingHitlCalls.filter((call) => call.kind === 'external_execution');
 
-		const lastMsg = msgs[msgs.length - 1];
-		return getContentBlocks(lastMsg, 'tool_call')
-			.filter((tc) => tc.state === 'asking')
-			.map((tc) => ({ replyId: lastMsg.id, toolCall: tc }));
-	}, [msgs]);
+	const pendingExternalTool = externalToolCalls[0];
+	const pendingExternalToolRegistration = pendingExternalTool
+		? getClientExternalToolRegistration(pendingExternalTool.toolCall.name)
+		: undefined;
+	const PendingExternalToolComponent = pendingExternalToolRegistration?.PendingComponent;
+	const isManualClientTool =
+		pendingExternalTool?.toolCall.name.startsWith('client__') === true &&
+		!PendingExternalToolComponent;
+	const acceptsInput =
+		Boolean(pendingExternalToolRegistration?.composerResult) &&
+		(!pendingExternalToolRegistration?.canCompose ||
+			Boolean(
+				pendingExternalTool &&
+				pendingExternalToolRegistration.canCompose(pendingExternalTool.toolCall),
+			));
+
+	const handleSend = async (content: ContentBlock[]) => {
+		const pending = pendingExternalTool;
+		if (!pending || !acceptsInput) {
+			await onSend(content);
+			return;
+		}
+
+		const result = pendingExternalToolRegistration?.composerResult?.(content, pending.toolCall);
+		if (result === null || result === undefined) return;
+		await onClientExternalToolResult(pending.toolCall, result, pending.replyId);
+	};
 
 	// On an empty session the prompt and the input centre together, so every box
 	// down to the message list shrinks to its content instead of filling.
@@ -155,15 +290,89 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 					<MessageScroller>
 						<MessageScrollerViewport>
 							<MessageScrollerContent>
-								{msgs.map((message) => (
-									<MessageScrollerItem key={message.id} messageId={message.id}>
-										<ASMessageBubble
+								{msgs.map((message, index) => {
+									const previous = msgs[index - 1];
+									const at = new Date(message.created_at);
+									const previousAt = previous
+										? new Date(previous.finished_at ?? previous.created_at)
+										: at;
+									return (
+										<MessageScrollerItem
 											key={message.id}
-											message={message}
-											onUserConfirm={onUserConfirm}
+											messageId={message.id}
+										>
+											{at.getTime() - previousAt.getTime() >
+												TIME_MARKER_GAP_MS && (
+												<Marker
+													variant="separator"
+													className="mb-6 font-mono text-xs"
+												>
+													<MarkerContent>
+														{markerStamp(at, previousAt, i18n.language)}
+													</MarkerContent>
+												</Marker>
+											)}
+											<ASMessageBubble
+												message={message}
+												onUserConfirm={onUserConfirm}
+											/>
+										</MessageScrollerItem>
+									);
+								})}
+								{steeringMessages.map((message) => (
+									<MessageScrollerItem
+										key={message.id}
+										messageId={`steering:${message.id}`}
+									>
+										<SteeringMessageBubble
+											blocks={message.content}
+											status="steering"
 										/>
 									</MessageScrollerItem>
 								))}
+								{msgs.length > 0 &&
+									msgs[msgs.length - 1].finished_reason ===
+										ReplyFinishedReason.EXCEED_MAX_ITERS &&
+									phase === 'idle' && (
+										<Alert
+											variant={'default'}
+											className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-50"
+										>
+											<TriangleAlert />
+											<AlertTitle>
+												{t('chat.maxItersExceeded.title')}
+											</AlertTitle>
+											<AlertDescription>
+												{t('chat.maxItersExceeded.description')}
+											</AlertDescription>
+											<AlertAction>
+												<Button
+													size={'xs'}
+													onClick={() => {
+														void Promise.resolve(
+															onSend([
+																{
+																	id: crypto.randomUUID(),
+																	type: 'text',
+																	text: t(
+																		'chat.maxItersExceeded.continue',
+																	),
+																	created_at:
+																		new Date().toISOString(),
+																	finished_at:
+																		new Date().toISOString(),
+																} as TextBlock,
+															]),
+														).catch(() => {
+															// The send handler reports the failure.
+														});
+													}}
+												>
+													{t('chat.maxItersExceeded.continue')}
+												</Button>
+											</AlertAction>
+										</Alert>
+									)}
 							</MessageScrollerContent>
 						</MessageScrollerViewport>
 						<MessageScrollerButton className="rounded-full" />
@@ -174,7 +383,11 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 			{loading ? null : (
 				<div className="relative min-w-full max-w-full w-full">
 					<FlipCard
-						visible={toConfirmedToolCalls.length > 0 || footerSlot !== null}
+						visible={
+							toConfirmedToolCalls.length > 0 ||
+							externalToolCalls.length > 0 ||
+							footerSlot !== null
+						}
 						className="absolute bottom-full left-0 right-0 mb-2 z-50"
 					>
 						{toConfirmedToolCalls.length > 0 ? (
@@ -190,24 +403,83 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 									)
 								}
 							/>
+						) : pendingExternalTool ? (
+							PendingExternalToolComponent ? (
+								<PendingExternalToolComponent
+									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
+									toolCall={pendingExternalTool.toolCall}
+									onSubmit={(result) =>
+										onClientExternalToolResult(
+											pendingExternalTool.toolCall,
+											result,
+											pendingExternalTool.replyId,
+										)
+									}
+									onCancel={onInterrupt}
+									cancelling={phase === 'interrupting'}
+								/>
+							) : isManualClientTool ? (
+								<ManualClientToolCard
+									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
+									toolCall={pendingExternalTool.toolCall}
+									onSubmit={(result) =>
+										onClientExternalToolResult(
+											pendingExternalTool.toolCall,
+											result,
+											pendingExternalTool.replyId,
+										)
+									}
+									onCancel={onInterrupt}
+									cancelling={phase === 'interrupting'}
+								/>
+							) : (
+								<ExternalExecutionCard
+									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
+									replyId={pendingExternalTool.replyId}
+									toolCall={pendingExternalTool.toolCall}
+									onResult={onExternalExecutionResult}
+								/>
+							)
 						) : (
 							footerSlot
 						)}
 					</FlipCard>
+					<QueuedMessages
+						items={deferredItems}
+						reorderDisabled={queueReorderDisabled}
+						activeReplyId={activeReplyId}
+						onUpdate={onUpdateQueued}
+						onDelete={onDeleteQueued}
+						onSteer={onSteerQueued}
+						onMove={onMoveQueued}
+						onReorder={onReorderQueued}
+					/>
 					{/* Concentric radii: the pill stays rounded-[28px] on all four
 				    corners and floats on this surface, whose own radius is
 				    28 + the 4px padding. Matching them is what keeps the two
 				    edges parallel — a plain rectangle here would show the
 				    pill's corners cutting into it. */}
 					<TextInput
+						key={JSON.stringify([agentId, sessionId])}
 						className="min-w-full max-w-full w-full rounded-[32px] bg-muted p-1"
-						onSend={onSend}
+						onSend={handleSend}
 						disabled={disabled}
 						autoComplete={autoComplete}
-						allowedInputTypes={allowedInputTypes}
+						allowedInputTypes={acceptsInput ? [] : allowedInputTypes}
 						fileProcessor={fileProcessor}
 						phase={phase}
+						acceptsInput={acceptsInput}
+						queuedCount={queuedCount}
 						onInterrupt={onInterrupt}
+						voiceState={voiceState}
+						onVoiceToggle={onVoiceToggle}
+						voiceDisabled={voiceDisabled}
+						asrInputTypes={asrInputTypes}
+						onTranscribe={onTranscribe}
+						asrRealtime={asrRealtime}
+						realtimeASRConfig={realtimeASRConfig}
+						asrDisabled={asrDisabled}
+						asrResetKey={asrResetKey}
 						headerSlot={
 							<div className="flex w-full items-center justify-between px-2 py-1 text-sm text-muted-foreground">
 								<WorkingDirectoryDialog
@@ -216,39 +488,42 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 									value={cwd}
 									onChange={onCwdChange}
 								/>
-								{git && (
-									<Button
-										className="font-mono"
-										variant="secondary"
-										size="sm"
-										onClick={() => void onRefreshGit?.()}
-										title={t('workdir.gitTooltip', {
-											staged: git.staged,
-											unstaged: git.unstaged,
-											untracked: git.untracked,
-										})}
-									>
-										<GitBranch />
-										{/* A detached HEAD has no branch to name, so
-										    fall back to the commit it sits on. The
-										    server sends no git at all when it has
-										    neither. */}
-										{git.branch ?? git.head?.slice(0, 7)}
-										{git.ahead !== null && git.ahead > 0 && (
-											<span className="text-xs">↑{git.ahead}</span>
-										)}
-										{git.behind !== null && git.behind > 0 && (
-											<span className="text-xs">↓{git.behind}</span>
-										)}
-										{/* Renders nothing when both are zero, so a
-										    clean tree shows just the branch. */}
-										<DiffStats
-											className="text-xs font-mono"
-											insertions={git.insertions}
-											deletions={git.deletions}
-										/>
-									</Button>
-								)}
+								<div className="flex items-center gap-1.5">
+									<ClientToolsMenu agentId={agentId} sessionId={sessionId} />
+									{git && (
+										<Button
+											className="font-mono"
+											variant="secondary"
+											size="sm"
+											onClick={() => void onRefreshGit?.()}
+											title={t('workdir.gitTooltip', {
+												staged: git.staged,
+												unstaged: git.unstaged,
+												untracked: git.untracked,
+											})}
+										>
+											<GitBranch />
+											{/* A detached HEAD has no branch to name, so
+											    fall back to the commit it sits on. The
+											    server sends no git at all when it has
+											    neither. */}
+											{git.branch ?? git.head?.slice(0, 7)}
+											{git.ahead !== null && git.ahead > 0 && (
+												<span className="text-xs">↑{git.ahead}</span>
+											)}
+											{git.behind !== null && git.behind > 0 && (
+												<span className="text-xs">↓{git.behind}</span>
+											)}
+											{/* Renders nothing when both are zero, so a
+											    clean tree shows just the branch. */}
+											<DiffStats
+												className="text-xs font-mono"
+												insertions={git.insertions}
+												deletions={git.deletions}
+											/>
+										</Button>
+									)}
+								</div>
 							</div>
 						}
 					/>

@@ -35,7 +35,7 @@ from agentscope.message import (
 )
 
 
-class _FakeBus(MessageBus):
+class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
     """In-memory bus that only implements the inbox API needed by
     :class:`InboxMiddleware`. All other primitives raise ``NotImplemented``
     to make accidental dependencies obvious."""
@@ -70,6 +70,22 @@ class _FakeBus(MessageBus):
         entries = self._queues.get(key, [])[:max_count]
         self._queues[key] = self._queues.get(key, [])[max_count:]
         return entries
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        return list(self._queues.get(key, [])[:max_count])
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        entries = [(self._alloc_id(), payload) for payload in payloads]
+        self._queues[key] = entries
+        return [entry_id for entry_id, _payload in entries]
 
     async def queue_delete(self, key: str) -> None:
         self._queues.pop(key, None)
@@ -147,6 +163,20 @@ class _FakeBus(MessageBus):
         *,
         ttl_secs: int | None = None,
     ) -> None:
+        raise NotImplementedError
+
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
         raise NotImplementedError
 
     async def registry_del(self, namespace: str, field: str) -> None:

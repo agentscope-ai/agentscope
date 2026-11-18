@@ -141,7 +141,13 @@ class AppleContainerWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The container may already be running, but this workspace
+            # never entered the cache, so nothing else would remove it.
+            await self._dispose_uninitialized(ws)
+            raise
         return ws
 
     # ── public API ────────────────────────────────────────────────
@@ -165,7 +171,7 @@ class AppleContainerWorkspaceManager(WorkspaceManagerBase):
                 not used here).
             workspace_id (`str | None`, optional):
                 Stable workspace identifier — used as the cache key
-                and container name suffix. When ``None`` the manager
+                and container name suffix. When unset the manager
                 falls back to :meth:`assign_workspace_id`.
 
         Returns:
@@ -174,8 +180,8 @@ class AppleContainerWorkspaceManager(WorkspaceManagerBase):
         """
         del session_id  # accepted for interface parity; not used here
 
-        if workspace_id is None:
-            workspace_id = self.assign_workspace_id(
+        if not workspace_id:
+            workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,
                 session_id="",

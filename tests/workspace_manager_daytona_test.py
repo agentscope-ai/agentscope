@@ -12,27 +12,81 @@ from agentscope.app.workspace_manager import (
     DaytonaWorkspaceManager,
     IsolationPolicy,
 )
+from agentscope.workspace import DaytonaWorkspace
+
+
+class _FakeSandbox:
+    """Daytona sandbox double recording a graceful stop."""
+
+    def __init__(self) -> None:
+        self.stopped = False
+
+    async def stop(self, **_kwargs: object) -> None:
+        """Record a graceful stop."""
+        self.stopped = True
+
+
+class _FakeDaytona:
+    """Daytona client double recording deletes and client close."""
+
+    def __init__(self) -> None:
+        self.deleted: list[_FakeSandbox] = []
+        self.closed = False
+        self.delete_error: Exception | None = None
+
+    async def delete(self, sandbox: _FakeSandbox) -> None:
+        """Record a permanent delete, or raise the configured error."""
+        if self.delete_error is not None:
+            raise self.delete_error
+        self.deleted.append(sandbox)
+
+    async def close(self) -> None:
+        """Record client shutdown."""
+        self.closed = True
 
 
 class _FakeWorkspace:
-    """Workspace double used by manager tests."""
+    """Workspace double whose ``close`` stops the sandbox, as Daytona's
+    does; an unclaimed workspace must be deleted instead."""
 
     created: list["_FakeWorkspace"] = []
+    initialize_error: Exception | None = None
+    close_error: Exception | None = None
+    daytona_delete_error: Exception | None = None
 
     def __init__(self, **kwargs: object) -> None:
         self.kwargs = kwargs
         self.workspace_id = str(kwargs.get("workspace_id") or "new-id")
         self.initialized = False
         self.closed = False
+        self.close_calls = 0
+        self._sandbox: _FakeSandbox | None = _FakeSandbox()
+        self._sandbox_created = True
+        self._daytona: _FakeDaytona | None = _FakeDaytona()
+        self._daytona.delete_error = _FakeWorkspace.daytona_delete_error
+        # Stable handles: disposal clears ``_sandbox`` on success.
+        self.sandbox = self._sandbox
+        self.daytona = self._daytona
         _FakeWorkspace.created.append(self)
 
     async def initialize(self) -> None:
-        """Mark initialized."""
+        """Mark initialized, or raise the configured error."""
         await asyncio.sleep(0)
+        if _FakeWorkspace.initialize_error is not None:
+            raise _FakeWorkspace.initialize_error
         self.initialized = True
 
     async def close(self) -> None:
-        """Mark closed."""
+        """Stop the sandbox and close the client, as the real close does."""
+        self.close_calls += 1
+        if _FakeWorkspace.close_error is not None:
+            raise _FakeWorkspace.close_error
+        if self._sandbox is not None:
+            await self._sandbox.stop()
+            self._sandbox = None
+        if self._daytona is not None:
+            await self._daytona.close()
+            self._daytona = None
         self.closed = True
 
 
@@ -42,6 +96,9 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Patch the workspace class used by the manager."""
         _FakeWorkspace.created.clear()
+        _FakeWorkspace.initialize_error = None
+        _FakeWorkspace.close_error = None
+        _FakeWorkspace.daytona_delete_error = None
         self.workspace_patch = patch(
             "agentscope.app.workspace_manager."
             "_daytona_workspace_manager.DaytonaWorkspace",
@@ -120,11 +177,26 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
         self.assertEqual(len(_FakeWorkspace.created), 1)
         self.assertEqual(
             first.kwargs["workspace_id"],
-            manager.assign_workspace_id(
+            await manager.assign_workspace_id(
                 user_id="u",
                 agent_id="a1",
                 session_id="",
             ),
+        )
+
+    async def test_an_empty_workspace_id_is_not_a_binding(self) -> None:
+        """Sessions persisted with ``workspace_id=""`` fall back to the
+        isolation policy instead of pooling every user into one
+        workspace keyed on the empty string."""
+        manager = DaytonaWorkspaceManager()
+
+        alice = await manager.get_workspace("alice", "a", "s", "")
+        bob = await manager.get_workspace("bob", "a", "s", "")
+
+        self.assertIsNot(alice, bob)
+        self.assertListEqual(
+            [alice.kwargs["workspace_id"], bob.kwargs["workspace_id"]],
+            ["ca79105d522eba6f", "ecbe3dbe754c96ee"],
         )
 
     async def test_concurrent_get_workspace_creates_one_instance(self) -> None:
@@ -200,6 +272,102 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
         await DaytonaWorkspaceManager._safe_close(  # type: ignore[arg-type]
             workspace,
         )
+
+    async def test_failed_initialize_deletes_the_sandbox(self) -> None:
+        """Delete (not stop) the sandbox and close the client."""
+        _FakeWorkspace.initialize_error = RuntimeError("sandbox failed")
+        manager = DaytonaWorkspaceManager()
+
+        with self.assertRaisesRegex(RuntimeError, "sandbox failed"):
+            await manager.get_workspace("u1", "a1", "s1", "ws-id")
+
+        self.assertEqual(len(_FakeWorkspace.created), 1)
+        workspace = _FakeWorkspace.created[0]
+        self.assertEqual(workspace.close_calls, 1)
+        self.assertListEqual(workspace.daytona.deleted, [workspace.sandbox])
+        self.assertFalse(workspace.sandbox.stopped)
+        self.assertTrue(workspace.daytona.closed)
+        self.assertTrue(workspace.closed)
+        self.assertEqual(manager._cache, {})
+
+    async def test_gateway_timeout_preserves_restored_sandbox(self) -> None:
+        """Only delete a sandbox created during the failed initialization."""
+        for existing in (True, False):
+            with self.subTest(existing=existing):
+                manager = DaytonaWorkspaceManager()
+                sandbox = _FakeSandbox()
+                client = AsyncMock()
+                client.create.return_value = sandbox
+                workspace = DaytonaWorkspace(workspace_id="ws")
+                workspace._daytona = client
+                with (
+                    patch(
+                        "agentscope.app.workspace_manager."
+                        "_daytona_workspace_manager.DaytonaWorkspace",
+                        return_value=workspace,
+                    ),
+                    patch.multiple(
+                        workspace,
+                        _find_existing_sandbox=AsyncMock(
+                            return_value=sandbox if existing else None,
+                        ),
+                        _create_params=lambda: {},
+                        _ensure_existing_sandbox_ready=AsyncMock(),
+                        _derive_sdk_paths=AsyncMock(),
+                        _restore_mcp_specs=AsyncMock(return_value={}),
+                        _ensure_workspace_layout=AsyncMock(),
+                        _setup_mcp_gateway=AsyncMock(side_effect=TimeoutError),
+                    ),
+                    self.assertRaises(TimeoutError),
+                ):
+                    await manager.get_workspace("u", "a", "s", "ws")
+                self.assertEqual(manager._cache, {})
+                self.assertEqual(
+                    (client.delete.await_count, sandbox.stopped),
+                    (0, True) if existing else (1, False),
+                )
+
+    async def test_failed_delete_falls_back_to_stop(self) -> None:
+        """If the delete fails, the ordinary close path still runs."""
+        _FakeWorkspace.initialize_error = RuntimeError("sandbox failed")
+        _FakeWorkspace.daytona_delete_error = RuntimeError("delete failed")
+        manager = DaytonaWorkspaceManager()
+
+        with self.assertRaisesRegex(RuntimeError, "sandbox failed"):
+            await manager.get_workspace("u1", "a1", "s1", "ws-id")
+
+        workspace = _FakeWorkspace.created[0]
+        self.assertListEqual(workspace.daytona.deleted, [])
+        self.assertTrue(workspace.sandbox.stopped)
+        self.assertTrue(workspace.daytona.closed)
+
+    async def test_dispose_error_does_not_mask_initialize_error(self) -> None:
+        """Cleanup failures are swallowed; the original error wins."""
+        _FakeWorkspace.initialize_error = ValueError("gateway failed")
+        _FakeWorkspace.close_error = RuntimeError("close failed")
+        _FakeWorkspace.daytona_delete_error = RuntimeError("delete failed")
+        manager = DaytonaWorkspaceManager()
+
+        with self.assertRaisesRegex(ValueError, "gateway failed"):
+            await manager.get_workspace("u1", "a1", "s1", "ws-id")
+
+        self.assertEqual(_FakeWorkspace.created[0].close_calls, 1)
+        self.assertEqual(manager._cache, {})
+
+    async def test_retry_after_failure_recreates_the_sandbox(self) -> None:
+        """Nothing is cached on failure, so the next call builds anew."""
+        _FakeWorkspace.initialize_error = RuntimeError("sandbox failed")
+        manager = DaytonaWorkspaceManager()
+        with self.assertRaisesRegex(RuntimeError, "sandbox failed"):
+            await manager.get_workspace("u1", "a1", "s1", "ws-id")
+
+        _FakeWorkspace.initialize_error = None
+        workspace = await manager.get_workspace("u1", "a1", "s1", "ws-id")
+
+        self.assertEqual(len(_FakeWorkspace.created), 2)
+        self.assertIs(manager._cache["ws-id"][0], workspace)
+        self.assertEqual(_FakeWorkspace.created[0].close_calls, 1)
+        self.assertEqual(_FakeWorkspace.created[1].close_calls, 0)
 
 
 if __name__ == "__main__":

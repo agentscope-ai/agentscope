@@ -24,11 +24,11 @@ Daytona-specific behavior:
 
 import asyncio
 import time
-from typing import Self
+from typing import Self, cast
 
 from ..._logging import logger
 from ...mcp import MCPClient
-from ...workspace import DaytonaWorkspace
+from ...workspace import DaytonaWorkspace, WorkspaceBase
 from ...workspace._daytona._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_SWEEP_INTERVAL,
@@ -171,8 +171,44 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             skill_paths=self._skill_paths,
             os_user=self._os_user,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # Delete newly created sandboxes, but preserve restored data.
+            await self._dispose_uninitialized(ws)
+            raise
         return ws
+
+    async def _dispose_uninitialized(
+        self,
+        workspace: WorkspaceBase,
+    ) -> None:
+        """Delete a new sandbox, or stop an existing one for a later retry.
+
+        A failed reattachment must preserve the sandbox's persistent data.
+        Only sandboxes created by this initialization attempt are deleted
+        through the per-workspace client before closing that client.
+        """
+        ws = cast(DaytonaWorkspace, workspace)
+        sandbox = ws._sandbox  # pylint: disable=protected-access
+        client = ws._daytona  # pylint: disable=protected-access
+        if (
+            sandbox is not None
+            and client is not None
+            and ws._sandbox_created  # pylint: disable=protected-access
+        ):
+            try:
+                await client.delete(sandbox)
+                # pylint: disable-next=protected-access
+                ws._sandbox = None
+            except Exception as e:
+                logger.warning(
+                    "DaytonaWorkspaceManager: failed to delete unclaimed "
+                    "sandbox %s: %s",
+                    ws.workspace_id,
+                    e,
+                )
+        await super()._dispose_uninitialized(ws)
 
     # ── public API ────────────────────────────────────────────────
 
@@ -198,7 +234,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
                 Session identifier (unused; sessions partition under
                 ``sessions/<session_id>/`` inside a workspace).
             workspace_id (`str | None`, optional):
-                Stable workspace identifier and cache key. When ``None``,
+                Stable workspace identifier and cache key. When unset,
                 the manager falls back to :meth:`assign_workspace_id`.
 
         Returns:
@@ -207,8 +243,8 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         """
         del session_id  # accepted for interface parity; not used here
 
-        if workspace_id is None:
-            workspace_id = self.assign_workspace_id(
+        if not workspace_id:
+            workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,
                 session_id="",

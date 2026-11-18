@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Tests for the session-inbox hand-off protocol in ``_bus_ops``.
 
 The protocol exists so a payload pushed to a session inbox is always
@@ -23,6 +24,7 @@ from agentscope.app._bus_ops import (
     has_pending_inbox_or_release,
     register_inbox_consumer,
 )
+from agentscope.app._service import SessionService
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 
 
@@ -160,3 +162,15 @@ class TestInboxHandoff(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(await self._wakeups(), [])
+
+    async def test_session_purge_releases_consumer_for_reused_id(self) -> None:
+        """Deleting a session must not suppress delivery to a reused ID."""
+        await register_inbox_consumer(self.bus, self.sid)
+        service = SessionService(storage=None, message_bus=self.bus)
+
+        await service._purge_session_bus(self.sid)
+        await self._deliver("after delete")
+
+        self.assertEqual(len(await self._wakeups()), 1)
+        entries = await self.bus.queue_drain(MessageBusKeys.inbox(self.sid))
+        self.assertEqual([p["hint"] for _i, p in entries], ["after delete"])

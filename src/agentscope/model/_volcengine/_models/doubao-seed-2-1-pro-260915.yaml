@@ -1,0 +1,19 @@
+name: doubao-seed-2-1-pro-260915
+label: Doubao Seed 2.1 Pro (260915)
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/*
+  - video/*
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+# Source: https://www.volcengine.com/docs/82379/1330310
+# The official model list specifies a 1024k context window and a 256k
+# maximum answer length for doubao-seed-2-1-pro-260915.
+context_size: 1024000
+output_size: 256000

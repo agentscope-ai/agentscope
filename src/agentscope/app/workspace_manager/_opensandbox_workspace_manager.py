@@ -29,7 +29,7 @@ Differences from the Docker manager:
 
 import asyncio
 import time
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, cast
 
 from ..._logging import logger
 from ...mcp import MCPClient
@@ -39,7 +39,7 @@ from ...workspace._opensandbox._constants import (
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_TIMEOUT,
 )
-from ...workspace import OpenSandboxWorkspace
+from ...workspace import OpenSandboxWorkspace, WorkspaceBase
 
 from ._base import IsolationPolicy, WorkspaceManagerBase
 
@@ -167,8 +167,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         """Construct an OpenSandbox workspace and run full initialize.
 
         ``workspace_id`` is always concrete here — :meth:`get_workspace`
-        resolves ``None`` via :meth:`assign_workspace_id` before calling
-        — and is forwarded so metadata-based reattachment works on the
+        resolves an unset id via :meth:`assign_workspace_id` first —
+        and is forwarded so metadata-based reattachment works on the
         next cache miss.
         """
         ws = OpenSandboxWorkspace(
@@ -193,8 +193,43 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # Delete newly created sandboxes, but preserve restored data.
+            await self._dispose_uninitialized(ws)
+            raise
         return ws
+
+    async def _dispose_uninitialized(
+        self,
+        workspace: WorkspaceBase,
+    ) -> None:
+        """Kill a new sandbox, or pause an existing one for a later retry.
+
+        A failed reattachment must preserve the sandbox's persistent data.
+        Only sandboxes created by this initialization attempt are killed;
+        ``close`` then releases the local resources.
+        """
+        ws = cast(OpenSandboxWorkspace, workspace)
+        sandbox = ws._sandbox  # pylint: disable=protected-access
+        if (
+            sandbox is not None
+            and ws._sandbox_created  # pylint: disable=protected-access
+        ):
+            try:
+                await sandbox.kill()
+                await sandbox.close()
+                # pylint: disable-next=protected-access
+                ws._sandbox = None
+            except Exception as e:
+                logger.warning(
+                    "OpenSandboxWorkspaceManager: failed to kill "
+                    "unclaimed sandbox %s: %s",
+                    ws.workspace_id,
+                    e,
+                )
+        await super()._dispose_uninitialized(ws)
 
     async def get_workspace(
         self,
@@ -227,7 +262,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             workspace_id (`str | None`, optional):
                 Stable workspace identifier — the cache key and the
                 value stored in the sandbox's ``agentscope.workspace.id``
-                metadata. When ``None`` the manager falls back to
+                metadata. When unset the manager falls back to
                 :meth:`assign_workspace_id` under its isolation policy.
 
         Returns:
@@ -236,8 +271,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         """
         del session_id  # accepted for interface parity; not used here
 
-        if workspace_id is None:
-            workspace_id = self.assign_workspace_id(
+        if not workspace_id:
+            workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,
                 session_id="",

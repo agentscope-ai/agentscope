@@ -56,9 +56,10 @@ class ParserBase(ABC):
         (``application/x-yaml`` returns the empty list).
 
         The result is consumed by the front-end's ``<input accept>`` and
-        by the client-side filename guard; it is **not** consulted for
-        media-type routing — that always goes through
-        :attr:`supported_media_types`.
+        by the client-side filename guard. The index worker also uses
+        it as a fallback when the upload type is missing or generic and
+        filename MIME inference finds no registered parser. This fallback
+        requires a unique match declaring a single media type.
 
         Returns:
             `list[str]`:

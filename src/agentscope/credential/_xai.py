@@ -8,6 +8,7 @@ from ._base import CredentialBase
 
 if TYPE_CHECKING:
     from ..model import ChatModelBase
+    from ..realtime import RealtimeModelBase
 
 
 class XAICredential(CredentialBase):
@@ -41,3 +42,12 @@ class XAICredential(CredentialBase):
         from ..model import XAIChatModel
 
         return XAIChatModel
+
+    @classmethod
+    def get_realtime_model_classes(
+        cls,
+    ) -> list[Type["RealtimeModelBase"]]:
+        """Return the xAI realtime model classes."""
+        from ..realtime import XAIRealtimeModel
+
+        return [XAIRealtimeModel]

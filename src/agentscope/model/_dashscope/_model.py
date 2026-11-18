@@ -11,9 +11,14 @@ from pydantic import BaseModel, Field
 from ..._utils._audio import _build_streaming_wav_header
 from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
-from .._model_response import ChatResponse, StructuredResponse
+from .._content_block import (
+    _normalize_openai_compatible_content_error,
+    _openai_compatible_response_block_error,
+)
+from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import DashScopeCredential
+from ...exception import ContentBlockedPhase
 from ...formatter import FormatterBase, DashScopeChatFormatter
 from ...message import (
     Msg,
@@ -50,10 +55,13 @@ class DashScopeChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
-            description="The thinking enable for the LLM output.",
+            description=(
+                "Whether to enable or disable thinking mode. When unset, "
+                "DashScope uses its default behavior for the model."
+            ),
         )
 
         thinking_budget: int | None = Field(
@@ -122,6 +130,7 @@ class DashScopeChatModel(ChatModelBase):
         context_size: int = 131072,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_content_filter: bool = False,
     ) -> None:
         """Initialize the DashScope chat model.
 
@@ -149,6 +158,10 @@ class DashScopeChatModel(ChatModelBase):
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
+            raise_on_content_filter (`bool`, defaults to `False`):
+                Raise ``ContentBlockedError`` for supported filter signals.
+                Disabled by default. See ``ChatModelBase.__init__`` for
+                compatibility, structured-output, and stream retry limits.
         """
         super().__init__(
             credential=credential,
@@ -158,6 +171,7 @@ class DashScopeChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_content_filter=raise_on_content_filter,
         )
         self.formatter = formatter or DashScopeChatFormatter()
         self.client_kwargs = client_kwargs or {}
@@ -180,6 +194,29 @@ class DashScopeChatModel(ChatModelBase):
             openai.RateLimitError,
             openai.InternalServerError,
         )
+
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        import openai
+
+        return (openai.BadRequestError,)
+
+    def _normalize_exception(self, error: Exception) -> Exception:
+        """Normalize structured DashScope data-inspection errors."""
+        if not self.raise_on_content_filter:
+            return error
+        normalized = _normalize_openai_compatible_content_error(
+            error,
+            provider="dashscope",
+            blocked_codes={
+                "datainspectionfailed",
+                "data_inspection_failed",
+            },
+            phase=ContentBlockedPhase.UNKNOWN,
+        )
+        return normalized or error
 
     async def _call_api(
         self,
@@ -244,17 +281,21 @@ class DashScopeChatModel(ChatModelBase):
         if fmt_tool_choice is not None:
             request_kwargs["tool_choice"] = fmt_tool_choice
 
-        extra_body: dict[str, Any] = {}
-        if self.parameters.thinking_enable is not None:
-            extra_body["enable_thinking"] = self.parameters.thinking_enable
-        if self.parameters.thinking_budget is not None:
-            extra_body["thinking_budget"] = self.parameters.thinking_budget
-        if self.parameters.top_k is not None:
-            extra_body["top_k"] = self.parameters.top_k
+        eb = dict(request_kwargs.get("extra_body") or {})
+        request_kwargs["extra_body"] = eb
 
-        if extra_body:
-            request_kwargs.setdefault("extra_body", {})
-            request_kwargs["extra_body"].update(extra_body)
+        if self.parameters.thinking_enable is not None:
+            eb.setdefault(
+                "enable_thinking",
+                self.parameters.thinking_enable,
+            )
+        if self.parameters.thinking_budget is not None:
+            eb.setdefault(
+                "thinking_budget",
+                self.parameters.thinking_budget,
+            )
+        if self.parameters.top_k is not None:
+            eb.setdefault("top_k", self.parameters.top_k)
 
         if self.stream:
             request_kwargs["stream_options"] = {"include_usage": True}
@@ -296,6 +337,7 @@ class DashScopeChatModel(ChatModelBase):
         audio_id = _generate_id()
         # The mapping from index to tool call id
         tool_call_mapping: dict = OrderedDict()
+        has_output = False
 
         async with response as stream:
             async for chunk in stream:
@@ -330,6 +372,15 @@ class DashScopeChatModel(ChatModelBase):
                     continue
 
                 choice = chunk.choices[0]
+                blocked_error = _openai_compatible_response_block_error(
+                    choice,
+                    include_content_filter=self.raise_on_content_filter,
+                    provider="dashscope",
+                    request_id=response_id,
+                    partial_output=has_output,
+                )
+                if blocked_error is not None:
+                    raise blocked_error
                 delta = choice.delta
 
                 # Thinking
@@ -374,8 +425,25 @@ class DashScopeChatModel(ChatModelBase):
                     delta_audio = getattr(delta, "audio", None)
                     if isinstance(delta_audio, dict):
                         audio_chunk = delta_audio.get("data", "")
+                        transcript_chunk = (
+                            delta_audio.get("transcript", "") or ""
+                        )
                     else:
                         audio_chunk = getattr(delta_audio, "data", "")
+                        transcript_chunk = (
+                            getattr(delta_audio, "transcript", "") or ""
+                        )
+
+                    # Omni models deliver the spoken text in
+                    # ``delta.audio.transcript`` rather than in
+                    # ``delta.content``. Append it to the same text block id
+                    # so the agent receives the text as well as the audio,
+                    # mirroring the OpenAI Chat model.
+                    if transcript_chunk:
+                        delta_res.append_text(
+                            block_id=text_id,
+                            text=transcript_chunk,
+                        )
 
                     if audio_chunk:
                         pcm_bytes = base64.b64decode(audio_chunk)
@@ -397,6 +465,7 @@ class DashScopeChatModel(ChatModelBase):
 
                 if delta_res.content or usage:
                     delta_res.usage = usage
+                    has_output = has_output or bool(delta_res.content)
                     yield delta_res
 
     def _parse_completion_response(
@@ -421,6 +490,14 @@ class DashScopeChatModel(ChatModelBase):
 
         if response.choices:
             choice = response.choices[0]
+            blocked_error = _openai_compatible_response_block_error(
+                choice,
+                include_content_filter=self.raise_on_content_filter,
+                provider="dashscope",
+                request_id=getattr(response, "id", None),
+            )
+            if blocked_error is not None:
+                raise blocked_error
             reasoning = getattr(choice.message, "reasoning_content", None)
             if isinstance(reasoning, str) and reasoning:
                 content_blocks.append(ThinkingBlock(thinking=reasoning))
@@ -446,8 +523,8 @@ class DashScopeChatModel(ChatModelBase):
             else:
                 cache_read = 0
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=cache_read,
             )
@@ -529,51 +606,6 @@ class DashScopeChatModel(ChatModelBase):
 
         return fmt_tools, mode
 
-    async def _call_api_with_structured_output(
-        self,
-        model_name: str,
-        messages: list[Msg],
-        structured_model: Type[BaseModel] | dict,
-        tool_choice: ToolChoice | None = None,
-        **kwargs: Any,
-    ) -> StructuredResponse:
-        """DashScope-specific override for structured output.
-
-        DashScope rejects ``tool_choice="required"`` or an object-form
-        ``tool_choice`` when thinking mode is enabled. In that case we
-        default ``tool_choice`` to ``"auto"`` and rely on the base class's
-        injected system-reminder prompt to guide the model. When thinking
-        is disabled, this falls through to the base implementation.
-
-        See: https://help.aliyun.com/en/model-studio/qwen-function-calling
-
-        Args:
-            model_name (`str`):
-                The model name to use for this call.
-            messages (`list[Msg]`):
-                The context for the LLM to generate the structured output.
-            structured_model (`Type[BaseModel] | dict`):
-                A Pydantic model class or a JSON schema dict describing the
-                required output structure.
-            tool_choice (`ToolChoice | None`, defaults to `None`):
-                The tool_choice forwarded to ``_call_api``. When ``None``
-                and thinking mode is enabled, it is downgraded to
-                ``ToolChoice(mode="auto")``; otherwise the base default
-                (force the structured-output tool) is used.
-            **kwargs (`Any`):
-                Additional keyword arguments forwarded to ``_call_api``.
-
-        Returns:
-            `StructuredResponse`:
-                The structured response whose ``content`` is the validated
-                output dict matching ``structured_model``.
-        """
-        if tool_choice is None and self.parameters.thinking_enable:
-            tool_choice = ToolChoice(mode="auto")
-        return await super()._call_api_with_structured_output(
-            model_name=model_name,
-            messages=messages,
-            structured_model=structured_model,
-            tool_choice=tool_choice,
-            **kwargs,
-        )
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """DashScope uses ``enable_thinking=False`` in extra_body."""
+        return {"extra_body": {"enable_thinking": False}}

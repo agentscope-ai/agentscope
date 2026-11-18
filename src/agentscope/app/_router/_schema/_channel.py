@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Request / response schemas for the channel router."""
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 from ...storage import (
@@ -17,7 +19,16 @@ class CreateChannelRequest(BaseModel):
         default=None,
         description="Optional display name.",
     )
-    credentials: dict = Field(description="Platform credentials.")
+    credentials: dict = Field(
+        default_factory=dict,
+        description="Platform credentials. Omit when "
+        "``credential_binding_id`` supplies them.",
+    )
+    credential_binding_id: str | None = Field(
+        default=None,
+        description="Completed credential-binding session to take the "
+        "credentials from, instead of passing them here.",
+    )
     platform_config: dict = Field(
         default_factory=dict,
         description="Non-secret platform options.",
@@ -49,8 +60,8 @@ class ChannelResponse(BaseModel):
     platform_config: dict
     routing: RoutingConfig
     session: SessionSettings
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
 
 
 class ChannelActionResponse(BaseModel):
@@ -78,3 +89,9 @@ class ChannelChatIdsResponse(BaseModel):
     """Chats available for routing configuration."""
 
     chats: list[ChannelChatId] = Field(default_factory=list)
+
+
+class StartCredentialBindingRequest(BaseModel):
+    """Request body for opening a credential-binding session."""
+
+    channel_type: str = Field(description="Channel type id, e.g. 'feishu'.")

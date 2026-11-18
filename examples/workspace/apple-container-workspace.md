@@ -5,7 +5,7 @@ AgentScope workspace backed by Apple's `container` CLI. Runs agent tool calls (B
 ## Prerequisites
 
 - **macOS 26+** on Apple silicon (Intel Macs are not supported by Apple Container).
-- **Apple Container 1.0.0 or later** (tested on 1.0.0 and 1.1.0). Install from the [Apple Container developer site](https://developer.apple.com/container/).
+- **Apple Container 1.0.0 or later** (tested on 1.0.0 and 1.1.0). Install from the [Apple Container project page](https://opensource.apple.com/projects/container).
 - **`container system start`** must be running before creating any workspace.
 - **Outbound network access from the container VM** is required during the first `initialize()` — the bootstrap installs system packages via `apt-get` and downloads `uv` via the installer script. If the container VM cannot reach the internet, initialize will fail at the bootstrap step with an apt-get or curl error.
 

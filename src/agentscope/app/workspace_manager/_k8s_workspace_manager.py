@@ -165,7 +165,13 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The Pod may already be running, but this workspace never
+            # entered the cache, so nothing else would ever delete it.
+            await self._dispose_uninitialized(ws)
+            raise
         return ws
 
     # ── public API ────────────────────────────────────────────────
@@ -188,7 +194,7 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
                 Session identifier (unused; Pods are per-workspace).
             workspace_id (`str | None`, optional):
                 Stable workspace identifier — the cache key. When
-                ``None`` the manager falls back to
+                unset the manager falls back to
                 :meth:`assign_workspace_id`.
 
         Returns:
@@ -197,8 +203,8 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         """
         del session_id
 
-        if workspace_id is None:
-            workspace_id = self.assign_workspace_id(
+        if not workspace_id:
+            workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,
                 session_id="",

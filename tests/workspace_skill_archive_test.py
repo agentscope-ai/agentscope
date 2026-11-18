@@ -2,8 +2,10 @@
 """Test cases for installing a skill from an archive stream."""
 import io
 import os
+import shutil
 import tarfile
 import tempfile
+import unittest
 import zipfile
 from typing import AsyncIterator
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -143,6 +145,10 @@ class AddSkillArchiveSandboxedTest(IsolatedAsyncioTestCase):
         await self.workspace.initialize()
         self.skills_dir = os.path.join(self.tmp, "skills", "default")
 
+    @unittest.skipIf(
+        shutil.which("mv") is None,
+        "base add_skill_archive shells out to POSIX mv/mkdir",
+    )
     async def test_directory_name_is_suffixed_when_taken(self) -> None:
         """A repeated name gets a numeric suffix rather than an error."""
         for index in range(3):
@@ -157,6 +163,10 @@ class AddSkillArchiveSandboxedTest(IsolatedAsyncioTestCase):
             ["pack", "pack-1", "pack-2"],
         )
 
+    @unittest.skipIf(
+        shutil.which("mv") is None,
+        "base add_skill_archive shells out to POSIX mv/mkdir",
+    )
     async def test_flat_archive_is_accepted(self) -> None:
         """SKILL.md at the archive root needs no wrapping folder."""
         await WorkspaceBase.add_skill_archive(
@@ -231,17 +241,37 @@ class UploadManifestTest(IsolatedAsyncioTestCase):
         with self.assertRaises(SkillUploadError):
             WorkspaceService.validate_manifest(manifest, 2)
 
+    def test_rejects_duplicate_normalized_paths(self) -> None:
+        """Separator aliases must not overwrite another uploaded file."""
+        for path in ("pack/lib/run.py", r"pack\lib\run.py"):
+            with self.subTest(path=path):
+                manifest = self._manifest(
+                    {"pack/SKILL.md": b"x", "pack/lib/run.py": b"y"},
+                )
+                manifest.entries.append(
+                    manifest.entries[1].model_copy(update={"path": path}),
+                )
+                with self.assertRaisesRegex(
+                    SkillUploadError,
+                    "Duplicate upload path",
+                ):
+                    WorkspaceService.validate_manifest(manifest, 3)
+
     def test_rejects_traversal(self) -> None:
         """A ``..`` segment is refused before anything is read."""
-        manifest = self._manifest({"pack/../../SKILL.md": b"x"})
-        with self.assertRaises(SkillUploadError):
-            WorkspaceService.validate_manifest(manifest, 1)
+        for path in ("pack/../../SKILL.md", r"pack\..\..\SKILL.md"):
+            with self.subTest(path=path):
+                manifest = self._manifest({path: b"x"})
+                with self.assertRaises(SkillUploadError):
+                    WorkspaceService.validate_manifest(manifest, 1)
 
     def test_rejects_missing_skill_md(self) -> None:
         """The root must hold a SKILL.md."""
-        manifest = self._manifest({"pack/readme.md": b"x"})
-        with self.assertRaises(SkillUploadError):
-            WorkspaceService.validate_manifest(manifest, 1)
+        for path in ("pack/readme.md", r"pack\readme.md"):
+            with self.subTest(path=path):
+                manifest = self._manifest({path: b"x"})
+                with self.assertRaises(SkillUploadError):
+                    WorkspaceService.validate_manifest(manifest, 1)
 
     def test_rejects_oversized_file(self) -> None:
         """A single part over the per-file limit is refused."""
@@ -291,6 +321,47 @@ class UploadManifestTest(IsolatedAsyncioTestCase):
         member = archive.extractfile("pack/lib/run.py")
         assert member is not None
         self.assertEqual(member.read(), b"print('hi')")
+
+    async def test_backslash_upload_installs(self) -> None:
+        """Backslash and mixed paths install with their nested files."""
+        for path in (r"pack\lib\run.py", "pack/lib/run.py"):
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as tmp:
+                files = {
+                    r"pack\SKILL.md": _skill_md("gamma").encode("utf-8"),
+                    path: b"print('hi')",
+                }
+                manifest = self._manifest(files)
+                self.assertEqual(
+                    WorkspaceService.validate_manifest(manifest, 2),
+                    "pack",
+                )
+                workspace = LocalWorkspace(workdir=tmp)
+                await workspace.initialize()
+                await workspace.add_skill_archive(
+                    WorkspaceService.tar_stream(
+                        manifest,
+                        self._uploads(files),
+                    ),
+                    "tar",
+                    "pack",
+                )
+                self.assertEqual(
+                    [skill.name for skill in await workspace.list_skills()],
+                    ["gamma"],
+                )
+                self.assertEqual(
+                    await workspace.get_backend().read_file(
+                        os.path.join(
+                            tmp,
+                            "skills",
+                            "default",
+                            "gamma",
+                            "lib",
+                            "run.py",
+                        ),
+                    ),
+                    b"print('hi')",
+                )
 
     async def test_declared_size_is_verified(self) -> None:
         """A part longer than declared aborts the stream."""

@@ -33,6 +33,9 @@ class ChannelTypeSchema(BaseModel):
     credentials_schema: dict
     config_schema: dict
     platform_bot_id_field: str
+    supports_credential_binding: bool = False
+    """Whether the type offers interactive binding as well as the
+    credential form."""
 
 
 class ChannelTypeRegistry:
@@ -135,6 +138,9 @@ class ChannelTypeRegistry:
             credentials_schema=channel_cls.Credentials.model_json_schema(),
             config_schema=channel_cls.Config.model_json_schema(),
             platform_bot_id_field=channel_cls.platform_bot_id_field,
+            supports_credential_binding=(
+                channel_cls.credential_binding is not None
+            ),
         )
 
     def list_types(self) -> list[ChannelTypeSchema]:

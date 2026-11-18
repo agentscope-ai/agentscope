@@ -36,7 +36,7 @@ Example::
     from agentscope.app.message_bus import RedisMessageBus
     from agentscope.app.storage import RedisStorage
     from agentscope.app.rag.index_worker import run_worker
-    from agentscope.rag import ApproxTokenChunker, TextParser, ...
+    from agentscope.rag import TextParser, ...
 
     async def main() -> None:
         storage = RedisStorage(url=os.environ["REDIS_URL"])
@@ -47,14 +47,12 @@ Example::
         )
         kb_manager = DefaultKnowledgeBaseManager(...)
         parsers = [TextParser()]
-        chunker = ApproxTokenChunker()
         await run_worker(
             storage=storage,
             message_bus=message_bus,
             blob_store=blob_store,
             knowledge_base_manager=kb_manager,
             parsers=parsers,
-            chunker=chunker,
         )
 
     if __name__ == "__main__":
@@ -66,7 +64,7 @@ import socket
 import uuid
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import AsyncExitStack
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from ..._service import IndexTaskConsumer, IndexWorker
 from ...._logging import logger
@@ -86,11 +84,12 @@ async def run_worker(
     blob_store: "BlobStoreBase",
     knowledge_base_manager: "KnowledgeBaseManagerBase",
     parsers: "list[ParserBase] | dict[str, ParserBase]",
-    chunker: "ChunkerBase",
+    chunkers: "list[type[ChunkerBase]] | None" = None,
     node_id: str | None = None,
     worker_max_concurrency: int = 4,
     consumer_max_batch: int = 32,
     parser_executor: ProcessPoolExecutor | None = None,
+    **kwargs: Any,
 ) -> None:
     """Run the out-of-process index worker until cancelled.
 
@@ -117,8 +116,10 @@ async def run_worker(
             ``supported_media_types`` (later entries override earlier
             ones, with a warning); dict mode is used verbatim for
             explicit routing.
-        chunker (`ChunkerBase`):
-            Shared chunker.
+        chunkers (`list[type[ChunkerBase]] | None`, optional):
+            The chunker classes that can be rebuilt from a knowledge
+            base's ``chunker_config``.  Defaults to
+            ``[ApproxTokenChunker]``.
         node_id (`str | None`, optional):
             Stable identifier for this worker process used on the
             storage lease. Defaults to
@@ -136,6 +137,9 @@ async def run_worker(
         parser_executor (`ProcessPoolExecutor | None`, optional):
             Process pool for CPU-bound parses. ``None`` runs parses
             inline (fine for text-only deployments).
+        **kwargs (`Any`):
+            Deprecated arguments forwarded to :class:`IndexWorker`
+            (e.g. the old ``chunker`` instance).
     """
     resolved_node_id = (
         node_id or f"{socket.gethostname()}:{uuid.uuid4().hex[:8]}"
@@ -152,10 +156,11 @@ async def run_worker(
             blob_store=blob_store,
             knowledge_base_manager=knowledge_base_manager,
             parsers=parsers,
-            chunker=chunker,
+            chunkers=chunkers,
             node_id=resolved_node_id,
             max_concurrency=worker_max_concurrency,
             parser_executor=parser_executor,
+            **kwargs,
         )
         await stack.enter_async_context(
             IndexTaskConsumer(

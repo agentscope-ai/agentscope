@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from ._base import _RecordBase
 from ....permission import PermissionMode
 
 
@@ -107,7 +108,7 @@ class RoutingConfig(BaseModel):
 
 
 class SessionSettings(BaseModel):
-    """Settings applied when a channel creates an agent session."""
+    """Settings for a session a channel or SOP run opens for a user."""
 
     chat_model_config: dict[str, Any]
     """Model configuration for channel-created sessions. Required — there
@@ -130,15 +131,18 @@ class SessionSettings(BaseModel):
         return v
 
 
-class ChannelRecord(BaseModel):
+class ChannelRecord(_RecordBase):
     """Persistent record for a channel instance — the single source of
     truth. Running adapter instances are a projection of this record.
+
+    ``id`` / ``created_at`` / ``updated_at`` come from
+    :class:`_RecordBase`, so this record round-trips through the generic
+    SQL row mapper like every other one. ``updated_at`` doubles as the
+    reconcile version: the lifecycle dispatcher compares it to detect
+    that a running instance's config has changed.
     """
 
     # -- Identity & ownership --
-
-    id: str
-    """Server-generated UUID."""
 
     channel_type: str
     """Platform adapter type: feishu / dingtalk / discord / wecom."""
@@ -172,10 +176,3 @@ class ChannelRecord(BaseModel):
 
     routing: RoutingConfig
     session: SessionSettings
-
-    # -- Versioning (reconcile basis for the lifecycle dispatcher) --
-
-    created_at: str
-    updated_at: str
-    """Refreshed on every write; the dispatcher compares it to detect
-    that a running instance's config has changed."""

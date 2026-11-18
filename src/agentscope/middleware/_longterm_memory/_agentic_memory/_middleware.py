@@ -324,13 +324,13 @@ information that will be useful in future conversations.
 When looking for past context:
 1. Search topic files in your memory directory:
 ```
-Grep with pattern="<search>" path="{memory_dir}" glob="*.md"</search>
+Grep with pattern="<search>" path="{memory_dir}" glob="*.md"
 # or Bash command:
 grep -rn "<search term>" {memory_dir} --include="*.md"
 ```
 Use narrow search terms (error messages, file paths, function names) rather \
 than broad keywords.
-"""  # noqa:
+"""
 
 DEFAULT_RETRIEVAL_INSTRUCTIONS = (
     "You are selecting memory files that will be useful as context for "
@@ -374,6 +374,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
         memory_max_tokens: int = Field(
             default=4_000,
+            ge=0,
             title="MEMORY.md Max Length",
             description=(
                 "The maximum tokens of the MEMORY.md inserted into the system "
@@ -412,6 +413,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
         retrieval_max_tokens_per_md: int = Field(
             default=2_000,
+            ge=0,
             title="Retrieval Max Tokens Per File",
             description=(
                 "Maximum tokens read from each memory file that is surfaced "
@@ -422,6 +424,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
         retrieval_max_files: int = Field(
             default=200,
+            ge=0,
             title="Retrieval Max Files",
             description=(
                 "The maximum number of Markdown memory files to consider "
@@ -431,10 +434,13 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
         retrieval_max_tokens_per_frontmatter: int = Field(
             default=256,
+            ge=0,
             title="Retrieval Max Tokens per Frontmatter",
             description=(
-                "The maximum number of tokens to read from the beginning of "
-                "each Markdown file when parsing frontmatter."
+                "The maximum estimated tokens of type and description per "
+                "memory file included in relevance selection. Complete "
+                "frontmatter is parsed before truncation, retaining type "
+                "before description within the shared budget."
             ),
         )
 
@@ -601,9 +607,9 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             if msgs is not None:
                 self._cached_input = "\n".join(
                     [
-                        f"{_.name}: " + _.get_text_content()
+                        f"{_.name}: {_.get_text_content()}"
                         for _ in msgs
-                        if _.get_text_content() is not None
+                        if _.has_content_blocks("text")
                     ],
                 )
 
@@ -754,9 +760,11 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             structured_model=_MemorySelection,
         )
 
-        # 3. Validate: discard hallucinated filenames.
+        # 3. Discard hallucinated filenames and count each memory only once.
         raw_selected: list[str] = res.content.get("selected_files", [])
-        selected = [f for f in raw_selected if f in valid_filenames][:5]
+        selected = list(
+            dict.fromkeys(f for f in raw_selected if f in valid_filenames),
+        )[:5]
         if not selected:
             return None
 
@@ -859,8 +867,11 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             errors="replace",
         )
 
+    # ``$`` covers a fence that ends the string. The discovery scan only
+    # reads a byte-capped prefix, so the newline after ``---`` is often
+    # outside that prefix; requiring it drops every field.
     _FRONTMATTER_RE = re.compile(
-        r"^\s*---\s*\n(?P<body>.*?)\n---\s*\n",
+        r"^\s*---\s*\n(?P<body>.*?)\n---\s*(?:\n|$)",
         re.DOTALL,
     )
     _FIELD_RE = re.compile(r"^(?P<key>\w+)\s*:\s*(?P<value>.+)$", re.MULTILINE)
@@ -869,7 +880,8 @@ class AgenticMemoryMiddleware(MiddlewareBase):
     def _parse_frontmatter_fields(cls, content: str) -> dict[str, str]:
         """Return a dict of YAML-like key/value pairs from the first
         frontmatter block.  Only scalar ``key: value`` lines are parsed;
-        nested structures are intentionally ignored.
+        nested structures are intentionally ignored.  The closing fence
+        may end the string.
 
         Args:
             content (`str`):
@@ -887,6 +899,38 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             fm.group("key"): fm.group("value").strip()
             for fm in cls._FIELD_RE.finditer(m.group("body"))
         }
+
+    @classmethod
+    def _frontmatter_snippet(
+        cls,
+        raw: bytes,
+        max_frontmatter_bytes: int,
+    ) -> str:
+        """Return the leading bytes to inspect for frontmatter.
+
+        Args:
+            raw (`bytes`):
+                The full file content.
+            max_frontmatter_bytes (`int`):
+                The initial byte cap for the parsing prefix.
+
+        Returns:
+            `str`:
+                The decoded prefix to parse. When the frontmatter block is
+                longer than the cap, the window extends to the closing
+                fence so its fields survive. Files without a complete
+                leading frontmatter block keep the capped prefix. The
+                metadata budget is applied separately after parsing.
+        """
+        snippet_end = min(len(raw), max_frontmatter_bytes)
+        match = re.match(
+            cls._FRONTMATTER_RE.pattern.encode("ascii"),
+            raw,
+            re.DOTALL,
+        )
+        if match:
+            snippet_end = max(snippet_end, match.end())
+        return raw[:snippet_end].decode("utf-8", errors="replace")
 
     async def _list_md_files(self) -> list[_MemoryFileHeader]:
         """Scan the memory directory for individual memory files.
@@ -927,15 +971,23 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
             try:
                 raw = await self._backend.read_file(full_path)
-                # Only parse the leading bytes to keep this cheap.
+                # Recover complete fields before limiting manifest metadata.
                 max_frontmatter_bytes = _estimate_bytes(
                     self._parameters.retrieval_max_tokens_per_frontmatter,
                 )
-                snippet = raw[:max_frontmatter_bytes].decode(
-                    "utf-8",
-                    errors="replace",
+                snippet = self._frontmatter_snippet(
+                    raw,
+                    max_frontmatter_bytes,
                 )
                 fields = self._parse_frontmatter_fields(snippet)
+                remaining_bytes = max(0, max_frontmatter_bytes)
+                for key in ("type", "description"):
+                    fields[key] = (
+                        fields.get(key, "")
+                        .encode("utf-8")[:remaining_bytes]
+                        .decode("utf-8", errors="ignore")
+                    )
+                    remaining_bytes -= len(fields[key].encode("utf-8"))
                 mtime = await self._backend.stat_mtime(full_path)
                 headers.append(
                     _MemoryFileHeader(
