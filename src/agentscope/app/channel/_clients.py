@@ -35,40 +35,24 @@ has instead.
 import asyncio
 from contextlib import aclosing
 from types import TracebackType
-from typing import AsyncIterator, TypeAlias
+from typing import AsyncIterator
 
 from ..._logging import logger
-from ...event import (
-    EventType,
-    ExternalExecutionResultEvent,
-    UserConfirmResultEvent,
-    UserInterruptEvent,
-)
-from ...message import Msg, ToolCallState
+from ...event import EventType
+from ...message import ToolCallState
 from ..message_bus import MessageBus
 from ..storage import StorageBase
 from ._approval import (
-    CHANNEL_APPROVAL_UNAVAILABLE,
     ChannelApprovalRecord,
     load_reply_requester,
     new_approval_id,
     approval_session,
-    remember_reply_requester,
     store_approval,
     with_approval_ids,
 )
 from ._base import ChannelBase, ChannelEvent
 from ._registry import ChannelTypeRegistry
 from ._stream import open_reply_stream
-
-ChannelRunInput: TypeAlias = (
-    Msg
-    | list[Msg]
-    | UserConfirmResultEvent
-    | ExternalExecutionResultEvent
-    | UserInterruptEvent
-    | None
-)
 
 
 class ChannelClients:
@@ -188,7 +172,6 @@ class ChannelClients:
         channel_id: str,
         chat_id: str,
         agent_id: str,
-        input_msg: ChannelRunInput = None,
     ) -> None:
         """Start streaming a run's reply back to its platform chat.
 
@@ -203,9 +186,6 @@ class ChannelClients:
             chat_id (`str`): The platform chat to deliver into.
             agent_id (`str`): The agent that owns the session; pinned on
                 a confirmation card so a click resumes this exact run.
-            input_msg (`ChannelRunInput`): Input that triggered the run. Used
-                to obtain the original platform requester for approval
-                authorization.
         """
         channel = await self.get(channel_id)
         if channel is None:
@@ -216,11 +196,6 @@ class ChannelClients:
                 session_id,
             )
             return
-
-        requester_id = await self._requester_for_input(
-            session_id,
-            input_msg,
-        )
 
         # Synthetic send target — a background run has no inbound
         # message. Carries the run's identity so a confirmation card can
@@ -253,7 +228,6 @@ class ChannelClients:
                         target,
                         self._approval_events(
                             events,
-                            requester_id=requester_id,
                             channel_id=channel_id,
                             chat_id=chat_id,
                             agent_id=agent_id,
@@ -274,55 +248,10 @@ class ChannelClients:
         self._deliveries.add(task)
         task.add_done_callback(self._deliveries.discard)
 
-    async def _requester_for_input(
-        self,
-        session_id: str,
-        input_msg: ChannelRunInput,
-    ) -> str:
-        """Resolve the original platform requester from one run input.
-
-        A fresh channel turn carries the user id in ``Msg.name``. Resume
-        events instead carry the parked reply id, so their requester is
-        recovered from the mapping stored when that reply first started.
-
-        Args:
-            session_id (`str`): Session being delivered.
-            input_msg (`ChannelRunInput`): Message or event that triggered the
-                run.
-
-        Returns:
-            `str`: Platform requester id, or an empty string when the run has
-            no requester.
-        """
-        if isinstance(input_msg, list) and input_msg:
-            input_msg = input_msg[0]
-        if isinstance(input_msg, Msg):
-            if input_msg.metadata.get(CHANNEL_APPROVAL_UNAVAILABLE) is True:
-                return ""
-            # Short-term compatibility: the Web UI uses the name "user",
-            # whereas channel messages use the platform user id. Replace
-            # this convention with explicit trusted provenance when available.
-            return "" if input_msg.name == "user" else input_msg.name
-        if not isinstance(
-            input_msg,
-            (
-                UserConfirmResultEvent,
-                ExternalExecutionResultEvent,
-                UserInterruptEvent,
-            ),
-        ):
-            return ""
-        return await load_reply_requester(
-            self._bus,
-            session_id=session_id,
-            reply_id=input_msg.reply_id,
-        )
-
     async def _approval_events(
         self,
         events: AsyncIterator[dict],
         *,
-        requester_id: str,
         channel_id: str,
         chat_id: str,
         agent_id: str,
@@ -330,9 +259,8 @@ class ChannelClients:
     ) -> AsyncIterator[dict]:
         """Persist approval context and attach opaque ids to the stream.
 
-        The requester is retained when the run pauses because a reply may be
-        continued by a background resume that no longer carries the original
-        channel event. For every confirmation request, this method stores the
+        The requester is read from the identity saved with the paused state.
+        For every confirmation request, this method stores the
         requester together with the exact agent, session, reply, and tool call
         behind a new opaque approval id. Platform adapters receive only those
         ids through event metadata; the gateway later treats the stored record
@@ -340,7 +268,6 @@ class ChannelClients:
 
         Args:
             events (`AsyncIterator[dict]`): Raw events from the running reply.
-            requester_id (`str`): Platform id of the user who started it.
             channel_id (`str`): Channel instance receiving the reply.
             chat_id (`str`): Platform chat receiving the reply.
             agent_id (`str`): Agent that owns the reply.
@@ -350,7 +277,6 @@ class ChannelClients:
             `dict`: The original event, with approval ids added to confirmation
             event metadata.
         """
-        current_requester = requester_id
         async for raw in events:
             event_type = raw.get("type")
             reply_id = raw.get("reply_id", "")
@@ -373,19 +299,11 @@ class ChannelClients:
                     awaiting = state.get_awaiting_tool_calls(agent_name)
                     if not awaiting:
                         return
-                    if not current_requester:
-                        current_requester = await load_reply_requester(
-                            self._bus,
-                            session_id=session_id,
-                            reply_id=reply_id,
-                        )
-                    if current_requester:
-                        await remember_reply_requester(
-                            self._bus,
-                            session_id=session_id,
-                            reply_id=reply_id,
-                            requester_id=current_requester,
-                        )
+                    current_requester = await load_reply_requester(
+                        self._bus,
+                        session_id=session_id,
+                        reply_id=reply_id,
+                    )
                     if event_type == EventType.REQUIRE_USER_CONFIRM:
                         pending = {
                             call.id

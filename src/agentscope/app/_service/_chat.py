@@ -33,7 +33,11 @@ from .._bus_ops import (
 from ..message_bus import MessageBus, MessageBusKeys
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
-from ..channel._approval import prune_session_approvals
+from ..channel._approval import (
+    prune_session_approvals,
+    remember_reply_requester,
+    requester_for_input,
+)
 from ..storage import (
     StorageBase,
     AgentRecord,
@@ -1356,6 +1360,17 @@ class ChatService:
             # ----------------------------------------------------------------
             # 7. Run the agent (still under the session lock)
             # -----------------------------------------------------------------
+            # Resolve before input_msg changes during inbox draining. Persist
+            # only if the run pauses, independently of platform delivery.
+            requester_id = (
+                await requester_for_input(
+                    self._message_bus,
+                    session_id,
+                    input_msg,
+                )
+                if isinstance(session_record.origin, ChannelOrigin)
+                else ""
+            )
             # Channel-bound run: start streaming the reply back to the
             # platform chat. Delivery is plain REST, so this node does it
             # rather than handing the run to whichever one holds the
@@ -1370,7 +1385,6 @@ class ChatService:
                     channel_id=session_record.origin.channel_id,
                     chat_id=session_record.origin.chat_id,
                     agent_id=agent_id,
-                    input_msg=input_msg,
                 )
             reply_msg: Msg | None = None
             active_reply_id: str | None = None
@@ -1698,6 +1712,15 @@ class ChatService:
                                 session_record.origin,
                                 ChannelOrigin,
                             ):
+                                if agent.state.has_awaiting_tool_calls(
+                                    agent_record.data.name,
+                                ):
+                                    await remember_reply_requester(
+                                        self._message_bus,
+                                        session_id=session_id,
+                                        reply_id=agent.state.reply_id,
+                                        requester_id=requester_id,
+                                    )
                                 try:
                                     await prune_session_approvals(
                                         self._message_bus,

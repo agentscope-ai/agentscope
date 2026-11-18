@@ -3,14 +3,19 @@
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 import re
-from typing import Any
+from typing import Any, TypeAlias
 from urllib.parse import quote, unquote
 from uuid import uuid4
 
 from pydantic import BaseModel
 
-from ...event import RequireUserConfirmEvent
-from ...message import ToolCallState
+from ...event import (
+    ExternalExecutionResultEvent,
+    RequireUserConfirmEvent,
+    UserConfirmResultEvent,
+    UserInterruptEvent,
+)
+from ...message import Msg, ToolCallState
 from ...state import AgentState
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
@@ -20,6 +25,16 @@ CHANNEL_APPROVAL_UNAVAILABLE = "channel_approval_unavailable"
 WEB_UI_APPROVAL_NOTICE = (
     "Tool execution needs approval. Open this session in the Web UI "
     "to approve or deny the tool call."
+)
+
+
+ChannelRunInput: TypeAlias = (
+    Msg
+    | list[Msg]
+    | UserConfirmResultEvent
+    | ExternalExecutionResultEvent
+    | UserInterruptEvent
+    | None
 )
 
 
@@ -76,6 +91,52 @@ def approval_id_for(
         return ""
     approval_id = approval_ids.get(tool_call_id)
     return approval_id if isinstance(approval_id, str) else ""
+
+
+async def requester_for_input(
+    bus: MessageBus,
+    session_id: str,
+    input_msg: ChannelRunInput,
+) -> str:
+    """Resolve the original platform requester from one run input.
+
+    A fresh channel turn carries the user id in ``Msg.name``. Resume
+    events instead carry the parked reply id, so their requester is
+    recovered from the mapping saved alongside that reply's paused state.
+
+    Args:
+        bus (`MessageBus`): Shared storage for paused requester identities.
+        session_id (`str`): Session being run.
+        input_msg (`ChannelRunInput`): Message or event that triggered the
+            run.
+
+    Returns:
+        `str`: Platform requester id, or an empty string when the run has
+        no requester.
+    """
+    if isinstance(input_msg, list) and input_msg:
+        input_msg = input_msg[0]
+    if isinstance(input_msg, Msg):
+        if input_msg.metadata.get(CHANNEL_APPROVAL_UNAVAILABLE) is True:
+            return ""
+        # Short-term compatibility: the Web UI uses the name "user",
+        # whereas channel messages use the platform user id. Replace
+        # this convention with explicit trusted provenance when available.
+        return "" if input_msg.name == "user" else input_msg.name
+    if not isinstance(
+        input_msg,
+        (
+            UserConfirmResultEvent,
+            ExternalExecutionResultEvent,
+            UserInterruptEvent,
+        ),
+    ):
+        return ""
+    return await load_reply_requester(
+        bus,
+        session_id=session_id,
+        reply_id=input_msg.reply_id,
+    )
 
 
 async def remember_reply_requester(

@@ -41,6 +41,7 @@ from agentscope.app.channel._approval import (
     load_reply_requester,
     prune_session_approvals,
     remember_reply_requester,
+    requester_for_input,
 )
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.storage import (
@@ -351,6 +352,12 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
         in the bus and survive a continuation of the same reply."""
         bus = InMemoryMessageBus()
         clients = self._clients(bus)
+        await remember_reply_requester(
+            bus,
+            session_id="s-1",
+            reply_id="reply-1",
+            requester_id="requester-1",
+        )
 
         async def events() -> AsyncIterator[dict]:
             for event in (
@@ -376,7 +383,6 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
             raw
             async for raw in clients._approval_events(  # pylint: disable=W0212
                 events(),
-                requester_id="requester-1",
                 channel_id="chan-1",
                 chat_id="chat-1",
                 agent_id="agent-x",
@@ -404,7 +410,6 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
             raw
             async for raw in clients._approval_events(  # pylint: disable=W0212
                 events(),
-                requester_id="",
                 channel_id="chan-1",
                 chat_id="chat-1",
                 agent_id="agent-x",
@@ -435,6 +440,12 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
         """Create approvals only from saved state under the session lock."""
         bus = InMemoryMessageBus()
         clients = self._clients(bus)
+        await remember_reply_requester(
+            bus,
+            session_id="s-1",
+            reply_id="reply-1",
+            requester_id="requester-1",
+        )
         calls = [
             ToolCallBlock(id=call_id, name="Bash", input="{}", state="asking")
             for call_id in ("resolved", "pending")
@@ -457,7 +468,6 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
                 raw
                 async for raw in clients._approval_events(
                     events(),
-                    requester_id="requester-1",
                     channel_id="chan-1",
                     chat_id="chat-1",
                     agent_id="agent-x",
@@ -505,6 +515,12 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
         """Retain the requester while waiting for external execution."""
         bus = InMemoryMessageBus()
         clients = self._clients(bus)
+        await remember_reply_requester(
+            bus,
+            session_id="s-1",
+            reply_id="reply-1",
+            requester_id="requester-1",
+        )
         clients._storage.state.context[-1].content[
             0
         ].state = ToolCallState.SUBMITTED
@@ -517,7 +533,6 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
 
         async for _ in clients._approval_events(
             events(),
-            requester_id="requester-1",
             channel_id="chan-1",
             chat_id="chat-1",
             agent_id="agent-x",
@@ -557,7 +572,6 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
 
         async for _ in clients._approval_events(
             events(),
-            requester_id="requester-1",
             channel_id="chan-1",
             chat_id="chat-1",
             agent_id="agent-x",
@@ -593,12 +607,12 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Web UI and background runs have no platform requester identity."""
-        clients = self._clients(InMemoryMessageBus())
+        bus = InMemoryMessageBus()
         message = UserMsg(name="user", content="hello")
         for run_input in (None, message, [message], []):
             with self.subTest(run_input=run_input):
                 self.assertEqual(
-                    await clients._requester_for_input("s-1", run_input),
+                    await requester_for_input(bus, "s-1", run_input),
                     "",
                 )
 
@@ -621,7 +635,6 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
                 event
                 async for event in clients._approval_events(
                     events(),
-                    requester_id="",
                     channel_id="chan-1",
                     chat_id="chat-1",
                     agent_id="agent-x",
@@ -645,13 +658,13 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
     async def test_requester_is_resolved_from_run_input(self) -> None:
         """Fresh messages name the requester; resume events recover it."""
         bus = InMemoryMessageBus()
-        clients = self._clients(bus)
         message = UserMsg(
             name="requester-1",
             content=[TextBlock(text="hello")],
         )
         self.assertEqual(
-            await clients._requester_for_input(  # pylint: disable=W0212
+            await requester_for_input(
+                bus,
                 "s-1",
                 message,
             ),
@@ -676,7 +689,8 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
             {},
         )
         self.assertEqual(
-            await clients._requester_for_input(  # pylint: disable=W0212
+            await requester_for_input(
+                bus,
                 "s-1",
                 UserInterruptEvent(reply_id="reply-1"),
             ),

@@ -36,6 +36,8 @@ from agentscope.app.channel._approval import (
     load_approval,
     new_approval_id,
     store_approval,
+    remember_reply_requester,
+    requester_for_input,
 )
 from agentscope.app.channel._gateway import ChannelGateway
 from agentscope.app.channel._routing import resolve
@@ -588,11 +590,6 @@ class TrustedChannelIdentityTest(IsolatedAsyncioTestCase):
                     message_bus=bus,
                     workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
                 )
-                clients = ChannelClients(
-                    storage,
-                    bus,
-                    ChannelTypeRegistry([DingTalkChannel]),
-                )
                 channel = DingTalkChannel(
                     record.id,
                     DingTalkChannel.Credentials(
@@ -620,7 +617,8 @@ class TrustedChannelIdentityTest(IsolatedAsyncioTestCase):
                 message = Msg.model_validate(trigger["input"])
                 self.assertEqual(message.name, staff_id or payload["senderId"])
                 self.assertEqual(
-                    await clients._requester_for_input(
+                    await requester_for_input(
+                        bus,
                         trigger["session_id"],
                         message,
                     ),
@@ -825,6 +823,12 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
                     workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
                 )
                 clients = ChannelClients(storage, bus, ChannelTypeRegistry([]))
+                await remember_reply_requester(
+                    bus,
+                    session_id="the-parked-session",
+                    reply_id="reply-1",
+                    requester_id="requester-1",
+                )
                 chat_id = "user:requester-1" if private else "group:cid-origin"
 
                 async def events() -> AsyncIterator[dict]:
@@ -838,7 +842,6 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
                     raw
                     async for raw in clients._approval_events(
                         events(),
-                        requester_id="requester-1",
                         channel_id="chan-1",
                         chat_id=chat_id,
                         agent_id="agent-x",
