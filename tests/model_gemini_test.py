@@ -1654,6 +1654,7 @@ class TestGeminiFormatTools(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+# pylint: disable-next=too-many-public-methods
 class TestGeminiSchemaUtils(unittest.TestCase):
     """Tests for _sanitize_schema_for_gemini and _flatten_json_schema."""
 
