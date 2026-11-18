@@ -9,6 +9,20 @@ from docstring_parser import parse
 from pydantic import Field, create_model, ConfigDict
 
 
+def _is_plain_callable(func: Callable) -> bool:
+    """Whether ``func`` carries its own annotations and docstring.
+
+    Callable objects delegate both to their class's ``__call__`` method,
+    so they need dedicated unwrapping.
+    """
+    return (
+        inspect.isfunction(func)
+        or inspect.ismethod(func)
+        or isinstance(func, type)
+        or inspect.isbuiltin(func)
+    )
+
+
 def _get_callable_name(tool_func: Callable) -> str:
     """Get the effective name of a callable."""
     named_func = tool_func
@@ -37,6 +51,14 @@ def _get_callable_docstring(tool_func: Callable) -> str:
             return documented_func.__doc__ or ""
 
         documented_func = documented_func.func
+
+    # Callable objects: the `__call__` docstring mirrors what a plain
+    # function's docstring would provide, while the docstring inherited
+    # by the instance describes the class instead.
+    if not _is_plain_callable(documented_func):
+        call_doc = getattr(type(documented_func).__call__, "__doc__", None)
+        if call_doc:
+            return call_doc
 
     return documented_func.__doc__ or ""
 
@@ -99,6 +121,14 @@ def _resolve_type_hints(tool_func: Callable) -> dict[str, Any]:
     while isinstance(annotated_func, partial):
         partial_funcs.append(annotated_func)
         annotated_func = annotated_func.func
+
+    # Callable objects carry their annotations and module globals on the
+    # class's `__call__` method, not on the instance itself — so PEP 563
+    # string annotations would otherwise stay unresolved.
+    if not _is_plain_callable(annotated_func):
+        call_func = getattr(annotated_func, "__call__", None)
+        if call_func is not None:
+            annotated_func = call_func
 
     globalns = getattr(annotated_func, "__globals__", None)
 

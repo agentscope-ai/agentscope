@@ -9,7 +9,7 @@ resolved back to real types before being handed to pydantic.
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 from unittest import TestCase
 
 from pydantic import BaseModel, Field
@@ -90,6 +90,18 @@ def state_injected_tool(
 ) -> str:
     """Search with the injected agent state."""
     return query
+
+
+class CallableSearch:
+    """A callable-object tool; its annotations live on ``__call__``."""
+
+    def __call__(self, mode: Literal["fast", "full"]) -> str:
+        """Search with a mode switch.
+
+        Args:
+            mode: The search mode to use.
+        """
+        return mode
 
 
 class LazyAnnotationsTest(TestCase):
@@ -433,3 +445,26 @@ class LazyAnnotationsTest(TestCase):
                 "required": ["query"],
             },
         )
+
+    def test_callable_object_literal_parameter(self) -> None:
+        """A callable instance must resolve the enum on its `__call__`."""
+        schema = _extract_input_schema(CallableSearch())
+
+        self.assertEqual(
+            schema["properties"]["mode"],
+            {
+                "description": "The search mode to use.",
+                "enum": ["fast", "full"],
+                "type": "string",
+            },
+        )
+
+    def test_function_tool_on_callable_object(self) -> None:
+        """`FunctionTool` schema generation must not raise on instances."""
+        tool = FunctionTool(CallableSearch())
+
+        self.assertEqual(
+            tool.input_schema["properties"]["mode"]["enum"],
+            ["fast", "full"],
+        )
+        self.assertEqual(tool.name, "CallableSearch")
