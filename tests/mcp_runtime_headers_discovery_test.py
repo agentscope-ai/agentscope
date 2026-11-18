@@ -12,6 +12,16 @@ from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp.types import ListToolsResult, Tool
 
 from agentscope.mcp import HttpMCPConfig, MCPClient
+from agentscope.tool import MCPTool
+
+
+def _expected_schema(tenant: str) -> dict[str, Any]:
+    """Describe the complete schema expected for a tenant."""
+    return {
+        "type": "object",
+        "properties": {f"query_{tenant}": {"type": "string"}},
+        "required": [f"query_{tenant}"],
+    }
 
 
 class RuntimeHeadersDiscoveryTest(IsolatedAsyncioTestCase):
@@ -151,18 +161,37 @@ class RuntimeHeadersDiscoveryTest(IsolatedAsyncioTestCase):
             await asyncio.wait_for(client.connect(), 5)
         return client
 
+    def _assert_tool(self, tool: MCPTool, tenant: str) -> None:
+        """Compare the wrapped tool's complete public descriptor."""
+        self.assertEqual(
+            (tool.name, tool.description, tool.input_schema),
+            (
+                "mcp__header_catalogue__shared",
+                f"Tenant {tenant}",
+                _expected_schema(tenant),
+            ),
+        )
+
+    def _assert_catalogue(self, tools: list[Tool], tenant: str) -> None:
+        """Compare every descriptor, including catalogue size and order."""
+        self.assertEqual(
+            [(t.name, t.description, t.input_schema) for t in tools],
+            [
+                ("shared", f"Tenant {tenant}", _expected_schema(tenant)),
+                (f"only_{tenant}", None, {"type": "object"}),
+            ],
+        )
+
     async def test_cached_lookup_refreshes_after_rotation_and_clear(
         self,
     ) -> None:
         """New lookups update names and schemas in both connection modes."""
         for stateful in (False, True):
             with self.subTest(stateful=stateful):
+                self.tool_requests.clear()
                 client = await self._client(stateful)
                 original = await client.get_tool("shared")
-                self.assertEqual(
-                    original.input_schema["required"],
-                    ["query_A"],
-                )
+                self._assert_tool(original, "A")
                 for headers, tenant, removed in (
                     ({"X-Tenant": "B"}, "B", "A"),
                     ({}, "A", "B"),
@@ -170,24 +199,16 @@ class RuntimeHeadersDiscoveryTest(IsolatedAsyncioTestCase):
                     ({"X-Tenant": "B", "x-tenant": "A"}, "B", "A"),
                 ):
                     await client.set_runtime_headers(headers)
-                    current = await client.get_tool("shared")
-                    self.assertEqual(
-                        current.input_schema["required"],
-                        [f"query_{tenant}"],
-                    )
-                    self.assertEqual(current.description, f"Tenant {tenant}")
+                    self._assert_tool(await client.get_tool("shared"), tenant)
                     self.assertEqual(
                         (await client.get_tool(f"only_{tenant}")).name,
                         f"mcp__header_catalogue__only_{tenant}",
                     )
                     with self.assertRaises(ValueError):
                         await client.get_tool(f"only_{removed}")
-                    self.assertEqual(self.tool_requests[-1], tenant)
+                self.assertEqual(self.tool_requests, ["A", "B", "A", "A", "B"])
                 # Previously returned wrappers are snapshots, not live objects.
-                self.assertEqual(
-                    original.input_schema["required"],
-                    ["query_A"],
-                )
+                self._assert_tool(original, "A")
 
     async def test_equivalent_and_invalid_updates_preserve_catalogue(
         self,
@@ -204,11 +225,7 @@ class RuntimeHeadersDiscoveryTest(IsolatedAsyncioTestCase):
                     {},
                 ):
                     await client.set_runtime_headers(headers)
-                    tool = await client.get_tool("shared")
-                    self.assertEqual(
-                        tool.input_schema["required"],
-                        ["query_A"],
-                    )
+                    self._assert_tool(await client.get_tool("shared"), "A")
                     self.assertEqual(len(self.tool_requests), requests)
                 await client.set_runtime_headers(
                     {"X-Tenant": "B", "X-Extra": "unchanged"},
@@ -226,15 +243,10 @@ class RuntimeHeadersDiscoveryTest(IsolatedAsyncioTestCase):
                 ):
                     with self.assertRaises(ValueError):
                         await client.set_runtime_headers(headers)
-                tool = await client.get_tool("shared")
-                self.assertEqual(tool.input_schema["required"], ["query_B"])
+                self._assert_tool(await client.get_tool("shared"), "B")
                 self.assertEqual(len(self.tool_requests), requests)
                 # Verify the retained headers on the wire, as well as cache.
-                refreshed = await client.list_raw_tools()
-                self.assertEqual(
-                    refreshed[0].input_schema["required"],
-                    ["query_B"],
-                )
+                self._assert_catalogue(await client.list_raw_tools(), "B")
 
     async def test_rotation_fences_shared_stateless_discovery(self) -> None:
         """An old response cannot populate the new header's shared cache."""
@@ -256,10 +268,9 @@ class RuntimeHeadersDiscoveryTest(IsolatedAsyncioTestCase):
             asyncio.gather(first, second),
             5,
         )
-        self.assertEqual(raw[0].input_schema["required"], ["query_B"])
-        self.assertEqual(wrapped.input_schema["required"], ["query_B"])
-        cached = await client.get_tool("shared")
-        self.assertEqual(cached.input_schema["required"], ["query_B"])
+        self._assert_catalogue(raw, "B")
+        self._assert_tool(wrapped, "B")
+        self._assert_tool(await client.get_tool("shared"), "B")
         self.assertEqual(self.tool_requests, ["A", "B"])
 
     async def test_rotation_during_handshake_with_overlapping_tool_call(
@@ -277,13 +288,15 @@ class RuntimeHeadersDiscoveryTest(IsolatedAsyncioTestCase):
         await client.set_runtime_headers({"X-Tenant": "B"})
         release.set()
         tools = await asyncio.wait_for(discovery, 5)
-        self.assertEqual(tools[0].input_schema["required"], ["query_B"])
-        current = await client.get_tool("shared")
-        self.assertEqual(current.input_schema["required"], ["query_B"])
-        self.assertEqual(self.tool_requests[-1], "B")
+        self._assert_catalogue(tools, "B")
+        self._assert_tool(await client.get_tool("shared"), "B")
+        self.assertEqual(self.tool_requests, ["A", "A", "B"])
         finish.set()
         result = await asyncio.wait_for(invocation, 5)
-        self.assertEqual(result.content[0].text, "already-in-flight")
+        self.assertEqual(
+            [(block.type, block.text) for block in result.content],
+            [("text", "already-in-flight")],
+        )
 
     async def test_repeated_rotation_is_bounded_and_lookup_can_recover(
         self,
@@ -312,9 +325,5 @@ class RuntimeHeadersDiscoveryTest(IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(RuntimeError, "changed"):
                     await asyncio.wait_for(discovery, 5)
                 self.assertEqual(self.tool_requests, ["A", "B"])
-                recovered = await client.get_tool("shared")
-                self.assertEqual(
-                    recovered.input_schema["required"],
-                    [f"query_{latest}"],
-                )
+                self._assert_tool(await client.get_tool("shared"), latest)
                 self.assertEqual(self.tool_requests, ["A", "B", latest])
