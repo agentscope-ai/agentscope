@@ -5,7 +5,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call as expected_call, patch
 
 from websockets.asyncio.server import ServerConnection, serve
 
@@ -127,6 +127,33 @@ class DashScopeASRModelTest(IsolatedAsyncioTestCase):
             "qwen-audio-3.0-asr-flash",
             "qwen-audio-3.1-asr-flash",
         )
+        common_request = {
+            "api_key": "test-key",
+            "base_address": "https://dashscope.aliyuncs.com/api/v1",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "data:audio/wav;base64,YXVkaW8=",
+                            },
+                        },
+                    ],
+                },
+            ],
+            "stream": False,
+            "format": "wav",
+        }
+        model_options: dict[str, dict[str, str | bool]] = {
+            models[0]: {"model": models[0]},
+            models[1]: {
+                "model": models[1],
+                "keep_dialect": True,
+                "speaker_diarization_enabled": True,
+            },
+        }
         for default_model, override in (models, models[::-1]):
             with self.subTest(default=default_model, override=override):
                 model = DashScopeASRModel(
@@ -144,7 +171,7 @@ class DashScopeASRModelTest(IsolatedAsyncioTestCase):
                 with patch(
                     "dashscope.MultiModalConversation.call",
                     return_value=response,
-                ) as call:
+                ) as mock_call:
                     result = await model.transcribe(
                         b"audio",
                         model=override,
@@ -153,30 +180,35 @@ class DashScopeASRModelTest(IsolatedAsyncioTestCase):
                     await model.transcribe(b"audio")
 
                 self.assertEqual(result.content.text, "recognized")
-                self.assertEqual(model.model, default_model)
-                self.assertTrue(model.parameters.keep_dialect)
-                self.assertTrue(model.parameters.speaker_diarization_enabled)
-                self.assertEqual(call.call_count, 2)
-                for request, expected_model in zip(
-                    call.call_args_list,
-                    (override, default_model),
-                ):
-                    options = request.kwargs
-                    self.assertEqual(options["model"], expected_model)
-                    self.assertFalse(options["stream"])
-                    self.assertEqual(options["format"], "wav")
-                    for key in ("keep_dialect", "speaker_diarization_enabled"):
-                        if expected_model == models[0]:
-                            self.assertNotIn(key, options)
-                        else:
-                            self.assertIs(options[key], True)
                 self.assertEqual(
-                    call.call_args_list[0].kwargs["language_hints"],
-                    ["en"],
+                    {
+                        "model": model.model,
+                        "parameters": model.parameters.model_dump(),
+                    },
+                    {
+                        "model": default_model,
+                        "parameters": {
+                            "language_hints": None,
+                            "keep_dialect": True,
+                            "speaker_diarization_enabled": True,
+                            "vocabulary": None,
+                            "sample_rate": None,
+                        },
+                    },
                 )
-                self.assertNotIn(
-                    "language_hints",
-                    call.call_args_list[1].kwargs,
+                self.assertEqual(
+                    mock_call.call_args_list,
+                    [
+                        expected_call(
+                            **common_request,
+                            **model_options[override],
+                            language_hints=["en"],
+                        ),
+                        expected_call(
+                            **common_request,
+                            **model_options[default_model],
+                        ),
+                    ],
                 )
 
     async def test_surfaces_provider_error(self) -> None:
