@@ -1779,7 +1779,7 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
-    def test_sanitize_rejects_ambiguous_type_array_with_anyof(
+    def test_sanitize_rejects_conjunctive_anyof_constraints(
         self,
     ) -> None:
         """Existing anyOf constraints are not overwritten silently."""
@@ -1797,6 +1797,32 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                     ],
                 },
             )
+
+        constraints: list[dict[str, Any]] = [
+            {"anyOf": [{"type": "string", "enum": ["auto"]}]},
+            {"type": ["string", "integer", "null"]},
+        ]
+        for constraint in constraints:
+            with self.subTest(constraint=constraint):
+                schema = {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "oneOf": [
+                                {"type": "string", "enum": ["auto"]},
+                                {"type": "string", "enum": ["manual"]},
+                            ],
+                            **constraint,
+                        },
+                    },
+                }
+                original = copy.deepcopy(schema)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "both oneOf and anyOf",
+                ):
+                    _sanitize_schema_for_gemini(schema)
+                self.assertEqual(schema, original)
 
     def test_sanitize_inlines_annotated_null_anyof(self) -> None:
         """Annotated null schemas in anyOf are treated as null branches."""
@@ -1855,6 +1881,35 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                 },
             },
         )
+
+    def test_sanitize_converts_oneof_from_discriminated_union(self) -> None:
+        """A discriminated union's `oneOf` becomes `anyOf` for Gemini."""
+
+        class Cat(BaseModel):
+            """Cat variant of the discriminated union."""
+
+            kind: Literal["cat"]
+            meow: str
+
+        class Dog(BaseModel):
+            """Dog variant of the discriminated union."""
+
+            kind: Literal["dog"]
+            bark: str
+
+        class Pet(BaseModel):
+            """Tool parameters containing a discriminated union."""
+
+            pet: Annotated[Cat | Dog, Field(discriminator="kind")]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Pet.model_json_schema()),
+        )
+        pet = result["properties"]["pet"]
+        self.assertNotIn("oneOf", pet)
+        self.assertNotIn("discriminator", pet)
+        self.assertIn("anyOf", pet)
+        FunctionDeclaration(name="pet", parameters=result)
 
     def test_sanitize_converts_const_to_enum(self) -> None:
         """`const` is converted into a single-value `enum` for Gemini."""
