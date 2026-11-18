@@ -194,7 +194,10 @@ class OpenAIResponseModel(ChatModelBase):
         if self.parameters.temperature is not None:
             api_kwargs["temperature"] = self.parameters.temperature
 
-        if self.parameters.reasoning_effort is not None:
+        if (
+            self.parameters.thinking_enable
+            and self.parameters.reasoning_effort
+        ):
             api_kwargs["reasoning"] = {
                 "effort": self.parameters.reasoning_effort,
             }
