@@ -193,8 +193,22 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     }
                     await bus.registry_set(key, "old", json.dumps(record))
                     cancelled = asyncio.Event()
+                    timeouts: list[asyncio.Timeout] = []
+                    configured_timeout = (
+                        MessageBusKeys.CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS
+                    )
+
+                    def collection_timeout(delay: float) -> asyncio.Timeout:
+                        self.assertEqual(delay, configured_timeout)
+                        timeout = asyncio.timeout(None)
+                        timeouts.append(timeout)
+                        return timeout
 
                     async def hung(*_args: object) -> dict:
+                        # Expire after Redis setup, without a tiny clock race.
+                        timeouts[-1].reschedule(
+                            asyncio.get_running_loop().time(),
+                        )
                         try:
                             await asyncio.Event().wait()
                         finally:
@@ -205,18 +219,20 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                         queue,
                         "_receipt_input_result",
                         side_effect=hung,
-                    ), patch.object(
-                        MessageBusKeys,
-                        "CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS",
-                        0.02,
-                    ):
+                    ), patch(
+                        "agentscope.app._manager._chat_input_queue.asyncio",
+                        wraps=asyncio,
+                    ) as runtime:
+                        runtime.timeout.side_effect = collection_timeout
                         self.assertEqual(
                             await asyncio.wait_for(
                                 queue._recover_pending_chat_inputs_locked(),
-                                1,
+                                10,
                             ),
                             2,
                         )
+                    self.assertEqual(len(timeouts), 2)
+                    self.assertEqual(sum(t.expired() for t in timeouts), 1)
                     self.assertTrue(cancelled.is_set())
                     self.assertFalse(
                         await bus.is_locked(
