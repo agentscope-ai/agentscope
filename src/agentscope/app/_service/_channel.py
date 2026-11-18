@@ -6,6 +6,7 @@ every node's :class:`ChannelLifecycleDispatcher` reconciles its running
 instances against storage. Holds no channel instances.
 """
 import time
+from contextlib import AsyncExitStack
 from datetime import datetime
 
 from pydantic import ValidationError
@@ -25,6 +26,13 @@ from ..channel._registry import ChannelTypeRegistry
 
 class ChannelService:
     """CRUD operations on channel records."""
+
+    # ``update`` reads the whole record and writes the whole record back;
+    # it does both under a per-channel lock so a concurrent update cannot
+    # put back the fields this one changed. The timeout only bounds a
+    # stuck holder.
+    _UPDATE_LOCK_TIMEOUT_SECS = 5.0
+    _UPDATE_LOCK_TTL_SECS = 30
 
     def __init__(
         self,
@@ -108,30 +116,51 @@ class ChannelService:
         Args:
             channel_id (`str`): The channel to update.
             updates (`dict`): Field changes to apply.
+
+        Raises:
+            `ChannelError`: 404 if the channel does not exist; 409 if
+                another update holds the channel for too long; 422 if
+                the result is not a valid channel record.
         """
-        record = await self._require(channel_id)
         updates.pop("credentials", None)
         updates.pop("channel_type", None)
-        # model_copy(update=...) skips validation; reject invalid updates
-        # before they reach storage.
-        try:
-            updated = ChannelRecord.model_validate(
-                {
-                    **record.model_dump(),
-                    **updates,
-                    "updated_at": datetime.now(),
-                },
+        async with AsyncExitStack() as stack:
+            try:
+                await stack.enter_async_context(
+                    self._bus.acquire_lock_bounded(
+                        MessageBusKeys.channel_lock(channel_id),
+                        ttl_secs=self._UPDATE_LOCK_TTL_SECS,
+                        timeout_secs=self._UPDATE_LOCK_TIMEOUT_SECS,
+                    ),
+                )
+            except TimeoutError as exc:
+                raise ChannelError(
+                    f"Channel '{channel_id}' is being updated by another "
+                    "request; retry.",
+                    409,
+                ) from exc
+
+            record = await self._require(channel_id)
+            # model_copy(update=...) skips validation; reject invalid
+            # updates before they reach storage.
+            try:
+                updated = ChannelRecord.model_validate(
+                    {
+                        **record.model_dump(),
+                        **updates,
+                        "updated_at": datetime.now(),
+                    },
+                )
+            except ValidationError as exc:
+                raise ChannelError(
+                    f"Invalid channel update: {exc.errors()}",
+                    422,
+                ) from exc
+            bot_id = self._types.extract_platform_bot_id(
+                updated.channel_type,
+                updated.credentials,
             )
-        except ValidationError as exc:
-            raise ChannelError(
-                f"Invalid channel update: {exc.errors()}",
-                422,
-            ) from exc
-        bot_id = self._types.extract_platform_bot_id(
-            updated.channel_type,
-            updated.credentials,
-        )
-        await self._storage.upsert_channel(updated, bot_id)
+            await self._storage.upsert_channel(updated, bot_id)
         await self._notify(channel_id)
         return updated
 

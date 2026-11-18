@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Schedule router — CRUD endpoints for scheduled agent tasks."""
+from contextlib import AsyncExitStack
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,6 +9,7 @@ from ..access import ResourceKind
 from .._manager import SchedulerManager
 from ..deps import (
     get_current_user_id,
+    get_message_bus,
     get_resource_access_service,
     get_scheduler_manager,
     get_session_service,
@@ -21,12 +23,22 @@ from ._schema import (
     UpdateScheduleRequest,
 )
 from .._service import ResourceAccessService, SessionService
+from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import (
     StorageBase,
     ScheduleData,
     ScheduleRecord,
     ScheduleSource,
 )
+
+# ``PATCH /schedule/{id}`` reads the whole record, applies the request's
+# fields and writes the whole record back. The read and the write run
+# under a per-schedule lock, so a concurrent update cannot put back the
+# fields this one changed. The body is a few storage round trips, so a
+# waiter normally gets the lock almost at once; the timeout only bounds
+# a stuck holder.
+_SCHEDULE_UPDATE_LOCK_TIMEOUT_SECS = 5.0
+_SCHEDULE_UPDATE_LOCK_TTL_SECS = 30
 
 schedule_router = APIRouter(
     prefix="/schedule",
@@ -150,6 +162,7 @@ async def update_schedule(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
+    message_bus: MessageBus = Depends(get_message_bus),
 ) -> ScheduleRecord:
     """Partially update a schedule.
 
@@ -164,38 +177,59 @@ async def update_schedule(
         user_id (`str`): Authenticated user ID.
         storage (`StorageBase`): Storage instance.
         scheduler (`SchedulerManager`): Scheduler manager.
+        message_bus (`MessageBus`): Provides the per-schedule lock.
 
     Returns:
         `ScheduleRecord`:
             The updated schedule record.
 
     Raises:
-        `HTTPException`: 404 if the schedule does not exist; 422 if the
+        `HTTPException`: 404 if the schedule does not exist; 409 if
+            another update holds the schedule for too long; 422 if the
             update leaves an invalid cron expression, timezone or
             activation window.
     """
-    existing = await storage.get_schedule(user_id, schedule_id)
-    if existing is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Schedule '{schedule_id}' not found.",
+    async with AsyncExitStack() as stack:
+        try:
+            await stack.enter_async_context(
+                message_bus.acquire_lock_bounded(
+                    MessageBusKeys.schedule_lock(schedule_id),
+                    ttl_secs=_SCHEDULE_UPDATE_LOCK_TTL_SECS,
+                    timeout_secs=_SCHEDULE_UPDATE_LOCK_TIMEOUT_SECS,
+                ),
+            )
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Schedule '{schedule_id}' is being updated by "
+                    "another request; retry."
+                ),
+            ) from exc
+
+        existing = await storage.get_schedule(user_id, schedule_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Schedule '{schedule_id}' not found.",
+            )
+
+        updates = body.model_dump(exclude_none=True)
+        updated_data = existing.data.model_copy(update=updates)
+        updated_record = existing.model_copy(
+            update={"data": updated_data, "updated_at": datetime.now()},
         )
 
-    updates = body.model_dump(exclude_none=True)
-    updated_data = existing.data.model_copy(update=updates)
-    updated_record = existing.model_copy(
-        update={"data": updated_data, "updated_at": datetime.now()},
-    )
+        try:
+            scheduler.validate_schedule(updated_record)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
 
-    try:
-        scheduler.validate_schedule(updated_record)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(exc),
-        ) from exc
+        await storage.upsert_schedule(user_id, updated_record)
 
-    await storage.upsert_schedule(user_id, updated_record)
     await scheduler.notify_changed(schedule_id)
 
     return updated_record

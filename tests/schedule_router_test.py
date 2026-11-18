@@ -20,6 +20,7 @@ from agentscope.app._router._schema._schedule import (
     CreateScheduleRequest,
     UpdateScheduleRequest,
 )
+from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.storage import (
     ChatModelConfig,
     ScheduleData,
@@ -797,6 +798,7 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
                 user_id="user-1",
                 storage=storage,
                 scheduler=scheduler,
+                message_bus=InMemoryMessageBus(),
             )
 
         self.assertEqual(ctx.exception.status_code, 422)
@@ -816,6 +818,7 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
                 user_id="user-1",
                 storage=storage,
                 scheduler=scheduler,
+                message_bus=InMemoryMessageBus(),
             )
 
         self.assertEqual(ctx.exception.status_code, 422)
