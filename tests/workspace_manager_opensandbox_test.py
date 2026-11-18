@@ -5,11 +5,12 @@
 import asyncio
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from agentscope.app.workspace_manager import (
     OpenSandboxWorkspaceManager,
 )
+from agentscope.workspace import OpenSandboxWorkspace
 
 
 class _FakeSandbox:
@@ -74,6 +75,39 @@ class _FakeWorkspace:
             await self._sandbox.close()
             self._sandbox = None
         self.closed = True
+
+
+class TestOpenSandboxGatewayFailure(IsolatedAsyncioTestCase):
+    """Exercise the real workspace's create and reattach paths."""
+
+    async def test_gateway_timeout_preserves_restored_sandbox(self) -> None:
+        """Pause a restored sandbox and kill a newly created one."""
+        for existing in (True, False):
+            with self.subTest(existing=existing):
+                manager = OpenSandboxWorkspaceManager()
+                sandbox = _FakeSandbox()
+                with (
+                    patch.multiple(
+                        OpenSandboxWorkspace,
+                        _find_existing_sandbox=AsyncMock(
+                            return_value=sandbox if existing else None,
+                        ),
+                        _attach_existing_sandbox=AsyncMock(
+                            return_value=sandbox,
+                        ),
+                        _create_sandbox=AsyncMock(return_value=sandbox),
+                        _restore_mcp_specs=AsyncMock(return_value={}),
+                        _ensure_workspace_layout=AsyncMock(),
+                        _setup_mcp_gateway=AsyncMock(side_effect=TimeoutError),
+                    ),
+                    self.assertRaises(TimeoutError),
+                ):
+                    await manager.get_workspace("u", "a", "s", "ws")
+                self.assertEqual(manager._cache, {})
+                self.assertEqual(
+                    (sandbox.killed, sandbox.paused, sandbox.local_closed),
+                    (not existing, existing, True),
+                )
 
 
 class TestOpenSandboxWorkspaceManagerLifecycle(IsolatedAsyncioTestCase):

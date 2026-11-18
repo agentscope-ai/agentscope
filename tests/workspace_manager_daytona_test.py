@@ -12,6 +12,7 @@ from agentscope.app.workspace_manager import (
     DaytonaWorkspaceManager,
     IsolationPolicy,
 )
+from agentscope.workspace import DaytonaWorkspace
 
 
 class _FakeSandbox:
@@ -288,6 +289,43 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
         self.assertTrue(workspace.daytona.closed)
         self.assertTrue(workspace.closed)
         self.assertEqual(manager._cache, {})
+
+    async def test_gateway_timeout_preserves_restored_sandbox(self) -> None:
+        """Only delete a sandbox created during the failed initialization."""
+        for existing in (True, False):
+            with self.subTest(existing=existing):
+                manager = DaytonaWorkspaceManager()
+                sandbox = _FakeSandbox()
+                client = AsyncMock()
+                client.create.return_value = sandbox
+                workspace = DaytonaWorkspace(workspace_id="ws")
+                workspace._daytona = client
+                with (
+                    patch(
+                        "agentscope.app.workspace_manager."
+                        "_daytona_workspace_manager.DaytonaWorkspace",
+                        return_value=workspace,
+                    ),
+                    patch.multiple(
+                        workspace,
+                        _find_existing_sandbox=AsyncMock(
+                            return_value=sandbox if existing else None,
+                        ),
+                        _create_params=lambda: {},
+                        _ensure_existing_sandbox_ready=AsyncMock(),
+                        _derive_sdk_paths=AsyncMock(),
+                        _restore_mcp_specs=AsyncMock(return_value={}),
+                        _ensure_workspace_layout=AsyncMock(),
+                        _setup_mcp_gateway=AsyncMock(side_effect=TimeoutError),
+                    ),
+                    self.assertRaises(TimeoutError),
+                ):
+                    await manager.get_workspace("u", "a", "s", "ws")
+                self.assertEqual(manager._cache, {})
+                self.assertEqual(
+                    (client.delete.await_count, sandbox.stopped),
+                    (0, True) if existing else (1, False),
+                )
 
     async def test_failed_delete_falls_back_to_stop(self) -> None:
         """If the delete fails, the ordinary close path still runs."""
