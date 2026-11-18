@@ -13,7 +13,7 @@ from ._dashscope import (
     DashScopeVoiceCloningClient,
 )
 from ._gemini import GeminiTTSModel
-from ._minimax import MiniMaxTTSModel
+from ._minimax import MiniMaxTTSModel, MiniMaxVoiceCloningClient
 from ._openai import OpenAITTSModel, OpenAIVoiceCloningClient
 
 __all__ = [
@@ -26,6 +26,7 @@ __all__ = [
     "DashScopeRealtimeTTSModel",
     "GeminiTTSModel",
     "MiniMaxTTSModel",
+    "MiniMaxVoiceCloningClient",
     "OpenAITTSModel",
     "OpenAIVoiceCloningClient",
     "DashScopeVoiceCloningClient",

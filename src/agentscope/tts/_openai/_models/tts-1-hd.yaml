@@ -1,6 +1,8 @@
 name: tts-1-hd
 label: TTS-1 HD
 status: active
+# Release date source: https://openai.com/index/new-models-and-developer-products-announced-at-devday/
+release_date: 2023-11-06
 
 input_types:
   - text/plain

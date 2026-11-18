@@ -101,6 +101,10 @@ def _has_dropped_keys(original: Any, repaired: Any) -> bool:
             if key in original
         )
     if isinstance(original, list) and isinstance(repaired, list):
+        # ``zip`` below stops at the shorter list, so a truncated repair
+        # would otherwise hide the trailing elements it dropped.
+        if len(repaired) < len(original):
+            return True
         return any(
             _has_dropped_keys(item, fixed)
             for item, fixed in zip(original, repaired)

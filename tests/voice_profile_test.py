@@ -183,6 +183,7 @@ class TestVoiceCloningClientDispatch(IsolatedAsyncioTestCase):
         for engine, provider in (
             ("openai_tts", "openai_credential"),
             ("cosyvoice", "dashscope_credential"),
+            ("minimax_tts", "minimax_credential"),
         ):
             for owner, actual_type, expected_status in (
                 ("user-b", provider, 403),
@@ -1649,6 +1650,7 @@ class TestEngineToCredentialMapping(TestCase):
             "dashscope_tts": "dashscope_credential",
             "openai_tts": "openai_credential",
             "gemini_tts": "gemini_credential",
+            "minimax_tts": "minimax_credential",
         }
         self.assertEqual(ENGINE_TO_CREDENTIAL_TYPE, expected)
 
