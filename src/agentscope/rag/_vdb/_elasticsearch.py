@@ -11,6 +11,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _reject_none_metadata_values,
 )
 
 if TYPE_CHECKING:
@@ -397,7 +398,12 @@ class ElasticsearchStore(VectorStoreBase):
     def _metadata_filters(
         metadata_filter: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
-        """Translate exact metadata matches into Elasticsearch filters."""
+        """Translate exact metadata matches into Elasticsearch filters.
+
+        ``None`` values are rejected: Elasticsearch does not index
+        ``null``, so it cannot tell an explicit null from a missing key.
+        """
+        _reject_none_metadata_values("ElasticsearchStore", metadata_filter)
         return [
             {"term": {f"metadata.{key}": value}}
             for key, value in (metadata_filter or {}).items()

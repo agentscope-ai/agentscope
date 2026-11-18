@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for chat and TTS model card metadata and serialization."""
+"""Tests for chat, TTS, and realtime model cards."""
 import tempfile
 from datetime import date
 from pathlib import Path
@@ -18,6 +18,7 @@ from agentscope.model import (
     OpenAIResponseModel,
     XAIChatModel,
 )
+from agentscope.realtime import RealtimeModelCard
 from agentscope.tts import TTSModelCard
 
 
@@ -239,6 +240,52 @@ class ModelCardTest(TestCase):
                     ],
                     [("custom-model", "openai_response", label)],
                 )
+
+
+class RealtimeModelCardTest(TestCase):
+    """Verify realtime parameter filtering."""
+
+    def test_null_override_removes_parameter_without_validation_error(
+        self,
+    ) -> None:
+        """Load cards with null parameter overrides."""
+
+        class Parameters(BaseModel):
+            """Parameters for card filtering."""
+
+            hidden: str
+            visible: int = 1
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "realtime-card.yaml")
+            path.write_text(
+                "name: test-model\n"
+                "label: Test Model\n"
+                "parameter_overrides:\n"
+                "  hidden: null\n",
+                encoding="utf-8",
+            )
+
+            card = RealtimeModelCard.from_yaml(path, Parameters)
+
+            self.assertEqual(
+                card.parameter_schema,
+                {
+                    "type": "object",
+                    "properties": {
+                        "visible": {
+                            "type": "integer",
+                            "title": "Visible",
+                            "default": 1,
+                        },
+                    },
+                },
+            )
+            self.assertEqual(card.parameter_overrides, {})
+            self.assertEqual(
+                RealtimeModelCard.list_from_directory(tmp, Parameters),
+                [card],
+            )
 
 
 class TTSModelCardTest(TestCase):

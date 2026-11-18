@@ -423,6 +423,11 @@ def _flatten_json_schema(schema: dict) -> dict:
 
             visited = visited | {def_name}
             resolved = _resolve_ref(defs[def_name], visited)
+            if resolved is True:
+                # True adds no constraints; preserve the reference's siblings.
+                resolved = {}
+            elif not isinstance(resolved, dict):
+                return resolved
 
         for key, value in obj.items():
             if key in ("$ref", "$defs", "definitions"):

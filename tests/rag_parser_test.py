@@ -10,6 +10,7 @@ import io
 import json
 import os
 import zipfile
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -238,6 +239,38 @@ def _make_docx_simple(paragraphs: list[str]) -> bytes:
         doc.add_paragraph(text)
     buffer = io.BytesIO()
     doc.save(buffer)
+    return buffer.getvalue()
+
+
+def _append_tracked_move(paragraph: Any) -> None:
+    """Add a complete move pair with text between its two locations."""
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    fragment = parse_xml(
+        f'<w:p {nsdecls("w")}>'
+        '<w:moveToRangeStart w:id="0" w:name="move1" '
+        'w:author="Example" w:date="2026-11-16T00:00:00Z"/>'
+        '<w:moveTo w:id="1" w:author="Example">'
+        '<w:r><w:t xml:space="preserve">Moved sentence. </w:t></w:r>'
+        '</w:moveTo><w:moveToRangeEnd w:id="0"/>'
+        "<w:r><w:t>Other sentence.</w:t></w:r>"
+        '<w:moveFromRangeStart w:id="2" w:name="move1" '
+        'w:author="Example" w:date="2026-11-16T00:00:00Z"/>'
+        '<w:moveFrom w:id="3" w:author="Example">'
+        '<w:r><w:t xml:space="preserve">Moved sentence. </w:t>'
+        "<w:tab/><w:br/></w:r>"
+        '</w:moveFrom><w:moveFromRangeEnd w:id="2"/>'
+        "</w:p>",
+    )
+    for element in list(fragment):
+        paragraph.append(element)
+
+
+def _document_bytes(document: Any) -> bytes:
+    """Serialize an in-memory DOCX fixture."""
+    buffer = io.BytesIO()
+    document.save(buffer)
     return buffer.getvalue()
 
 
@@ -2070,6 +2103,36 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_json_preserves_cell_whitespace(self) -> None:
+        """Keep cell whitespace in JSON and trim it in Markdown."""
+        values = ["  SKU-123  ", "  ", "\tSKU-123\t", ""]
+        workbook = _make_xlsx_simple(
+            {"Data": [["Padded", "Spaces only", "Tabs", "Empty"], values]},
+        )
+
+        for coordinates in (False, True):
+            with self.subTest(coordinates=coordinates):
+                parser = ExcelParser(
+                    table_format="json",
+                    include_cell_coordinates=coordinates,
+                    include_sheet_names=False,
+                )
+                sections = await parser.parse(workbook, "whitespace.xlsx")
+                row = json.loads(sections[0].content.text.splitlines()[-1])
+                expected = (
+                    dict(zip(("A2", "B2", "C2", "D2"), values, strict=True))
+                    if coordinates
+                    else values
+                )
+                self.assertEqual(row, expected)
+
+        parser = ExcelParser(include_sheet_names=False)
+        sections = await parser.parse(workbook, "whitespace.xlsx")
+        self.assertEqual(
+            sections[0].content.text.splitlines()[-1],
+            "| SKU-123 |  | SKU-123 |  |",
+        )
+
     async def test_native_error_cells_preserved(self) -> None:
         """Stored Excel error values stay visible in both renderers.
 
@@ -3538,6 +3601,92 @@ class WordParserParagraphTest(IsolatedAsyncioTestCase):
             [section.model_dump() for section in sections],
             _expected_word_sections("ChoiceFallback\nAfter"),
         )
+
+
+class WordTrackedMovesTest(IsolatedAsyncioTestCase):
+    """Keep moved text once, at its destination, in the public parser."""
+
+    async def test_paragraph_keeps_only_move_destination(self) -> None:
+        """Omit source runs and their separators without losing neighbours."""
+        from docx import Document
+
+        document = Document()
+        document.add_paragraph("Before")
+        paragraph = document.add_paragraph()
+        _append_tracked_move(
+            paragraph._element,  # pylint: disable=protected-access
+        )
+        document.add_paragraph("After")
+
+        sections = await WordParser(include_image=False).parse(
+            _document_bytes(document),
+            "moves.docx",
+        )
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(
+            sections[0].content.text,
+            "Before\nMoved sentence. Other sentence.\nAfter",
+        )
+        self.assertEqual(sections[0].source, "moves.docx")
+
+    async def test_text_box_keeps_only_move_destination(self) -> None:
+        """Apply the same revision handling to anchored text-box content."""
+        from docx import Document
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls, qn
+
+        document = Document()
+        paragraph = document.add_paragraph("Outside")
+        drawing = parse_xml(
+            f'<w:r {nsdecls("w")} '
+            'xmlns:v="urn:schemas-microsoft-com:vml">'
+            "<w:pict><v:shape><v:textbox><w:txbxContent><w:p/>"
+            "</w:txbxContent></v:textbox></v:shape></w:pict></w:r>",
+        )
+        text_box_paragraph = drawing.find(".//" + qn("w:p"))
+        _append_tracked_move(text_box_paragraph)
+        paragraph._element.append(drawing)  # pylint: disable=protected-access
+
+        sections = await WordParser(include_image=False).parse(
+            _document_bytes(document),
+            "moves.docx",
+        )
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(
+            sections[0].content.text,
+            "Outside\nMoved sentence. Other sentence.",
+        )
+
+    async def test_table_keeps_only_move_destination(self) -> None:
+        """Markdown and JSON must both omit the obsolete cell text."""
+        from docx import Document
+
+        document = Document()
+        table = document.add_table(rows=2, cols=1)
+        table.cell(0, 0).text = "Header"
+        paragraph = table.cell(1, 0).paragraphs[0]
+        _append_tracked_move(
+            paragraph._element,  # pylint: disable=protected-access
+        )
+        expected = {
+            "markdown": "| Header |\n| --- |\n"
+            "| Moved sentence. Other sentence. |\n",
+            "json": "<system-info>A table loaded as a JSON array:"
+            '</system-info>\n[["Header"], '
+            '["Moved sentence. Other sentence."]]',
+        }
+        for table_format, text in expected.items():
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format=table_format,
+                ).parse(_document_bytes(document), "moves.docx")
+
+                self.assertEqual(len(sections), 1)
+                self.assertEqual(sections[0].content.text, text)
 
 
 class WordParserContentControlTest(IsolatedAsyncioTestCase):

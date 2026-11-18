@@ -514,6 +514,51 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                     {"document_id": "doc"},
                 )
 
+    async def test_none_metadata_filter_value_is_rejected(self) -> None:
+        """None would also match records that lack the key, so it raises."""
+        unreachable = AssertionError("the filter must fail before any query")
+        collection = SimpleNamespace(
+            list_search_indexes=AsyncMock(side_effect=unreachable),
+            aggregate=AsyncMock(side_effect=unreachable),
+            delete_many=AsyncMock(side_effect=unreachable),
+            find=Mock(side_effect=unreachable),
+        )
+        scope = {"reviewer": None}
+        calls = {
+            "search": lambda: self.store.search(
+                "shared",
+                [1.0, 0.0],
+                metadata_filter=scope,
+            ),
+            "list_documents": lambda: self.store.list_documents(
+                "shared",
+                metadata_filter=scope,
+            ),
+            "list_chunks": lambda: self.store.list_chunks(
+                "shared",
+                "doc",
+                metadata_filter=scope,
+            ),
+            "delete": lambda: self.store.delete(
+                "shared",
+                "doc",
+                metadata_filter=scope,
+            ),
+        }
+        with patch.object(
+            self.store,
+            "_col",
+            return_value=collection,
+        ):
+            for name, call_store in calls.items():
+                with self.subTest(method=name):
+                    with self.assertRaisesRegex(ValueError, "'reviewer'"):
+                        await call_store()
+        collection.list_search_indexes.assert_not_awaited()
+        collection.aggregate.assert_not_awaited()
+        collection.delete_many.assert_not_awaited()
+        collection.find.assert_not_called()
+
     async def test_list_documents_uses_literal_metadata_values(self) -> None:
         """Operator-shaped values must remain equality operands."""
         collection = SimpleNamespace(
@@ -525,7 +570,6 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                 metadata_filter={
                     "scope": {"$ne": "alpha"},
                     "label": {"$regex": "^private"},
-                    "archived": None,
                 },
             )
         pipeline = collection.aggregate.call_args.args[0]
@@ -535,7 +579,6 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                 "$match": {
                     "chunk.metadata.scope": {"$eq": {"$ne": "alpha"}},
                     "chunk.metadata.label": {"$eq": {"$regex": "^private"}},
-                    "chunk.metadata.archived": {"$eq": None},
                 },
             },
         )
@@ -552,7 +595,6 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                 metadata_filter={
                     "scope": {"$ne": "alpha"},
                     "label": {"$regex": "^private"},
-                    "archived": None,
                 },
             )
         self.assertEqual(
@@ -561,7 +603,6 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                 "document_id": "doc",
                 "chunk.metadata.scope": {"$eq": {"$ne": "alpha"}},
                 "chunk.metadata.label": {"$eq": {"$regex": "^private"}},
-                "chunk.metadata.archived": {"$eq": None},
             },
         )
 

@@ -274,10 +274,23 @@ class GatewayMCPClient(MCPClient):
     async def close(self, ignore_errors: bool = True) -> None:
         """Deregister this MCP via ``DELETE /mcps/{name}``.
 
+        A scoped missing-registration response counts as success, allowing
+        retries after a successful DELETE whose response was lost. Strict
+        failures leave the connection flag set so the request can be retried.
+
         Args:
             ignore_errors (`bool`, defaults to `True`):
-                Suppress "not connected" precondition and gateway
-                4xx/5xx. Mirrors :meth:`MCPClient.close`.
+                Suppress "not connected" precondition, gateway errors,
+                and request exceptions. If `False`, propagate failures
+                without clearing the connection flag.
+
+        Raises:
+            `RuntimeError`:
+                If `ignore_errors` is `False` and the client is not
+                connected or the gateway rejects the removal.
+            `Exception`:
+                If `ignore_errors` is `False`, underlying gateway request
+                exceptions propagate unchanged.
         """
         if not self._is_connected:
             if ignore_errors:
@@ -295,7 +308,24 @@ class GatewayMCPClient(MCPClient):
                     "session_id": self._session_id,
                 },
             )
-            if status >= 400 and not ignore_errors:
+            missing = False
+            if status == 404:
+                try:
+                    data = json.loads(resp_body)
+                    # Match _build_app._lookup in _mcp_gateway_app.py;
+                    # unrelated route/proxy 404s must remain failures.
+                    expected = (
+                        f"{self.name!r} not found for "
+                        f"agent={self._agent_id!r} "
+                        f"session={self._session_id!r}"
+                    )
+                    missing = (
+                        isinstance(data, dict)
+                        and data.get("detail") == expected
+                    )
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+            if status >= 400 and not missing and not ignore_errors:
                 raise RuntimeError(
                     f"gateway failed to remove MCP {self.name!r}: "
                     f"{_safe_detail(status, resp_body)}",
