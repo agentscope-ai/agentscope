@@ -89,8 +89,8 @@ def _make_pptx_rich() -> bytes:
     ).table
     table.cell(0, 0).text = "A"
     table.cell(0, 1).text = "B"
-    table.cell(1, 0).text = "1"
-    table.cell(1, 1).text = "2"
+    table.cell(1, 0).text = " 1 "
+    table.cell(1, 1).text = " 2 "
     trailing = slide2.shapes.add_textbox(
         Inches(1),
         Inches(4),
@@ -1661,7 +1661,7 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "text": (
                             "<system-info>A table loaded as a JSON "
                             "array:</system-info>\n"
-                            '[["A", "B"], ["1", "2"]]'
+                            '[["A", "B"], [" 1 ", " 2 "]]'
                         ),
                         "id": AnyString(),
                         "created_at": AnyString(),
