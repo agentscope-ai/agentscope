@@ -21,6 +21,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _reject_none_metadata_values,
 )
 from .._document import Chunk
 
@@ -354,6 +355,7 @@ class MongoDBStore(VectorStoreBase):
         """
         if top_k > 10_000:
             raise ValueError("top_k cannot exceed MongoDB's 10000 ANN limit")
+        filter_expr = self._build_metadata_filter(metadata_filter)
         await self._ensure_index_ready(collection)
         col = self._col(collection)
 
@@ -364,7 +366,6 @@ class MongoDBStore(VectorStoreBase):
             "numCandidates": min(10_000, max(100, top_k * 20)),
             "limit": top_k,
         }
-        filter_expr = self._build_metadata_filter(metadata_filter)
         if filter_expr is not None:
             vector_search["filter"] = filter_expr
 
@@ -411,6 +412,7 @@ class MongoDBStore(VectorStoreBase):
         """
         if not metadata_filter:
             return None
+        _reject_none_metadata_values("MongoDBStore", metadata_filter)
 
         return {
             "$and": [
@@ -446,6 +448,7 @@ class MongoDBStore(VectorStoreBase):
             `list[DocumentSummary]`:
                 One summary per distinct ``document_id``.
         """
+        _reject_none_metadata_values("MongoDBStore", metadata_filter)
         pipeline: list[dict[str, Any]] = []
         if metadata_filter:
             pipeline.append(
@@ -515,6 +518,7 @@ class MongoDBStore(VectorStoreBase):
             `list[Chunk]`:
                 At most ``limit`` chunks, ``chunk_index`` ascending.
         """
+        _reject_none_metadata_values("MongoDBStore", metadata_filter)
         if limit <= 0:
             return []
         query: dict[str, Any] = {"document_id": document_id}
