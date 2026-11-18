@@ -1655,7 +1655,7 @@ class TestGeminiFormatTools(unittest.TestCase):
 
 
 class TestGeminiSchemaUtils(unittest.TestCase):
-    """Tests for _sanitize_schema_for_gemini and _flatten_json_schema."""
+    """Tests for _sanitize_schema_for_gemini."""
 
     def test_sanitize_removes_schema_keyword_recursively(self) -> None:
         """The unsupported `$schema` keyword is removed recursively."""
@@ -1898,6 +1898,10 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         )
         # The SDK forbids unknown schema keys, so this raises if any is left.
         FunctionDeclaration(name="search", parameters=parameters)
+
+
+class TestJsonSchemaFlattening(unittest.TestCase):
+    """Tests for _flatten_json_schema."""
 
     def test_flatten_resolves_ref_and_removes_defs(self) -> None:
         """$ref inlined with extra keys merged; $defs removed."""
