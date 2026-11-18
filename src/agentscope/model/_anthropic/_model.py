@@ -12,6 +12,7 @@ from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ..._utils._common import _generate_id
 from ...credential import AnthropicCredential
+from ...exception import ContentBlockedError, ContentBlockedPhase
 from ...formatter import FormatterBase, AnthropicChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
@@ -43,6 +44,8 @@ def _total_input_tokens(usage: Any) -> int:
 
 class AnthropicChatModel(ChatModelBase):
     """The Anthropic chat model."""
+
+    _content_block_provider = "anthropic"
 
     type: Literal["anthropic_chat"] = "anthropic_chat"
     """The type of the chat model."""
@@ -128,6 +131,7 @@ class AnthropicChatModel(ChatModelBase):
         context_size: int = 200000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_refusal: bool = False,
     ) -> None:
         """Initialize the Anthropic chat model.
 
@@ -156,6 +160,9 @@ class AnthropicChatModel(ChatModelBase):
                 Extra keyword arguments forwarded to
                 ``anthropic.AsyncAnthropic`` (e.g. ``timeout``,
                 ``default_headers``, ``http_client``, ``auth_token``).
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether an explicit provider refusal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
         """
         super().__init__(
             credential=credential,
@@ -165,6 +172,7 @@ class AnthropicChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_refusal=raise_on_refusal,
         )
         self.formatter = formatter or AnthropicChatFormatter()
         self.client_kwargs = client_kwargs or {}
@@ -368,6 +376,21 @@ class AnthropicChatModel(ChatModelBase):
                 A single ``ChatResponse`` with ``is_last=True`` containing
                 the extracted content blocks and usage.
         """
+        if (
+            self.raise_on_refusal
+            and getattr(response, "stop_reason", None) == "refusal"
+        ):
+            stop_details = getattr(response, "stop_details", None)
+            explanation = getattr(stop_details, "explanation", None)
+            raise ContentBlockedError(
+                explanation
+                or f"{self._content_block_provider} refused the response.",
+                phase=ContentBlockedPhase.OUTPUT,
+                provider=self._content_block_provider,
+                original_code="refusal",
+                request_id=getattr(response, "id", None),
+            )
+
         content_blocks: List[ThinkingBlock | TextBlock | ToolCallBlock] = []
 
         if hasattr(response, "content") and response.content:
@@ -487,6 +510,7 @@ class AnthropicChatModel(ChatModelBase):
         tool_call_mapping: dict = OrderedDict()
         # The indexes of the tool calls that received argument text
         tool_call_with_input: set[int] = set()
+        has_output = False
 
         async with response as stream:
             async for event in stream:
@@ -611,6 +635,31 @@ class AnthropicChatModel(ChatModelBase):
                     )
 
                 elif event.type == "message_delta":
+                    if (
+                        self.raise_on_refusal
+                        and getattr(event.delta, "stop_reason", None)
+                        == "refusal"
+                    ):
+                        stop_details = getattr(
+                            event.delta,
+                            "stop_details",
+                            None,
+                        )
+                        explanation = getattr(
+                            stop_details,
+                            "explanation",
+                            None,
+                        )
+                        raise ContentBlockedError(
+                            explanation
+                            or f"{self._content_block_provider} refused "
+                            f"the response.",
+                            phase=ContentBlockedPhase.OUTPUT,
+                            provider=self._content_block_provider,
+                            original_code="refusal",
+                            request_id=response_id,
+                            partial_output=has_output,
+                        )
                     if event.usage and usage:
                         usage.output_tokens = event.usage.output_tokens or 0
                         # Update cumulative counts before adding cache tokens.
@@ -648,6 +697,7 @@ class AnthropicChatModel(ChatModelBase):
                         ).total_seconds()
 
                 if delta_res.content:
+                    has_output = True
                     delta_res.usage = usage
                     yield delta_res
 

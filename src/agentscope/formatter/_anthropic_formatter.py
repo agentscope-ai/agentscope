@@ -4,12 +4,11 @@ import base64
 import fnmatch
 from abc import ABC
 from typing import Any
-from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import FormatterBase, file_url_to_path
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..message import (
@@ -20,6 +19,7 @@ from ..message import (
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
+    ToolResultState,
     URLSource,
     Base64Source,
 )
@@ -244,13 +244,14 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                             {"type": "text", "text": "(empty tool output)"},
                         )
 
-                    content_blocks.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": tool_result_content,
-                        },
-                    )
+                    tool_result: dict[str, Any] = {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": tool_result_content,
+                    }
+                    if block.state == ToolResultState.ERROR:
+                        tool_result["is_error"] = True
+                    content_blocks.append(tool_result)
                     # Anthropic requires tool_result to be in a "user" message.
                     has_tool_result = True
 
@@ -356,7 +357,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
             url = str(source.url)
             if url.startswith("file://"):
                 with open(
-                    url2pathname(url.removeprefix("file://")),
+                    file_url_to_path(url),
                     "rb",
                 ) as f:
                     data = base64.b64encode(f.read()).decode("utf-8")

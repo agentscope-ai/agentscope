@@ -1,6 +1,8 @@
 name: gpt-4o-mini-tts
 label: GPT-4o Mini TTS
 status: active
+# Release date source: https://openai.com/index/introducing-our-next-generation-audio-models/
+release_date: 2025-03-20
 voice_cloning: true
 
 input_types:

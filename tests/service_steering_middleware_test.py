@@ -37,6 +37,7 @@ from agentscope.message import (
     ToolCallBlock,
     UserMsg,
 )
+from agentscope.middleware import SteeringAcknowledgementUncertainError
 
 _STEERING_HINT_SOURCE = "chat_input_steering"
 
@@ -154,9 +155,12 @@ class TestSteeringCancellation(IsolatedAsyncioTestCase):
         """Persist only after commit resolution, even on repeated Stop."""
         for backend in ("memory", "redis"):
             for boundary in (
+                "pre_write_failure",
                 "before_commit",
                 "before_commit_failure",
                 "commit_response",
+                "commit_response_timeout",
+                "commit_verification_failure",
                 "payload_cleanup",
                 "queue_notification",
                 "injection_notification",
@@ -195,6 +199,7 @@ class TestSteeringCancellation(IsolatedAsyncioTestCase):
         ack_cancelled = asyncio.Event()
         finished = asyncio.Event()
         persisted: list = []
+        hint_events: list[HintBlockEvent] = []
         restored: list = []
         model_calls: list = []
 
@@ -204,13 +209,13 @@ class TestSteeringCancellation(IsolatedAsyncioTestCase):
 
         async def run() -> None:
             try:
-                await _collect(
-                    SteeringMiddleware(bus).on_reasoning(
-                        agent,
-                        {},
-                        model_call,
-                    ),
-                )
+                async for event in SteeringMiddleware(bus).on_reasoning(
+                    agent,
+                    {},
+                    model_call,
+                ):
+                    if isinstance(event, HintBlockEvent):
+                        hint_events.append(event)
             finally:
                 persisted.extend(_message_structures(agent.state.context))
                 restored.extend(
@@ -223,8 +228,12 @@ class TestSteeringCancellation(IsolatedAsyncioTestCase):
             "before_commit",
             "before_commit_failure",
             "commit_response",
+            "commit_response_timeout",
+            "commit_verification_failure",
         ):
-            target, operation = bus, "queue_replace"
+            target, operation = bus, "queue_remove_if"
+        elif boundary == "pre_write_failure":
+            target, operation = bus, "registry_getall"
         elif boundary == "payload_cleanup":
             target, operation = _bus_ops, "discard_input"
         elif boundary == "queue_notification":
@@ -233,6 +242,20 @@ class TestSteeringCancellation(IsolatedAsyncioTestCase):
             target, operation = _steering_adapter, "publish_session_event"
 
         original = getattr(target, operation)
+        original_read = bus.queue_read
+        verification_failed = False
+
+        async def read_queue(*args: Any, **kwargs: Any) -> Any:
+            nonlocal verification_failed
+            if (
+                boundary == "commit_verification_failure"
+                and release.is_set()
+                and not verification_failed
+            ):
+                verification_failed = True
+                raise ConnectionError("verification unavailable")
+            return await original_read(*args, **kwargs)
+
         async with bus.acquire_lock(MessageBusKeys.session_lock("session")):
             await register_active_chat_reply(bus, "session", "reply")
             await steer_chat_input(
@@ -243,13 +266,16 @@ class TestSteeringCancellation(IsolatedAsyncioTestCase):
                 items[1]["id"],
                 "reply",
             )
-            with patch.object(target, operation) as mocked:
+            with (
+                patch.object(target, operation) as mocked,
+                patch.object(bus, "queue_read", side_effect=read_queue),
+            ):
 
                 async def blocked(*args: Any, **kwargs: Any) -> Any:
                     if entered.is_set():
                         return await original(*args, **kwargs)
                     result = None
-                    if boundary == "commit_response":
+                    if boundary.startswith("commit_"):
                         result = await original(*args, **kwargs)
                     entered.set()
                     try:
@@ -257,8 +283,16 @@ class TestSteeringCancellation(IsolatedAsyncioTestCase):
                     except asyncio.CancelledError:
                         ack_cancelled.set()
                         raise
-                    if boundary == "before_commit_failure":
-                        raise RuntimeError("commit rejected")
+                    if boundary in (
+                        "pre_write_failure",
+                        "before_commit_failure",
+                    ):
+                        raise RuntimeError("acknowledgement failed")
+                    if boundary in (
+                        "commit_response_timeout",
+                        "commit_verification_failure",
+                    ):
+                        raise TimeoutError("commit response lost")
                     if boundary == "commit_response":
                         return result
                     return await original(*args, **kwargs)
@@ -278,7 +312,12 @@ class TestSteeringCancellation(IsolatedAsyncioTestCase):
                         await asyncio.wait_for(task, timeout=2)
                     self.assertEqual(raised.exception.args, ("stop",))
 
-        rejected = boundary == "before_commit_failure"
+        rejected = boundary == "pre_write_failure"
+        pending = boundary in ("pre_write_failure", "before_commit_failure")
+        uncertain = boundary in (
+            "before_commit_failure",
+            "commit_verification_failure",
+        )
         expected_context = [initial]
         if not rejected:
             expected_context.append(
@@ -286,23 +325,32 @@ class TestSteeringCancellation(IsolatedAsyncioTestCase):
             )
         self.assertEqual(persisted, _message_structures(expected_context))
         self.assertEqual(_message_structures(agent.state.context), persisted)
+        self.assertEqual(
+            [_hint_event_structure(event) for event in hint_events],
+            []
+            if rejected
+            else [_expected_hint_event(items[1]["id"], messages[1])],
+        )
         self.assertEqual(model_calls, [])
-        self.assertEqual(restored, [items[1]["id"]] if rejected else [])
+        self.assertEqual(restored, [items[1]["id"]] if pending else [])
         self.assertEqual(
             await list_chat_inputs(bus, "session"),
-            items if rejected else [items[0], items[2]],
+            items if pending else [items[0], items[2]],
         )
-        remaining = items if rejected else [items[0], items[2]]
+        remaining = items if pending else [items[0], items[2]]
         self.assertEqual(
             await bus.registry_getall(
                 MessageBusKeys.chat_input_payloads("session"),
             ),
-            {item["id"]: json.dumps(item["input"]) for item in remaining},
+            {
+                item["id"]: json.dumps(item["input"])
+                for item in (items if uncertain else remaining)
+            },
         )
         self.assertEqual(
             await _custom_events(bus),
             []
-            if rejected
+            if rejected or uncertain
             else [
                 {
                     "metadata": {},
@@ -314,6 +362,283 @@ class TestSteeringCancellation(IsolatedAsyncioTestCase):
                     },
                 },
             ],
+        )
+
+
+class TestSteeringAcknowledgementFailures(IsolatedAsyncioTestCase):
+    """Retain uncertain inputs without claiming successful injection."""
+
+    async def test_failed_acknowledgement_outcomes(self) -> None:
+        """Verify failures before commit and while resolving the outcome."""
+        for backend in ("memory", "redis"):
+            for boundary in (
+                "pre_write_failure",
+                "before_commit",
+                "verification_before_commit",
+                "verification_after_commit",
+                "partial_commit",
+                "changed_reservation",
+                "missing_payload",
+                "delayed_commit",
+                "delayed_after_finish",
+                "reservation_rejected",
+            ):
+                for extend_reply in (False, True):
+                    with self.subTest(
+                        backend=backend,
+                        boundary=boundary,
+                        extend_reply=extend_reply,
+                    ):
+                        async with (
+                            _cancellation_bus(backend) as bus,
+                            bus.acquire_lock(
+                                MessageBusKeys.session_lock("session"),
+                            ),
+                        ):
+                            await self._check_failure(
+                                bus,
+                                boundary,
+                                extend_reply,
+                            )
+
+    async def _check_failure(
+        self,
+        bus: MessageBus,
+        boundary: str,
+        extend_reply: bool,
+    ) -> None:
+        """Compare queue, context and event projections after a failed ack."""
+        agent = _make_agent()
+        if extend_reply:
+            agent.state.context.append(
+                AssistantMsg(id="reply", name="agent", content="working"),
+            )
+        original_context = [
+            message.model_copy(deep=True) for message in agent.state.context
+        ]
+        messages = [
+            UserMsg("user", text)
+            for text in ("first", "guide one", "guide two", "last")
+        ]
+        items = [
+            await enqueue_chat_input(bus, "user", "session", "agent", msg)
+            for msg in messages
+        ]
+        await register_active_chat_reply(bus, "session", "reply")
+        for item in items[1:3]:
+            await steer_chat_input(
+                bus,
+                "user",
+                "session",
+                "agent",
+                item["id"],
+                "reply",
+            )
+        key = MessageBusKeys.chat_inputs("session")
+        expected_queue = [payload for _, payload in await bus.queue_read(key)]
+        reserved_queue = list(expected_queue)
+        original_replace = bus.queue_replace
+        original_remove = bus.queue_remove_if
+        original_read = bus.queue_read
+        original_registry_read = bus.registry_getall
+        replacement_started = False
+        failure = TimeoutError("acknowledgement response lost")
+        commit_allowed = asyncio.Event()
+        delayed_commit: asyncio.Task | None = None
+        stale_reads: list[list[dict]] = []
+
+        async def commit_later(
+            queue_key: str,
+            matches: list[dict[str, str]],
+        ) -> None:
+            await commit_allowed.wait()
+            self.assertEqual(
+                await original_remove(queue_key, matches),
+                boundary != "delayed_after_finish",
+            )
+
+        async def fail_remove(
+            queue_key: str,
+            matches: list[dict[str, str]],
+        ) -> bool:
+            nonlocal replacement_started, expected_queue, delayed_commit
+            replacement_started = True
+            remaining = [
+                payload
+                for payload in expected_queue
+                if payload["id"] not in {items[1]["id"], items[2]["id"]}
+            ]
+            if boundary in ("delayed_commit", "delayed_after_finish"):
+                expected_queue = remaining
+                delayed_commit = asyncio.create_task(
+                    commit_later(queue_key, matches),
+                )
+            elif boundary == "verification_after_commit":
+                expected_queue = remaining
+                await original_remove(queue_key, matches)
+            elif boundary == "partial_commit":
+                expected_queue = [
+                    payload
+                    for payload in expected_queue
+                    if payload["id"] != items[1]["id"]
+                ]
+                await original_remove(queue_key, matches[:1])
+            elif boundary in ("changed_reservation", "reservation_rejected"):
+                expected_queue[1]["target_reply_id"] = "another-reply"
+                await original_replace(queue_key, expected_queue)
+                if boundary == "reservation_rejected":
+                    return await original_remove(queue_key, matches)
+            elif boundary == "missing_payload":
+                await bus.registry_del(
+                    MessageBusKeys.chat_input_payloads("session"),
+                    items[1]["id"],
+                )
+            raise failure
+
+        async def read_queue(*args: Any, **kwargs: Any) -> Any:
+            if replacement_started and boundary.startswith("verification_"):
+                raise ConnectionError("verification unavailable")
+            entries = await original_read(*args, **kwargs)
+            if replacement_started and boundary.startswith("delayed_"):
+                stale_reads.append([payload for _, payload in entries])
+            return entries
+
+        async def read_registry(*args: Any, **kwargs: Any) -> Any:
+            if boundary == "pre_write_failure":
+                raise failure
+            return await original_registry_read(*args, **kwargs)
+
+        model_calls: list[str] = []
+
+        async def model_call(**_kwargs: object) -> AsyncGenerator:
+            model_calls.append("called")
+            yield AssistantMsg(id="reply", name="agent", content="done")
+
+        rejected = boundary == "pre_write_failure"
+        error_type = (
+            TimeoutError if rejected else SteeringAcknowledgementUncertainError
+        )
+        events: list[HintBlockEvent] = []
+        try:
+            with (
+                patch.object(bus, "queue_remove_if", side_effect=fail_remove),
+                patch.object(bus, "queue_read", side_effect=read_queue),
+                patch.object(
+                    bus,
+                    "registry_getall",
+                    side_effect=read_registry,
+                ),
+                self.assertRaises(error_type) as raised,
+            ):
+                async for event in SteeringMiddleware(bus).on_reasoning(
+                    agent,
+                    {},
+                    model_call,
+                ):
+                    events.append(event)
+        finally:
+            try:
+                if delayed_commit is not None:
+                    self.assertFalse(
+                        await bus.is_locked(
+                            MessageBusKeys.chat_input_mutation_lock("session"),
+                        ),
+                    )
+                    if boundary == "delayed_after_finish":
+                        self.assertEqual(
+                            await finish_active_chat_reply(
+                                bus,
+                                "session",
+                                "reply",
+                            ),
+                            [item["id"] for item in items[1:3]],
+                        )
+                        expected_queue = [
+                            payload for _, payload in await original_read(key)
+                        ]
+                    new_items = [
+                        await enqueue_chat_input(
+                            bus,
+                            "user",
+                            "session",
+                            "agent",
+                            UserMsg("user", text),
+                        )
+                        for text in ("new first", "new second")
+                    ]
+                    items.extend(new_items)
+                    new_ids = {item["id"] for item in new_items}
+                    expected_queue.extend(
+                        payload
+                        for _, payload in await original_read(key)
+                        if payload["id"] in new_ids
+                    )
+            finally:
+                # The server commits after readback, exit, and new appends.
+                commit_allowed.set()
+                if delayed_commit is not None:
+                    await asyncio.wait_for(delayed_commit, timeout=2)
+        if boundary.startswith("delayed_"):
+            self.assertEqual(stale_reads, [reserved_queue])
+        self.assertEqual(replacement_started, not rejected)
+        if rejected:
+            self.assertIs(raised.exception, failure)
+        elif boundary != "reservation_rejected":
+            self.assertIsNotNone(raised.exception.__cause__)
+        expected_hints = [
+            _expected_hint_message(item["id"], message).content[0]
+            for item, message in zip(items[1:3], messages[1:3])
+        ]
+        expected_context = original_context
+        if not rejected:
+            if not extend_reply:
+                expected_context.append(
+                    AssistantMsg(id="reply", name="agent", content=[]),
+                )
+            expected_context[-1].content.extend(expected_hints)
+        self.assertEqual(
+            _message_structures(agent.state.context),
+            _message_structures(expected_context),
+        )
+        self.assertEqual(
+            [_hint_event_structure(event) for event in events],
+            []
+            if rejected
+            else [
+                _expected_hint_event(item["id"], message)
+                for item, message in zip(items[1:3], messages[1:3])
+            ],
+        )
+        projected_reply = AssistantMsg(id="reply", name="agent", content=[])
+        for event in events:
+            projected_reply.append_event(event)
+        self.assertEqual(
+            _message_structures([projected_reply]),
+            _message_structures(
+                [
+                    AssistantMsg(
+                        id="reply",
+                        name="agent",
+                        content=[] if rejected else expected_hints,
+                    ),
+                ],
+            ),
+        )
+        self.assertEqual(model_calls, [])
+        self.assertEqual(await _custom_events(bus), [])
+        self.assertEqual(
+            [payload for _, payload in await bus.queue_read(key)],
+            expected_queue,
+        )
+        self.assertEqual(
+            await bus.registry_getall(
+                MessageBusKeys.chat_input_payloads("session"),
+            ),
+            {
+                item["id"]: json.dumps(item["input"])
+                for item in items
+                if boundary != "missing_payload" or item != items[1]
+            },
         )
 
 
@@ -579,6 +904,91 @@ class TestSteeringQueueState(IsolatedAsyncioTestCase):
 
 class TestSteeringMiddleware(IsolatedAsyncioTestCase):
     """Steering is consumed before or after a model call as needed."""
+
+    async def test_committed_queue_timeout_retains_hint_events(self) -> None:
+        """A lost commit response must not lose the persisted hint."""
+        for backend in ("memory", "redis"):
+            with self.subTest(backend=backend):
+                async with (
+                    _cancellation_bus(backend) as bus,
+                    bus.acquire_lock(MessageBusKeys.session_lock("session")),
+                ):
+                    agent = _make_agent()
+                    message = UserMsg("user", "guide")
+                    item = await enqueue_chat_input(
+                        bus,
+                        "user",
+                        "session",
+                        "agent",
+                        message,
+                    )
+                    await register_active_chat_reply(
+                        bus,
+                        "session",
+                        "reply",
+                    )
+                    await steer_chat_input(
+                        bus,
+                        "user",
+                        "session",
+                        "agent",
+                        item["id"],
+                        "reply",
+                    )
+                    original = bus.queue_remove_if
+
+                    async def commit_then_timeout(
+                        *args: Any,
+                        _replace: Any = original,
+                        **kwargs: Any,
+                    ) -> None:
+                        await _replace(*args, **kwargs)
+                        raise TimeoutError("commit response lost")
+
+                    async def model_call(**_kwargs: object) -> AsyncGenerator:
+                        yield AssistantMsg(
+                            id="reply",
+                            name="agent",
+                            content="done",
+                        )
+
+                    with patch.object(
+                        bus,
+                        "queue_remove_if",
+                        side_effect=commit_then_timeout,
+                    ):
+                        events = await _collect(
+                            SteeringMiddleware(bus).on_reasoning(
+                                agent,
+                                {},
+                                model_call,
+                            ),
+                        )
+                    hints = [
+                        event
+                        for event in events
+                        if isinstance(event, HintBlockEvent)
+                    ]
+                    self.assertEqual(
+                        [_hint_event_structure(event) for event in hints],
+                        [_expected_hint_event(item["id"], message)],
+                    )
+                    reply = AssistantMsg(id="reply", name="agent", content=[])
+                    for event in hints:
+                        reply.append_event(event)
+                    expected = _expected_hint_message(item["id"], message)
+                    self.assertEqual(
+                        _message_structures([reply]),
+                        _message_structures([expected]),
+                    )
+                    self.assertEqual(
+                        _message_structures(agent.state.context[1:]),
+                        _message_structures([expected]),
+                    )
+                    self.assertEqual(
+                        await list_chat_inputs(bus, "session"),
+                        [],
+                    )
 
     async def test_injection_notification_failure_keeps_committed_hint(
         self,

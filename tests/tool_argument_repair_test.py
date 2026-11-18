@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """Unittests for the schema-guided repair of the tool call arguments."""
+
+import json
 import unittest
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import AnyString, MockModel
 
@@ -113,6 +116,107 @@ class JsonLoadsWithRepairTest(unittest.TestCase):
             ),
             {"count": "42", "verbse": True},
         )
+        # ...also when the dropped argument sits in a nested object
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"opts": {"unit": "C", "verbse": true}}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "opts": {
+                            "type": "object",
+                            "properties": {"unit": {"type": "string"}},
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+            ),
+            {"opts": {"unit": "C", "verbse": True}},
+        )
+        # ...or in an object inside an array
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"items": [{"unit": "C", "verbse": true}]}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {"unit": {"type": "string"}},
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                },
+            ),
+            {"items": [{"unit": "C", "verbse": True}]},
+        )
+        # ...and when the repair truncates an array itself
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"items": [1, 2, 3], "name": "x"}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "prefixItems": [{"type": "integer"}],
+                            "items": False,
+                        },
+                    },
+                },
+            ),
+            {"items": [1, 2, 3], "name": "x"},
+        )
+        # Type repairs inside a nested object still happen
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"opts": {"unit": 123}}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "opts": {
+                            "type": "object",
+                            "properties": {"unit": {"type": "string"}},
+                        },
+                    },
+                },
+            ),
+            {"opts": {"unit": "123"}},
+        )
+
+    def test_keep_arguments_when_repair_truncates_arrays(self) -> None:
+        """Preserve arguments when repair drops array elements."""
+        cases: list[tuple[str, dict[str, Any], dict[str, Any]]] = [
+            (
+                "truncated",
+                {"items": [1, 2, 3], "name": "x"},
+                {"items": [1], "name": "x"},
+            ),
+            (
+                "emptied",
+                {"items": [1]},
+                {"items": []},
+            ),
+            (
+                "nested",
+                {"groups": [{"items": [1, 2]}]},
+                {"groups": [{"items": [1]}]},
+            ),
+        ]
+        for case_name, original, repaired in cases:
+            with self.subTest(case_name=case_name):
+                # Schema repair behavior varies across dependency versions.
+                with patch("json_repair.repair_json", return_value=repaired):
+                    self.assertDictEqual(
+                        _json_loads_with_repair(
+                            json.dumps(original),
+                            {"type": "object"},
+                        ),
+                        original,
+                    )
 
     def test_empty_arguments_are_an_empty_object(self) -> None:
         """Test that an empty argument payload is parsed as no arguments."""

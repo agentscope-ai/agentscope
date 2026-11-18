@@ -3,6 +3,7 @@
 """Toolkit test case."""
 import base64
 import json
+from functools import partial
 from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -453,6 +454,56 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_tool_error_text(self) -> None:
+        """Test error text for bare, ordinary, and grouped exceptions."""
+
+        def raise_bare_timeout() -> None:
+            """Raise an exception without a message."""
+            raise TimeoutError()
+
+        def raise_with_message() -> None:
+            """Raise an exception with a message."""
+            raise ValueError("boom")
+
+        def raise_group() -> None:
+            """Raise an exception group with a leaf cause."""
+            raise ExceptionGroup("unhandled errors", [KeyError("missing")])
+
+        for func, expected_text in (
+            (raise_bare_timeout, "TimeoutError"),
+            (raise_with_message, "boom"),
+            (raise_group, "'missing'"),
+        ):
+            with self.subTest(tool=func.__name__):
+                toolkit = Toolkit(tools=[FunctionTool(func)])
+                responses = [
+                    chunk.model_dump()
+                    async for chunk in toolkit.call_tool(
+                        ToolCallBlock(id="1", name=func.__name__, input="{}"),
+                        AgentState(),
+                    )
+                    if isinstance(chunk, ToolResponse)
+                ]
+                self.assertEqual(
+                    responses,
+                    [
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                    "id": AnyString(),
+                                    "text": expected_text,
+                                },
+                            ],
+                            "state": "error",
+                            "metadata": {},
+                            "id": "1",
+                        },
+                    ],
+                )
+
     async def test_tool_response_merges_base64_chunks_by_bytes(self) -> None:
         """Base64 chunks with padding should merge as bytes, not strings."""
         response = ToolResponse(id="tool")
@@ -597,6 +648,27 @@ class ToolkitTest(IsolatedAsyncioTestCase):
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):
     """Test registering different functions in the toolkit."""
+
+    def test_callable_object_default_name(self) -> None:
+        """Infer callable names while preserving explicit names."""
+
+        class Echo:
+            """Echo a value asynchronously."""
+
+            async def __call__(self, value: str) -> str:
+                return value
+
+        renamed = partial(Echo())
+        renamed.__name__ = "renamed_echo"
+        for func, name, expected in (
+            (Echo(), None, "Echo"),
+            (partial(Echo()), None, "Echo"),
+            (renamed, None, "renamed_echo"),
+            (Echo(), "custom_echo", "custom_echo"),
+        ):
+            with self.subTest(expected=expected):
+                tool = FunctionTool(func, name=name)
+                self.assertEqual(tool.name, expected)
 
     async def test_sync_function_returning_awaitable(self) -> None:
         """Await the coroutine returned by a sync function."""

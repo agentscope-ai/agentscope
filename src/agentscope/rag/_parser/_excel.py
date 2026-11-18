@@ -35,7 +35,15 @@ def _get_excel_column_name(col_index: int) -> str:
     Returns:
         `str`:
             The corresponding Excel column letter(s).
+
+    Raises:
+        `ValueError`:
+            If ``col_index`` is negative.
     """
+    if col_index < 0:
+        raise ValueError(
+            f"Column index must be non-negative, got {col_index}.",
+        )
     result = ""
     col_index += 1
     while col_index > 0:

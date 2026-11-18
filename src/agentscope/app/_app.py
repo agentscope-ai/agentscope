@@ -17,6 +17,7 @@ from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     asr_router,
     agent_router,
+    background_task_router,
     channel_router,
     chat_router,
     credential_router,
@@ -439,6 +440,7 @@ def create_app(
     for router in (
         asr_router,
         agent_router,
+        background_task_router,
         chat_router,
         credential_router,
         health_router,

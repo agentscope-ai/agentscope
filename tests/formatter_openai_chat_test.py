@@ -7,12 +7,16 @@ import base64
 import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
+from urllib.parse import unquote
+
+from nturl2path import url2pathname
 
 from agentscope.formatter import (
     OpenAIChatFormatter,
     OpenAIMultiAgentFormatter,
 )
+from agentscope.formatter._formatter_base import file_url_to_path
 from agentscope.message import (
     UserMsg,
     AssistantMsg,
@@ -30,6 +34,112 @@ from agentscope.message import (
 
 
 _FIXED_ID = "TESTID1234567"
+
+
+class TestFileUrlToPath(IsolatedAsyncioTestCase):
+    """Test local paths and Windows shares without URL normalization."""
+
+    def test_file_url_paths(self) -> None:
+        """Decode local paths and preserve Windows drive and share roots."""
+        module = "agentscope.formatter._formatter_base"
+        cases = [
+            ("posix", unquote, "/tmp/my%20file%23.png", "/tmp/my file#.png"),
+            (
+                "nt",
+                url2pathname,
+                "/C:/my%20file%23.png",
+                "C:\\my file#.png",
+            ),
+        ]
+        for platform, converter, path, expected in cases:
+            for authority in ("", "localhost", "LOCALHOST"):
+                with self.subTest(platform=platform, authority=authority):
+                    with (
+                        patch(f"{module}.os.name", platform),
+                        patch(f"{module}.url2pathname", converter),
+                    ):
+                        self.assertEqual(
+                            file_url_to_path("file://" + authority + path),
+                            expected,
+                        )
+
+    async def test_chat_formatter_windows_file_url(self) -> None:
+        """Read the addressed Windows drive or share and encode its bytes."""
+        module = "agentscope.formatter._formatter_base"
+        cases = [
+            ("file:///C:/my%20image.png", "C:\\my image.png"),
+            (
+                "file://fileserver/share/my%20image.png",
+                "\\\\fileserver\\share\\my image.png",
+            ),
+        ]
+        for url, expected_path in cases:
+            with self.subTest(url=url):
+                msg = UserMsg(
+                    name="user",
+                    content=[
+                        DataBlock(
+                            source=URLSource(url=url, media_type="image/png"),
+                        ),
+                    ],
+                )
+                with (
+                    patch(f"{module}.os.name", "nt"),
+                    patch(f"{module}.url2pathname", url2pathname),
+                    patch(
+                        "builtins.open",
+                        mock_open(read_data=b"image"),
+                    ) as opened,
+                ):
+                    res = await OpenAIChatFormatter().format([msg])
+                opened.assert_called_once_with(expected_path, "rb")
+                self.assertEqual(
+                    res,
+                    [
+                        {
+                            "role": "user",
+                            "name": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": (
+                                            "data:image/png;base64,aW1hZ2U="
+                                        ),
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                )
+
+    async def test_chat_formatter_rejects_remote_file_url_on_posix(
+        self,
+    ) -> None:
+        """Reject remote authorities before reading a local decoy file."""
+        module = "agentscope.formatter._formatter_base"
+        msg = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=URLSource(
+                        url="file://fileserver/share/image.png",
+                        media_type="image/png",
+                    ),
+                ),
+            ],
+        )
+        with (
+            patch(f"{module}.os.name", "posix"),
+            patch(f"{module}.url2pathname", unquote),
+            patch(
+                "builtins.open",
+                mock_open(read_data=b"local-decoy"),
+            ) as opened,
+        ):
+            with self.assertRaisesRegex(ValueError, "Remote file URLs"):
+                await OpenAIChatFormatter().format([msg])
+            opened.assert_not_called()
 
 
 class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
