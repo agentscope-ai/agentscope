@@ -19,6 +19,7 @@ from ._vdb import (
     DocumentSummary,
     ElasticsearchStore,
     MilvusLiteStore,
+    RedisStore,
     VectorStoreBase,
     VectorRecord,
     VectorSearchResult,
@@ -48,4 +49,5 @@ __all__ = [
     "QdrantStore",
     "KnowledgeBase",
     "MongoDBStore",
+    "RedisStore",
 ]
