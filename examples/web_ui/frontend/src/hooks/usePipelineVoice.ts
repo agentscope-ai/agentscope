@@ -135,18 +135,6 @@ export function usePipelineVoice(options: Options) {
 						silent: true,
 					});
 				},
-				findQueued: async (messageId, signal) => {
-					const { items } = await chatApi.queue(agentId, sessionId, true, {
-						...requestScope,
-						signal,
-					});
-					return (
-						items.find((item) => {
-							const messages = Array.isArray(item.input) ? item.input : [item.input];
-							return messages.some((message) => message.id === messageId);
-						})?.id ?? null
-					);
-				},
 				interrupt: async (replyId, signal) => {
 					await sessionApi.interrupt(sessionId, agentId, replyId, {
 						...requestScope,

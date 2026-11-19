@@ -501,6 +501,41 @@ class TestPubSubPrimitive(IsolatedAsyncioTestCase):
         await asyncio.wait_for(task, timeout=2.0)
         self.assertEqual([p["i"] for p in received], [1, 2])
 
+    async def test_subscription_barrier_orders_pending_messages(self) -> None:
+        """Flushing covers the reader backlog without yielding the PONG."""
+        barrier = asyncio.get_running_loop().create_future()
+        received = []
+        gate = asyncio.Event()
+
+        async def consume() -> None:
+            async for event in self.bus.subscribe(
+                "ch",
+                on_barrier=barrier.set_result,
+            ):
+                await gate.wait()
+                received.append(event)
+                if event == {"frame": "next"}:
+                    break
+
+        task = asyncio.create_task(consume())
+        try:
+            flush = await asyncio.wait_for(barrier, 2)
+            await self.bus.publish("ch", {"frame": "body"})
+            await self.bus.publish("ch", {"frame": "end"})
+            flushing = asyncio.create_task(flush())
+            gate.set()
+            await asyncio.wait_for(flushing, 2)
+            self.assertEqual(received, [{"frame": "body"}, {"frame": "end"}])
+            await self.bus.publish("ch", {"frame": "next"})
+            await asyncio.wait_for(task, 2)
+            self.assertEqual(
+                received,
+                [{"frame": f} for f in ("body", "end", "next")],
+            )
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def test_subscribe_cleanup_survives_cancellation(self) -> None:
         """A consumer cancelled again while closing the pubsub must not
         abort the close, otherwise the connection leaks from the pool."""

@@ -129,7 +129,7 @@ class InputResultTest(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(
                     (response.status_code, response.json()),
-                    (200, expected),
+                    (200, {**expected, "queue_item_id": submission}),
                 )
             with self.assertRaises(ValueError):
                 await bind_chat_submission(
@@ -154,7 +154,11 @@ class InputResultTest(IsolatedAsyncioTestCase):
                     "shared",
                     submission_id="first",
                 ),
-                {"state": "unknown", "reply_id": None},
+                {
+                    "state": "unknown",
+                    "reply_id": None,
+                    "queue_item_id": "first",
+                },
             )
 
     async def test_http_result_does_not_guess_from_empty_queue(self) -> None:

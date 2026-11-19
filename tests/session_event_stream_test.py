@@ -154,6 +154,46 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
                 frames.append(_decode(frame))
         self.assertEqual(frames, [{"sequence": n} for n in (1, 2, 3)])
 
+    async def test_snapshot_ahead_of_subscription_feeder(self) -> None:
+        """A delta in the transport buffer must precede the snapshot end."""
+        bus = InMemoryMessageBus()
+        read = bus.log_read
+        injected = False
+
+        async def read_after_trim(
+            key: str,
+            since: str | None = None,
+            max_count: int = 100,
+        ) -> list[tuple[str, dict]]:
+            nonlocal injected
+            if not injected:
+                injected = True
+                # In-memory publish and trim do not yield to the feeder.
+                await publish_session_event(bus, "s", {"frame": "delta"})
+                end = await publish_session_event(bus, "s", {"frame": "end"})
+                await bus.log_trim(key, end)
+            return await read(key, since=since, max_count=max_count)
+
+        response = await stream_session_events(
+            session_id="s",
+            agent_id="a",
+            user_id="u",
+            storage=_Storage(),  # type: ignore[arg-type]
+            message_bus=bus,
+            after=None,
+        )
+        async with aclosing(response.body_iterator) as stream:
+            with patch.object(bus, "log_read", side_effect=read_after_trim):
+                frames = [_decode(await asyncio.wait_for(anext(stream), 1))]
+                await publish_session_event(bus, "s", {"frame": "sentinel"})
+                while frames[-1] != {"frame": "sentinel"}:
+                    frame = await asyncio.wait_for(anext(stream), 1)
+                    frames.append(_decode(frame))
+        self.assertEqual(
+            frames,
+            [{"frame": name} for name in ("delta", "end", "sentinel")],
+        )
+
     async def test_connected_client_recovers_failed_live_delivery(
         self,
     ) -> None:

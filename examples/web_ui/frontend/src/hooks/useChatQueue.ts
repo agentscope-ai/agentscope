@@ -20,11 +20,13 @@ export interface ChatInputTerminalValue {
 	message?: string;
 }
 
+type LocalInputOutcome = 'finished' | 'removed';
+
 interface LocalChatInput {
 	message: Msg;
 	optimisticId: string;
 	queueId: string | null;
-	removedIds: Set<string>;
+	outcomes: Map<string, LocalInputOutcome>;
 }
 
 /** Return every message carried by queue items in FIFO order. */
@@ -157,7 +159,7 @@ export function useChatQueue(
 				message,
 				optimisticId,
 				queueId: null,
-				removedIds: new Set(),
+				outcomes: new Map(),
 			});
 			if (shownInConversation) {
 				updateConversationMessageIds((ids) => ids.add(message.id));
@@ -177,25 +179,6 @@ export function useChatQueue(
 		[updateConversationMessageIds, updateItems],
 	);
 
-	const acceptOptimistic = useCallback(
-		(messageId: string, queueItemId: string) => {
-			const local = localInputs.current.get(messageId);
-			if (!local) return false;
-			local.queueId = queueItemId;
-			const removed = local.removedIds.has(queueItemId);
-			local.removedIds.clear();
-			if (removed) return true;
-			const { optimisticId } = local;
-			updateItems(
-				itemsRef.current.map((item) =>
-					item.id === optimisticId ? { ...item, id: queueItemId } : item,
-				),
-			);
-			return false;
-		},
-		[updateItems],
-	);
-
 	const rollbackOptimistic = useCallback(
 		(optimisticId: string, messageId: string) => {
 			localInputs.current.delete(messageId);
@@ -205,88 +188,68 @@ export function useChatQueue(
 		[updateConversationMessageIds, updateItems],
 	);
 
-	/** Remove a started item and return the message payload for conversation UI. */
-	const startItem = useCallback(
-		(value: ChatInputStartedValue): ChatQueueItem | undefined => {
-			const startedIds = new Set(value.message_ids ?? []);
-			updateConversationMessageIds((ids) => {
-				for (const messageId of startedIds) {
-					localInputs.current.delete(messageId);
-					ids.delete(messageId);
-				}
-			});
-			const localItem = itemsRef.current.find(
-				(item) =>
-					item.id === value.queue_item_id ||
-					(item.id.startsWith(OPTIMISTIC_ITEM_PREFIX) &&
-						getQueueMessages([item]).some((message) => startedIds.has(message.id))),
-			);
-			updateItems(
-				itemsRef.current.filter(
-					(item) =>
-						item.id !== value.queue_item_id &&
-						!(
-							item.id.startsWith(OPTIMISTIC_ITEM_PREFIX) &&
-							getQueueMessages([item]).some((message) => startedIds.has(message.id))
-						),
-				),
-			);
-			return value.queue_item ?? localItem;
-		},
-		[updateConversationMessageIds, updateItems],
-	);
-
-	const finishItem = useCallback(
-		(value: ChatInputTerminalValue) => {
-			const terminalIds = new Set(value.message_ids ?? []);
-			updateItems(
-				itemsRef.current.filter(
-					(item) =>
-						item.id !== value.queue_item_id &&
-						!(
-							(!value.queue_item_id || item.id.startsWith(OPTIMISTIC_ITEM_PREFIX)) &&
-							getQueueMessages([item]).some((message) => terminalIds.has(message.id))
-						),
-				),
-			);
-			updateConversationMessageIds((ids) => {
-				for (const id of terminalIds) {
-					localInputs.current.delete(id);
-					ids.delete(id);
-				}
-			});
-		},
-		[updateConversationMessageIds, updateItems],
-	);
-
-	/** A local cancellation receipt can also confirm removal before the POST returns. */
-	const removeUnstartedItem = useCallback(
-		({ queue_item_id: queueId, message_ids = [] }: ChatInputTerminalValue) => {
-			const removedRows = new Set(queueId ? [queueId] : []);
-			const provisionalMessages = new Set<Msg>();
+	/** Retire only the local turn whose receipt matches the server queue item. */
+	const retireItem = useCallback(
+		(
+			{ queue_item_id: queueId, message_ids = [] }: ChatInputTerminalValue,
+			outcome: LocalInputOutcome,
+		) => {
+			const rows = new Set(queueId ? [queueId] : []);
+			const provisional = new Set<Msg>();
 			for (const id of message_ids) {
 				const local = localInputs.current.get(id);
 				if (!local) continue;
 				if (queueId && queueId !== local.queueId) {
-					if (!local.queueId) local.removedIds.add(queueId);
+					if (!local.queueId) local.outcomes.set(queueId, outcome);
 					continue;
 				}
 				localInputs.current.delete(id);
-				removedRows.add(local.optimisticId);
-				if (local.queueId) removedRows.add(local.queueId);
-				if (conversationMessageIdsRef.current.has(id)) {
-					provisionalMessages.add(local.message);
-				}
+				rows.add(local.optimisticId);
+				if (local.queueId) rows.add(local.queueId);
+				if (conversationMessageIdsRef.current.has(id)) provisional.add(local.message);
 			}
-			updateItems(itemsRef.current.filter((item) => !removedRows.has(item.id)));
-			if (provisionalMessages.size) {
+			updateItems(itemsRef.current.filter((item) => !rows.has(item.id)));
+			if (provisional.size) {
 				updateConversationMessageIds((ids) => {
-					for (const msg of provisionalMessages) ids.delete(msg.id);
+					for (const msg of provisional) ids.delete(msg.id);
 				});
 			}
-			return provisionalMessages;
+			return provisional;
 		},
 		[updateConversationMessageIds, updateItems],
+	);
+
+	const startItem = useCallback(
+		(value: ChatInputStartedValue) => {
+			const item =
+				value.queue_item ?? itemsRef.current.find((row) => row.id === value.queue_item_id);
+			retireItem(value, 'finished');
+			return item;
+		},
+		[retireItem],
+	);
+
+	const acceptOptimistic = useCallback(
+		(messageId: string, queueItemId: string) => {
+			const local = localInputs.current.get(messageId);
+			if (!local || local.queueId === queueItemId) return false;
+			local.queueId = queueItemId;
+			const outcome = local.outcomes.get(queueItemId);
+			local.outcomes.clear();
+			if (outcome === 'removed') return true;
+			if (outcome) {
+				retireItem({ queue_item_id: queueItemId, message_ids: [messageId] }, outcome);
+				return false;
+			}
+			const { optimisticId } = local;
+			updateItems(
+				itemsRef.current.map((item) =>
+					item.id === optimisticId ? { ...item, id: queueItemId } : item,
+				),
+			);
+			return false;
+		},
+		[retireItem, updateItems],
 	);
 
 	const updateQueued = useCallback(
@@ -474,8 +437,7 @@ export function useChatQueue(
 		rollbackOptimistic,
 		applyQueueSnapshot,
 		startItem,
-		finishItem,
-		removeUnstartedItem,
+		retireItem,
 		updateQueued,
 		deleteQueued,
 		steerQueued,

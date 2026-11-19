@@ -40,8 +40,12 @@ export interface PipelineVoiceOptions {
 			submissionId: string;
 			signal: AbortSignal;
 			isCurrent: () => boolean;
-			hasExecutionEvidence: () => boolean;
-			submitted: (id: string, clearPending: (beforeClaim: boolean) => void) => void;
+			keepPendingOnPostError: () => boolean;
+			submitted: (
+				id: string,
+				clearPending: (beforeClaim: boolean) => void,
+				acceptedQueue: (id: string) => void,
+			) => void;
 			accepted: (id: string | null) => void;
 		},
 	) => Promise<void>;
@@ -56,7 +60,6 @@ export interface PipelineVoiceOptions {
 	}>;
 	interrupt: (replyId: string, signal: AbortSignal) => Promise<void>;
 	deleteQueued: (id: string, signal: AbortSignal) => Promise<void>;
-	findQueued: (messageId: string, signal: AbortSignal) => Promise<string | null>;
 	inputResult: (
 		messageId: string,
 		submissionId: string,
@@ -87,7 +90,11 @@ export class PipelineVoiceSession {
 	private submissionPending = false;
 	private submissionAttempt: { controller: AbortController; terminal: boolean } | null = null;
 	private queueId: string | null = null;
-	private removedBeforeAcceptance = new Set<string>();
+	private nextReplyQueueId: string | null = null;
+	private replyQueues = new Map<string, string>();
+	private pendingQueueEvents: ((id: string | null) => void)[] = [];
+	private receiptLookup: Promise<void> | null = null;
+	private acceptedQueue?: (id: string) => void;
 	private inputStarted = false;
 	private clearPendingInput: ((beforeClaim: boolean) => void) | null = null;
 	private cancelledReply: Promise<string | null> | null = null;
@@ -277,54 +284,106 @@ export class PipelineVoiceSession {
 		if (this.stopped && event.type === EventType.DATA_BLOCK_START) {
 			return this.stoppedPlayback(event);
 		}
+		let queueId: string | undefined;
+		if (event.type === EventType.CUSTOM) {
+			if (!this.userMessageId) return false;
+			const { name, value } = event as CustomEvent;
+			const input = value as {
+				queue_item_id?: string;
+				message_ids?: string[];
+				reply_id?: string;
+			} | null;
+			if (
+				[
+					'chat_input_started',
+					'chat_input_cancelled',
+					'chat_input_failed',
+					'chat_input_removed',
+				].includes(name)
+			) {
+				queueId = input?.queue_item_id;
+				if (name === 'chat_input_started') this.nextReplyQueueId = queueId ?? null;
+				else if (queueId === this.nextReplyQueueId) this.nextReplyQueueId = null;
+				if (
+					!queueId ||
+					(queueId !== this.queueId && !input?.message_ids?.includes(this.userMessageId))
+				)
+					return false;
+			} else if (name === 'tts_error') {
+				queueId = input?.reply_id
+					? this.replyQueues.get(input.reply_id)
+					: (this.nextReplyQueueId ?? undefined);
+			}
+		} else if ('reply_id' in event && this.userMessageId) {
+			if (
+				event.type === EventType.REPLY_START &&
+				event.role === 'assistant' &&
+				this.nextReplyQueueId
+			) {
+				this.replyQueues.set(event.reply_id, this.nextReplyQueueId);
+				this.nextReplyQueueId = null;
+			}
+			queueId = this.replyQueues.get(event.reply_id);
+		}
+		if (!queueId) return this.applyEvent(event);
+		if (this.queueId) return queueId === this.queueId && this.applyEvent(event);
+		if (this.inputFinished) return false;
+
+		// Replay voice side effects in SSE order when the POST or durable receipt
+		// identifies the input. Chat can render the same stream immediately.
+		const decision = new Promise<boolean>((resolve, reject) => {
+			this.pendingQueueEvents.push((id) => {
+				if (id !== queueId) {
+					resolve(false);
+					return;
+				}
+				try {
+					const result = this.applyEvent(event);
+					if (result instanceof Promise) result.then(() => resolve(true), reject);
+					else resolve(true);
+				} catch (error) {
+					reject(error);
+				}
+			});
+		});
+		if (this.pendingQueueEvents.length === 1 && !this.stopped) void this.lookupQueueItem();
+		if (event.type === EventType.DATA_BLOCK_START)
+			return { autoplay: decision.then((owns) => !owns) };
+		if (event.type === EventType.DATA_BLOCK_END) return decision.then(() => undefined);
+		void decision.catch((error) => this.fail(error));
+		return true;
+	}
+
+	private applyEvent(event: AgentEvent): VoicePlayback {
 		const handled =
 			!this.stopped ||
 			('reply_id' in event && this.options.suppressedReplies.has(event.reply_id));
 		if (event.type === EventType.CUSTOM) {
 			const custom = event as CustomEvent;
-			const value = (custom.value ?? {}) as {
-				message_ids?: string[];
-				reply_id?: string;
-				queue_item_id?: string;
-			};
-			if (custom.name === 'chat_input_removed') {
-				if (
-					this.userMessageId &&
-					value.message_ids?.includes(this.userMessageId) &&
-					value.queue_item_id
-				) {
-					if (this.queueId === value.queue_item_id) this.onInputRemoved();
-					else if (!this.queueId) this.removedBeforeAcceptance.add(value.queue_item_id);
-				}
-				return handled;
-			}
-			if (this.stopped && (!this.queueId || value.queue_item_id !== this.queueId))
-				return handled;
-			if (
-				custom.name === 'chat_input_started' &&
-				this.userMessageId &&
-				value.message_ids?.includes(this.userMessageId)
-			)
+			if (custom.name === 'chat_input_started') {
 				this.inputStarted = true;
-			if (
-				!this.stopped &&
-				custom.name === 'tts_error' &&
-				this.userMessageId &&
-				(value.message_ids?.includes(this.userMessageId) ||
-					(!!this.replyId && value.reply_id === this.replyId))
-			)
-				this.fail(
-					new Error('Speech synthesis failed. The text reply remains available.'),
-					false,
-				);
-			if (
-				['chat_input_failed', 'chat_input_cancelled'].includes(custom.name) &&
-				(!this.queueId || !value.queue_item_id || this.queueId === value.queue_item_id) &&
-				this.userMessageId &&
-				value.message_ids?.includes(this.userMessageId)
+			} else if (
+				['chat_input_failed', 'chat_input_cancelled', 'chat_input_removed'].includes(
+					custom.name,
+				)
 			) {
-				this.finishCancellation();
-				this.fail(new Error('The voice turn could not be completed.'));
+				if (!this.inputFinished) {
+					this.finishCancellation(custom.name === 'chat_input_removed');
+					this.fail(new Error('The voice turn could not be completed.'));
+				}
+			} else if (!this.stopped && custom.name === 'tts_error') {
+				const value = custom.value as { message_ids?: string[]; reply_id?: string } | null;
+				if (
+					(this.inputStarted &&
+						this.userMessageId &&
+						value?.message_ids?.includes(this.userMessageId)) ||
+					(this.replyId && value?.reply_id === this.replyId)
+				) {
+					this.fail(
+						new Error('Speech synthesis failed. The text reply remains available.'),
+						false,
+					);
+				}
 			}
 			return handled;
 		}
@@ -392,6 +451,9 @@ export class PipelineVoiceSession {
 			this.submissionAttempt?.controller.abort();
 			this.clearSpeechTimer();
 			this.clearTransitionTimer();
+			if (!this.cancellationPending) {
+				for (const apply of this.pendingQueueEvents.splice(0)) apply(null);
+			}
 			if (this.cancellationPending) {
 				this.transitionTimer = setTimeout(() => {
 					this.reportError(
@@ -456,6 +518,8 @@ export class PipelineVoiceSession {
 			if (this.submissionId) {
 				const result = await this.options.cancelSubmission(this.submissionId, signal);
 				signal.throwIfAborted();
+				if (result.queue_item_id) this.bindQueueItem(result.queue_item_id);
+				if (!this.cancellationPending) return;
 				if (result.state === 'cancelled') {
 					if (result.before_claim) {
 						this.finishCancellation(true);
@@ -475,10 +539,6 @@ export class PipelineVoiceSession {
 					this.finishCancellation();
 					return;
 				}
-				if (!this.queueId && result.queue_item_id) {
-					this.bindQueueItem(result.queue_item_id);
-				}
-				if (!this.cancellationPending) return;
 			}
 			if (this.userMessageId && this.submissionId) {
 				const result = await this.options.inputResult(
@@ -495,12 +555,6 @@ export class PipelineVoiceSession {
 					this.finishCancellation();
 					return;
 				}
-			}
-			if (!this.queueId && !this.inputStarted && !this.replyId && this.userMessageId) {
-				const id = await this.options.findQueued(this.userMessageId, signal);
-				signal.throwIfAborted();
-				// Acceptance may arrive while the queue snapshot is being fetched.
-				if (!this.queueId) this.queueId = id;
 			}
 			if (!this.cancellationPending) return;
 			if (this.replyId) {
@@ -552,21 +606,45 @@ export class PipelineVoiceSession {
 		this.resolveCancelledReply?.(replyId);
 	}
 
-	private bindQueueItem(queueId: string): void {
-		this.queueId = queueId;
-		const removed = this.removedBeforeAcceptance.has(queueId);
-		this.removedBeforeAcceptance.clear();
-		if (removed) this.onInputRemoved();
+	private lookupQueueItem(): Promise<void> {
+		if (this.receiptLookup) return this.receiptLookup;
+		const attempt = this.submissionAttempt;
+		if (!attempt || !this.userMessageId || !this.submissionId) return Promise.resolve();
+		const lookup = this.options
+			.inputResult(this.userMessageId, this.submissionId, this.abort.signal)
+			.then((result) => {
+				if (
+					this.submissionAttempt !== attempt ||
+					attempt.terminal ||
+					this.stopped ||
+					this.queueId
+				)
+					return;
+				const id =
+					result.queue_item_id ??
+					(result.reply_id && this.replyQueues.get(result.reply_id));
+				if (id) this.bindQueueItem(id);
+			})
+			.catch(() => {
+				/* The POST may still provide the receipt. */
+			})
+			.finally(() => {
+				if (this.receiptLookup === lookup) this.receiptLookup = null;
+			});
+		this.receiptLookup = lookup;
+		return lookup;
 	}
 
-	private onInputRemoved(): void {
-		if (this.inputFinished) return;
-		this.finishCancellation(true);
-		this.fail(new Error('The voice turn could not be completed.'));
+	private bindQueueItem(queueId: string): void {
+		if (this.queueId) return;
+		this.queueId = queueId;
+		this.acceptedQueue?.(queueId);
+		for (const apply of this.pendingQueueEvents.splice(0)) apply(queueId);
 	}
 
 	private finishCancellation(beforeClaim = false): void {
 		this.resolveCancelledReply?.(this.replyId);
+		for (const apply of this.pendingQueueEvents.splice(0)) apply(null);
 		this.clearPendingInput?.(beforeClaim);
 		this.clearPendingInput = null;
 		this.completeSubmission();
@@ -587,7 +665,10 @@ export class PipelineVoiceSession {
 		this.clearPendingInput = null;
 		this.submissionId = null;
 		this.queueId = null;
-		this.removedBeforeAcceptance.clear();
+		this.nextReplyQueueId = null;
+		this.replyQueues.clear();
+		this.acceptedQueue = undefined;
+		this.receiptLookup = null;
 		this.inputStarted = false;
 		this.inputFinished = false;
 		this.replyEnded = false;
@@ -688,14 +769,18 @@ export class PipelineVoiceSession {
 							signal,
 							isCurrent: () =>
 								this.submissionAttempt === attempt && !attempt.terminal,
-							hasExecutionEvidence: () =>
+							keepPendingOnPostError: () =>
 								attempt.terminal ||
 								(this.submissionAttempt === attempt &&
-									(this.inputStarted || !!this.replyId)),
-							submitted: (id, clearPending) => {
+									(this.inputStarted ||
+										!!this.replyId ||
+										this.pendingQueueEvents.length > 0 ||
+										!!this.queueId)),
+							submitted: (id, clearPending, acceptedQueue) => {
 								if (this.submissionAttempt !== attempt || signal.aborted) return;
 								this.userMessageId = id;
 								this.clearPendingInput = clearPending;
+								this.acceptedQueue = acceptedQueue;
 							},
 							accepted: (id) => {
 								if (this.submissionAttempt !== attempt || signal.aborted) return;
@@ -709,8 +794,12 @@ export class PipelineVoiceSession {
 				await Promise.race([work(), aborted]);
 			} catch (error) {
 				if (this.submissionAttempt !== attempt || attempt.terminal) return;
-				// SSE can confirm execution before the POST fails or times out.
-				if (!this.stopped && this.inputStarted) return;
+				// A targeted receipt can confirm acceptance even if the POST was lost.
+				if (!this.stopped && !this.queueId && this.pendingQueueEvents.length) {
+					await this.lookupQueueItem();
+					if (this.submissionAttempt !== attempt || attempt.terminal) return;
+				}
+				if (!this.stopped && (this.inputStarted || this.queueId)) return;
 				// Only explicit rejection, without acceptance/execution evidence, proves
 				// no turn exists. Network errors, timeouts and 5xx remain ambiguous.
 				if (
@@ -721,7 +810,7 @@ export class PipelineVoiceSession {
 					!this.inputStarted &&
 					!this.replyId
 				) {
-					this.finishCancellation();
+					this.finishCancellation(true);
 					this.fail(error);
 					return;
 				}

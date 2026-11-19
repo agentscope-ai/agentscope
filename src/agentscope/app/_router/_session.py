@@ -3,7 +3,7 @@
 import asyncio
 import json
 from collections import deque
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Awaitable, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -979,7 +979,9 @@ async def stream_session_events(
 
     async def _sse_generator() -> AsyncGenerator[str, None]:
         events_key = MessageBusKeys.session_events(session_id)
-        ready = asyncio.Event()
+        barrier: asyncio.Future[
+            Callable[[], Awaitable[None]]
+        ] = asyncio.get_running_loop().create_future()
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         cursor = after
@@ -1030,8 +1032,24 @@ async def stream_session_events(
             if not buffered:
                 return
             last_id, last_event = buffered[-1]
-            # A live event older than the snapshot tail may only exist in
-            # this queue after a checkpoint. Process it before the tail.
+            # The subscription can still hold trimmed frames even when the
+            # feeder queue is empty. Its ordered marker covers both buffers.
+            flushing = asyncio.ensure_future(flush())
+            try:
+                while not flushing.done():
+                    done, _ = await asyncio.wait(
+                        (flushing, feeder_task),
+                        timeout=_HEARTBEAT_INTERVAL_SECS,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if feeder_task in done and not flushing.done():
+                        return
+                    if not done:
+                        yield ":\n\n"
+                await flushing
+            finally:
+                flushing.cancel()
+                await asyncio.gather(flushing, return_exceptions=True)
             for _ in range(queue.qsize()):
                 item = queue.get_nowait()
                 if item is None:
@@ -1051,7 +1069,7 @@ async def stream_session_events(
             try:
                 async for evt in message_bus.subscribe(
                     events_key,
-                    on_ready=ready.set,
+                    on_barrier=barrier.set_result,
                 ):
                     await queue.put(evt)
             except asyncio.CancelledError:
@@ -1067,8 +1085,8 @@ async def stream_session_events(
         try:
             # Subscribe first, then replay. Events arriving across that
             # seam are present in both paths and deduplicated by entry id.
-            await asyncio.wait_for(
-                ready.wait(),
+            flush = await asyncio.wait_for(
+                barrier,
                 timeout=_SUBSCRIBE_TIMEOUT_SECS,
             )
             async for frame in replay_snapshot():

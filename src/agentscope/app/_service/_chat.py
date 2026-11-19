@@ -937,6 +937,7 @@ class ChatService:
             if session is None:
                 raise LookupError(f"Session {session_id!r} not found.")
             unknown = {"state": "unknown", "reply_id": None}
+            identity = {}
             if submission_id is not None:
                 receipt = await get_submission(
                     self._message_bus,
@@ -951,8 +952,11 @@ class ChatService:
                     return {"state": "finished", "reply_id": None}
                 if message_id not in receipt.get("message_ids", []):
                     return unknown
+                if queue_id := receipt.get("queue_item_id"):
+                    identity["queue_item_id"] = queue_id
                 if receipt["state"] in ("cancelled", "finished"):
                     return {
+                        **identity,
                         "state": "finished",
                         "reply_id": receipt.get("reply_id"),
                     }
@@ -968,6 +972,7 @@ class ChatService:
             reply_id = receipt.get("reply_id")
             if not reply_id:
                 return {
+                    **identity,
                     "state": "finished"
                     if receipt.get("finished")
                     else "unknown",
@@ -992,6 +997,7 @@ class ChatService:
                     is SessionStatus.IDLE
                 )
             return {
+                **identity,
                 "state": "finished" if finished else "reply",
                 "reply_id": reply_id,
             }

@@ -197,8 +197,7 @@ export function useMessages(
 		rollbackOptimistic,
 		applyQueueSnapshot,
 		startItem,
-		finishItem,
-		removeUnstartedItem,
+		retireItem,
 		updateQueued,
 		deleteQueued,
 		steerQueued,
@@ -208,6 +207,8 @@ export function useMessages(
 
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
+	const startingQueueRef = useRef<string | null>(null);
+	const replyQueueRef = useRef<string | null>(null);
 	const ttsConfigurationWarningsRef = useRef(new Set<string>());
 	const abortRef = useRef<AbortController | null>(null);
 	const rafRef = useRef<number | null>(null);
@@ -238,13 +239,13 @@ export function useMessages(
 
 	const removeUnstartedInput = useCallback(
 		(value: ChatInputTerminalValue) => {
-			const provisional = removeUnstartedItem(value);
+			const provisional = retireItem(value, 'removed');
 			if (provisional.size) {
 				msgsRef.current = msgsRef.current.filter((msg) => !provisional.has(msg));
 				scheduleUpdate();
 			}
 		},
-		[removeUnstartedItem, scheduleUpdate],
+		[retireItem, scheduleUpdate],
 	);
 
 	/** Apply a single AgentEvent to the in-progress reply. */
@@ -302,7 +303,8 @@ export function useMessages(
 					setSubagentHitl((prev) => prev.filter((x) => hitlKey(x) !== hitlKey(v)));
 				} else if (custom.name === 'chat_input_started') {
 					const value = custom.value as ChatInputStartedValue;
-					setStartingInputId(value.queue_item_id ?? null);
+					startingQueueRef.current = value.queue_item_id ?? null;
+					setStartingInputId(startingQueueRef.current);
 					const startedItem = startItem(value);
 					if (startedItem) {
 						const existingIds = new Set(msgsRef.current.map((msg) => msg.id));
@@ -320,30 +322,32 @@ export function useMessages(
 				} else if (custom.name === 'chat_input_removed') {
 					const value = custom.value as ChatInputTerminalValue;
 					if (value.queue_item_id) removeUnstartedInput(value);
-				} else if (custom.name === 'chat_input_failed') {
+				} else if (
+					custom.name === 'chat_input_failed' ||
+					custom.name === 'chat_input_cancelled'
+				) {
 					const value = custom.value as ChatInputTerminalValue;
 					setStartingInputId((id) => (id === value.queue_item_id ? null : id));
-					finishItem(value);
-					const failure = new Error(value.message ?? t('chatQueue.processFailed'));
-					clearInterruptTimer();
-					currentReplyRef.current = null;
-					setPhase('idle');
-					setActiveReplyId(null);
-					setError(failure);
-					toast.error(failure.message);
-				} else if (custom.name === 'chat_input_cancelled') {
-					const value = custom.value as ChatInputTerminalValue;
-					setStartingInputId((id) => (id === value.queue_item_id ? null : id));
-					finishItem(value);
-					const message = value.message ?? t('chatQueue.processingCancelled');
-					clearInterruptTimer();
-					currentReplyRef.current = null;
-					setPhase('idle');
-					setActiveReplyId(null);
-					toast.info(message);
+					retireItem(value, 'finished');
+					if (value.queue_item_id === startingQueueRef.current)
+						startingQueueRef.current = null;
+					if (value.queue_item_id === replyQueueRef.current) {
+						replyQueueRef.current = null;
+						clearInterruptTimer();
+						currentReplyRef.current = null;
+						setPhase('idle');
+						setActiveReplyId(null);
+					}
+					if (custom.name === 'chat_input_failed') {
+						const failure = new Error(value.message ?? t('chatQueue.processFailed'));
+						setError(failure);
+						toast.error(failure.message);
+					} else {
+						toast.info(value.message ?? t('chatQueue.processingCancelled'));
+					}
 				} else if (custom.name === 'chat_input_injected') {
 					const value = custom.value as ChatInputTerminalValue;
-					finishItem(value);
+					retireItem(value, 'finished');
 					toast.success(t('chatQueue.injected'));
 				} else if (custom.name === 'chat_input_steer_failed') {
 					const value = custom.value as ChatInputTerminalValue;
@@ -370,7 +374,13 @@ export function useMessages(
 			}
 			if (event.type === EventType.REPLY_START) {
 				const e = event as ReplyStartEvent;
-				if (e.role === 'assistant') setStartingInputId(null);
+				if (e.role === 'assistant') {
+					if (startingQueueRef.current || currentReplyRef.current?.id !== e.reply_id) {
+						replyQueueRef.current = startingQueueRef.current;
+					}
+					startingQueueRef.current = null;
+					setStartingInputId(null);
+				}
 				// A continuation (the run resuming after a confirmation or an
 				// external execution result) re-emits REPLY_START with the
 				// *same* reply_id. Re-point at the existing reply instead of
@@ -437,6 +447,7 @@ export function useMessages(
 					setPhase('idle');
 					setActiveReplyId(null);
 					currentReplyRef.current = null;
+					replyQueueRef.current = null;
 				}
 			}
 
@@ -486,7 +497,7 @@ export function useMessages(
 			clearInterruptTimer,
 			startItem,
 			applyQueueSnapshot,
-			finishItem,
+			retireItem,
 			removeUnstartedInput,
 			t,
 			agentId,
@@ -501,6 +512,8 @@ export function useMessages(
 		setStartingInputId(null);
 		msgsRef.current = [];
 		currentReplyRef.current = null;
+		startingQueueRef.current = null;
+		replyQueueRef.current = null;
 		setMsgs([]);
 		setError(null);
 		clearInterruptTimer();
@@ -623,8 +636,12 @@ export function useMessages(
 				submissionId?: string;
 				signal?: AbortSignal;
 				isCurrent?: () => boolean;
-				hasExecutionEvidence?: () => boolean;
-				submitted: (id: string, clearPending: (beforeClaim: boolean) => void) => void;
+				keepPendingOnPostError?: () => boolean;
+				submitted: (
+					id: string,
+					clearPending: (beforeClaim: boolean) => void,
+					acceptedQueue: (id: string) => void,
+				) => void;
 				accepted: (id: string | null) => void;
 			},
 			mode: 'chat' | 'pipeline_voice' = 'chat',
@@ -632,12 +649,21 @@ export function useMessages(
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
 			const userMsg = UserMsg({ name: 'user', content });
-			observer?.submitted(userMsg.id, (beforeClaim) => {
-				if (activeSessionRef.current !== session) return;
-				const value = { message_ids: [userMsg.id] };
-				if (beforeClaim) removeUnstartedInput(value);
-				else finishItem(value);
-			});
+			const confirmQueue = (id: string) => {
+				if (activeSessionRef.current === session && acceptOptimistic(userMsg.id, id)) {
+					removeUnstartedInput({ queue_item_id: id, message_ids: [userMsg.id] });
+				}
+			};
+			observer?.submitted(
+				userMsg.id,
+				(beforeClaim) => {
+					if (activeSessionRef.current !== session) return;
+					const value = { message_ids: [userMsg.id] };
+					if (beforeClaim) removeUnstartedInput(value);
+					else retireItem(value, 'finished');
+				},
+				confirmQueue,
+			);
 			const showInConversationImmediately = phase === 'idle' && pendingQueueCount === 0;
 			if (showInConversationImmediately) {
 				msgsRef.current = [...msgsRef.current, userMsg];
@@ -658,18 +684,12 @@ export function useMessages(
 				if (observer?.signal?.aborted || (observer?.isCurrent && !observer.isCurrent()))
 					return;
 				const queueId = response.queue_item_id;
-				if (
-					activeSessionRef.current === session &&
-					queueId &&
-					acceptOptimistic(userMsg.id, queueId)
-				) {
-					removeUnstartedInput({ queue_item_id: queueId, message_ids: [userMsg.id] });
-				}
+				if (queueId) confirmQueue(queueId);
 				observer?.accepted(queueId);
 			} catch (e) {
 				// SSE may already have committed this input and its reply.
 				if (
-					observer?.hasExecutionEvidence?.() ||
+					observer?.keepPendingOnPostError?.() ||
 					(observer?.isCurrent && !observer.isCurrent())
 				)
 					throw e;
@@ -694,7 +714,7 @@ export function useMessages(
 			sessionId,
 			phase,
 			pendingQueueCount,
-			finishItem,
+			retireItem,
 			removeUnstartedInput,
 			session,
 			scheduleUpdate,

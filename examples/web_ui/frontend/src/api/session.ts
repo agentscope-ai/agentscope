@@ -18,6 +18,7 @@ export interface MessagesResponse {
 }
 
 export interface InputResult {
+	queue_item_id?: string;
 	state: 'unknown' | 'reply' | 'finished';
 	reply_id: string | null;
 }

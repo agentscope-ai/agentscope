@@ -234,6 +234,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         queue = ChatInputQueue(self.bus, self.storage, self.service)
         self.addAsyncCleanup(queue.close)
         replies = ["A", "B"]
+        queue_ids = {}
 
         async def reply_stream(
             agent: _ReplyAgent,
@@ -255,7 +256,11 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                     "shared",
                     submission_id=agent.state.reply_id,
                 ),
-                {"state": "reply", "reply_id": agent.state.reply_id},
+                {
+                    "state": "reply",
+                    "reply_id": agent.state.reply_id,
+                    "queue_item_id": queue_ids[agent.state.reply_id],
+                },
             )
             yield ReplyEndEvent(
                 session_id="session-1",
@@ -272,7 +277,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                     "session-1",
                     "agent-1",
                 )
-                await enqueue_chat_input(
+                item = await enqueue_chat_input(
                     self.bus,
                     "user-1",
                     "session-1",
@@ -280,6 +285,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                     UserMsg("user", "voice", id="shared"),
                     submission_id=submission,
                 )
+                queue_ids[submission] = item["id"]
                 self.assertTrue(
                     await queue.drain_chat_inputs(
                         "user-1",
@@ -296,7 +302,11 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                     "shared",
                     submission_id=submission,
                 ),
-                {"state": "finished", "reply_id": submission},
+                {
+                    "state": "finished",
+                    "reply_id": submission,
+                    "queue_item_id": queue_ids[submission],
+                },
             )
 
     async def test_cancel_during_service_initialization(self) -> None:

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Callable, Self, TYPE_CHECKING
 
 from ..._logging import logger
-from ._base import MessageBus
+from ._base import MessageBus, RegisterSubscriptionBarrier
 
 if TYPE_CHECKING:
     from redis.asyncio import ConnectionPool, Redis
@@ -738,6 +738,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         key: str,
         *,
         on_ready: Callable[[], None] | None = None,
+        on_barrier: RegisterSubscriptionBarrier | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Yield broadcast payloads on ``key`` until the consumer
         closes the generator.
@@ -751,6 +752,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 a "subscription is live" event so they can publish
                 immediately after starting a subscriber without losing
                 the first message to a SUBSCRIBE/PUBLISH race.
+            on_barrier (optional):
+                Register an ordered flush operation for this subscription.
 
         Yields:
             `dict`:
@@ -759,8 +762,18 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         from redis import exceptions as redis_exceptions
 
         pubsub = self._client.pubsub()
+        flushed = asyncio.Event()
+        marker = "agentscope-subscription-barrier"
+
+        async def flush() -> None:
+            flushed.clear()
+            await pubsub.ping(marker)
+            await flushed.wait()
+
         try:
             await pubsub.subscribe(key)
+            if on_barrier is not None:
+                on_barrier(flush)
             if on_ready is not None:
                 on_ready()
             while True:
@@ -777,6 +790,12 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     continue
                 if message is None:
                     # No payload within the poll window — keep waiting.
+                    continue
+                if message.get("type") == "pong" and message.get("data") in (
+                    marker,
+                    marker.encode(),
+                ):
+                    flushed.set()
                     continue
                 if message.get("type") != "message":
                     # Skip ``subscribe`` ack and similar control frames.

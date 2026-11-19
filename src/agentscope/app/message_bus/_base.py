@@ -43,13 +43,18 @@ responsibility.
 import asyncio
 import json
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Self
 
 from typing_extensions import deprecated
 
 from ._keys import MessageBusKeys
+
+
+# Register a coroutine that waits for previously received broadcasts to be
+# yielded to this subscriber. Each subscription has one sequential caller.
+RegisterSubscriptionBarrier = Callable[[Callable[[], Awaitable[None]]], None]
 
 
 class MessageBus(ABC):  # pylint: disable=too-many-public-methods
@@ -360,6 +365,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         key: str,
         *,
         on_ready: Callable[[], None] | None = None,
+        on_barrier: RegisterSubscriptionBarrier | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Yield broadcast payloads for ``key`` until the consumer
         closes the generator.
@@ -380,6 +386,11 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``SessionTriggerListenerManager.start``) until the
                 subscription is live, so a publish-immediately-after
                 race is impossible.
+            on_barrier (optional):
+                Register a flush coroutine once the subscription is ready.
+                It must wait until this iterator has yielded all preceding
+                notifications. The caller may cancel a pending flush when
+                closing the subscription.
 
         Yields:
             `dict`:
