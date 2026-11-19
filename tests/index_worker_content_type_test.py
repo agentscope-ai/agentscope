@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for Content-Type dispatch in ``IndexWorker``."""
+"""Regression tests for Content-Type dispatch and PDF indexing status."""
+from io import BytesIO
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+from PIL import Image
+from pypdf import PdfWriter
 
 from rag_parser_test import (
     _PNG_PIXEL,
+    _make_pdf,
     _make_pptx_rich,
     _make_pptx_with_image,
 )
@@ -16,6 +21,7 @@ from agentscope.rag import (
     Chunk,
     ExcelParser,
     ImageParser,
+    PDFParser,
     PPTParser,
     Section,
     TextParser,
@@ -294,6 +300,84 @@ def _worker(
         node_id="test-node",
     )
     return worker, manager
+
+
+class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
+    """Distinguish a scan from a mixed PDF with searchable pages."""
+
+    async def test_index_status_reflects_searchable_pdf_content(self) -> None:
+        """A scan needs OCR, while a mixed file indexes its text page."""
+        scan = BytesIO()
+        Image.new("RGB", (16, 16), "white").save(scan, format="PDF")
+        mixed = BytesIO()
+        writer = PdfWriter()
+        writer.append(BytesIO(scan.getvalue()))
+        writer.append(BytesIO(_make_pdf(["Cell structure"])))
+        writer.write(mixed)
+
+        for payload, status, expected in (
+            (
+                scan.getvalue(),
+                "error",
+                {
+                    "statuses": ["parsing", "chunking", "error"],
+                    "chunks": [],
+                },
+            ),
+            (
+                mixed.getvalue(),
+                "ready",
+                {
+                    "statuses": ["parsing", "chunking", "indexing", "ready"],
+                    "chunks": [
+                        {
+                            "content": {
+                                "type": "text",
+                                "text": "Cell structure\n",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            "source": "lesson.pdf",
+                            "chunk_index": 0,
+                            "total_chunks": 1,
+                            "metadata": {"page": 2},
+                        },
+                    ],
+                },
+            ),
+        ):
+            with self.subTest(status=status):
+                storage = _Storage("application/pdf", filename="lesson.pdf")
+                storage.update_knowledge_document_status = AsyncMock(
+                    wraps=storage.update_knowledge_document_status,
+                )
+                worker, manager = _worker(storage, [PDFParser()])
+                worker.blob_content = payload
+
+                with patch.multiple(
+                    storage,
+                    acquire_knowledge_document_lease=AsyncMock(
+                        return_value=True,
+                    ),
+                    release_knowledge_document_lease=AsyncMock(),
+                    create=True,
+                ):
+                    await worker.process("user-1", "kb-1", "doc-1")
+
+                self.assertEqual(
+                    {
+                        "statuses": storage.statuses,
+                        "chunks": [
+                            chunk.model_dump()
+                            for chunk in manager.knowledge.inserted_chunks
+                        ],
+                    },
+                    expected,
+                )
+                if status == "error":
+                    update = storage.update_knowledge_document_status
+                    self.assertTrue(update.await_args.kwargs["error"])
 
 
 class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):
