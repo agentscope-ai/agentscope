@@ -46,7 +46,11 @@ export const chatApi = {
 		sessionId: string,
 		options?: ApiRequestOptions,
 	) =>
-		client.post<{ state: 'cancelled' | 'started'; queue_item_id: string | null }>(
+		client.post<{
+			state: 'cancelled' | 'started';
+			queue_item_id: string | null;
+			before_claim?: boolean;
+		}>(
 			`/chat/submissions/${encodeURIComponent(submissionId)}/cancel`,
 			null,
 			{ agent_id: agentId, session_id: sessionId },

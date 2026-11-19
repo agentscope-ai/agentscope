@@ -2,6 +2,7 @@
 """Session router — create, list, update, delete, stream, and get messages."""
 import asyncio
 import json
+from collections import deque
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -981,6 +982,41 @@ async def stream_session_events(
         ready = asyncio.Event()
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
+        cursor = after
+        buffered: deque[tuple[str, dict]] = deque()
+
+        def stream_id(value: str) -> tuple[int, ...]:
+            """Compare Redis and in-memory stream IDs numerically."""
+            return tuple(map(int, value.split("-")))
+
+        async def replay(
+            through: str | None = None,
+        ) -> AsyncGenerator[str, None]:
+            """Catch up in log order and retain later entries for reuse."""
+            nonlocal cursor
+            emitted = 0
+            while through is not None or emitted < (
+                MessageBusKeys.SESSION_REPLAY_MAX_LEN
+            ):
+                if not buffered:
+                    buffered.extend(
+                        await message_bus.log_read(events_key, since=cursor),
+                    )
+                if not buffered:
+                    return
+                entry_id, payload = buffered[0]
+                if through is not None and stream_id(entry_id) > stream_id(
+                    through,
+                ):
+                    return
+                buffered.popleft()
+                cursor = entry_id
+                emitted += 1
+                data = json.dumps(payload, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+                if entry_id == through:
+                    return
+
         async def _feeder() -> None:
             """Read from the bus subscription and forward to the queue.
 
@@ -1010,14 +1046,8 @@ async def stream_session_events(
                 ready.wait(),
                 timeout=_SUBSCRIBE_TIMEOUT_SECS,
             )
-            seen_entry_ids: set[str] = set()
-            for entry_id, event in await message_bus.log_read(
-                events_key,
-                since=after,
-                max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
-            ):
-                seen_entry_ids.add(str(entry_id))
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            async for frame in replay():
+                yield frame
 
             # Inject pending subagent HITL cards projected onto this
             # session as a team leader. These live in a durable registry,
@@ -1053,28 +1083,45 @@ async def stream_session_events(
                 )
                 yield f"data: {data}\n\n"
 
+            loop = asyncio.get_running_loop()
+            next_check = loop.time() + _HEARTBEAT_INTERVAL_SECS
             while True:
-                try:
-                    item = await asyncio.wait_for(
-                        queue.get(),
-                        timeout=_HEARTBEAT_INTERVAL_SECS,
-                    )
-                    if item is None:
-                        break
-                    entry_id = item.get("_entry_id")
-                    if entry_id is not None:
-                        entry_id = str(entry_id)
-                        if entry_id in seen_entry_ids:
-                            continue
-                    payload = {
-                        key: value
-                        for key, value in item.items()
-                        if key != "_entry_id"
-                    }
-                    data = json.dumps(payload, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
-                except asyncio.TimeoutError:
+                remaining = next_check - loop.time()
+                if not queue.empty():
+                    # Already queued frames may have been trimmed from the log.
+                    item = queue.get_nowait()
+                elif remaining > 0:
+                    try:
+                        item = await asyncio.wait_for(queue.get(), remaining)
+                    except asyncio.TimeoutError:
+                        continue
+                else:
+                    async for frame in replay():
+                        yield frame
+                    next_check = loop.time() + _HEARTBEAT_INTERVAL_SECS
                     yield ":\n\n"
+                    continue
+                if item is None:
+                    break
+                entry_id = item.get("_entry_id")
+                if entry_id is not None:
+                    entry_id = str(entry_id)
+                    if cursor and stream_id(entry_id) <= stream_id(cursor):
+                        continue
+                    async for frame in replay(through=entry_id):
+                        yield frame
+                    if cursor == entry_id:
+                        continue
+                    # A checkpoint can trim a queued live frame before
+                    # this subscriber consumes it.
+                    cursor = entry_id
+                payload = {
+                    key: value
+                    for key, value in item.items()
+                    if key != "_entry_id"
+                }
+                data = json.dumps(payload, ensure_ascii=False)
+                yield f"data: {data}\n\n"
         finally:
             feeder_task.cancel()
             try:

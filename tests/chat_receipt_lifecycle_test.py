@@ -464,6 +464,7 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                                 ),
                                 {
                                     "state": "cancelled",
+                                    "before_claim": True,
                                     "queue_item_id": item["id"],
                                 },
                             )
@@ -522,6 +523,7 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                             result,
                             {
                                 "state": "cancelled",
+                                "before_claim": True,
                                 "queue_item_id": record["queue_item_id"],
                             },
                         )
@@ -605,6 +607,7 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                             ),
                             {
                                 "state": "cancelled",
+                                "before_claim": True,
                                 "queue_item_id": item["id"],
                             },
                         )

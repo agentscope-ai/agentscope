@@ -613,6 +613,28 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                 self.assertEqual(deleted, [second])
                 self.assertEqual(await list_chat_inputs(bus, "s"), deleted)
 
+    async def test_remove_publishes_ids_for_other_subscribers(self) -> None:
+        """An idempotent removal identifies every unstarted message."""
+        async with InMemoryMessageBus() as bus:
+            messages = [UserMsg("u", "first"), UserMsg("u", "second")]
+            item = await enqueue_chat_input(bus, "u", "s", "a", messages)
+            key = MessageBusKeys.session_events("s")
+            with patch.object(bus, "publish", wraps=bus.publish) as publish:
+                for _ in range(2):
+                    await delete_chat_input(bus, "u", "s", "a", item["id"])
+            [(entry_id, event)] = await bus.log_read(key)
+            self.assertEqual(
+                (event["name"], event["value"]),
+                (
+                    "chat_input_removed",
+                    {
+                        "queue_item_id": item["id"],
+                        "message_ids": [message.id for message in messages],
+                    },
+                ),
+            )
+            publish.assert_any_await(key, {**event, "_entry_id": entry_id})
+
     async def test_snapshot_does_not_acquire_mutation_lock(self) -> None:
         """Polling succeeds even while a mutation lock is held."""
         async with InMemoryMessageBus() as bus:

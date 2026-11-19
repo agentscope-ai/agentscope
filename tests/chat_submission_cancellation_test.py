@@ -139,6 +139,7 @@ class ChatSubmissionCancellationTest(IsolatedAsyncioTestCase):
                                     200,
                                     {
                                         "state": "cancelled",
+                                        "before_claim": True,
                                         "queue_item_id": None,
                                     },
                                 ),
@@ -201,6 +202,7 @@ class ChatSubmissionCancellationTest(IsolatedAsyncioTestCase):
                     )
                     expected = {
                         "state": "cancelled",
+                        "before_claim": True,
                         "queue_item_id": first["id"],
                     }
                     for _ in range(2):
@@ -351,6 +353,20 @@ class ChatSubmissionCancellationTest(IsolatedAsyncioTestCase):
                         self.addAsyncCleanup(queue.close)
                         await queue.drain_chat_inputs("u", "s", "a")
                         self.assertEqual(service.calls, [])
+                        events = await bus.log_read(
+                            MessageBusKeys.session_events("s"),
+                        )
+                        self.assertIn(
+                            {
+                                "queue_item_id": item["id"],
+                                "message_ids": [item["input"]["id"]],
+                            },
+                            [
+                                event["value"]
+                                for _, event in events
+                                if event["name"] == "chat_input_removed"
+                            ],
+                        )
                         self.assertEqual(
                             await cancel_chat_submission(
                                 bus,
@@ -361,6 +377,7 @@ class ChatSubmissionCancellationTest(IsolatedAsyncioTestCase):
                             ),
                             {
                                 "state": "cancelled",
+                                "before_claim": True,
                                 "queue_item_id": item["id"],
                             },
                         )
@@ -482,7 +499,11 @@ class ChatSubmissionCancellationTest(IsolatedAsyncioTestCase):
                         )
                     self.assertEqual(
                         result,
-                        {"state": "cancelled", "queue_item_id": item["id"]},
+                        {
+                            "state": "cancelled",
+                            "before_claim": True,
+                            "queue_item_id": item["id"],
+                        },
                     )
                     self.assertEqual(await list_chat_inputs(bus, "s"), [])
 
@@ -522,7 +543,11 @@ class ChatSubmissionCancellationTest(IsolatedAsyncioTestCase):
                             "a",
                             "first",
                         ),
-                        {"state": "cancelled", "queue_item_id": None},
+                        {
+                            "state": "cancelled",
+                            "before_claim": True,
+                            "queue_item_id": None,
+                        },
                     )
                     for user, agent in (("other", "a"), ("u", "other")):
                         with self.assertRaises(LookupError):

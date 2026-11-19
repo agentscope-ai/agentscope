@@ -5,6 +5,7 @@ import asyncio
 from contextlib import aclosing
 import json
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.app._bus_ops import publish_session_event
 from agentscope.app._router._session import stream_session_events
@@ -78,3 +79,44 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
             [first, second, third],
             [{"sequence": 1}, {"sequence": 2}, {"sequence": 3}],
         )
+
+    async def test_connected_client_recovers_failed_live_delivery(
+        self,
+    ) -> None:
+        """Recover a missed end on heartbeat or before the next live event."""
+        for next_live in (False, True):
+            with self.subTest(next_live=next_live), patch(
+                "agentscope.app._router._session._HEARTBEAT_INTERVAL_SECS",
+                0.02,
+            ):
+                bus = InMemoryMessageBus()
+                response = await stream_session_events(
+                    session_id="s",
+                    agent_id="a",
+                    user_id="u",
+                    storage=_Storage(),  # type: ignore[arg-type]
+                    message_bus=bus,
+                    after=None,
+                )
+                async with aclosing(response.body_iterator) as stream:
+                    # A heartbeat proves replay is over and the client is live.
+                    self.assertEqual(await anext(stream), ":\n\n")
+                    end = {"type": "REPLY_END", "reply_id": "first"}
+                    with patch.object(bus, "publish", side_effect=OSError):
+                        await publish_session_event(
+                            bus,
+                            "s",
+                            end,
+                            require_live_delivery=False,
+                        )
+                    expected = [end]
+                    if next_live:
+                        start = {"type": "REPLY_START", "reply_id": "next"}
+                        await publish_session_event(bus, "s", start)
+                        expected.append(start)
+                    frames = [
+                        _decode(await asyncio.wait_for(anext(stream), 1))
+                        for _ in expected
+                    ]
+                    self.assertEqual(frames, expected)
+                    self.assertEqual(await anext(stream), ":\n\n")

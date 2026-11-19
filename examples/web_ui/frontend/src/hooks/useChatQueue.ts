@@ -216,12 +216,19 @@ export function useChatQueue(
 				itemsRef.current.filter(
 					(item) =>
 						item.id !== value.queue_item_id &&
-						!getQueueMessages([item]).some((message) => terminalIds.has(message.id)),
+						!(
+							(!value.queue_item_id || item.id.startsWith(OPTIMISTIC_ITEM_PREFIX)) &&
+							getQueueMessages([item]).some((message) => terminalIds.has(message.id))
+						),
 				),
 			);
+			const provisionalIds = new Set<string>();
 			updateConversationMessageIds((ids) => {
-				for (const messageId of terminalIds) ids.delete(messageId);
+				for (const id of terminalIds) {
+					if (ids.delete(id)) provisionalIds.add(id);
+				}
 			});
+			return provisionalIds;
 		},
 		[updateConversationMessageIds, updateItems],
 	);

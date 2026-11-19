@@ -235,6 +235,17 @@ export function useMessages(
 		});
 	}, []);
 
+	const removeUnstartedInput = useCallback(
+		(value: ChatInputTerminalValue) => {
+			const provisionalIds = finishItem(value);
+			if (provisionalIds.size) {
+				msgsRef.current = msgsRef.current.filter((msg) => !provisionalIds.has(msg.id));
+				scheduleUpdate();
+			}
+		},
+		[finishItem, scheduleUpdate],
+	);
+
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
 		(event: AgentEvent) => {
@@ -305,6 +316,8 @@ export function useMessages(
 				} else if (custom.name === 'chat_queue_changed') {
 					const value = custom.value as { items?: ChatQueueItem[] };
 					applyQueueSnapshot(value.items ?? []);
+				} else if (custom.name === 'chat_input_removed') {
+					removeUnstartedInput(custom.value as ChatInputTerminalValue);
 				} else if (custom.name === 'chat_input_failed') {
 					const value = custom.value as ChatInputTerminalValue;
 					setStartingInputId((id) => (id === value.queue_item_id ? null : id));
@@ -472,6 +485,7 @@ export function useMessages(
 			startItem,
 			applyQueueSnapshot,
 			finishItem,
+			removeUnstartedInput,
 			t,
 			agentId,
 			sessionId,
@@ -608,7 +622,7 @@ export function useMessages(
 				signal?: AbortSignal;
 				isCurrent?: () => boolean;
 				hasExecutionEvidence?: () => boolean;
-				submitted: (id: string, clearPending: () => void) => void;
+				submitted: (id: string, clearPending: (beforeClaim: boolean) => void) => void;
 				accepted: (id: string | null) => void;
 			},
 			mode: 'chat' | 'pipeline_voice' = 'chat',
@@ -616,8 +630,11 @@ export function useMessages(
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
 			const userMsg = UserMsg({ name: 'user', content });
-			observer?.submitted(userMsg.id, () => {
-				if (activeSessionRef.current === session) finishItem({ message_ids: [userMsg.id] });
+			observer?.submitted(userMsg.id, (beforeClaim) => {
+				if (activeSessionRef.current !== session) return;
+				const value = { message_ids: [userMsg.id] };
+				if (beforeClaim) removeUnstartedInput(value);
+				else finishItem(value);
 			});
 			const showInConversationImmediately = phase === 'idle' && pendingQueueCount === 0;
 			if (showInConversationImmediately) {
@@ -670,6 +687,7 @@ export function useMessages(
 			phase,
 			pendingQueueCount,
 			finishItem,
+			removeUnstartedInput,
 			session,
 			scheduleUpdate,
 			addOptimistic,

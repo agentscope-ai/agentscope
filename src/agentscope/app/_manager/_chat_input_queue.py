@@ -29,6 +29,7 @@ from .._bus_ops import (
     chat_input_mutation,
     enqueue_run_trigger,
     publish_session_event,
+    publish_removed_chat_input,
 )
 from .._chat_input_store import (
     get_submission,
@@ -868,6 +869,9 @@ class ChatInputQueue:
                     pending[0][1].get("user_id", ""),
                     pending[0][1].get("agent_id", ""),
                 ):
+                    removed = await hydrate_input(self._bus, pending[0][1])
+                    if removed is not None:
+                        await publish_removed_chat_input(self._bus, removed)
                     await self._bus.queue_drain(
                         MessageBusKeys.chat_inputs(session_id),
                         max_count=1,

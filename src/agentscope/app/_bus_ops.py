@@ -676,7 +676,11 @@ async def cancel_chat_submission(
         return {"state": "started", "queue_item_id": item_id}
     if item_id is not None:
         await delete_chat_input(bus, user_id, session_id, agent_id, item_id)
-    return {"state": "cancelled", "queue_item_id": item_id}
+    return {
+        "state": "cancelled",
+        "queue_item_id": item_id,
+        "before_claim": True,
+    }
 
 
 async def list_chat_inputs(
@@ -1154,6 +1158,25 @@ async def update_chat_input(
     return items
 
 
+async def publish_removed_chat_input(bus: "MessageBus", item: dict) -> None:
+    """Notify subscribers which messages were removed before execution."""
+    inputs = item["input"]
+    messages = inputs if isinstance(inputs, list) else [inputs]
+    event = CustomEvent(
+        name="chat_input_removed",
+        value={
+            "queue_item_id": item["id"],
+            "message_ids": [msg["id"] for msg in messages],
+        },
+    )
+    await publish_session_event(
+        bus,
+        item["session_id"],
+        event.model_dump(mode="json"),
+        require_live_delivery=False,
+    )
+
+
 async def delete_chat_input(
     bus: "MessageBus",
     user_id: str,
@@ -1222,6 +1245,7 @@ async def delete_chat_input(
                 cancellation_receipt(user_id, agent_id),
             )
         if item is not None:
+            await publish_removed_chat_input(bus, item)
             payloads.remove(item)
             await bus.queue_replace(
                 MessageBusKeys.chat_inputs(session_id),

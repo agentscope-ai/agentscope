@@ -41,7 +41,7 @@ export interface PipelineVoiceOptions {
 			signal: AbortSignal;
 			isCurrent: () => boolean;
 			hasExecutionEvidence: () => boolean;
-			submitted: (id: string, clearPending: () => void) => void;
+			submitted: (id: string, clearPending: (beforeClaim: boolean) => void) => void;
 			accepted: (id: string | null) => void;
 		},
 	) => Promise<void>;
@@ -51,6 +51,7 @@ export interface PipelineVoiceOptions {
 		signal: AbortSignal,
 	) => Promise<{
 		state: 'cancelled' | 'started';
+		before_claim?: boolean;
 		queue_item_id: string | null;
 	}>;
 	interrupt: (replyId: string, signal: AbortSignal) => Promise<void>;
@@ -87,7 +88,7 @@ export class PipelineVoiceSession {
 	private submissionAttempt: { controller: AbortController; terminal: boolean } | null = null;
 	private queueId: string | null = null;
 	private inputStarted = false;
-	private clearPendingInput: (() => void) | null = null;
+	private clearPendingInput: ((beforeClaim: boolean) => void) | null = null;
 	private cancelledReply: Promise<string | null> | null = null;
 	private resolveCancelledReply?: (replyId: string | null) => void;
 	private inputFinished = false;
@@ -305,11 +306,14 @@ export class PipelineVoiceSession {
 					false,
 				);
 			if (
-				['chat_input_failed', 'chat_input_cancelled'].includes(custom.name) &&
+				['chat_input_failed', 'chat_input_cancelled', 'chat_input_removed'].includes(
+					custom.name,
+				) &&
+				(!this.queueId || !value.queue_item_id || this.queueId === value.queue_item_id) &&
 				this.userMessageId &&
 				value.message_ids?.includes(this.userMessageId)
 			) {
-				this.finishCancellation();
+				this.finishCancellation(custom.name === 'chat_input_removed');
 				this.fail(new Error('The voice turn could not be completed.'));
 			}
 			return handled;
@@ -443,6 +447,10 @@ export class PipelineVoiceSession {
 				const result = await this.options.cancelSubmission(this.submissionId, signal);
 				signal.throwIfAborted();
 				if (result.state === 'cancelled') {
+					if (result.before_claim) {
+						this.finishCancellation(true);
+						return;
+					}
 					// A retired receipt can belong to an already completed reply.
 					if (this.userMessageId) {
 						const input = await this.options.inputResult(
@@ -488,7 +496,7 @@ export class PipelineVoiceSession {
 			} else if (this.queueId && !this.inputStarted && !this.replyId) {
 				await this.options.deleteQueued(this.queueId, signal);
 				signal.throwIfAborted();
-				this.finishCancellation();
+				this.finishCancellation(true);
 			}
 		});
 		this.cancellationPromise = Promise.race([work, aborted])
@@ -531,9 +539,9 @@ export class PipelineVoiceSession {
 		this.resolveCancelledReply?.(replyId);
 	}
 
-	private finishCancellation(): void {
+	private finishCancellation(beforeClaim = false): void {
 		this.resolveCancelledReply?.(this.replyId);
-		this.clearPendingInput?.();
+		this.clearPendingInput?.(beforeClaim);
 		this.clearPendingInput = null;
 		this.completeSubmission();
 		this.inputFinished = true;
