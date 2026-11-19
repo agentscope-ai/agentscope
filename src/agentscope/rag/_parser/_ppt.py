@@ -143,7 +143,8 @@ class PPTParser(ParserBase):
     ``slide_prefix`` / ``slide_suffix`` are wrapped around each
     slide's text content (the prefix is prepended to the slide's
     first text section, the suffix is appended to its last text
-    section).  Use ``None`` on either to disable wrapping.
+    section). Slides without text do not emit wrapper-only sections.
+    Use ``None`` on either to disable wrapping.
     """
 
     supported_media_types: list[str] = [
@@ -303,10 +304,6 @@ class PPTParser(ParserBase):
             )
             text_buffer.clear()
 
-        # Slide prefix lives at the very top of the first text section.
-        if prefix:
-            text_buffer.append(prefix)
-
         for shape in _iter_shapes(slide.shapes):
             # 1. Pictures — flush running text, emit a DataBlock section.
             if self.include_image:
@@ -382,12 +379,16 @@ class PPTParser(ParserBase):
                 if parts:
                     text_buffer.append("\n".join(parts))
 
-        # Suffix goes onto the last text section of this slide.  If the
-        # slide ends on an image (text_buffer empty, no prior text
-        # section in this slide), create a small text-only carrier so
-        # the suffix is preserved.
-        if self.slide_suffix is not None:
-            text_buffer.append(self.slide_suffix)
-
         flush_text()
+        # Decorate real text only: wrappers are not indexable slide content.
+        text_blocks = [
+            section.content
+            for section in slide_sections
+            if isinstance(section.content, TextBlock)
+        ]
+        if text_blocks:
+            if prefix:
+                text_blocks[0].text = f"{prefix}\n{text_blocks[0].text}"
+            if self.slide_suffix is not None:
+                text_blocks[-1].text += f"\n{self.slide_suffix}"
         return slide_sections

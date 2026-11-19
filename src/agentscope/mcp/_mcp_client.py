@@ -521,6 +521,8 @@ class MCPClient(BaseModel):
             self._lifecycle_task = None
             self._close_requested = None
             self._is_connected = False
+            # Rediscover tools after reconnecting.
+            self._cached_tools = None
             logger.info("MCP closed: %s", self.name)
 
     def _get_client_gen(self) -> AbstractAsyncContextManager[Any]:

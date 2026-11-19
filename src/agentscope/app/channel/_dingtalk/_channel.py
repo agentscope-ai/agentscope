@@ -13,7 +13,7 @@ import json
 import mimetypes
 import re
 import time
-from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
@@ -29,10 +29,17 @@ from ....message import (
     ToolCallBlock,
     ToolResultBlock,
 )
+from .._approval import (
+    CHANNEL_APPROVAL_UNAVAILABLE,
+    WEB_UI_APPROVAL_NOTICE,
+    approval_id_for,
+)
 from .._base import (
+    _EVENT_ADAPTER,
     ChannelBase,
     ChannelCapability,
     ChannelConfirmationResultEvent,
+    ChannelDecisionStatus,
     ChannelEvent,
     ChannelStatus,
     ChatKind,
@@ -40,13 +47,11 @@ from .._base import (
     WikiNode,
     WikiPage,
     WikiSpace,
-    _EVENT_ADAPTER,
 )
 from ._card import (
     _approval_card_data,
     _parse_card_callback,
     _resolved_card_data,
-    _tracking_id,
 )
 from ._openapi import _DingTalkOpenAPI
 
@@ -194,7 +199,7 @@ class DingTalkChannel(ChannelBase):
         self._emit: (
             Callable[
                 [ChannelEvent | ChannelConfirmationResultEvent],
-                Awaitable[None],
+                Awaitable[ChannelDecisionStatus | None],
             ]
             | None
         ) = None
@@ -209,7 +214,7 @@ class DingTalkChannel(ChannelBase):
         self,
         emit: Callable[
             [ChannelEvent | ChannelConfirmationResultEvent],
-            Awaitable[None],
+            Awaitable[ChannelDecisionStatus | None],
         ],
     ) -> None:
         """Start the DingTalk Stream connection until cancelled.
@@ -939,21 +944,31 @@ class DingTalkChannel(ChannelBase):
         request: RequireUserConfirmEvent,
         agent_name: str,
     ) -> None:
-        """Create one approval card for each pending tool call.
+        """Present channel approval cards or a Web UI approval notice.
 
         Args:
             event (`ChannelEvent`): Chat receiving the cards.
             request (`RequireUserConfirmEvent`): Pending tool calls.
             agent_name (`str`): The agent that asked for approval.
         """
+        # Web UI/background runs, or DingTalk messages without staffId,
+        # still require confirmation but have no channel approval token.
+        approvals = []
+        for tool in request.tool_calls:
+            approval_id = approval_id_for(request, tool.id)
+            if approval_id:
+                approvals.append((tool, approval_id))
+        if len(approvals) != len(request.tool_calls):
+            await self._api().send_text(event.chat_id, WEB_UI_APPROVAL_NOTICE)
+        if not approvals:
+            return
+
         template_id = self._config.approval_card_template_id
         if not template_id:
             logger.error(
                 "DingTalk '%s' cannot deliver tool approval cards",
                 self._channel_id,
             )
-            # The run is parked on an approval nobody can give. Say so
-            # here, or the chat simply goes quiet.
             await self._api().send_text(
                 event.chat_id,
                 "无法展示工具审批卡片：审批卡片模板为空，请管理员配置。",
@@ -964,13 +979,14 @@ class DingTalkChannel(ChannelBase):
             if event.chat_id.startswith("user:")
             else ""
         )
-        for tool in request.tool_calls:
+        for tool, approval_id in approvals:
             out_track_id = await self._api().create_approval_card(
                 event.chat_id,
                 approver_id,
                 template_id,
-                _approval_card_data(tool, agent_name),
-                _tracking_id(tool.id),
+                _approval_card_data(tool, agent_name, approval_id),
+                # DingTalk echoes this tracking ID on every card callback.
+                approval_id,
             )
             if out_track_id is None:
                 await self._api().send_text(
@@ -997,18 +1013,42 @@ class DingTalkChannel(ChannelBase):
             return
         if self._emit is None:
             return
-        await self._emit(
-            ChannelConfirmationResultEvent(
-                channel_id=self._channel_id,
-                chat_id=decision.chat_id,
-                channel_user_id=decision.user_id,
-                agent_id=decision.agent_id,
-                session_id=decision.session_id,
-                tool_call_id=decision.tool_call_id,
-                approved=decision.approved,
-                actor=decision.user_id,
-            ),
+        event = ChannelConfirmationResultEvent(
+            channel_id=self._channel_id,
+            chat_id="",
+            channel_user_id=decision.user_id,
+            approved=decision.approved,
+            actor=decision.user_id,
+            approval_id=decision.out_track_id,
         )
+        status = await self._emit(event)
+        status = status or ChannelDecisionStatus.ACCEPTED
+        if status is not ChannelDecisionStatus.ACCEPTED:
+            if not event.chat_id:
+                # The gateway could not resolve a destination for this card.
+                logger.warning(
+                    "DingTalk '%s' rejected approval without a verified chat",
+                    self._channel_id,
+                )
+                return
+            if status is ChannelDecisionStatus.UNAUTHORIZED:
+                notice = (
+                    "Only the requester can approve or deny this tool call."
+                )
+            elif status is ChannelDecisionStatus.STALE:
+                notice = "This approval request is no longer pending."
+            else:
+                notice = (
+                    "Your approval permission could not be verified. Please "
+                    "try again later."
+                )
+            if not await self._api().send_text(event.chat_id, notice):
+                logger.warning(
+                    "DingTalk '%s' could not deliver approval rejection "
+                    "notice",
+                    self._channel_id,
+                )
+            return
         await self._api().update_approval_card(
             decision.out_track_id,
             _resolved_card_data(decision.approved),
@@ -1030,9 +1070,8 @@ class DingTalkChannel(ChannelBase):
         ):
             return
 
-        user_id = str(
-            payload.get("senderStaffId") or payload.get("senderId") or "",
-        )
+        staff_id = str(payload.get("senderStaffId") or "")
+        user_id = staff_id or str(payload.get("senderId") or "")
         conversation_id = str(payload.get("conversationId") or "")
         target_id = conversation_id if is_group else user_id
         if not user_id or not target_id:
@@ -1062,6 +1101,10 @@ class DingTalkChannel(ChannelBase):
                 metadata={
                     "chat_type": "group" if is_group else "private",
                     "conversation_type": conversation_type,
+                    # senderId can route inbound messages, but card callbacks
+                    # identify the clicker by enterprise userid. Without
+                    # senderStaffId, direct tool approvals to the Web UI.
+                    CHANNEL_APPROVAL_UNAVAILABLE: not staff_id,
                 },
             ),
         )
