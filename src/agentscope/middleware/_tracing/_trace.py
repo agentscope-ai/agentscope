@@ -83,6 +83,24 @@ def _set_span_error_status(span: "Span", e: BaseException) -> None:
     span.end()
 
 
+def _is_stream_close(e: BaseException) -> bool:
+    """Whether an exception only reports that the consumer stopped reading.
+
+    Closing an async generator throws :class:`GeneratorExit` at the
+    ``yield`` it is suspended on.  That is how every consumer ends a
+    stream it no longer needs — an explicit ``aclose()``, or a ``break``
+    out of an ``async for`` under :func:`contextlib.aclosing` — so it
+    says nothing about the traced operation and must not fail its span.
+
+    Args:
+        e (`BaseException`): The exception caught at the stream boundary.
+
+    Returns:
+        `bool`: ``True`` when the stream is simply being closed.
+    """
+    return isinstance(e, GeneratorExit)
+
+
 async def _trace_async_generator_wrapper(
     res: AsyncGenerator[T, None],
     span: "Span",
@@ -98,8 +116,10 @@ async def _trace_async_generator_wrapper(
             yield chunk
 
     except BaseException as e:
-        has_error = True
-        _set_span_error_status(span, e)
+        # A close is how the consumer ends the stream, not a failure
+        if not _is_stream_close(e):
+            has_error = True
+            _set_span_error_status(span, e)
         raise
 
     finally:
@@ -224,8 +244,10 @@ class TracingMiddleware(MiddlewareBase):
                     last_msg = item
                 yield item
         except BaseException as e:
-            has_error = True
-            error_exc = e
+            # A close is how the consumer ends the stream, not a failure
+            if not _is_stream_close(e):
+                has_error = True
+                error_exc = e
             raise
         finally:
             reply_id = observed_reply_id or agent.state.reply_id
@@ -362,8 +384,10 @@ class TracingMiddleware(MiddlewareBase):
                 last_item = item
                 yield item
         except BaseException as e:
-            has_error = True
-            _set_span_error_status(span, e)
+            # A close is how the consumer ends the stream, not a failure
+            if not _is_stream_close(e):
+                has_error = True
+                _set_span_error_status(span, e)
             raise
         finally:
             if not has_error:
