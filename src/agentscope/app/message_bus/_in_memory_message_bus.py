@@ -25,7 +25,11 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from typing import Callable, Self
 
-from ._base import MessageBus, RegisterSubscriptionBarrier
+from ._base import (
+    MessageBus,
+    RegisterSubscriptionBarrier,
+    _stream_cursor_precedes,
+)
 
 
 class InMemoryMessageBus(
@@ -322,6 +326,8 @@ class InMemoryMessageBus(
         if max_len is not None and len(log) > max_len:
             del log[: len(log) - max_len]
         return entry_id
+
+    log_cursor_precedes = staticmethod(_stream_cursor_precedes)
 
     async def log_read(
         self,

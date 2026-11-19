@@ -114,6 +114,72 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
         async with _LegacyBus() as bus:
             await self._assert_replay_then_live(bus)
 
+    async def test_replay_and_resume_with_opaque_cursors(self) -> None:
+        """Replay in append order and skip late duplicate notifications."""
+        key = MessageBusKeys.session_events("s")
+
+        async def read(
+            key: str,
+            since: str | None = None,
+            max_count: int = 100,
+        ) -> list[tuple[str, dict]]:
+            self.assertEqual(key, MessageBusKeys.session_events("s"))
+            ids = [entry_id for entry_id, _ in entries]
+            start = 0 if since is None else ids.index(since) + 1
+            return entries[start : start + min(1, max_count)]
+
+        for after, first in ((None, 9), ("evt-9", 10), ("evt-10", 11)):
+            entries = [
+                ("evt-9", {"sequence": 9}),
+                ("evt-10", {"sequence": 10}),
+            ]
+            with self.subTest(after=after), patch.object(
+                _LegacyBus,
+                "log_read",
+                side_effect=read,
+            ):
+                async with _LegacyBus() as bus:
+                    response = await stream_session_events(
+                        session_id="s",
+                        agent_id="a",
+                        user_id="u",
+                        storage=_Storage(),  # type: ignore[arg-type]
+                        message_bus=bus,
+                        after=after,
+                    )
+                    async with aclosing(response.body_iterator) as stream:
+                        with patch(
+                            "agentscope.app._router._session."
+                            "_HEARTBEAT_INTERVAL_SECS",
+                            0.02,
+                        ):
+                            frames = []
+                            while (frame := await anext(stream)) != ":\n\n":
+                                frames.append(_decode(frame))
+                        for entry_id, event in entries:
+                            await bus.publish(
+                                key,
+                                {**event, "_entry_id": entry_id},
+                            )
+                        # Only the final log entry gets a live notification.
+                        entries.extend(
+                            [
+                                ("evt-11", {"sequence": 11}),
+                                ("evt-12", {"sequence": 12}),
+                            ],
+                        )
+                        await bus.publish(
+                            key,
+                            {"sequence": 12, "_entry_id": "evt-12"},
+                        )
+                        for _ in range(2):
+                            frame = await asyncio.wait_for(anext(stream), 1)
+                            frames.append(_decode(frame))
+                self.assertEqual(
+                    frames,
+                    [{"sequence": n} for n in range(first, 13)],
+                )
+
     async def test_real_redis_protocols(self) -> None:
         """Exercise decoded PING replies on real RESP2 and RESP3 sockets."""
         url = os.getenv("AGENTSCOPE_TEST_REDIS_URL")
@@ -233,6 +299,51 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
                 frame = await asyncio.wait_for(anext(stream), 1)
                 frames.append(_decode(frame))
         self.assertEqual(frames, [{"sequence": n} for n in (1, 2, 3)])
+
+    async def test_checkpoint_trims_snapshot_before_delivery(self) -> None:
+        """Keep a queued delta before an end trimmed by a later checkpoint."""
+        bus = InMemoryMessageBus()
+        old = await publish_session_event(bus, "s", {"frame": "old"})
+        after = await publish_session_event(bus, "s", {"frame": "checkpoint"})
+        read = bus.log_read
+        injected = False
+
+        async def read_between_checkpoints(
+            key: str,
+            since: str | None = None,
+            max_count: int = 100,
+        ) -> list[tuple[str, dict]]:
+            nonlocal injected
+            if injected:
+                return await read(key, since, max_count)
+            injected = True
+            await bus.publish(key, {"frame": "old", "_entry_id": old})
+            await publish_session_event(bus, "s", {"frame": "delta"})
+            end = await publish_session_event(bus, "s", {"frame": "end"})
+            await bus.log_trim(key, end)
+            snapshot = await read(key, since, max_count)
+            tail = await publish_session_event(bus, "s", {"frame": "tail"})
+            await bus.log_trim(key, tail)
+            return snapshot
+
+        response = await stream_session_events(
+            session_id="s",
+            agent_id="a",
+            user_id="u",
+            storage=_Storage(),  # type: ignore[arg-type]
+            message_bus=bus,
+            after=after,
+        )
+        async with aclosing(response.body_iterator) as stream:
+            with patch.object(bus, "log_read", read_between_checkpoints):
+                frames = [
+                    _decode(await asyncio.wait_for(anext(stream), 1))
+                    for _ in range(3)
+                ]
+        self.assertEqual(
+            frames,
+            [{"frame": f} for f in ("delta", "end", "tail")],
+        )
 
     async def test_snapshot_ahead_of_subscription_feeder(self) -> None:
         """A delta in the transport buffer must precede the snapshot end."""

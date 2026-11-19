@@ -57,6 +57,16 @@ from ._keys import MessageBusKeys
 RegisterSubscriptionBarrier = Callable[[Callable[[], Awaitable[None]]], None]
 
 
+def _stream_cursor_precedes(left: str, right: str) -> bool | None:
+    """Compare native Redis-style stream IDs, if both use that format."""
+    try:
+        return tuple(map(int, left.split("-"))) < tuple(
+            map(int, right.split("-")),
+        )
+    except ValueError:
+        return None
+
+
 class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     """Abstract base class for live message transport.
 
@@ -288,6 +298,14 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Transport-level entry id, useful as a cursor for
                 subsequent :meth:`log_read` calls.
         """
+
+    @staticmethod
+    def log_cursor_precedes(left: str, right: str) -> bool | None:
+        """Order cursors when both log records may already be trimmed.
+
+        Return None for distinct cursors when only log_read exposes order.
+        """
+        return False if left == right else None
 
     @abstractmethod
     async def log_read(

@@ -3,7 +3,7 @@
 import asyncio
 import inspect
 import json
-from collections import deque
+from collections import OrderedDict
 from typing import AsyncGenerator, Awaitable, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -888,6 +888,96 @@ def _subscribe_session_events(
     return subscribe(key, on_ready=on_ready, on_barrier=on_barrier)
 
 
+class _SessionEventReplay:
+    """Merge the append-ordered log and live events using opaque cursors."""
+
+    def __init__(self, bus: MessageBus, key: str, after: str | None) -> None:
+        self.bus = bus
+        self.key = key
+        self.cursor = after
+        self.pending: OrderedDict[str, dict] = OrderedDict()
+        self.recent: OrderedDict[str, None] = OrderedDict()
+        self.queued: set[str] = set()
+
+    async def read(self) -> list[tuple[str, dict]]:
+        """Extend the buffered log after its tail or the delivered cursor."""
+        rows = await self.bus.log_read(
+            self.key,
+            since=next(reversed(self.pending), self.cursor),
+            max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
+        )
+        self.pending.update(rows)
+        return rows
+
+    def advance(self, entry_id: str) -> None:
+        """Retain recent IDs for late notifications after a checkpoint trim."""
+        if self.cursor is not None:
+            self.recent[self.cursor] = None
+            if len(self.recent) > MessageBusKeys.SESSION_REPLAY_MAX_LEN:
+                self.recent.popitem(last=False)
+        self.cursor = entry_id
+
+    async def _locate(self, entry_id: str) -> str | None:
+        """Buffer the target or find its first surviving log successor."""
+        if entry_id in self.pending:
+            return None
+        rows = await self.read()
+        if entry_id in self.pending:
+            return None
+        following = await self.bus.log_read(
+            self.key,
+            since=entry_id,
+            max_count=1,
+        )
+        successor = following[0][0] if following else None
+        if not rows and successor is None:
+            return None
+        while entry_id not in self.pending and successor not in self.pending:
+            if not await self.read():
+                break
+        return successor
+
+    async def deliver(self, item: dict) -> AsyncGenerator[dict, None]:
+        """Yield through the notified ID, including any missed broadcasts."""
+        entry_id = item.get("_entry_id")
+        if entry_id is None:
+            yield item
+            return
+        if entry_id == self.cursor or entry_id in self.recent:
+            return
+
+        successor = await self._locate(entry_id)
+        trimmed = entry_id not in self.pending
+        if trimmed and self.cursor is not None:
+            older = self.bus.log_cursor_precedes(entry_id, self.cursor)
+            if older or (
+                older is None
+                and successor is not None
+                and successor not in self.pending
+            ):
+                return
+        while self.pending:
+            first = next(iter(self.pending), entry_id)
+            # A second trim can remove the snapshot's records as well.
+            # Their queued live copies still establish their order.
+            if trimmed:
+                precedes = self.bus.log_cursor_precedes(entry_id, first)
+                if precedes or (
+                    precedes is None
+                    and (first == successor or first in self.queued)
+                ):
+                    break
+            key, payload = self.pending.popitem(last=False)
+            self.advance(key)
+            yield payload
+            if key == entry_id:
+                return
+        # A checkpoint trimmed this event. Use its live payload before
+        # delivering any retained successors.
+        self.advance(entry_id)
+        yield {k: v for k, v in item.items() if k != "_entry_id"}
+
+
 async def _worker_still_asking(
     storage: StorageBase,
     user_id: str,
@@ -1004,54 +1094,21 @@ async def stream_session_events(
         flush: Callable[[], Awaitable[None]] | None = None
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
-        cursor = after
-        buffered: deque[tuple[str, dict]] = deque()
-
-        def stream_id(value: str) -> tuple[int, ...]:
-            """Compare Redis and in-memory stream IDs numerically."""
-            return tuple(map(int, value.split("-")))
+        replay = _SessionEventReplay(message_bus, events_key, after)
 
         async def deliver(item: dict) -> AsyncGenerator[str, None]:
-            """Fill log gaps through this notification, then deliver it."""
-            nonlocal cursor
-            entry_id = item.get("_entry_id")
-            if entry_id is not None:
-                target = stream_id(entry_id)
-                if cursor and target <= stream_id(cursor):
-                    return
-                while True:
-                    if not buffered:
-                        buffered.extend(
-                            await message_bus.log_read(
-                                events_key,
-                                since=cursor,
-                            ),
-                        )
-                    if not buffered or stream_id(buffered[0][0]) > target:
-                        break
-                    cursor, payload = buffered.popleft()
-                    data = json.dumps(payload, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
-                    if cursor == entry_id:
-                        return
-                # A checkpoint may already have trimmed this live payload.
-                cursor = entry_id
-            payload = {k: v for k, v in item.items() if k != "_entry_id"}
-            data = json.dumps(payload, ensure_ascii=False)
-            yield f"data: {data}\n\n"
+            if (entry_id := item.get("_entry_id")) is not None:
+                replay.queued.discard(entry_id)
+            async for payload in replay.deliver(item):
+                data = json.dumps(payload, ensure_ascii=False)
+                yield f"data: {data}\n\n"
 
         async def replay_snapshot() -> AsyncGenerator[str, None]:
             """Merge a fixed log snapshot with pending live notifications."""
-            buffered.extend(
-                await message_bus.log_read(
-                    events_key,
-                    since=buffered[-1][0] if buffered else cursor,
-                    max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
-                ),
-            )
-            if not buffered:
+            await replay.read()
+            last_id = next(reversed(replay.pending), None)
+            if last_id is None:
                 return
-            last_id, last_event = buffered[-1]
             # The subscription can still hold trimmed frames even when the
             # feeder queue is empty. Its ordered marker covers both buffers.
             if flush is not None:
@@ -1078,8 +1135,9 @@ async def stream_session_events(
                     break
                 async for frame in deliver(item):
                     yield frame
-            async for frame in deliver({**last_event, "_entry_id": last_id}):
-                yield frame
+            if last_id in replay.pending:
+                async for frame in deliver({"_entry_id": last_id}):
+                    yield frame
 
         def register_barrier(callback: Callable[[], Awaitable[None]]) -> None:
             nonlocal flush
@@ -1099,6 +1157,8 @@ async def stream_session_events(
                     ready.set,
                     register_barrier,
                 ):
+                    if (entry_id := evt.get("_entry_id")) is not None:
+                        replay.queued.add(entry_id)
                     await queue.put(evt)
             except asyncio.CancelledError:
                 pass

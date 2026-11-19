@@ -8,7 +8,11 @@ from contextlib import asynccontextmanager
 from typing import Any, Callable, Self, TYPE_CHECKING
 
 from ..._logging import logger
-from ._base import MessageBus, RegisterSubscriptionBarrier
+from ._base import (
+    MessageBus,
+    RegisterSubscriptionBarrier,
+    _stream_cursor_precedes,
+)
 
 if TYPE_CHECKING:
     from redis.asyncio import ConnectionPool, Redis
@@ -486,6 +490,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         if ttl_secs is not None:
             await self._client.expire(key, ttl_secs)
         return entry_id
+
+    log_cursor_precedes = staticmethod(_stream_cursor_precedes)
 
     async def log_read(
         self,
