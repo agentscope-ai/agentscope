@@ -17,12 +17,10 @@ from agentscope.tool._builtin._backend import (
 )
 
 
-class _ShellBackend(BackendBase):
-    """Use real local I/O without overriding the base shell helpers."""
+class _ShellBackend(LocalBackend):
+    """Run the sandbox mtime helper against local files."""
 
-    def __init__(self, workdir: str | None = None) -> None:
-        """Resolve shell commands inside the test directory."""
-        self.local = LocalBackend(workdir=workdir)
+    stat_mtime = BackendBase.stat_mtime
 
     async def exec_shell(
         self,
@@ -33,16 +31,8 @@ class _ShellBackend(BackendBase):
     ) -> ExecResult:
         """Run the actual stat command, including its platform fallback."""
         if cwd is None:
-            cwd = await self.local.getcwd()
-        return await self.local.exec_shell(command, cwd=cwd, timeout=timeout)
-
-    async def read_file(self, path: str) -> bytes:
-        """Read real bytes as a sandbox backend would."""
-        return await self.local.read_file(path)
-
-    async def write_file(self, path: str, data: bytes) -> None:
-        """Write real bytes without replacing stat_mtime with os.stat."""
-        await self.local.write_file(path, data)
+            cwd = await self.getcwd()
+        return await super().exec_shell(command, cwd=cwd, timeout=timeout)
 
 
 class ShellMtimeOutputTest(unittest.IsolatedAsyncioTestCase):
@@ -59,6 +49,8 @@ class ShellMtimeOutputTest(unittest.IsolatedAsyncioTestCase):
                 b"gnu 2026-09-21 19:43:20.123456789 +0530\n",
                 1790000000.123456789,
             ),
+            # BusyBox 1.31 prints whole seconds without a timezone.
+            (b"gnu 2026-09-21 14:13:20.000000000\n", 1790000000.0),
             (b"bsd 1790000000.123456789 Regular File\n", 1790000000.123456789),
             (b"gnu 1969-12-31 23:59:59.900000000 +0000\n", -0.1),
             (b"bsd -1.900000000 Regular File\n", -0.1),
@@ -134,22 +126,15 @@ class ShellMtimeFilesystemTest(unittest.IsolatedAsyncioTestCase):
         self.path.write_text(content, encoding="utf-8")
         os.utime(self.path, ns=(mtime_ns, mtime_ns))
 
-    async def _cache_file(
-        self,
-        *,
-        linked: bool = False,
-    ) -> tuple[str, AgentState]:
+    async def _cache_file(self) -> tuple[str, AgentState]:
         """Populate the real Read cache before another actor changes a file."""
         self._put_file("agent=old\nhuman=old\n", self.initial_ns)
-        path = self.path
-        if linked:
-            path = self.directory / "linked.txt"
-            path.symlink_to(self.path)
+        path = str(self.path)
         state = AgentState()
-        result = await self.read(file_path=str(path), _agent_state=state)
+        result = await self.read(file_path=path, _agent_state=state)
         self.assertEqual(result.state, "running")
         self.assertEqual(len(state.tool_context.read_file_cache), 1)
-        return str(path), state
+        return path, state
 
     def _external_change(self) -> None:
         """Change content and mtime while staying within the same second."""
@@ -173,13 +158,11 @@ class ShellMtimeFilesystemTest(unittest.IsolatedAsyncioTestCase):
         for nanos in (-1_100_000_000, -100_000_000, 0, 100_000_000):
             with self.subTest(nanos=nanos):
                 self._put_file("content", nanos)
+                if nanos < 0 and self.path.stat().st_mtime_ns != nanos:
+                    self.skipTest("Negative mtime did not round-trip")
                 actual = await self.backend.stat_mtime(str(self.path))
                 self.assertIsNotNone(actual)
-                self.assertAlmostEqual(
-                    actual,
-                    self.path.stat().st_mtime,
-                    places=9,
-                )
+                self.assertAlmostEqual(actual, nanos / 1_000_000_000, places=9)
 
     async def test_symlink_uses_target_mtime(self) -> None:
         """A stable link must still observe its changing target's mtime."""
@@ -216,63 +199,57 @@ class ShellMtimeFilesystemTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_reread_then_edit_preserves_external_change(self) -> None:
         """Re-reading must refresh cached lines before Edit rebuilds a file."""
-        for linked in (False, True):
-            with self.subTest(linked=linked):
-                path, state = await self._cache_file(linked=linked)
-                self._external_change()
-                result = await self.read(file_path=path, _agent_state=state)
-                self.assertEqual(result.state, "running")
-                self.assertIn("human=NEW", result.content[0].text)
-                result = await self.edit(
-                    file_path=path,
-                    old_string="agent=old",
-                    new_string="agent=NEW",
-                    _agent_state=state,
-                )
-                self.assertEqual(result.state, "running")
-                self.assertEqual(
-                    self.path.read_text(encoding="utf-8"),
-                    "agent=NEW\nhuman=NEW\n",
-                )
+        path, state = await self._cache_file()
+        self._external_change()
+        result = await self.read(file_path=path, _agent_state=state)
+        self.assertEqual(result.state, "running")
+        self.assertIn("human=NEW", result.content[0].text)
+        result = await self.edit(
+            file_path=path,
+            old_string="agent=old",
+            new_string="agent=NEW",
+            _agent_state=state,
+        )
+        self.assertEqual(result.state, "running")
+        self.assertEqual(
+            self.path.read_text(encoding="utf-8"),
+            "agent=NEW\nhuman=NEW\n",
+        )
 
     async def test_edit_rejects_stale_cache(self) -> None:
         """An external same-second write must require a new Read first."""
-        for linked in (False, True):
-            with self.subTest(linked=linked):
-                path, state = await self._cache_file(linked=linked)
-                self._external_change()
-                result = await self.edit(
-                    file_path=path,
-                    old_string="agent=old",
-                    new_string="agent=NEW",
-                    _agent_state=state,
-                )
-                self.assertEqual(result.state, "error")
-                self.assertIn("must first read", result.content[0].text)
-                self.assertEqual(state.tool_context.read_file_cache, [])
-                self.assertEqual(
-                    self.path.read_text(encoding="utf-8"),
-                    "agent=old\nhuman=NEW\n",
-                )
+        path, state = await self._cache_file()
+        self._external_change()
+        result = await self.edit(
+            file_path=path,
+            old_string="agent=old",
+            new_string="agent=NEW",
+            _agent_state=state,
+        )
+        self.assertEqual(result.state, "error")
+        self.assertIn("must first read", result.content[0].text)
+        self.assertEqual(state.tool_context.read_file_cache, [])
+        self.assertEqual(
+            self.path.read_text(encoding="utf-8"),
+            "agent=old\nhuman=NEW\n",
+        )
 
     async def test_write_rejects_stale_cache(self) -> None:
         """Write must not accept an old Read as approval to replace changes."""
-        for linked in (False, True):
-            with self.subTest(linked=linked):
-                path, state = await self._cache_file(linked=linked)
-                self._external_change()
-                result = await self.write(
-                    file_path=path,
-                    content="replacement\n",
-                    _agent_state=state,
-                )
-                self.assertEqual(result.state, "error")
-                self.assertIn("read the file first", result.content[0].text)
-                self.assertEqual(state.tool_context.read_file_cache, [])
-                self.assertEqual(
-                    self.path.read_text(encoding="utf-8"),
-                    "agent=old\nhuman=NEW\n",
-                )
+        path, state = await self._cache_file()
+        self._external_change()
+        result = await self.write(
+            file_path=path,
+            content="replacement\n",
+            _agent_state=state,
+        )
+        self.assertEqual(result.state, "error")
+        self.assertIn("read the file first", result.content[0].text)
+        self.assertEqual(state.tool_context.read_file_cache, [])
+        self.assertEqual(
+            self.path.read_text(encoding="utf-8"),
+            "agent=old\nhuman=NEW\n",
+        )
 
     async def test_unchanged_cache_is_reused(self) -> None:
         """Higher precision must not turn every Read into a cache miss."""

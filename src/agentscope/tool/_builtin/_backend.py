@@ -701,7 +701,10 @@ class BackendBase(ABC):
             if dialect == "gnu":
                 # %y works across GNU, BusyBox and uutils, whose %Y
                 # precision and negative-epoch formatting differ.
-                date, clock, offset = value.split()
+                date, time_and_offset = value.strip().split(maxsplit=1)
+                clock, _, offset = time_and_offset.partition(" ")
+                # Older BusyBox omits the offset. We set TZ=UTC0 above.
+                offset = offset or "+0000"
                 whole_clock, nanoseconds = clock.split(".")
                 # datetime only retains microseconds. Parse whole seconds
                 # separately so sub-microsecond changes remain visible.
