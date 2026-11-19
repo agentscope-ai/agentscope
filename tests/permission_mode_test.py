@@ -38,6 +38,10 @@ from agentscope.tool import (
     Edit,
     Glob,
     Grep,
+    TaskCreate,
+    TaskGet,
+    TaskList,
+    TaskUpdate,
 )
 
 
@@ -240,6 +244,32 @@ class PermissionEngineExploreModeTest(IsolatedAsyncioTestCase):
             {"file_path": "/tmp/file.txt"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
+
+    async def test_explore_task_readers_allow(self) -> None:
+        """TaskList and TaskGet only read state, so EXPLORE allows them."""
+        for tool, tool_input in (
+            (TaskList(), {}),
+            (TaskGet(), {"task_id": "1"}),
+        ):
+            decision = await self.engine.check_permission(tool, tool_input)
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+                f"{tool.name} should be allowed in EXPLORE",
+            )
+
+    async def test_explore_task_writers_deny(self) -> None:
+        """TaskCreate and TaskUpdate mutate state, so EXPLORE denies them."""
+        for tool, tool_input in (
+            (TaskCreate(), {"subject": "s", "description": "d"}),
+            (TaskUpdate(), {"task_id": "1", "subject": "s2"}),
+        ):
+            decision = await self.engine.check_permission(tool, tool_input)
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.DENY,
+                f"{tool.name} should stay denied in EXPLORE",
+            )
 
     async def test_explore_deny_rule_returns_deny(self) -> None:
         """Deny rule still has top priority in EXPLORE."""
