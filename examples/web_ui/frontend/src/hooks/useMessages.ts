@@ -31,6 +31,7 @@ import { ASK_USER_TOOL_NAME, formatAskUserOutput, parseAskUserResult } from '@/l
 import type { ClientExternalToolResult } from '@/lib/client-external-tools';
 import { appendMessageEvent } from '@/lib/message-events';
 import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
+import type { VoicePlayback } from '@/lib/pipelineVoiceSession';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -109,8 +110,8 @@ export function useMessages(
 	agentId: string | null,
 	sessionId: string | null,
 	options?: {
-		/** Return ownership, or the remaining playback on DATA_BLOCK_END. */
-		onVoiceEvent?: (event: AgentEvent) => boolean | Promise<void>;
+		/** Route playback, including deferred ownership or a pending block end. */
+		onVoiceEvent?: (event: AgentEvent) => VoicePlayback;
 		onStreamClosed?: () => void;
 		/**
 		 * Called when a ``CUSTOM`` event with ``name="team_updated"``
@@ -433,7 +434,11 @@ export function useMessages(
 				if (event.type === EventType.DATA_BLOCK_START) {
 					const e = event as DataBlockStartEvent;
 					if (e.media_type.startsWith('audio/')) {
-						audioManager.start(e.block_id, e.media_type, !voicePlayback, e.reply_id);
+						const autoplay =
+							typeof voicePlayback === 'object' && 'autoplay' in voicePlayback
+								? voicePlayback.autoplay
+								: !voicePlayback;
+						audioManager.start(e.block_id, e.media_type, autoplay, e.reply_id);
 					}
 				} else if (event.type === EventType.DATA_BLOCK_DELTA) {
 					const e = event as DataBlockDeltaEvent;
@@ -446,7 +451,9 @@ export function useMessages(
 					// we can call it unconditionally.
 					void audioManager.end(
 						e.block_id,
-						typeof voicePlayback === 'boolean' ? undefined : voicePlayback,
+						typeof voicePlayback === 'object' && 'then' in voicePlayback
+							? voicePlayback
+							: undefined,
 					);
 				} else if (
 					event.type === EventType.REPLY_END &&
@@ -601,7 +608,7 @@ export function useMessages(
 				signal?: AbortSignal;
 				isCurrent?: () => boolean;
 				hasExecutionEvidence?: () => boolean;
-				submitted: (id: string) => void;
+				submitted: (id: string, clearPending: () => void) => void;
 				accepted: (id: string | null) => void;
 			},
 			mode: 'chat' | 'pipeline_voice' = 'chat',
@@ -609,7 +616,9 @@ export function useMessages(
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
 			const userMsg = UserMsg({ name: 'user', content });
-			observer?.submitted(userMsg.id);
+			observer?.submitted(userMsg.id, () => {
+				if (activeSessionRef.current === session) finishItem({ message_ids: [userMsg.id] });
+			});
 			const showInConversationImmediately = phase === 'idle' && pendingQueueCount === 0;
 			if (showInConversationImmediately) {
 				msgsRef.current = [...msgsRef.current, userMsg];
@@ -660,6 +669,7 @@ export function useMessages(
 			sessionId,
 			phase,
 			pendingQueueCount,
+			finishItem,
 			session,
 			scheduleUpdate,
 			addOptimistic,

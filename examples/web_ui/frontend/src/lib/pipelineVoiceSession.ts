@@ -26,6 +26,8 @@ export type PipelineVoiceState =
 	| 'stopping'
 	| 'error';
 
+export type VoicePlayback = boolean | Promise<void> | { autoplay: Promise<boolean> };
+
 export interface PipelineVoiceOptions {
 	scope: ApiScope;
 	asr: ASRModelConfig;
@@ -39,7 +41,7 @@ export interface PipelineVoiceOptions {
 			signal: AbortSignal;
 			isCurrent: () => boolean;
 			hasExecutionEvidence: () => boolean;
-			submitted: (id: string) => void;
+			submitted: (id: string, clearPending: () => void) => void;
 			accepted: (id: string | null) => void;
 		},
 	) => Promise<void>;
@@ -85,6 +87,9 @@ export class PipelineVoiceSession {
 	private submissionAttempt: { controller: AbortController; terminal: boolean } | null = null;
 	private queueId: string | null = null;
 	private inputStarted = false;
+	private clearPendingInput: (() => void) | null = null;
+	private cancelledReply: Promise<string | null> | null = null;
+	private resolveCancelledReply?: (replyId: string | null) => void;
 	private inputFinished = false;
 	private cancellationPending = false;
 	private cancellationTimer: ReturnType<typeof setTimeout> | undefined;
@@ -214,8 +219,17 @@ export class PipelineVoiceSession {
 		return { state: this.state, transcript: this.transcript };
 	}
 
-	get currentReplyId(): string | null {
-		return this.replyId;
+	/** Hold automatic playback until the cancellation receipt identifies the reply. */
+	stoppedPlayback(event: AgentEvent): VoicePlayback {
+		if (!('reply_id' in event)) return false;
+		if (this.replyId !== null) return event.reply_id === this.replyId;
+		if (!this.cancellationPending) return this.suppressedReplies.has(event.reply_id);
+		if (event.type !== EventType.DATA_BLOCK_START || !event.media_type.startsWith('audio/'))
+			return false;
+		this.cancelledReply ??= new Promise((resolve) => {
+			this.resolveCancelledReply = resolve;
+		});
+		return { autoplay: this.cancelledReply.then((id) => event.reply_id !== id) };
 	}
 
 	get suppressedReplies(): Set<string> {
@@ -257,7 +271,10 @@ export class PipelineVoiceSession {
 	}
 
 	/** Return true for audio owned by this session, including cancelled replies. */
-	onEvent(event: AgentEvent): boolean | Promise<void> {
+	onEvent(event: AgentEvent): VoicePlayback {
+		if (this.stopped && event.type === EventType.DATA_BLOCK_START) {
+			return this.stoppedPlayback(event);
+		}
 		const handled =
 			!this.stopped ||
 			('reply_id' in event && this.options.suppressedReplies.has(event.reply_id));
@@ -435,7 +452,7 @@ export class PipelineVoiceSession {
 						);
 						signal.throwIfAborted();
 						if (input.reply_id && (!this.replyId || input.reply_id === this.replyId))
-							this.options.suppressedReplies.add(input.reply_id);
+							this.bindCancelledReply(input.reply_id);
 					}
 					this.finishCancellation();
 					return;
@@ -451,15 +468,11 @@ export class PipelineVoiceSession {
 				signal.throwIfAborted();
 				if (this.replyId && result.reply_id && result.reply_id !== this.replyId)
 					throw new Error('Voice submission returned a different reply.');
-				if (result.reply_id) this.options.suppressedReplies.add(result.reply_id);
+				if (result.reply_id) this.bindCancelledReply(result.reply_id);
 				if (!this.cancellationPending) return;
 				if (result.state === 'finished') {
 					this.finishCancellation();
 					return;
-				}
-				if (result.state === 'reply' && result.reply_id && !this.replyId) {
-					this.replyId = result.reply_id;
-					this.inputStarted = true;
 				}
 			}
 			if (!this.queueId && !this.inputStarted && !this.replyId && this.userMessageId) {
@@ -511,7 +524,17 @@ export class PipelineVoiceSession {
 		if (this.stopped && !this.restartBlocked) this.setState('idle');
 	}
 
+	private bindCancelledReply(replyId: string): void {
+		this.replyId = replyId;
+		this.inputStarted = true;
+		this.options.suppressedReplies.add(replyId);
+		this.resolveCancelledReply?.(replyId);
+	}
+
 	private finishCancellation(): void {
+		this.resolveCancelledReply?.(this.replyId);
+		this.clearPendingInput?.();
+		this.clearPendingInput = null;
 		this.completeSubmission();
 		this.inputFinished = true;
 		this.cancellationPending = false;
@@ -527,6 +550,7 @@ export class PipelineVoiceSession {
 			throw new Error('The session is busy. Restart voice mode when it is ready.');
 		this.replyId = null;
 		this.userMessageId = null;
+		this.clearPendingInput = null;
 		this.submissionId = null;
 		this.queueId = null;
 		this.inputStarted = false;
@@ -633,9 +657,10 @@ export class PipelineVoiceSession {
 								attempt.terminal ||
 								(this.submissionAttempt === attempt &&
 									(this.inputStarted || !!this.replyId)),
-							submitted: (id) => {
+							submitted: (id, clearPending) => {
 								if (this.submissionAttempt !== attempt || signal.aborted) return;
 								this.userMessageId = id;
+								this.clearPendingInput = clearPending;
 							},
 							accepted: (id) => {
 								if (this.submissionAttempt !== attempt || signal.aborted) return;

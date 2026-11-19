@@ -2144,7 +2144,7 @@ class ChatService:
             state.reply_id,
         )
         await self._start_channel_delivery(session)
-        cursor = await publish_session_event(
+        start_cursor = await publish_session_event(
             self._message_bus,
             session.id,
             ReplyStartEvent(
@@ -2152,7 +2152,9 @@ class ChatService:
                 reply_id=state.reply_id,
                 name=agent.data.name,
             ).model_dump(mode="json"),
+            require_live_delivery=False,
         )
+        cursor = start_cursor
         for event in Agent.interrupt_reply(state, agent.data.name):
             if reply is not None:
                 reply.append_event(event)
@@ -2160,6 +2162,7 @@ class ChatService:
                 self._message_bus,
                 session.id,
                 event.model_dump(mode="json"),
+                require_live_delivery=False,
             )
             await self._project_event(user_id, session, agent, event)
         await self._save_checkpoint(
@@ -2168,6 +2171,7 @@ class ChatService:
             [reply] if reply is not None else [],
             state,
             cursor,
+            replay_from=start_cursor,
         )
         await self._notify_leader_of_failure(
             user_id,
@@ -2184,6 +2188,8 @@ class ChatService:
         messages: list[Msg],
         state: AgentState,
         cursor: str | None,
+        *,
+        replay_from: str | None = None,
     ) -> None:
         """Commit reply messages and state before advancing the SSE cursor."""
         async with self._message_bus.acquire_lock(
@@ -2204,9 +2210,10 @@ class ChatService:
                     MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
                     cursor,
                 )
+                # A reconnecting subscriber can replay missed live events.
                 await self._message_bus.log_trim(
                     MessageBusKeys.session_events(session.id),
-                    before_id=cursor,
+                    before_id=replay_from or cursor,
                 )
 
     async def _parked_dispatch(

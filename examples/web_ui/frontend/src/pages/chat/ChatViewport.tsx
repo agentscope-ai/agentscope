@@ -88,6 +88,7 @@ import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
 import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
+import type { VoicePlayback } from '@/lib/pipelineVoiceSession';
 
 const REALTIME_EXCLUDED_ENUM_VALUES: Record<string, unknown[]> = {
 	turn_detection: ['none'],
@@ -340,7 +341,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 			// Keep mode switching available when browser storage is unavailable.
 		}
 	}, [voiceMode]);
-	const pipelineEventsRef = useRef<(event: AgentEvent) => boolean | Promise<void>>(() => false);
+	const pipelineEventsRef = useRef<(event: AgentEvent) => VoicePlayback>(() => false);
 	const pipelineStopRef = useRef<() => void>(() => undefined);
 	const {
 		msgs,

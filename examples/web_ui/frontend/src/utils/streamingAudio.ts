@@ -227,11 +227,11 @@ class WavStreamPlayer {
 interface Session {
 	replyId?: string;
 	mediaType: string;
-	autoplay: boolean;
+	autoplay: boolean | Promise<boolean>;
 	chunks: Bytes[];
 	totalBytes: number;
 	livePlayer: WavStreamPlayer | null;
-	/** True if a live player was created at start — survives dispose. */
+	/** True if a live player was created — survives dispose. */
 	hadLivePlayer: boolean;
 	autoplayElement: HTMLAudioElement | null;
 	state: StreamingAudioState;
@@ -268,9 +268,15 @@ export class StreamingAudioManager {
 	}
 
 	/** Track an audio block; disable autoplay when another player owns output. */
-	start(blockId: string, mediaType: string, autoplay = true, replyId?: string): void {
+	start(
+		blockId: string,
+		mediaType: string,
+		autoplay: boolean | Promise<boolean> = true,
+		replyId?: string,
+	): void {
 		if (this.sessions.has(blockId)) return;
-		const livePlayer = autoplay && mediaType === 'audio/wav' ? new WavStreamPlayer() : null;
+		const livePlayer =
+			autoplay === true && mediaType === 'audio/wav' ? new WavStreamPlayer() : null;
 		this.sessions.set(blockId, {
 			replyId,
 			mediaType,
@@ -282,6 +288,21 @@ export class StreamingAudioManager {
 			autoplayElement: null,
 			state: { status: 'streaming', mediaType, url: null, interruptCount: 0 },
 		});
+		if (typeof autoplay !== 'boolean') {
+			void autoplay.then((allowed) => {
+				const session = this.sessions.get(blockId);
+				if (!session || session.autoplay !== autoplay) return;
+				session.autoplay = allowed;
+				if (!allowed) return;
+				if (session.state.url) {
+					this.playBlob(session, session.state.url);
+				} else if (mediaType === 'audio/wav' && session.state.status === 'streaming') {
+					session.livePlayer = new WavStreamPlayer();
+					session.hadLivePlayer = true;
+					for (const chunk of session.chunks) session.livePlayer.append(chunk);
+				}
+			});
+		}
 		this.emit(blockId);
 	}
 
@@ -341,21 +362,21 @@ export class StreamingAudioManager {
 		};
 		this.emit(blockId);
 
-		if (session.autoplay && !hadLivePlayback) {
-			// Non-wav: no live playback path, so kick off autoplay now. Some
-			// browsers gate this behind a user gesture; if blocked, the user
-			// can still hit play on the <audio controls> element.
-			const el = new Audio(url);
-			session.autoplayElement = el;
-			void el.play().catch(() => undefined);
-		}
+		if (session.autoplay === true && !hadLivePlayback) this.playBlob(session, url);
+	}
+
+	private playBlob(session: Session, url: string): void {
+		const el = new Audio(url);
+		session.autoplayElement = el;
+		void el.play().catch(() => undefined);
 	}
 
 	/** Close unfinished blocks when the reply ends without a DATA_BLOCK_END. */
 	interruptReply(replyId: string): void {
 		for (const [blockId, session] of this.sessions) {
-			if (session.replyId !== replyId || session.state.status !== 'streaming') continue;
+			if (session.replyId !== replyId) continue;
 			session.autoplay = false;
+			if (session.state.status !== 'streaming') continue;
 			session.livePlayer?.dispose();
 			session.livePlayer = null;
 			if (session.totalBytes) {
@@ -376,6 +397,7 @@ export class StreamingAudioManager {
 	 */
 	stopLivePlayback(): void {
 		for (const session of this.sessions.values()) {
+			if (typeof session.autoplay !== 'boolean') session.autoplay = false;
 			if (session.livePlayer) {
 				session.livePlayer.dispose();
 				session.livePlayer = null;
@@ -390,6 +412,7 @@ export class StreamingAudioManager {
 	 */
 	stopAllPlayback(): void {
 		for (const [blockId, session] of this.sessions) {
+			if (typeof session.autoplay !== 'boolean') session.autoplay = false;
 			session.autoplayElement?.pause();
 			session.autoplayElement = null;
 			if (session.livePlayer) {

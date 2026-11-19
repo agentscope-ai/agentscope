@@ -198,6 +198,8 @@ async def publish_session_event(
     bus: "MessageBus",
     session_id: str,
     event: dict,
+    *,
+    require_live_delivery: bool = True,
 ) -> str:
     """Append event to replay log + fan out live.
 
@@ -208,6 +210,8 @@ async def publish_session_event(
             The session this event belongs to.
         event (`dict`):
             JSON-serializable event payload.
+        require_live_delivery (``bool``):
+            Propagate live delivery errors after the replay log is written.
 
     Returns:
         `str`:
@@ -219,7 +223,16 @@ async def publish_session_event(
         event,
         max_len=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
     )
-    await bus.publish(key, {**event, "_entry_id": entry_id})
+    try:
+        await bus.publish(key, {**event, "_entry_id": entry_id})
+    except Exception:
+        if require_live_delivery:
+            raise
+        logger.exception(
+            "Live delivery failed for session %s; replay entry %s is saved.",
+            session_id,
+            entry_id,
+        )
     return entry_id
 
 

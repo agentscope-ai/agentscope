@@ -94,10 +94,7 @@ export function usePipelineVoice(options: Options) {
 	const onEvent = useCallback(
 		(event: AgentEvent) => {
 			const pending = getPendingPipelineVoice(scopeKey);
-			if (pending) {
-				const replyId = pending.currentReplyId;
-				return replyId !== null && 'reply_id' in event && event.reply_id === replyId;
-			}
+			if (pending) return pending.stoppedPlayback(event);
 			return sessionRef.current?.onEvent(event) ?? false;
 		},
 		[scopeKey],

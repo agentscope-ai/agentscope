@@ -30,7 +30,7 @@ from agentscope.app._router._chat import chat
 from agentscope.app._service import ChatService
 from agentscope.app._service._model import REPLY_CHAT_CONFIG
 from agentscope.app._service._tts_model import validate_tts_model_config
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.middleware._chat_tts_middleware import (
     ChatTTSMiddleware,
     REPLY_TTS_CONFIG,
@@ -379,8 +379,8 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                         },
                     )
 
-    async def test_stop_parked_reply_after_credential_removed(self) -> None:
-        """Stopping closes the original tools and unblocks queued chat."""
+    async def _park_voice_reply(self) -> Msg:
+        """Persist a reply awaiting confirmation with a stale credential."""
         current = self.session.config.chat_model_config
         old = current.model_copy(update={"credential_id": "deleted"})
         reply = AssistantMsg(
@@ -404,6 +404,12 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         self.session.state.reply_id = reply.id
         self.session.state.context.append(reply.model_copy(deep=True))
         await self.storage.upsert_message("user-1", "session-1", reply)
+        return reply
+
+    async def test_stop_parked_reply_after_credential_removed(self) -> None:
+        """Stopping closes the original tools and unblocks queued chat."""
+        current = self.session.config.chat_model_config
+        reply = await self._park_voice_reply()
         queue = ChatInputQueue(self.bus, self.storage, self.service)
         self.addAsyncCleanup(queue.close)
         await enqueue_chat_input(
@@ -457,6 +463,48 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             [agent.models_used for agent in self.agents],
             [[(current, None)]],
         )
+
+    async def test_parked_stop_survives_failed_live_delivery(self) -> None:
+        """Missing live events remain replayable after state is committed."""
+        reply = await self._park_voice_reply()
+        key = MessageBusKeys.session_events(self.session.id)
+        publish = self.bus.publish
+
+        async def fail_live(channel: str, payload: dict) -> None:
+            if channel == key:
+                raise ConnectionError("Live subscriber disconnected")
+            await publish(channel, payload)
+
+        with patch.object(self.bus, "publish", side_effect=fail_live):
+            await self._run(UserInterruptEvent(reply_id=reply.id))
+
+        replay = await self.bus.log_read(key)
+        cursor = await self.bus.registry_get(
+            MessageBusKeys.session_event_checkpoint(self.session.id),
+            MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+        )
+        self.assertEqual(cursor, replay[-1][0])
+        self.assertEqual(
+            [(e["reply_id"], e["type"]) for _, e in replay],
+            [
+                (reply.id, "REPLY_START"),
+                (reply.id, "TOOL_RESULT_START"),
+                (reply.id, "TOOL_RESULT_TEXT_DELTA"),
+                (reply.id, "TOOL_RESULT_END"),
+                (reply.id, "REPLY_END"),
+            ],
+        )
+        persisted = await self.storage.get_message(
+            "user-1",
+            self.session.id,
+            reply.id,
+        )
+        self.assertEqual(persisted.finished_reason, "interrupted")
+        self.assertEqual(
+            self.session.state.get_awaiting_tool_calls(self.agent.data.name),
+            [],
+        )
+        self.assertEqual({m.id for m in self.storage.messages}, {reply.id})
 
     async def test_snapshot_queue_resume_and_next_ordinary_reply(self) -> None:
         """Queued voice keeps its policy; subsequent chat stays silent."""
