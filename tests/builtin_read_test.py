@@ -405,6 +405,39 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         )
         self.assertGreater(len(suggestions), 0)
 
+    async def test_permission_suggestions_escape_parent(self) -> None:
+        """An approved suggestion covers only the literal parent directory.
+
+        The suggested rule is a glob matched with ``fnmatch``; without
+        escaping, a parent whose name contains ``[``, ``?`` or ``*``
+        makes the rule match sibling directories too.
+        """
+        for parent, escaped, sibling in (
+            ("reports [2024]", "reports [[]2024]", "reports 2"),
+            ("reports ?", "reports [?]", "reports x"),
+            ("reports *", "reports [*]", "reports other"),
+        ):
+            with self.subTest(parent=parent):
+                suggestions = await self.read_tool.generate_suggestions(
+                    {"file_path": f"/tmp/probe/{parent}/out.csv"},
+                )
+                self.assertEqual(
+                    [s.rule_content for s in suggestions],
+                    [f"/tmp/probe/{escaped}/**"],
+                )
+                self.assertTrue(
+                    await self.read_tool.match_rule(
+                        suggestions[0].rule_content,
+                        {"file_path": f"/tmp/probe/{parent}/out.csv"},
+                    ),
+                )
+                self.assertFalse(
+                    await self.read_tool.match_rule(
+                        suggestions[0].rule_content,
+                        {"file_path": f"/tmp/probe/{sibling}/out.csv"},
+                    ),
+                )
+
     async def test_read_image_file_returns_data_block(self) -> None:
         """Test reading an image file returns a base64 DataBlock."""
         img_data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
