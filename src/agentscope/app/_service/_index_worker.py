@@ -470,7 +470,7 @@ class IndexWorker:
         if not chunks and media_type == "application/pdf":
             raise ValueError(
                 "This PDF has no indexable text. If it is a scan, "
-                "apply OCR before uploading it."
+                "apply OCR before uploading it.",
             )
 
         # ---- indexing ----
