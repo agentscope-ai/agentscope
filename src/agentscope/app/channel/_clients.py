@@ -35,10 +35,21 @@ has instead.
 import asyncio
 from contextlib import aclosing
 from types import TracebackType
+from typing import AsyncIterator
 
 from ..._logging import logger
+from ...event import EventType
+from ...message import ToolCallState
 from ..message_bus import MessageBus
 from ..storage import StorageBase
+from ._approval import (
+    ChannelApprovalRecord,
+    load_reply_requester,
+    new_approval_id,
+    approval_session,
+    store_approval,
+    with_approval_ids,
+)
 from ._base import ChannelBase, ChannelEvent
 from ._registry import ChannelTypeRegistry
 from ._stream import open_reply_stream
@@ -213,11 +224,19 @@ class ChannelClients:
             """Feed the run's event stream to the channel."""
             try:
                 async with aclosing(events):
-                    await channel.send_response(target, events)
+                    await channel.send_response(
+                        target,
+                        self._approval_events(
+                            events,
+                            channel_id=channel_id,
+                            chat_id=chat_id,
+                            agent_id=agent_id,
+                            session_id=session_id,
+                        ),
+                    )
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
-                    "channel '%s' failed to deliver the reply for "
-                    "session '%s'",
+                    "channel '%s' delivery failed for session '%s'",
                     channel_id,
                     session_id,
                 )
@@ -228,3 +247,96 @@ class ChannelClients:
         )
         self._deliveries.add(task)
         task.add_done_callback(self._deliveries.discard)
+
+    async def _approval_events(
+        self,
+        events: AsyncIterator[dict],
+        *,
+        channel_id: str,
+        chat_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> AsyncIterator[dict]:
+        """Persist approval context and attach opaque ids to the stream.
+
+        The requester is read from the identity saved with the paused state.
+        For every confirmation request, this method stores the
+        requester together with the exact agent, session, reply, and tool call
+        behind a new opaque approval id. Platform adapters receive only those
+        ids through event metadata; the gateway later treats the stored record
+        as authoritative.
+
+        Args:
+            events (`AsyncIterator[dict]`): Raw events from the running reply.
+            channel_id (`str`): Channel instance receiving the reply.
+            chat_id (`str`): Platform chat receiving the reply.
+            agent_id (`str`): Agent that owns the reply.
+            session_id (`str`): Session that owns the reply.
+
+        Yields:
+            `dict`: The original event, with approval ids added to confirmation
+            event metadata.
+        """
+        async for raw in events:
+            event_type = raw.get("type")
+            reply_id = raw.get("reply_id", "")
+            if event_type in (
+                EventType.REQUIRE_USER_CONFIRM,
+                EventType.REQUIRE_EXTERNAL_EXECUTION,
+            ):
+                # Paused runs release the session lock after saving state.
+                # Only pause handling waits here, so text can stream freely.
+                async with approval_session(
+                    self._bus,
+                    self._storage,
+                    channel_id=channel_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                ) as saved:
+                    if saved is None or saved[0].reply_id != reply_id:
+                        return
+                    state, agent_name = saved
+                    awaiting = state.get_awaiting_tool_calls(agent_name)
+                    if not awaiting:
+                        return
+                    current_requester = await load_reply_requester(
+                        self._bus,
+                        session_id=session_id,
+                        reply_id=reply_id,
+                    )
+                    if event_type == EventType.REQUIRE_USER_CONFIRM:
+                        pending = {
+                            call.id
+                            for call in awaiting
+                            if call.state == ToolCallState.ASKING
+                        }
+                        tools = [
+                            tool
+                            for tool in raw["tool_calls"]
+                            if tool["id"] in pending
+                        ]
+                        if not tools:
+                            return
+                        approval_ids = {}
+                        if current_requester:
+                            for tool in tools:
+                                approval_id = new_approval_id(session_id)
+                                await store_approval(
+                                    self._bus,
+                                    approval_id,
+                                    ChannelApprovalRecord(
+                                        channel_id=channel_id,
+                                        chat_id=chat_id,
+                                        agent_id=agent_id,
+                                        session_id=session_id,
+                                        reply_id=reply_id,
+                                        tool_call_id=tool["id"],
+                                        requester_id=current_requester,
+                                    ),
+                                )
+                                approval_ids[tool["id"]] = approval_id
+                        raw = with_approval_ids(
+                            {**raw, "tool_calls": tools},
+                            approval_ids,
+                        )
+            yield raw
