@@ -5,7 +5,7 @@
 from types import SimpleNamespace
 from typing import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._service import ChatService
@@ -245,9 +245,9 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
             ),
             patch("agentscope.app._service._chat.get_model", new=_get_model),
             patch(
-                "agentscope.app._service._chat.get_tts_model",
+                "agentscope.app._service._chat.build_reply_tts_model",
                 autospec=True,
-            ) as get_tts_model,
+            ) as build_tts,
             patch(
                 "agentscope.app._service._chat.publish_session_event",
                 new_callable=AsyncMock,
@@ -258,10 +258,10 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 wraps=storage.upsert_message,
             ) as save,
         ):
-            if not tts_available:
-                get_tts_model.return_value = None
-            else:
-                get_tts_model.return_value.realtime = False
+            build_tts.return_value = (
+                config.tts_model_config,
+                MagicMock(realtime=False) if tts_available else None,
+            )
             if queued:
                 queue = ChatInputQueue(service._message_bus, storage, service)
                 self.addAsyncCleanup(queue.close)
@@ -330,11 +330,12 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 },
             ],
         )
-        get_tts_model.assert_awaited_once_with(
+        build_tts.assert_awaited_once_with(
             user_id,
             config.tts_model_config,
             service._access,
             storage,
+            use_snapshot=False,
         )
         self.assertDictEqual(
             {

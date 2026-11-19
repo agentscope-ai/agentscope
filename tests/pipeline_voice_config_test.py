@@ -29,7 +29,10 @@ from agentscope.app._router._session import update_session
 from agentscope.app._router._chat import chat
 from agentscope.app._service import ChatService
 from agentscope.app._service._model import REPLY_CHAT_CONFIG
-from agentscope.app._service._tts_model import validate_tts_model_config
+from agentscope.app._service._tts_model import (
+    build_reply_tts_model,
+    validate_tts_model_config,
+)
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.middleware._chat_tts_middleware import (
     ChatTTSMiddleware,
@@ -214,8 +217,13 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         model.__aexit__ = AsyncMock(return_value=None)
         self.create_tts = self.enterContext(
             patch(
-                "agentscope.app._service._chat.get_tts_model",
-                new=AsyncMock(return_value=model),
+                "agentscope.app._service._chat.build_reply_tts_model",
+                new=AsyncMock(
+                    side_effect=lambda _user, config, *_, **__: (
+                        config,
+                        model,
+                    ),
+                ),
             ),
         )
 
@@ -323,7 +331,11 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         self.addAsyncCleanup(queue.close)
         dispatcher = CancelDispatcher(self.bus, registry, MagicMock())
         async with registry, dispatcher:
-            for factory in ("get_model", "get_toolkit", "get_tts_model"):
+            for factory in (
+                "get_model",
+                "get_toolkit",
+                "build_reply_tts_model",
+            ):
                 with self.subTest(factory=factory):
                     await _reserve(
                         self.bus,
@@ -782,7 +794,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         middleware = ChatTTSMiddleware(
             _tts("voice"),
             _tts("ordinary"),
-            self.create_tts,
+            lambda cfg, pinned: self.create_tts(None, cfg, pinned),
         )
 
         async def reply(**_: object) -> AsyncGenerator:
@@ -842,6 +854,73 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         )
         self.validate.side_effect = validate_tts_model_config
         return profile
+
+    async def test_queued_and_resumed_speech_use_submitted_voice(self) -> None:
+        """Exercise model construction after rebinding an accepted voice."""
+        profile = self._configure_voice_profile()
+        observed = []
+
+        async def build(*args: Any, use_snapshot: bool) -> tuple:
+            config, model = await build_reply_tts_model(
+                *args,
+                use_snapshot=use_snapshot,
+            )
+            self.assertIsNotNone(model)
+            self.addAsyncCleanup(model.client.close)
+            observed.append(
+                (config.credential_id, model.model, model.parameters.voice),
+            )
+            return config, model
+
+        self.create_tts.side_effect = build
+        await chat(
+            ChatRequest(
+                agent_id="agent-1",
+                session_id="session-1",
+                input=UserMsg("user", "voice input", id="voice"),
+                mode="pipeline_voice",
+            ),
+            user_id="user-1",
+            storage=self.storage,
+            chat_service=self.service,
+            chat_run_registry=None,
+            message_bus=self.bus,
+        )
+        profile.data.credential_id = "new-c"
+        profile.data.model = "tts-1"
+        profile.data.voice = "alloy"
+        queue = ChatInputQueue(self.bus, self.storage, self.service)
+        self.addAsyncCleanup(queue.close)
+        await queue.drain_chat_inputs("user-1", "session-1", "agent-1")
+        await self._run(
+            UserConfirmResultEvent(reply_id="voice-reply", confirm_results=[]),
+        )
+        models, speech = await self.service.pipeline_snapshot(
+            "user-1",
+            "session-1",
+            "agent-1",
+        )
+        await self._run(
+            UserMsg("user", "new input", id="new"),
+            pipeline_chat_config=models,
+            pipeline_tts_config=speech,
+        )
+        # Ordinary chat resolves the profile on reply start and records
+        # that effective config for its own later tool continuation.
+        self.session.config.tts_model_config = (
+            self.session.config.pipeline_voice_config.tts_model_config
+        )
+        await self._run(UserMsg("user", "ordinary", id="ordinary"))
+        profile.data.voice = "nova"
+        await self._run(
+            UserConfirmResultEvent(
+                reply_id="ordinary-reply",
+                confirm_results=[],
+            ),
+        )
+        old = ("c", "gpt-4o-mini-tts", {"id": "voice-old"})
+        updated = ("new-c", "tts-1", "alloy")
+        self.assertEqual(observed, [old, old, updated, updated, updated])
 
     async def test_pipeline_follows_updated_voice_profile(self) -> None:
         """Submission refreshes bindings without weakening session writes."""

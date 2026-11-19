@@ -128,7 +128,7 @@ export class PipelineVoiceSession {
 					);
 				else this.maybeListen();
 			},
-			(error) => this.fail(error),
+			(error) => this.fail(error, false),
 		);
 	}
 
@@ -138,7 +138,10 @@ export class PipelineVoiceSession {
 			await this.context.resume();
 			this.context.onstatechange = () => {
 				if (!this.stopped && this.context.state === 'suspended') {
-					this.fail(new Error('Audio was suspended. Restart voice mode to continue.'));
+					this.fail(
+						new Error('Audio was suspended. Restart voice mode to continue.'),
+						false,
+					);
 				}
 			};
 			const stream = await navigator.mediaDevices.getUserMedia({

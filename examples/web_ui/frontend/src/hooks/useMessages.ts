@@ -329,9 +329,13 @@ export function useMessages(
 					const value = custom.value as ChatInputTerminalValue;
 					setStartingInputId((id) => (id === value.queue_item_id ? null : id));
 					retireItem(value, 'finished');
-					if (value.queue_item_id === startingQueueRef.current)
-						startingQueueRef.current = null;
-					if (value.queue_item_id === replyQueueRef.current) {
+					const queueId = value.queue_item_id;
+					const wasStarting = !!queueId && queueId === startingQueueRef.current;
+					if (wasStarting) startingQueueRef.current = null;
+					if (
+						(queueId && queueId === replyQueueRef.current) ||
+						(wasStarting && !currentReplyRef.current && !replyQueueRef.current)
+					) {
 						replyQueueRef.current = null;
 						clearInterruptTimer();
 						currentReplyRef.current = null;
@@ -554,7 +558,13 @@ export function useMessages(
 					const pendingHitl = getPendingHitlCalls(messages)[0];
 					if (is_running || pendingHitl) {
 						setPhase('streaming');
-						if (is_running && !pendingHitl && tail?.role === 'assistant') {
+						if (
+							is_running &&
+							!pendingHitl &&
+							tail?.role === 'assistant' &&
+							!tail.finished_reason
+						) {
+							currentReplyRef.current = tail;
 							setActiveReplyId(tail.id);
 						}
 						if (pendingHitl) {

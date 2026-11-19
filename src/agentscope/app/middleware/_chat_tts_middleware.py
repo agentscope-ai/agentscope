@@ -23,12 +23,14 @@ class ChatTTSMiddleware(MiddlewareBase):
         initial_config: TTSModelConfig | None,
         default_config: TTSModelConfig | None,
         create_model: Callable[
-            [TTSModelConfig],
-            Awaitable[TTSModelBase | None],
+            [TTSModelConfig, bool],
+            Awaitable[tuple[TTSModelConfig, TTSModelBase | None]],
         ],
+        *,
+        initial_is_snapshot: bool = False,
     ) -> None:
         """Keep reply policy separate from the agent's other middleware."""
-        self._next_config = initial_config
+        self._next_config = (initial_config, initial_is_snapshot)
         self._default_config = default_config
         self._create_model = create_model
 
@@ -39,11 +41,11 @@ class ChatTTSMiddleware(MiddlewareBase):
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
         """Persist the effective policy on reply start and preserve cleanup."""
-        config = self._next_config
-        self._next_config = self._default_config
+        config, use_snapshot = self._next_config
+        self._next_config = (self._default_config, False)
         middleware = None
         if config is not None:
-            model = await self._create_model(config)
+            config, model = await self._create_model(config, use_snapshot)
             if model is not None:
                 middleware = TTSMiddleware(model, continue_on_error=True)
             else:

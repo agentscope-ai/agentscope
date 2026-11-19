@@ -82,7 +82,7 @@ from .._client_external_tool import (
 from ._access import ResourceAccessService
 from ._model import get_model, REPLY_CHAT_CONFIG
 from ._tts_model import (
-    get_tts_model,
+    build_reply_tts_model,
     resolve_tts_voice_profile,
     validate_tts_model_config,
 )
@@ -1404,6 +1404,7 @@ class ChatService:
                 # -------------------------------------------------------------
                 default_tts = session_record.config.tts_model_config
                 initial_tts = pipeline_tts_config or default_tts
+                initial_is_snapshot = pipeline_tts_config is not None
                 reply_models = pipeline_chat_config
                 if isinstance(
                     input_msg,
@@ -1422,6 +1423,7 @@ class ChatService:
                             previous.metadata[REPLY_CHAT_CONFIG],
                         )
                     if previous and REPLY_TTS_CONFIG in previous.metadata:
+                        initial_is_snapshot = True
                         saved = previous.metadata[REPLY_TTS_CONFIG]
                         initial_tts = (
                             TTSModelConfig.model_validate(saved)
@@ -1431,13 +1433,15 @@ class ChatService:
 
                 async def create_tts(
                     config: TTSModelConfig,
-                ) -> TTSModelBase | None:
+                    use_snapshot: bool,
+                ) -> tuple[TTSModelConfig, TTSModelBase | None]:
                     """Resolve the snapshot with current authorization."""
-                    return await get_tts_model(
+                    return await build_reply_tts_model(
                         user_id,
                         config,
                         self._access,
                         self._storage,
+                        use_snapshot=use_snapshot,
                     )
 
                 middlewares.append(
@@ -1445,6 +1449,7 @@ class ChatService:
                         initial_tts,
                         default_tts,
                         create_tts,
+                        initial_is_snapshot=initial_is_snapshot,
                     ),
                 )
 

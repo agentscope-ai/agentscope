@@ -79,13 +79,40 @@ async def get_tts_model(
             The TTS model instance, or ``None`` when its configuration
             is no longer valid or accessible.
     """
+    _, model = await build_reply_tts_model(
+        user_id,
+        config,
+        access,
+        storage,
+        use_snapshot=False,
+    )
+    return model
+
+
+async def build_reply_tts_model(
+    user_id: str,
+    config: TTSModelConfig,
+    access: ResourceAccessService,
+    storage: StorageBase,
+    *,
+    use_snapshot: bool,
+) -> tuple[TTSModelConfig, TTSModelBase | None]:
+    """Build speech and return the effective config to persist for resumes."""
     credential = None
     try:
-        config, data = await resolve_tts_voice_profile(
-            user_id,
-            config,
-            storage,
-        )
+        if use_snapshot and config.voice_profile_id is not None:
+            # Recheck ownership while retaining the server-bound settings.
+            data = await _get_owned_voice_profile_data(
+                user_id,
+                config.voice_profile_id,
+                storage,
+            )
+        else:
+            config, data = await resolve_tts_voice_profile(
+                user_id,
+                config,
+                storage,
+            )
         credential, tts_cls = await _validate_and_resolve_tts_config(
             user_id,
             config,
@@ -94,7 +121,7 @@ async def get_tts_model(
             resolved_profile=data,
         )
         parameters = _tts_parameters(tts_cls, config)
-        return tts_cls(
+        return config, tts_cls(
             credential=credential,
             model=config.model,
             parameters=parameters,
@@ -106,7 +133,7 @@ async def get_tts_model(
             config.model,
             _config_error_detail(exc, credential),
         )
-        return None
+        return config, None
 
 
 def _config_error_detail(
@@ -311,18 +338,17 @@ async def _validate_voice_binding(
             storage,
         )
 
-    assert data.engine is not None
-    assert data.credential_id is not None
     if credential_owner_id != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Custom voices cannot use a shared credential.",
         )
 
-    # Runtime already derived its config from this owner-scoped snapshot.
+    # Runtime has checked ownership of the profile bound to this reply.
     # Persisted session writes still require an exact binding comparison.
     if resolved_profile is not None:
         return
+    assert data.engine is not None
     expected_type = ENGINE_TO_CREDENTIAL_TYPE[data.engine]
     bindings = {
         "credential_id": (config.credential_id, data.credential_id),
@@ -345,12 +371,12 @@ async def _validate_voice_binding(
         )
 
 
-async def _get_voice_profile_data(
+async def _get_owned_voice_profile_data(
     user_id: str,
     profile_id: str,
     storage: StorageBase,
 ) -> VoiceProfileData:
-    """Load a complete profile using an owner-scoped lookup."""
+    """Look up a profile within the requesting user's namespace."""
     profile = await storage.get_voice_profile(user_id, profile_id)
     if profile is None:
         # Do not reveal whether another tenant owns the supplied profile id.
@@ -358,17 +384,27 @@ async def _get_voice_profile_data(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Voice profile {profile_id!r} not found.",
         )
-    missing = get_missing_voice_profile_binding_fields(profile.data)
+    return profile.data
+
+
+async def _get_voice_profile_data(
+    user_id: str,
+    profile_id: str,
+    storage: StorageBase,
+) -> VoiceProfileData:
+    """Load and validate the profile used for a new binding."""
+    data = await _get_owned_voice_profile_data(user_id, profile_id, storage)
+    missing = get_missing_voice_profile_binding_fields(data)
     if missing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"Voice profile {profile.id!r} is incomplete: "
+                f"Voice profile {profile_id!r} is incomplete: "
                 + ", ".join(missing)
                 + "."
             ),
         )
-    return profile.data
+    return data
 
 
 def _find_model_card(
