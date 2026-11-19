@@ -92,10 +92,14 @@ export function usePipelineVoice(options: Options) {
 		await sessionRef.current?.stop();
 	}, []);
 	const onEvent = useCallback(
-		(event: AgentEvent) =>
-			getPendingPipelineVoice(scopeKey)
-				? true
-				: (sessionRef.current?.onEvent(event) ?? false),
+		(event: AgentEvent) => {
+			const pending = getPendingPipelineVoice(scopeKey);
+			if (pending) {
+				const replyId = pending.currentReplyId;
+				return replyId !== null && 'reply_id' in event && event.reply_id === replyId;
+			}
+			return sessionRef.current?.onEvent(event) ?? false;
+		},
 		[scopeKey],
 	);
 	const busy = state !== 'idle' && state !== 'error';

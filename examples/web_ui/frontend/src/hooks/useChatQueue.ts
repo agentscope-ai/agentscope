@@ -403,6 +403,8 @@ export function useChatQueue(
 		items: visibleItems,
 		visibleCount: visibleItems.filter((item) => item.state !== 'steering').length,
 		pendingCount: items.length,
+		// A queue refresh can omit a claimed input before its start event.
+		hasPendingInput: items.length > 0 || conversationMessageIds.size > 0,
 		reorderDisabled,
 		addOptimistic,
 		acceptOptimistic,

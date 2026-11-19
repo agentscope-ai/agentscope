@@ -214,6 +214,10 @@ export class PipelineVoiceSession {
 		return { state: this.state, transcript: this.transcript };
 	}
 
+	get currentReplyId(): string | null {
+		return this.replyId;
+	}
+
 	get suppressedReplies(): Set<string> {
 		return this.options.suppressedReplies;
 	}
@@ -645,6 +649,8 @@ export class PipelineVoiceSession {
 				await Promise.race([work(), aborted]);
 			} catch (error) {
 				if (this.submissionAttempt !== attempt || attempt.terminal) return;
+				// SSE can confirm execution before the POST fails or times out.
+				if (!this.stopped && this.inputStarted) return;
 				// Only explicit rejection, without acceptance/execution evidence, proves
 				// no turn exists. Network errors, timeouts and 5xx remain ambiguous.
 				if (

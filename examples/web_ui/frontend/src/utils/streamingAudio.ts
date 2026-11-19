@@ -225,6 +225,7 @@ class WavStreamPlayer {
 }
 
 interface Session {
+	replyId?: string;
 	mediaType: string;
 	autoplay: boolean;
 	chunks: Bytes[];
@@ -267,10 +268,11 @@ export class StreamingAudioManager {
 	}
 
 	/** Track an audio block; disable autoplay when another player owns output. */
-	start(blockId: string, mediaType: string, autoplay = true): void {
+	start(blockId: string, mediaType: string, autoplay = true, replyId?: string): void {
 		if (this.sessions.has(blockId)) return;
 		const livePlayer = autoplay && mediaType === 'audio/wav' ? new WavStreamPlayer() : null;
 		this.sessions.set(blockId, {
+			replyId,
 			mediaType,
 			autoplay,
 			chunks: [],
@@ -286,7 +288,7 @@ export class StreamingAudioManager {
 	/** Called on DATA_BLOCK_DELTA. ``data`` is the base64 chunk payload. */
 	append(blockId: string, data: string): void {
 		const session = this.sessions.get(blockId);
-		if (!session || !data) return;
+		if (!session || session.state.status !== 'streaming' || !data) return;
 		let bytes: Uint8Array;
 		try {
 			bytes = base64ToBytes(data);
@@ -314,7 +316,7 @@ export class StreamingAudioManager {
 			await playbackDone;
 			if (this.sessions.get(blockId) !== session) return;
 		}
-		if (session.state.status === 'ready') return;
+		if (session.state.status !== 'streaming') return;
 
 		const hadLivePlayback = session.hadLivePlayer;
 		if (session.livePlayer) {
@@ -346,6 +348,22 @@ export class StreamingAudioManager {
 			const el = new Audio(url);
 			session.autoplayElement = el;
 			void el.play().catch(() => undefined);
+		}
+	}
+
+	/** Close unfinished blocks when the reply ends without a DATA_BLOCK_END. */
+	interruptReply(replyId: string): void {
+		for (const [blockId, session] of this.sessions) {
+			if (session.replyId !== replyId || session.state.status !== 'streaming') continue;
+			session.autoplay = false;
+			session.livePlayer?.dispose();
+			session.livePlayer = null;
+			if (session.totalBytes) {
+				void this.end(blockId);
+			} else {
+				session.state = { ...session.state, status: 'error' };
+				this.emit(blockId);
+			}
 		}
 	}
 

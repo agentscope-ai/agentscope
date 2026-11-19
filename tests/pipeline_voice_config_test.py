@@ -53,8 +53,9 @@ from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
     UserConfirmResultEvent,
+    UserInterruptEvent,
 )
-from agentscope.message import Msg, UserMsg
+from agentscope.message import AssistantMsg, Msg, ToolCallBlock, UserMsg
 from agentscope.state import AgentState
 from agentscope.tts import TTSModelBase
 from agentscope.model import ChatModelBase
@@ -377,6 +378,85 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                             "queue_item_id": item["id"],
                         },
                     )
+
+    async def test_stop_parked_reply_after_credential_removed(self) -> None:
+        """Stopping closes the original tools and unblocks queued chat."""
+        current = self.session.config.chat_model_config
+        old = current.model_copy(update={"credential_id": "deleted"})
+        reply = AssistantMsg(
+            id="parked",
+            name=self.agent.data.name,
+            content=[
+                ToolCallBlock(
+                    id="tool",
+                    name="ask",
+                    input="{}",
+                    state="asking",
+                ),
+            ],
+            metadata={
+                REPLY_CHAT_CONFIG: ChatModelSnapshot(
+                    primary=old,
+                    fallback=old,
+                ).model_dump(mode="json"),
+            },
+        )
+        self.session.state.reply_id = reply.id
+        self.session.state.context.append(reply.model_copy(deep=True))
+        await self.storage.upsert_message("user-1", "session-1", reply)
+        queue = ChatInputQueue(self.bus, self.storage, self.service)
+        self.addAsyncCleanup(queue.close)
+        await enqueue_chat_input(
+            self.bus,
+            "user-1",
+            "session-1",
+            "agent-1",
+            UserMsg("user", "next", id="next"),
+        )
+        published = self.enterContext(
+            patch.object(self.bus, "log_append", wraps=self.bus.log_append),
+        )
+        with patch(
+            "agentscope.app._service._chat.get_model",
+            side_effect=LookupError("Credential deleted"),
+        ) as load:
+            await self._run(UserInterruptEvent(reply_id=reply.id))
+            await self._run(UserInterruptEvent(reply_id=reply.id))
+            load.assert_not_awaited()
+        events = [entry.args[1] for entry in published.await_args_list]
+        self.assertEqual(
+            [(event["type"], event["reply_id"]) for event in events],
+            [
+                ("REPLY_START", "parked"),
+                ("TOOL_RESULT_START", "parked"),
+                ("TOOL_RESULT_TEXT_DELTA", "parked"),
+                ("TOOL_RESULT_END", "parked"),
+                ("REPLY_END", "parked"),
+            ],
+        )
+        self.assertEqual(events[-1]["finished_reason"], "interrupted")
+        closed = await self.storage.get_message(
+            "user-1",
+            "session-1",
+            reply.id,
+        )
+        self.assertEqual(closed.finished_reason, "interrupted")
+        self.assertEqual(closed.metadata, reply.metadata)
+        for message in (closed, self.session.state.context[-1]):
+            self.assertEqual(
+                [(b.type, b.id, b.state) for b in message.content],
+                [
+                    ("tool_call", "tool", "finished"),
+                    ("tool_result", "tool", "interrupted"),
+                ],
+            )
+        self.assertTrue(
+            await queue.drain_chat_inputs("user-1", "session-1", "agent-1"),
+        )
+        self.assertEqual(
+            [agent.models_used for agent in self.agents],
+            [[(current, None)]],
+        )
 
     async def test_snapshot_queue_resume_and_next_ordinary_reply(self) -> None:
         """Queued voice keeps its policy; subsequent chat stays silent."""

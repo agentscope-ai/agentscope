@@ -349,6 +349,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		phase,
 		activeReplyId,
 		queuedCount,
+		hasPendingInput,
 		queuedItems,
 		queueReorderDisabled,
 		send,
@@ -783,7 +784,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		!messagesLoading &&
 		!configPending &&
 		phase === 'idle' &&
-		queuedCount === 0 &&
+		!hasPendingInput &&
 		!realtimeBusy &&
 		getPendingHitlCalls(msgs).length === 0 &&
 		subagentHitl.length === 0;

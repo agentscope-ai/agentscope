@@ -220,7 +220,7 @@ def _interrupted_tool_result_dict(
     - ``True`` — ``list[TextBlock]``, emitted by the toolkit's
       ``CancelledError`` path (in-flight tool cancelled mid-run).
     - ``False`` — raw ``str``, emitted by
-      :meth:`Agent._close_unfinished_tool_calls` for HITL tool calls
+      :meth:`Agent.interrupt_reply` for HITL tool calls
       that never actually started (ASKING / SUBMITTED).
     """
     output: Any
@@ -604,7 +604,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
     ) -> None:
         """Concurrent batch mixes a user-confirmation tool (parks in
         ASKING state without ever running, so its result comes from the
-        agent ``_close_unfinished_tool_calls`` path with a ``str``
+        agent ``interrupt_reply`` path with a ``str``
         output) and a slow running tool (whose result comes from the
         toolkit cancel path with a ``list[TextBlock]`` output).
 
@@ -885,7 +885,7 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
     """A :class:`UserInterruptEvent` is delivered to a parked reply.
 
     HITL tool calls that never actually ran are patched by
-    :meth:`Agent._close_unfinished_tool_calls`, whose ``tool_result``
+    :meth:`Agent.interrupt_reply`, whose ``tool_result``
     output is always the raw interrupt ``str`` (never ``list[TextBlock]``)."""
 
     def _make_agent(self, tools: list[ToolBase]) -> tuple[Agent, MockModel]:

@@ -1,4 +1,4 @@
-import { EventType } from '@agentscope-ai/agentscope/event';
+import { EventType, ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
 import type {
 	AgentEvent,
 	CustomEvent,
@@ -178,6 +178,7 @@ export function useMessages(
 	const [loadedKey, setLoadedKey] = useState<string | null>(null);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
 	const [streamConnected, setStreamConnected] = useState(false);
+	const [startingInputId, setStartingInputId] = useState<string | null>(null);
 	// Only a running reply accepts steering. Parked replies retain their
 	// streaming phase and currentReplyRef for confirmation and Stop.
 	const [activeReplyId, setActiveReplyId] = useState<string | null>(null);
@@ -188,6 +189,7 @@ export function useMessages(
 		items: queuedItems,
 		visibleCount: queuedCount,
 		pendingCount: pendingQueueCount,
+		hasPendingInput: hasQueuedInput,
 		reorderDisabled: queueReorderDisabled,
 		addOptimistic,
 		acceptOptimistic,
@@ -286,7 +288,9 @@ export function useMessages(
 					const v = custom.value as { worker_session_id: string; reply_id: string };
 					setSubagentHitl((prev) => prev.filter((x) => hitlKey(x) !== hitlKey(v)));
 				} else if (custom.name === 'chat_input_started') {
-					const startedItem = startItem(custom.value as ChatInputStartedValue);
+					const value = custom.value as ChatInputStartedValue;
+					setStartingInputId(value.queue_item_id ?? null);
+					const startedItem = startItem(value);
 					if (startedItem) {
 						const existingIds = new Set(msgsRef.current.map((msg) => msg.id));
 						msgsRef.current = [
@@ -302,6 +306,7 @@ export function useMessages(
 					applyQueueSnapshot(value.items ?? []);
 				} else if (custom.name === 'chat_input_failed') {
 					const value = custom.value as ChatInputTerminalValue;
+					setStartingInputId((id) => (id === value.queue_item_id ? null : id));
 					finishItem(value);
 					const failure = new Error(value.message ?? t('chatQueue.processFailed'));
 					clearInterruptTimer();
@@ -312,6 +317,7 @@ export function useMessages(
 					toast.error(failure.message);
 				} else if (custom.name === 'chat_input_cancelled') {
 					const value = custom.value as ChatInputTerminalValue;
+					setStartingInputId((id) => (id === value.queue_item_id ? null : id));
 					finishItem(value);
 					const message = value.message ?? t('chatQueue.processingCancelled');
 					clearInterruptTimer();
@@ -348,6 +354,7 @@ export function useMessages(
 			}
 			if (event.type === EventType.REPLY_START) {
 				const e = event as ReplyStartEvent;
+				if (e.role === 'assistant') setStartingInputId(null);
 				// A continuation (the run resuming after a confirmation or an
 				// external execution result) re-emits REPLY_START with the
 				// *same* reply_id. Re-point at the existing reply instead of
@@ -426,7 +433,7 @@ export function useMessages(
 				if (event.type === EventType.DATA_BLOCK_START) {
 					const e = event as DataBlockStartEvent;
 					if (e.media_type.startsWith('audio/')) {
-						audioManager.start(e.block_id, e.media_type, !voicePlayback);
+						audioManager.start(e.block_id, e.media_type, !voicePlayback, e.reply_id);
 					}
 				} else if (event.type === EventType.DATA_BLOCK_DELTA) {
 					const e = event as DataBlockDeltaEvent;
@@ -441,6 +448,11 @@ export function useMessages(
 						e.block_id,
 						typeof voicePlayback === 'boolean' ? undefined : voicePlayback,
 					);
+				} else if (
+					event.type === EventType.REPLY_END &&
+					event.finished_reason !== ReplyFinishedReason.COMPLETED
+				) {
+					audioManager.interruptReply(event.reply_id);
 				}
 			}
 
@@ -463,6 +475,7 @@ export function useMessages(
 	useEffect(() => {
 		setLoadedKey(null);
 		setStreamConnected(false);
+		setStartingInputId(null);
 		msgsRef.current = [];
 		currentReplyRef.current = null;
 		setMsgs([]);
@@ -917,6 +930,7 @@ export function useMessages(
 		streamConnected: ownsConversation && streamConnected,
 		queuedItems: ownsConversation ? queuedItems : [],
 		queuedCount: ownsConversation ? queuedCount : 0,
+		hasPendingInput: hasQueuedInput || startingInputId !== null,
 		queueReorderDisabled: !ownsConversation || queueReorderDisabled,
 		updateQueued,
 		deleteQueued,

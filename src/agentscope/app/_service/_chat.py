@@ -15,7 +15,7 @@ import asyncio
 import inspect
 import json
 from dataclasses import dataclass
-from typing import Literal, TYPE_CHECKING
+from typing import Any, Coroutine, Literal, TYPE_CHECKING
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -93,6 +93,7 @@ from ._projectors import SubagentHitlProjector
 
 from ..._logging import logger
 from ...agent import Agent, ModelConfig
+from ...state import AgentState
 from ...model import ChatModelBase
 from ...event import (
     AgentEvent,
@@ -116,6 +117,16 @@ if TYPE_CHECKING:
 _CHECKPOINT_LOCK_TTL_SECS = (
     MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
 )
+
+
+async def _finish_under_lock(work: Coroutine[Any, Any, None]) -> None:
+    """Finish the write before cancellation releases the session lock."""
+    task = asyncio.create_task(work)
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
 
 
 @dataclass(frozen=True)
@@ -1255,6 +1266,31 @@ class ChatService:
                             leader_name=leader.name,
                         )
 
+                if isinstance(input_msg, UserInterruptEvent):
+                    await register_inbox_consumer(
+                        self._message_bus,
+                        session_id,
+                    )
+                    try:
+                        await _finish_under_lock(
+                            self._interrupt_parked_reply(
+                                user_id,
+                                session_record,
+                                agent_record,
+                                team_ctx,
+                            ),
+                        )
+                    finally:
+                        # A fresh run drains pending inbox content with the
+                        # current model after the parked reply is closed.
+                        await abandon_inbox_consumer(
+                            self._message_bus,
+                            user_id=user_id,
+                            session_id=session_id,
+                            agent_id=agent_id,
+                        )
+                    return
+
                 workspace = await self._workspace_manager.get_workspace(
                     user_id,
                     agent_id,
@@ -1368,7 +1404,6 @@ class ChatService:
                     (
                         UserConfirmResultEvent,
                         ExternalExecutionResultEvent,
-                        UserInterruptEvent,
                     ),
                 ):
                     previous = await self._storage.get_message(
@@ -1619,16 +1654,7 @@ class ChatService:
             # rather than handing the run to whichever one holds the
             # channel's connection. Covers scheduled / background wakes,
             # not just inbound channel messages.
-            if (
-                isinstance(session_record.origin, ChannelOrigin)
-                and self._channel_clients is not None
-            ):
-                await self._channel_clients.deliver(
-                    session_id=session_id,
-                    channel_id=session_record.origin.channel_id,
-                    chat_id=session_record.origin.chat_id,
-                    agent_id=agent_id,
-                )
+            await self._start_channel_delivery(session_record)
             reply_msg: Msg | None = None
             active_reply_id: str | None = None
             reply_msgs: list[Msg] = []
@@ -2025,42 +2051,13 @@ class ChatService:
                 # before this write lands.
                 async def _persist() -> None:
                     try:
-                        async with self._message_bus.acquire_lock(
-                            MessageBusKeys.session_event_checkpoint_lock(
-                                session_id,
-                            ),
-                            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
-                        ):
-                            for msg in reply_msgs:
-                                await self._storage.upsert_message(
-                                    user_id,
-                                    session_id,
-                                    msg,
-                                )
-                            for msg in bound_inputs:
-                                await self._storage.upsert_message(
-                                    user_id,
-                                    session_id,
-                                    msg,
-                                )
-                            await self._storage.update_session_state(
-                                user_id=user_id,
-                                agent_id=agent_id,
-                                session_id=session_id,
-                                state=agent.state,
-                            )
-                            if checkpoint_cursor is not None:
-                                await self._message_bus.registry_set(
-                                    MessageBusKeys.session_event_checkpoint(
-                                        session_id,
-                                    ),
-                                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
-                                    checkpoint_cursor,
-                                )
-                                await self._message_bus.log_trim(
-                                    MessageBusKeys.session_events(session_id),
-                                    before_id=checkpoint_cursor,
-                                )
+                        await self._save_checkpoint(
+                            user_id,
+                            session_record,
+                            [*reply_msgs, *bound_inputs],
+                            agent.state,
+                            checkpoint_cursor,
+                        )
                     finally:
                         try:
                             if active_reply_id is not None:
@@ -2095,15 +2092,7 @@ class ChatService:
                                         "finished.",
                                     )
 
-                persist_task = asyncio.create_task(_persist())
-                try:
-                    await asyncio.shield(persist_task)
-                except asyncio.CancelledError:
-                    # Await the shielded task so the lock is only
-                    # released after storage is consistent, then
-                    # propagate to honour asyncio semantics.
-                    await persist_task
-                    raise
+                await _finish_under_lock(_persist())
 
                 # Still under the session lock, so this config write
                 # cannot race the next turn's snapshot of it. Skipped on
@@ -2125,6 +2114,100 @@ class ChatService:
             and self.sop_service is not None
         ):
             self.sop_service.advance_later(user_id, resumed_sop_run_id)
+
+    async def _start_channel_delivery(self, session: SessionRecord) -> None:
+        """Start delivery for a channel-bound reply or continuation."""
+        if (
+            isinstance(session.origin, ChannelOrigin)
+            and self._channel_clients is not None
+        ):
+            await self._channel_clients.deliver(
+                session_id=session.id,
+                channel_id=session.origin.channel_id,
+                chat_id=session.origin.chat_id,
+                agent_id=session.agent_id,
+            )
+
+    async def _interrupt_parked_reply(
+        self,
+        user_id: str,
+        session: SessionRecord,
+        agent: AgentRecord,
+        team_ctx: _TeamContext | None,
+    ) -> None:
+        """Close a verified parked reply using only its persisted state."""
+        state = session.state
+        state.session_id = session.id
+        reply = await self._storage.get_message(
+            user_id,
+            session.id,
+            state.reply_id,
+        )
+        await self._start_channel_delivery(session)
+        cursor = await publish_session_event(
+            self._message_bus,
+            session.id,
+            ReplyStartEvent(
+                session_id=session.id,
+                reply_id=state.reply_id,
+                name=agent.data.name,
+            ).model_dump(mode="json"),
+        )
+        for event in Agent.interrupt_reply(state, agent.data.name):
+            if reply is not None:
+                reply.append_event(event)
+            cursor = await publish_session_event(
+                self._message_bus,
+                session.id,
+                event.model_dump(mode="json"),
+            )
+            await self._project_event(user_id, session, agent, event)
+        await self._save_checkpoint(
+            user_id,
+            session,
+            [reply] if reply is not None else [],
+            state,
+            cursor,
+        )
+        await self._notify_leader_of_failure(
+            user_id,
+            team_ctx,
+            agent.data.name,
+            ReplyFinishedReason.INTERRUPTED,
+            "The turn stopped before it finished.",
+        )
+
+    async def _save_checkpoint(
+        self,
+        user_id: str,
+        session: SessionRecord,
+        messages: list[Msg],
+        state: AgentState,
+        cursor: str | None,
+    ) -> None:
+        """Commit reply messages and state before advancing the SSE cursor."""
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.session_event_checkpoint_lock(session.id),
+            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+        ):
+            for msg in messages:
+                await self._storage.upsert_message(user_id, session.id, msg)
+            await self._storage.update_session_state(
+                user_id=user_id,
+                agent_id=session.agent_id,
+                session_id=session.id,
+                state=state,
+            )
+            if cursor is not None:
+                await self._message_bus.registry_set(
+                    MessageBusKeys.session_event_checkpoint(session.id),
+                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                    cursor,
+                )
+                await self._message_bus.log_trim(
+                    MessageBusKeys.session_events(session.id),
+                    before_id=cursor,
+                )
 
     async def _parked_dispatch(
         self,
