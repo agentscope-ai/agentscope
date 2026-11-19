@@ -45,16 +45,6 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
     )
 
     @property
-    def supported_input_media_types(self) -> list[str]:
-        """Derive supported media types from :attr:`input_types`, excluding
-        ``text/plain`` and ``application/x-thinking``."""
-        return [
-            t
-            for t in self.input_types
-            if t not in ("text/plain", "application/x-thinking")
-        ]
-
-    @property
     def supports_thinking_input(self) -> bool:
         """Return ``True`` if ``application/x-thinking`` is listed in
         :attr:`input_types`, meaning the model accepts ``reasoning_content``

@@ -742,6 +742,7 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
         """URL images in tool results are promoted to a follow-up user
         message."""
         fmt = OpenAIChatFormatter()
+        source = URLSource(url=self.image_url, media_type="image/png")
         msgs = [
             AssistantMsg(
                 name="assistant",
@@ -758,10 +759,7 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                             TextBlock(text="Here is the map."),
                             DataBlock(
                                 id=_FIXED_ID,
-                                source=URLSource(
-                                    url=self.image_url,
-                                    media_type="image/png",
-                                ),
+                                source=source,
                             ),
                         ],
                         state=ToolResultState.SUCCESS,
@@ -840,6 +838,16 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+        for media_type, pattern in (
+            ("Image/PNG", "image/*"),
+            ("IMAGE/PNG", "IMAGE/*"),
+        ):
+            with self.subTest(media_type=media_type, pattern=pattern):
+                source.media_type = media_type
+                fmt = OpenAIChatFormatter(input_types=[pattern])
+                self.assertListEqual(await fmt.format(msgs), res)
+                self.assertEqual(source.media_type, media_type)
 
     async def test_chat_formatter_tool_result_image_id_is_deterministic(
         self,

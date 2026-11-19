@@ -18,6 +18,12 @@ from ..message import (
 )
 
 
+def _normalize_media_type(media_type: str) -> str:
+    """Lowercase the MIME type and subtype, preserving parameter values."""
+    mime, separator, parameters = media_type.partition(";")
+    return mime.lower() + separator + parameters
+
+
 class FormatterBase(BaseModel):
     """The base class for formatters."""
 
@@ -38,9 +44,10 @@ class FormatterBase(BaseModel):
     def supported_input_media_types(self) -> list[str]:
         """Derive the accepted media-type patterns from :attr:`input_types` by
         excluding ``text/plain`` and ``application/x-thinking``."""
+        media_types = map(_normalize_media_type, self.input_types)
         return [
             t
-            for t in self.input_types
+            for t in media_types
             if t not in ("text/plain", "application/x-thinking")
         ]
 
@@ -137,20 +144,18 @@ class FormatterBase(BaseModel):
                 textual_output.append(block.text)
 
             elif isinstance(block, DataBlock):
-                main_type = block.source.media_type.split("/")[0]
-
-                # `fnmatch` normalises both sides through `os.path.normcase`,
-                # which lowercases only on Windows, so an uppercase media
-                # type -- legal per RFC 2045/6838 and common in HTTP
-                # `Content-Type` headers -- matched on Windows and missed on
-                # Linux. `fnmatchcase` plus explicit lowercasing gives every
-                # platform the same, spec-correct answer.
-                media_type = block.source.media_type.lower()
+                media_type = _normalize_media_type(block.source.media_type)
                 if any(
-                    fnmatchcase(media_type, pattern.lower())
+                    fnmatchcase(media_type, pattern)
                     for pattern in self.supported_input_media_types
                 ):
-                    # If supported, promote the block
+                    main_type = media_type.split("/", 1)[0]
+                    if media_type != block.source.media_type:
+                        # Normalize the promoted copy, preserving history.
+                        source = block.source.model_copy(
+                            update={"media_type": media_type},
+                        )
+                        block = block.model_copy(update={"source": source})
 
                     # Reuse the block's own stable id as the identifier so
                     # repeated formatting of the same unchanged Msg history
