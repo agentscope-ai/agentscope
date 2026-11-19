@@ -509,11 +509,7 @@ class MCPClient(BaseModel):
             self._lifecycle_task = None
             self._close_requested = None
             self._is_connected = False
-            # The catalog belongs to the connection that just ended. A server
-            # that restarted or was reconfigured can advertise a different
-            # tool set, and ``get_tool`` serves straight from this cache
-            # without asking the server, so keeping it would resolve names
-            # (and hand out schemas) from the previous connection.
+            # Rediscover tools after reconnecting.
             self._cached_tools = None
             logger.info("MCP closed: %s", self.name)
 
