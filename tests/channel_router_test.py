@@ -60,7 +60,7 @@ def _client(service: object) -> TestClient:
     """Build an app around the channel router and the given service."""
     app = FastAPI()
     app.include_router(channel_router)
-    app.dependency_overrides[get_storage] = lambda: _OwnedStorage()
+    app.dependency_overrides[get_storage] = _OwnedStorage
     app.dependency_overrides[get_channel_service] = lambda: service
     app.dependency_overrides[get_current_user_id] = lambda: _USER
     return TestClient(app)
