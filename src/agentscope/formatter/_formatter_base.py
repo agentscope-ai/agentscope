@@ -109,6 +109,22 @@ class FormatterBase(BaseModel):
                     f"Expected Msg object, got {type(msg)} instead.",
                 )
 
+    def _get_supported_tool_result_block(
+        self,
+        block: DataBlock,
+    ) -> DataBlock | None:
+        """Return a supported block with a normalized MIME type for output."""
+        media_type = _normalize_media_type(block.source.media_type)
+        if not any(
+            fnmatchcase(media_type, pattern)
+            for pattern in self.supported_input_media_types
+        ):
+            return None
+        if media_type == block.source.media_type:
+            return block
+        source = block.source.model_copy(update={"media_type": media_type})
+        return block.model_copy(update={"source": source})
+
     @staticmethod
     def _convert_unsupported_data_block_to_string(block: DataBlock) -> str:
         """Convert an unsupported data block into its textual fallback.
@@ -180,24 +196,15 @@ class FormatterBase(BaseModel):
                 textual_output.append(block.text)
 
             elif isinstance(block, DataBlock):
-                media_type = _normalize_media_type(block.source.media_type)
-                if any(
-                    fnmatchcase(media_type, pattern)
-                    for pattern in self.supported_input_media_types
-                ):
-                    main_type = media_type.split("/", 1)[0]
-                    if media_type != block.source.media_type:
-                        # Normalize the promoted copy, preserving history.
-                        source = block.source.model_copy(
-                            update={"media_type": media_type},
-                        )
-                        block = block.model_copy(update={"source": source})
+                supported = self._get_supported_tool_result_block(block)
+                if supported is not None:
+                    main_type = supported.source.media_type.split("/", 1)[0]
 
                     # Reuse the block's own stable id as the identifier so
                     # repeated formatting of the same unchanged Msg history
                     # (e.g. on every LLM call) produces the same text, rather
                     # than a fresh random id each time.
-                    identifier = block.id
+                    identifier = supported.id
 
                     textual_output.append(
                         f"<system-reminder>A(n) {main_type} file is returned "
@@ -209,7 +216,7 @@ class FormatterBase(BaseModel):
                             TextBlock(
                                 text=f"- {identifier} ({main_type} file): ",
                             ),
-                            block,
+                            supported,
                         ],
                     )
 
