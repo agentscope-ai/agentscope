@@ -5,7 +5,7 @@ import asyncio
 from typing import Any, AsyncGenerator
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from fastapi import HTTPException
 from chat_submission_cancellation_test import _reserve
@@ -29,6 +29,7 @@ from agentscope.app._router._session import update_session
 from agentscope.app._router._chat import chat
 from agentscope.app._service import ChatService
 from agentscope.app._service._model import REPLY_CHAT_CONFIG
+from agentscope.app._service._tts_model import validate_tts_model_config
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.middleware._chat_tts_middleware import (
     ChatTTSMiddleware,
@@ -40,10 +41,13 @@ from agentscope.app.storage import (
     ASRModelConfig,
     ChatModelConfig,
     ChatModelSnapshot,
+    CredentialRecord,
     PipelineVoiceConfig,
     SessionConfig,
     SessionRecord,
     TTSModelConfig,
+    VoiceProfileData,
+    VoiceProfileRecord,
 )
 from agentscope.event import (
     ReplyEndEvent,
@@ -667,6 +671,161 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                 {REPLY_TTS_CONFIG: _tts("voice").model_dump(mode="json")},
                 {REPLY_TTS_CONFIG: _tts("ordinary").model_dump(mode="json")},
             ],
+        )
+
+    def _configure_voice_profile(self) -> VoiceProfileRecord:
+        """Exercise real profile validation with owner-scoped test storage."""
+        config = TTSModelConfig(
+            type="openai_credential",
+            credential_id="c",
+            model="gpt-4o-mini-tts",
+            voice_profile_id="profile",
+            parameters={"voice": "voice-old", "response_format": "wav"},
+        )
+        self.session.config.pipeline_voice_config.tts_model_config = config
+        profile = VoiceProfileRecord(
+            id="profile",
+            user_id="user-1",
+            data=VoiceProfileData(
+                name="Voice",
+                engine="openai_tts",
+                credential_id="c",
+                model=config.model,
+                voice="voice-old",
+            ),
+        )
+        self.storage.get_voice_profile = AsyncMock(return_value=profile)
+        self.service._access.resolve_credential = AsyncMock(
+            return_value=CredentialRecord(
+                id="c",
+                user_id="user-1",
+                data={"type": "openai_credential", "api_key": "test"},
+            ),
+        )
+        self.validate.side_effect = validate_tts_model_config
+        return profile
+
+    async def test_pipeline_follows_updated_voice_profile(self) -> None:
+        """Submission refreshes bindings without weakening session writes."""
+        for changes, parameters in (
+            (
+                {"voice": "voice-new"},
+                {"voice": "voice-new", "response_format": "wav"},
+            ),
+            (
+                {"credential_id": "new-c"},
+                {"voice": "voice-old", "response_format": "wav"},
+            ),
+            ({"model": "tts-1", "voice": "alloy"}, {"voice": "alloy"}),
+        ):
+            with self.subTest(changes=changes):
+                profile = self._configure_voice_profile()
+                config = self.session.config.pipeline_voice_config
+                before = config.tts_model_config.model_dump()
+                profile.data = profile.data.model_copy(update=changes)
+                access = self.service._access
+                access.resolve_credential.return_value.id = (
+                    profile.data.credential_id
+                )
+                models, speech = await self.service.pipeline_snapshot(
+                    "user-1",
+                    "session-1",
+                    "agent-1",
+                )
+                self.assertEqual(
+                    (models, speech.model_dump()),
+                    (
+                        ChatModelSnapshot(
+                            primary=self.session.config.chat_model_config,
+                        ),
+                        {
+                            **before,
+                            "credential_id": profile.data.credential_id,
+                            "model": profile.data.model,
+                            "parameters": parameters,
+                        },
+                    ),
+                )
+                self.assertEqual(config.tts_model_config.model_dump(), before)
+                self.storage.get_voice_profile.assert_awaited_once_with(
+                    "user-1",
+                    "profile",
+                )
+                self.assertEqual(
+                    access.resolve_credential.await_args_list,
+                    [
+                        call("user-1", profile.data.credential_id),
+                        call("user-1", "c"),
+                    ],
+                )
+                with self.assertRaises(HTTPException) as error:
+                    await validate_tts_model_config(
+                        "user-1",
+                        config.tts_model_config,
+                        access,
+                        self.storage,
+                    )
+                self.assertEqual(error.exception.status_code, 400)
+
+    async def test_pipeline_rejects_invalid_current_profile(self) -> None:
+        """Missing profiles and revoked credentials cannot use stale data."""
+        for failure, status in (
+            ("missing", 404),
+            ("incomplete", 400),
+            ("revoked", 404),
+            ("shared", 403),
+            ("parameters", 400),
+        ):
+            with self.subTest(failure=failure):
+                profile = self._configure_voice_profile()
+                access = self.service._access
+                if failure == "missing":
+                    self.storage.get_voice_profile.return_value = None
+                elif failure == "incomplete":
+                    profile.data.voice = None
+                elif failure == "revoked":
+                    access.resolve_credential.side_effect = HTTPException(404)
+                elif failure == "shared":
+                    access.resolve_credential.return_value.user_id = "other"
+                else:
+                    config = self.session.config.pipeline_voice_config
+                    config.tts_model_config.parameters[
+                        "response_format"
+                    ] = "invalid"
+                with self.assertRaises(HTTPException) as error:
+                    await self.service.pipeline_snapshot(
+                        "user-1",
+                        "session-1",
+                        "agent-1",
+                    )
+                self.assertEqual(error.exception.status_code, status)
+
+    async def test_pipeline_checks_resolved_audio_format(self) -> None:
+        """Changing models drops obsolete parameters before the PCM guard."""
+        profile = self._configure_voice_profile()
+        config = self.session.config.pipeline_voice_config
+        config.tts_model_config.parameters["response_format"] = "pcm"
+        with self.assertRaises(HTTPException) as error:
+            await self.service.pipeline_snapshot(
+                "user-1",
+                "session-1",
+                "agent-1",
+            )
+        self.assertEqual(error.exception.status_code, 422)
+        profile.data.model = "tts-1"
+        profile.data.voice = "alloy"
+        _, speech = await self.service.pipeline_snapshot(
+            "user-1",
+            "session-1",
+            "agent-1",
+        )
+        self.assertEqual(speech.parameters, {"voice": "alloy"})
+        self.assertEqual(
+            config.tts_model_config.parameters,
+            {
+                "voice": "voice-old",
+                "response_format": "pcm",
+            },
         )
 
     async def test_missing_voice_and_raw_pcm_are_rejected(self) -> None:

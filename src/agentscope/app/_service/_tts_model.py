@@ -17,6 +17,44 @@ from ...tts import OpenAITTSModel, TTSModelBase, TTSModelCard
 from ..._logging import logger
 
 
+async def resolve_tts_voice_profile(
+    user_id: str,
+    config: TTSModelConfig,
+    storage: StorageBase,
+) -> tuple[TTSModelConfig, VoiceProfileData | None]:
+    """Refresh voice bindings; callers must still validate credentials.
+
+    Return the same owner-scoped profile snapshot for binding validation.
+    Model/provider changes discard parameters from the previous adapter.
+    """
+    if config.voice_profile_id is None:
+        return config, None
+    data = await _get_voice_profile_data(
+        user_id,
+        config.voice_profile_id,
+        storage,
+    )
+    assert data.engine is not None
+    provider_type = ENGINE_TO_CREDENTIAL_TYPE[data.engine]
+    values = (
+        dict(config.parameters)
+        if config.type == provider_type and config.model == data.model
+        else {}
+    )
+    values["voice"] = data.voice
+    return (
+        config.model_copy(
+            update={
+                "type": provider_type,
+                "credential_id": data.credential_id,
+                "model": data.model,
+                "parameters": values,
+            },
+        ),
+        data,
+    )
+
+
 async def get_tts_model(
     user_id: str,
     config: TTSModelConfig,
@@ -42,30 +80,12 @@ async def get_tts_model(
             is no longer valid or accessible.
     """
     credential = None
-    data = None
     try:
-        if config.voice_profile_id is not None:
-            data = await _get_voice_profile_data(
-                user_id,
-                config.voice_profile_id,
-                storage,
-            )
-            assert data.engine is not None
-            provider_type = ENGINE_TO_CREDENTIAL_TYPE[data.engine]
-            values = (
-                dict(config.parameters)
-                if config.type == provider_type and config.model == data.model
-                else {}
-            )
-            values["voice"] = data.voice
-            config = config.model_copy(
-                update={
-                    "type": provider_type,
-                    "credential_id": data.credential_id,
-                    "model": data.model,
-                    "parameters": values,
-                },
-            )
+        config, data = await resolve_tts_voice_profile(
+            user_id,
+            config,
+            storage,
+        )
         credential, tts_cls = await _validate_and_resolve_tts_config(
             user_id,
             config,
@@ -114,8 +134,14 @@ async def validate_tts_model_config(
     config: TTSModelConfig | None,
     access: ResourceAccessService,
     storage: StorageBase,
+    *,
+    resolved_profile: VoiceProfileData | None = None,
 ) -> None:
-    """Validate a TTS config before it is persisted on a session."""
+    """Validate a session write or an already resolved runtime snapshot.
+
+    Session writes omit ``resolved_profile`` and require exact bindings.
+    Runtime callers pass the snapshot from ``resolve_tts_voice_profile``.
+    """
     if config is None:
         return
     _, tts_cls = await _validate_and_resolve_tts_config(
@@ -123,6 +149,7 @@ async def validate_tts_model_config(
         config,
         access,
         storage,
+        resolved_profile=resolved_profile,
     )
 
     try:

@@ -81,7 +81,11 @@ from .._client_external_tool import (
 )
 from ._access import ResourceAccessService
 from ._model import get_model, REPLY_CHAT_CONFIG
-from ._tts_model import get_tts_model, validate_tts_model_config
+from ._tts_model import (
+    get_tts_model,
+    resolve_tts_voice_profile,
+    validate_tts_model_config,
+)
 from ._toolkit import get_toolkit
 from ._session_projection import SessionProjection
 from ._sop import SOPService
@@ -854,7 +858,11 @@ class ChatService:
                 status_code=422,
                 detail="Configure pipeline voice ASR and TTS before starting.",
             )
-        tts = config.tts_model_config
+        tts, profile = await resolve_tts_voice_profile(
+            user_id,
+            config.tts_model_config,
+            self._storage,
+        )
         if tts.parameters.get("response_format") == "pcm":
             raise HTTPException(
                 status_code=422,
@@ -868,6 +876,7 @@ class ChatService:
             tts,
             self._access,
             self._storage,
+            resolved_profile=profile,
         )
         primary = config.chat_model_config or session.config.chat_model_config
         if primary is None:
