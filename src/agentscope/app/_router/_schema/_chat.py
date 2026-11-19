@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The chat endpoint schema."""
 
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal, Self, TypeAlias
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -146,6 +146,16 @@ class UpdateChatQueueItemRequest(BaseModel):
     input: Msg | NonEmptyMsgList = Field(
         description="Replacement message or non-empty message list.",
     )
+
+    @model_validator(mode="after")
+    def _validate_message_roles(self) -> Self:
+        """Keep server-authored roles out of the public queue boundary."""
+        messages = self.input if isinstance(self.input, list) else [self.input]
+        if any(message.role != "user" for message in messages):
+            raise ValueError(
+                "Queued chat inputs must have role='user'.",
+            )
+        return self
 
 
 class SteerChatQueueItemRequest(BaseModel):
