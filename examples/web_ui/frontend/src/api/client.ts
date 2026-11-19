@@ -126,7 +126,13 @@ export const client = {
 	get: <T>(
 		path: string,
 		params?: Record<string, string>,
-		options?: { silent?: boolean; baseUrl?: string; userId?: string; timeoutMs?: number },
+		options?: {
+			silent?: boolean;
+			signal?: AbortSignal;
+			baseUrl?: string;
+			userId?: string;
+			timeoutMs?: number;
+		},
 	) => request<T>(path, { method: 'GET', params, ...options }),
 	post: <T>(
 		path: string,

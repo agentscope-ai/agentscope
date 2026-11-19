@@ -2,10 +2,13 @@
 """The formatter module."""
 import base64
 import mimetypes
+import os
 import tempfile
 from abc import abstractmethod
 from fnmatch import fnmatchcase
 from typing import Any, AsyncGenerator, Awaitable, Callable, List
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from pydantic import BaseModel, Field
 
@@ -22,6 +25,39 @@ def _normalize_media_type(media_type: str) -> str:
     """Lowercase the MIME type and subtype, preserving parameter values."""
     mime, separator, parameters = media_type.partition(";")
     return mime.lower() + separator + parameters
+
+
+def file_url_to_path(url: str) -> str:
+    """Resolve a ``file://`` URL to a local filesystem path.
+
+    Local URLs and ``localhost`` authorities resolve on every platform.
+    Other authorities resolve to UNC paths on Windows and are rejected on
+    other platforms to avoid reading an unrelated local file.
+
+    Args:
+        url (`str`):
+            A ``file://`` URL, e.g. ``file:///tmp/x.png`` or
+            ``file://server/share/x.png``.
+
+    Returns:
+        `str`:
+            The platform filesystem path for the URL, suitable for
+            ``open()``.
+
+    Raises:
+        ValueError:
+            If a remote authority is used on a non-Windows platform.
+    """
+    parsed = urlsplit(url)
+    path = parsed.path
+    if parsed.netloc and parsed.netloc.lower() != "localhost":
+        if os.name != "nt":
+            raise ValueError(
+                "Remote file URLs are not supported on this platform. "
+                "Mount the share and use a local file URL instead.",
+            )
+        path = "//" + parsed.netloc + path
+    return url2pathname(path)
 
 
 class FormatterBase(BaseModel):

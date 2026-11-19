@@ -11,12 +11,14 @@ from pydantic import TypeAdapter
 from ._lifespan import lifespan
 from .access import DenyAllResourceAccessPolicy, ResourceAccessPolicyBase
 from .hub import HubBase, HubError, MCPHubBase, SkillHubBase
+from ._service._session import SessionBusyError
 from .rag.blob_store import BlobStoreBase, LocalBlobStore
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     asr_router,
     agent_router,
+    background_task_router,
     channel_router,
     chat_router,
     credential_router,
@@ -439,6 +441,7 @@ def create_app(
     for router in (
         asr_router,
         agent_router,
+        background_task_router,
         chat_router,
         credential_router,
         health_router,
@@ -458,6 +461,17 @@ def create_app(
         channel_router,
     ):
         app.include_router(router)
+
+    @app.exception_handler(SessionBusyError)
+    async def _on_session_busy(
+        _: Request,
+        exc: SessionBusyError,
+    ) -> JSONResponse:
+        """Allow callers to retry deletion after lock contention."""
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": str(exc)},
+        )
 
     @app.exception_handler(HubError)
     async def _on_hub_error(_: Request, exc: HubError) -> JSONResponse:

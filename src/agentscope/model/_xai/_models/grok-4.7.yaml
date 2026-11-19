@@ -2,6 +2,8 @@
 name: grok-4.7
 label: Grok 4.7
 status: active
+# Release date source: https://docs.x.ai/developers/release-notes
+release_date: 2026-09-21
 
 input_types:
   - text/plain

@@ -14,6 +14,7 @@ from ._tts_middleware import TTSMiddleware
 from ._model_router import ChatModelCandidate, ModelRouterMiddleware
 from ._steering import SteeringMiddleware
 from ._steering_queue import (
+    SteeringAcknowledgementUncertainError,
     SteeringInput,
     SteeringQueue,
     SteeringReceipt,
@@ -32,6 +33,7 @@ __all__ = [
     "ChatModelCandidate",
     "ModelRouterMiddleware",
     "SteeringInput",
+    "SteeringAcknowledgementUncertainError",
     "SteeringMiddleware",
     "SteeringQueue",
     "SteeringReceipt",

@@ -1,6 +1,8 @@
 name: kimi-k2.6
 label: Kimi K2.6
 status: active
+# Release date source: https://www.kimi.com/en/help/agent/agent-swarm
+release_date: 2026-04-20
 
 input_types:
   - text/plain

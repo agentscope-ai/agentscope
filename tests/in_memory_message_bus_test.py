@@ -106,6 +106,47 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
             [{"i": 3}, {"i": 2}],
         )
 
+    async def test_queue_read_observes_sliding_expiry(self) -> None:
+        """Reads retain all entries until the refreshed key deadline."""
+        with patch.object(_bus.time, "monotonic", return_value=0):
+            first_id = await self.bus.queue_push("k", {"i": 1}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=5):
+            second_id = await self.bus.queue_push("k", {"i": 2}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=11):
+            self.assertEqual(
+                await self.bus.queue_read("k", max_count=1),
+                [(first_id, {"i": 1})],
+            )
+            self.assertEqual(
+                await self.bus.queue_read("k"),
+                [(first_id, {"i": 1}), (second_id, {"i": 2})],
+            )
+        with patch.object(_bus.time, "monotonic", return_value=15):
+            self.assertEqual(await self.bus.queue_read("k"), [])
+            self.assertEqual(await self.bus.queue_drain("k"), [])
+
+    async def test_queue_replace_clears_existing_expiry(self) -> None:
+        """Replacement queues do not inherit the old key's deadline."""
+        cases: tuple[list[dict], ...] = ([{"nested": {"i": 2}}], [])
+        for payloads in cases:
+            with self.subTest(payloads=payloads):
+                with patch.object(_bus.time, "monotonic", return_value=0):
+                    await self.bus.queue_push("k", {"i": 1}, ttl_secs=10)
+                with patch.object(_bus.time, "monotonic", return_value=5):
+                    ids = await self.bus.queue_replace("k", payloads)
+                    expected: list[tuple[str, dict]] = [
+                        (entry_id, {"nested": {"i": 2}}) for entry_id in ids
+                    ]
+                    self.assertEqual(len(ids), len(payloads))
+                    if payloads:
+                        payloads[0]["nested"]["i"] = 3
+                    else:
+                        entry_id = await self.bus.queue_push("k", {"i": 3})
+                        expected = [(entry_id, {"i": 3})]
+                with patch.object(_bus.time, "monotonic", return_value=11):
+                    self.assertEqual(await self.bus.queue_read("k"), expected)
+                    self.assertEqual(await self.bus.queue_drain("k"), expected)
+
     async def test_queue_isolation_between_keys(self) -> None:
         """Pushes to different keys are independent."""
         await self.bus.queue_push("a", {"x": 1})
@@ -120,6 +161,40 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         await self.bus.queue_push("k", {"x": 1}, ttl_secs=0)
 
         self.assertEqual(await self.bus.queue_drain("k"), [])
+
+    async def test_push_refreshes_ttl_for_whole_queue(self) -> None:
+        """A later push keeps earlier entries until the refreshed deadline."""
+        with patch.object(_bus.time, "monotonic", return_value=0):
+            await self.bus.queue_push("k", {"i": 1}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=5):
+            await self.bus.queue_push("k", {"i": 2}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=11):
+            entries = await self.bus.queue_drain("k")
+
+        self.assertEqual(
+            [payload for _, payload in entries],
+            [{"i": 1}, {"i": 2}],
+        )
+
+    async def test_zero_ttl_expires_existing_queue(self) -> None:
+        """An immediate key expiry also removes entries already queued."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_push("k", {"i": 2}, ttl_secs=0)
+
+        self.assertEqual(await self.bus.queue_drain("k"), [])
+
+    async def test_push_without_ttl_keeps_existing_key_expiry(self) -> None:
+        """Omitting TTL does not cancel a previously set key expiry."""
+        with patch.object(_bus.time, "monotonic", return_value=0):
+            await self.bus.queue_push("k", {"i": 1}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=5):
+            first = await self.bus.queue_drain("k")
+            await self.bus.queue_push("k", {"i": 2})
+        with patch.object(_bus.time, "monotonic", return_value=11):
+            remaining = await self.bus.queue_drain("k")
+
+        self.assertEqual([payload for _, payload in first], [{"i": 1}])
+        self.assertEqual(remaining, [])
 
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):
