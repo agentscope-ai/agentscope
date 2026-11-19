@@ -476,6 +476,7 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 	const { t } = useTranslation();
 
 	const isRunning = !message.finished_at;
+	const partialReplay = message.metadata?.partial_replay === true;
 	const hasUsage =
 		!!message.usage &&
 		((message.usage.input_tokens ?? 0) > 0 || (message.usage.output_tokens ?? 0) > 0);
@@ -513,6 +514,13 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 	return (
 		<Message align={isUser ? 'end' : 'start'} data-role={message.role}>
 			<MessageContent>
+				{!isUser && partialReplay && (
+					<Alert className="mb-2 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-50">
+						<TriangleAlert />
+						<AlertTitle>{t('messageBubble.partialReplayTitle')}</AlertTitle>
+						<AlertDescription>{t('messageBubble.partialReplay')}</AlertDescription>
+					</Alert>
+				)}
 				{blocks
 					.filter((block) => block.type !== 'data')
 					.map((block, index) =>

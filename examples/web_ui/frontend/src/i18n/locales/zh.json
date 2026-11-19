@@ -215,6 +215,8 @@
 	"messageBubble": {
 		"thinking": "思考中",
 		"thinkingFor": "思考 {{duration}}",
+		"partialReplayTitle": "早期事件未完整回放",
+		"partialReplay": "这条回复的早期过程已从实时回放窗口移出；下面只显示仍可获得的事件，不补造缺失内容。",
 		"audioGenerating": "正在生成音频…",
 		"playAudio": "播放音频",
 		"pauseAudio": "暂停音频",
@@ -244,6 +246,24 @@
 	},
 	"chat": {
 		"ttsFailed": "语音生成失败，文字回复继续。",
+		"runWaiting": "智能体正在处理（{{stage}}），等待可见输出。",
+		"runStageLabel": "智能体正在{{stage}}。",
+		"runStopping": "正在停止当前任务…",
+		"streamReconnecting": "实时连接已中断，正在重新连接；任务状态仍以服务端为准。",
+		"streamErrorTitle": "实时连接异常",
+		"requestErrorTitle": "请求失败",
+		"lastEvent": "最近事件：{{time}}",
+		"streamError": "暂时看不到新的事件。系统会自动重连，不会重复发送这条消息。",
+		"streamClosed": "实时事件连接意外关闭。",
+		"runStage": {
+			"preparing": "准备中",
+			"model": "调用模型",
+			"tool": "执行工具",
+			"awaiting_confirmation": "等待确认",
+			"awaiting_external_result": "等待外部结果",
+			"finalizing": "整理结果",
+			"reconnecting": "重新连接"
+		},
 		"inputPlaceholder": "输入消息...",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",

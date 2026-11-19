@@ -215,6 +215,8 @@
 	"messageBubble": {
 		"thinking": "Thinking",
 		"thinkingFor": "Thinking for {{duration}}",
+		"partialReplayTitle": "Earlier events were not replayed",
+		"partialReplay": "The early part of this reply has left the live replay window. Only events still available are shown; missing content is not invented.",
 		"audioGenerating": "Generating audio…",
 		"playAudio": "Play audio",
 		"pauseAudio": "Pause audio",
@@ -244,6 +246,24 @@
 	},
 	"chat": {
 		"ttsFailed": "Speech generation failed. Text replies will continue.",
+		"runWaiting": "The agent is {{stage}} and waiting for visible output.",
+		"runStageLabel": "The agent is {{stage}}.",
+		"runStopping": "Stopping the current task…",
+		"streamReconnecting": "The live connection was interrupted. Reconnecting; the server remains the source of truth.",
+		"streamErrorTitle": "Live connection problem",
+		"requestErrorTitle": "Request failed",
+		"lastEvent": "Latest event: {{time}}",
+		"streamError": "New events are temporarily unavailable. The UI will reconnect without resending this message.",
+		"streamClosed": "The live event connection closed unexpectedly.",
+		"runStage": {
+			"preparing": "preparing",
+			"model": "calling the model",
+			"tool": "running a tool",
+			"awaiting_confirmation": "waiting for confirmation",
+			"awaiting_external_result": "waiting for an external result",
+			"finalizing": "finalizing the result",
+			"reconnecting": "reconnecting"
+		},
 		"inputPlaceholder": "Type a message...",
 		"confirmToolCall": "Allow this action?",
 		"subagentConfirmTitle": "{{name}} requests confirmation",

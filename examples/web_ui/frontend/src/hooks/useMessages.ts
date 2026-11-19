@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 
 import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
+import type { StreamEventsObserver } from '@/api/session';
 import { useAudioManager } from '@/context/AudioContext';
 import {
 	getQueueMessages,
@@ -30,6 +31,13 @@ import { ASK_USER_TOOL_NAME, formatAskUserOutput, parseAskUserResult } from '@/l
 import type { ClientExternalToolResult } from '@/lib/client-external-tools';
 import { appendMessageEvent } from '@/lib/message-events';
 import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
+import {
+	createPartialReply,
+	findReplyById,
+	loadReplyCheckpoint,
+	mergeHistoryWithPendingUsers,
+	waitForAbortableDelay,
+} from '@/lib/reply-recovery';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -69,6 +77,17 @@ const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
  *   event never arrives (dropped SSE frame, backend bug, etc.).
  */
 export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
+
+export type RunStage =
+	| 'preparing'
+	| 'model'
+	| 'tool'
+	| 'awaiting_confirmation'
+	| 'awaiting_external_result'
+	| 'finalizing'
+	| 'reconnecting';
+
+export type StreamConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
 /** Safety fallback: force phase back to idle if REPLY_END is not seen. */
 const INTERRUPT_TIMEOUT_MS = 10_000;
@@ -173,6 +192,11 @@ export function useMessages(
 	// state over a session that does have messages.
 	const [loadedKey, setLoadedKey] = useState<string | null>(null);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
+	const [runStage, setRunStage] = useState<RunStage | null>(null);
+	const [activeToolName, setActiveToolName] = useState<string | null>(null);
+	const [connectionState, setConnectionState] = useState<StreamConnectionState>('disconnected');
+	const [lastActivity, setLastActivity] = useState<string | null>(null);
+	const [streamError, setStreamError] = useState<Error | null>(null);
 	// Only a running reply accepts steering. Parked replies retain their
 	// streaming phase and currentReplyRef for confirmation and Stop.
 	const [activeReplyId, setActiveReplyId] = useState<string | null>(null);
@@ -205,6 +229,8 @@ export function useMessages(
 	// Timer that reverts ``interrupting`` back to ``idle`` if the
 	// terminating REPLY_END never arrives (dropped SSE frame, etc.).
 	const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const partialReplayIdsRef = useRef(new Set<string>());
+	const pendingUserMessagesRef = useRef(new Map<string, Msg>());
 
 	const clearInterruptTimer = useCallback(() => {
 		if (interruptTimerRef.current !== null) {
@@ -230,6 +256,32 @@ export function useMessages(
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
 		(event: AgentEvent) => {
+			const eventReplyId = 'reply_id' in event ? event.reply_id : undefined;
+			setLastActivity((previous) =>
+				!previous || Date.parse(event.created_at) > Date.parse(previous)
+					? event.created_at
+					: previous,
+			);
+			if (event.type === EventType.MODEL_CALL_START) {
+				setRunStage('model');
+				setActiveToolName(null);
+			}
+			if (
+				event.type === EventType.TOOL_CALL_START ||
+				event.type === EventType.TOOL_RESULT_START
+			) {
+				setRunStage('tool');
+				setActiveToolName(event.tool_call_name);
+			}
+			if (event.type === EventType.REQUIRE_USER_CONFIRM) setRunStage('awaiting_confirmation');
+			if (event.type === EventType.REQUIRE_EXTERNAL_EXECUTION) {
+				setRunStage('awaiting_external_result');
+			}
+			if (event.type === EventType.REPLY_END) {
+				setRunStage('finalizing');
+				setActiveToolName(null);
+			}
+
 			// Custom events are service-layer notifications, not agent
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
@@ -282,6 +334,10 @@ export function useMessages(
 				} else if (custom.name === 'chat_input_started') {
 					const startedItem = startItem(custom.value as ChatInputStartedValue);
 					if (startedItem) {
+						for (const message of getQueueMessages([startedItem])) {
+							if (message.role === 'user')
+								pendingUserMessagesRef.current.set(message.id, message);
+						}
 						const existingIds = new Set(msgsRef.current.map((msg) => msg.id));
 						msgsRef.current = [
 							...msgsRef.current,
@@ -322,6 +378,22 @@ export function useMessages(
 					toast.error(value.message ?? t('chatQueue.steerFailed'));
 				}
 				return;
+			}
+
+			// A reconnect can start after the replay buffer has already evicted
+			// REPLY_START. Keep a clearly marked assistant shell so subsequent
+			// deltas are visible, without inventing the missing text or tool input.
+			if (
+				eventReplyId &&
+				event.type !== EventType.REPLY_START &&
+				!msgsRef.current.some((message) => message.id === eventReplyId)
+			) {
+				const partial = createPartialReply(event)!;
+				msgsRef.current = [...msgsRef.current, partial];
+				currentReplyRef.current = partial;
+				partialReplayIdsRef.current.add(eventReplyId);
+				setActiveReplyId(eventReplyId);
+				setPhase('streaming');
 			}
 			if (event.type === EventType.TOOL_RESULT_END) {
 				const result = event as ToolResultEndEvent;
@@ -365,15 +437,16 @@ export function useMessages(
 				setActiveReplyId(e.reply_id);
 				clearInterruptTimer();
 				setPhase('streaming');
+				setRunStage('preparing');
+				setActiveToolName(null);
 			} else {
 				// Realtime providers may start the assistant response before the
 				// user's final transcription arrives. Route every identified event
 				// to its own reply instead of assuming event streams never overlap.
-				const reply = event.reply_id
-					? currentReplyRef.current?.id === event.reply_id
-						? currentReplyRef.current
-						: (msgsRef.current.find((message) => message.id === event.reply_id) ?? null)
-					: currentReplyRef.current;
+				const reply = findReplyById(
+					msgsRef.current,
+					event.reply_id ?? currentReplyRef.current?.id,
+				);
 				if (reply) {
 					appendMessageEvent(reply, event);
 					// ``appendEvent`` mutates in place, which would leave
@@ -385,7 +458,7 @@ export function useMessages(
 					// must re-read it from here — ``currentReplyRef`` below,
 					// everything else looks the reply up by id.
 					const updated = { ...reply, content: [...reply.content] };
-					msgsRef.current = msgsRef.current.map((m) => (m === reply ? updated : m));
+					msgsRef.current = msgsRef.current.map((m) => (m.id === reply.id ? updated : m));
 					if (currentReplyRef.current?.id === reply.id) {
 						currentReplyRef.current = updated;
 					}
@@ -406,6 +479,7 @@ export function useMessages(
 				) {
 					clearInterruptTimer();
 					setPhase('idle');
+					setRunStage(null);
 					setActiveReplyId(null);
 					currentReplyRef.current = null;
 				}
@@ -458,8 +532,15 @@ export function useMessages(
 		setError(null);
 		clearInterruptTimer();
 		setPhase('idle');
+		setRunStage(null);
+		setActiveToolName(null);
+		setConnectionState('disconnected');
+		setLastActivity(null);
+		setStreamError(null);
 		setActiveReplyId(null);
 		setSubagentHitl([]);
+		partialReplayIdsRef.current.clear();
+		pendingUserMessagesRef.current.clear();
 		audioManager?.disposeAll();
 
 		if (!agentId || !sessionId) return;
@@ -467,79 +548,138 @@ export function useMessages(
 		const controller = new AbortController();
 		abortRef.current = controller;
 		let cancelled = false;
+		const currentKey = `${agentId}:${sessionId}`;
+		const recoveryReplyIds = new Set<string>();
+		const attemptedRepairs = new Set<string>();
+
+		const applyHistory = async (markLoaded: boolean) => {
+			const { messages, is_running, event_cursor } = await loadReplyCheckpoint(
+				() =>
+					sessionApi.messages(sessionId, agentId, undefined, {
+						signal: controller.signal,
+						silent: true,
+					}),
+				recoveryReplyIds,
+				controller.signal,
+			);
+			if (cancelled) return null;
+			// The history endpoint is the canonical snapshot. It repairs any
+			// partial replay shell once the complete message is persisted.
+			partialReplayIdsRef.current.clear();
+			for (const message of messages) pendingUserMessagesRef.current.delete(message.id);
+			msgsRef.current = mergeHistoryWithPendingUsers(
+				messages,
+				pendingUserMessagesRef.current,
+			);
+			const tail = messages[messages.length - 1];
+			const pendingHitl = getPendingHitlCalls(messages)[0];
+			// Every ref must point at the new canonical objects. A matching ID
+			// on an old object is insufficient for append/publish by identity.
+			currentReplyRef.current = findReplyById(
+				msgsRef.current,
+				pendingHitl?.replyId ?? currentReplyRef.current?.id,
+			);
+			if (is_running || pendingHitl) {
+				setPhase('streaming');
+				setRunStage(
+					pendingHitl?.kind === 'external_execution'
+						? 'awaiting_external_result'
+						: pendingHitl
+							? 'awaiting_confirmation'
+							: 'preparing',
+				);
+				setActiveToolName(null);
+				if (is_running && !pendingHitl && tail?.role === 'assistant') {
+					setActiveReplyId(tail.id);
+					currentReplyRef.current = tail;
+				}
+				if (pendingHitl) {
+					currentReplyRef.current =
+						messages.find((message) => message.id === pendingHitl.replyId) ?? null;
+				}
+			} else {
+				setPhase('idle');
+				setRunStage(null);
+				setActiveToolName(null);
+				setActiveReplyId(null);
+				currentReplyRef.current = null;
+			}
+			setMsgs([...msgsRef.current]);
+			if (markLoaded) setLoadedKey(currentKey);
+			return event_cursor;
+		};
 
 		(async () => {
-			let eventCursor: string | null = null;
-			// 1. Fetch persisted history — unless this tab just created the
-			// session, in which case there is provably none.
-			if (takeFreshlyCreated(sessionId)) {
-				if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
-			} else {
+			let firstLoad = true;
+			let delayMs = 500;
+			while (!cancelled && !controller.signal.aborted) {
+				const streamController = new AbortController();
+				const abortStream = () => streamController.abort();
+				controller.signal.addEventListener('abort', abortStream, { once: true });
+				let repairingReply = false;
 				try {
-					const { messages, is_running, event_cursor } = await sessionApi.messages(
+					setConnectionState(firstLoad ? 'connecting' : 'reconnecting');
+					setRunStage((stage) => (stage === null ? 'reconnecting' : stage));
+					const freshlyCreated = takeFreshlyCreated(sessionId);
+					const eventCursor = freshlyCreated ? null : await applyHistory(firstLoad);
+					recoveryReplyIds.clear();
+					if (freshlyCreated && firstLoad) setLoadedKey(currentKey);
+					if (cancelled) break;
+					firstLoad = false;
+					for await (const event of sessionApi.streamEvents(
 						sessionId,
 						agentId,
-					);
-					if (cancelled) return;
-					eventCursor = event_cursor;
-					msgsRef.current = messages;
-					// If a reply is in flight (running on a worker) OR any
-					// persisted msg is parked on a pending tool_call (awaiting
-					// user confirmation / external execution), initialise the
-					// phase to ``streaming`` so the interrupt button is
-					// available immediately — otherwise a fresh page load
-					// while parked leaves the UI stuck on ``idle`` with no
-					// way to abort.
-					const tail = messages[messages.length - 1];
-					const pendingHitl = getPendingHitlCalls(messages)[0];
-					if (is_running || pendingHitl) {
-						setPhase('streaming');
-						if (is_running && !pendingHitl && tail?.role === 'assistant') {
-							setActiveReplyId(tail.id);
-						}
-						if (pendingHitl) {
-							// Prime the ref so continuation events (which
-							// arrive without a fresh REPLY_START) apply to
-							// the right msg.
-							currentReplyRef.current =
-								messages.find((message) => message.id === pendingHitl.replyId) ??
-								null;
+						streamController.signal,
+						eventCursor,
+						{
+							onOpen: () => {
+								if (
+									cancelled ||
+									controller.signal.aborted ||
+									streamController.signal.aborted
+								)
+									return;
+								setConnectionState('connected');
+								setStreamError(null);
+								delayMs = 500;
+							},
+						} satisfies StreamEventsObserver,
+					)) {
+						if (cancelled) break;
+						processEvent(event);
+						if (
+							event.type === EventType.REPLY_END &&
+							partialReplayIdsRef.current.has(event.reply_id) &&
+							!attemptedRepairs.has(event.reply_id)
+						) {
+							// Stop consuming deltas before fetching the canonical
+							// reply/checkpoint. Never merge a new stream into a
+							// snapshot fetched concurrently with that stream.
+							recoveryReplyIds.add(event.reply_id);
+							attemptedRepairs.add(event.reply_id);
+							repairingReply = true;
+							streamController.abort();
+							break;
 						}
 					}
-					// Published synchronously, not through `scheduleUpdate`:
-					// its requestAnimationFrame batching exists for
-					// high-frequency streaming deltas, and deferring here
-					// would let `loadedKey` below clear `loading` a frame
-					// before the messages land — painting the empty-session
-					// greeting over a conversation that does have history.
-					// Both setters now land in the same React batch.
-					setMsgs([...msgsRef.current]);
+					if (repairingReply) continue;
+					if (!cancelled) throw new Error(t('chat.streamClosed'));
 				} catch (e) {
-					if (!cancelled) setError(e as Error);
-					return;
+					if (cancelled || controller.signal.aborted) break;
+					if (repairingReply) continue;
+					if (firstLoad) setLoadedKey(currentKey);
+					setConnectionState('reconnecting');
+					setRunStage((stage) => (stage === null ? 'reconnecting' : stage));
+					setStreamError(e as Error);
+					try {
+						await waitForAbortableDelay(delayMs, controller.signal);
+					} catch {
+						break;
+					}
+					delayMs = Math.min(delayMs * 2, 8_000);
 				} finally {
-					// Marks the load done whether it succeeded or threw —
-					// an error surfaces through `error`, and leaving
-					// `loading` stuck on would hide it behind a spinner
-					// forever.
-					if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
-				}
-			}
-
-			// 2. Open SSE long connection for live events
-			try {
-				for await (const event of sessionApi.streamEvents(
-					sessionId,
-					agentId,
-					controller.signal,
-					eventCursor,
-				)) {
-					if (cancelled) break;
-					processEvent(event);
-				}
-			} catch (e) {
-				if ((e as Error).name !== 'AbortError' && !cancelled) {
-					setError(e as Error);
+					streamController.abort();
+					controller.signal.removeEventListener('abort', abortStream);
 				}
 			}
 		})();
@@ -550,7 +690,7 @@ export function useMessages(
 			abortRef.current = null;
 			clearInterruptTimer();
 		};
-	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
+	}, [agentId, sessionId, processEvent, audioManager, clearInterruptTimer, t]);
 
 	/**
 	 * Send a user message. The first idle input appears in the conversation
@@ -563,9 +703,11 @@ export function useMessages(
 		async (content: ContentBlock[]) => {
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
+			setError(null);
 			const userMsg = UserMsg({ name: 'user', content });
 			const showInConversationImmediately = phase === 'idle' && pendingQueueCount === 0;
 			if (showInConversationImmediately) {
+				pendingUserMessagesRef.current.set(userMsg.id, userMsg);
 				msgsRef.current = [...msgsRef.current, userMsg];
 				scheduleUpdate();
 			}
@@ -583,6 +725,7 @@ export function useMessages(
 				// The server never accepted this input. Remove the
 				// optimistic queue row and restore the caller's draft.
 				rollbackOptimistic(optimisticId, userMsg.id);
+				pendingUserMessagesRef.current.delete(userMsg.id);
 				if (showInConversationImmediately) {
 					msgsRef.current = msgsRef.current.filter((msg) => msg.id !== userMsg.id);
 					scheduleUpdate();
@@ -871,6 +1014,13 @@ export function useMessages(
 		moveQueued,
 		reorderQueued,
 		phase: ownsConversation ? phase : ('idle' as ReplyPhase),
+		runStage: ownsConversation ? runStage : null,
+		activeToolName: ownsConversation ? activeToolName : null,
+		connectionState: ownsConversation
+			? connectionState
+			: ('disconnected' as StreamConnectionState),
+		lastActivity: ownsConversation ? lastActivity : null,
+		streamError: ownsConversation ? streamError : null,
 		error: ownsConversation ? error : null,
 		activeReplyId: ownsConversation && phase === 'streaming' ? activeReplyId : null,
 		steerQueued,

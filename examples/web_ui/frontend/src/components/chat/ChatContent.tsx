@@ -35,7 +35,7 @@ import {
 	MessageScrollerViewport,
 } from '@/components/ui/message-scroller.tsx';
 import { Spinner } from '@/components/ui/spinner';
-import type { ReplyPhase } from '@/hooks/useMessages';
+import type { ReplyPhase, RunStage, StreamConnectionState } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
 import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
@@ -87,6 +87,12 @@ interface ChatContentProps {
 	 * Send available for queued turns and coordinate realtime voice.
 	 */
 	phase: ReplyPhase;
+	runStage: RunStage | null;
+	activeToolName: string | null;
+	connectionState: StreamConnectionState;
+	lastActivity: string | null;
+	streamError: Error | null;
+	error: Error | null;
 	/** Number of locally submitted user turns waiting to start. */
 	queuedCount: number;
 	queuedItems: ChatQueueItem[];
@@ -160,6 +166,12 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
 	loading = false,
 	phase,
+	runStage,
+	activeToolName,
+	connectionState,
+	lastActivity,
+	streamError,
+	error,
 	queuedCount,
 	queuedItems,
 	queueReorderDisabled,
@@ -219,7 +231,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	// Only a session that finished loading with nothing in it is empty.
 	// Treating "no messages yet" as empty would flash the greeting over
 	// every session that does have history.
-	const isEmpty = !loading && msgs.length === 0 && steeringMessages.length === 0;
+	const isEmpty =
+		!loading && phase === 'idle' && msgs.length === 0 && steeringMessages.length === 0;
 
 	// A spinner that appears and vanishes inside a couple of frames reads
 	// as a flicker, not as feedback — so hold it back until the load has
@@ -266,6 +279,19 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		if (result === null || result === undefined) return;
 		await onClientExternalToolResult(pending.toolCall, result, pending.replyId);
 	};
+	const runningWithoutBubble =
+		phase !== 'idle' &&
+		!msgs.some((message) => message.role === 'assistant' && !message.finished_at);
+	const stageLabel = runStage
+		? t(`chat.runStage.${runStage}`, { defaultValue: runStage })
+		: t('chat.runStage.preparing');
+	const activityLabel = lastActivity
+		? new Intl.DateTimeFormat(undefined, {
+				hour: '2-digit',
+				minute: '2-digit',
+				second: '2-digit',
+			}).format(new Date(lastActivity))
+		: null;
 
 	// On an empty session the prompt and the input centre together, so every box
 	// down to the message list shrinks to its content instead of filling.
@@ -277,6 +303,45 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				className,
 			)}
 		>
+			{!loading && phase !== 'idle' && (
+				<div className="w-full max-w-[var(--chat-content-w)] rounded-lg border border-muted bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+					<div className="flex items-center gap-2">
+						<Spinner className="size-4" />
+						<span>
+							{phase === 'interrupting'
+								? t('chat.runStopping')
+								: runningWithoutBubble
+									? t('chat.runWaiting', { stage: stageLabel })
+									: t('chat.runStageLabel', { stage: stageLabel })}
+						</span>
+						{activeToolName && <code className="text-xs">{activeToolName}</code>}
+						{activityLabel && (
+							<span className="ml-auto text-xs">
+								{t('chat.lastEvent', { time: activityLabel })}
+							</span>
+						)}
+					</div>
+					{connectionState === 'reconnecting' && (
+						<div className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+							{t('chat.streamReconnecting')}
+						</div>
+					)}
+				</div>
+			)}
+			{!loading && streamError && (
+				<Alert variant="destructive" className="w-full max-w-[var(--chat-content-w)]">
+					<TriangleAlert />
+					<AlertTitle>{t('chat.streamErrorTitle')}</AlertTitle>
+					<AlertDescription>{t('chat.streamError')}</AlertDescription>
+				</Alert>
+			)}
+			{!loading && error && (
+				<Alert variant="destructive" className="w-full max-w-[var(--chat-content-w)]">
+					<TriangleAlert />
+					<AlertTitle>{t('chat.requestErrorTitle')}</AlertTitle>
+					<AlertDescription>{error.message}</AlertDescription>
+				</Alert>
+			)}
 			{loading ? (
 				<div className="flex flex-1 w-full items-center justify-center">
 					{showSpinner ? <Spinner className="size-5 text-muted-foreground" /> : null}

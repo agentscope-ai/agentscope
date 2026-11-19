@@ -17,6 +17,15 @@ export interface MessagesResponse {
 	has_more: boolean;
 }
 
+export interface StreamEventsObserver {
+	/** The HTTP stream has been accepted and its reader is ready. */
+	onOpen?: () => void;
+	/** A data frame or SSE heartbeat was received. */
+	onActivity?: (kind: 'event' | 'heartbeat') => void;
+	/** The reader stopped, with an optional failure. */
+	onClose?: (error?: Error) => void;
+}
+
 /**
  * Sessions this tab created and has not opened yet.
  *
@@ -84,12 +93,21 @@ export const sessionApi = {
 			agent_id: agentId,
 		}),
 
-	messages: (sessionId: string, agentId: string, params?: { before?: string; limit?: number }) =>
-		client.get<MessagesResponse>(`/sessions/${sessionId}/messages`, {
-			agent_id: agentId,
-			...(params?.before != null && { before: params.before }),
-			...(params?.limit != null && { limit: String(params.limit) }),
-		}),
+	messages: (
+		sessionId: string,
+		agentId: string,
+		params?: { before?: string; limit?: number },
+		options?: { signal?: AbortSignal; silent?: boolean },
+	) =>
+		client.get<MessagesResponse>(
+			`/sessions/${sessionId}/messages`,
+			{
+				agent_id: agentId,
+				...(params?.before != null && { before: params.before }),
+				...(params?.limit != null && { limit: String(params.limit) }),
+			},
+			options,
+		),
 
 	/**
 	 * Subscribe to a session's live event stream via SSE.
@@ -113,40 +131,53 @@ export const sessionApi = {
 		agentId: string,
 		signal?: AbortSignal,
 		after?: string | null,
+		observer?: StreamEventsObserver,
 	): AsyncGenerator<AgentEvent> {
-		const res = await client.stream(`/sessions/${sessionId}/stream`, {
-			method: 'GET',
-			params: {
-				agent_id: agentId,
-				...(after != null && { after }),
-			},
-			signal,
-		});
-
-		const reader = res.body!.getReader();
-		const decoder = new TextDecoder();
-		let buffer = '';
-
 		try {
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
+			const res = await client.stream(`/sessions/${sessionId}/stream`, {
+				method: 'GET',
+				params: {
+					agent_id: agentId,
+					...(after != null && { after }),
+				},
+				signal,
+				silent: true,
+			});
+			const reader = res.body?.getReader();
+			if (!reader) throw new Error('The event stream returned no body.');
+			observer?.onOpen?.();
+			const decoder = new TextDecoder();
+			let buffer = '';
 
-				buffer += decoder.decode(value, { stream: true });
-				const lines = buffer.split('\n');
-				buffer = lines.pop() ?? '';
+			try {
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
 
-				for (const line of lines) {
-					if (line.startsWith('data: ')) {
-						const json = line.slice(6).trim();
-						if (json) yield JSON.parse(json) as AgentEvent;
+					buffer += decoder.decode(value, { stream: true });
+					const lines = buffer.split('\n');
+					buffer = lines.pop() ?? '';
+
+					for (const line of lines) {
+						if (line.startsWith('data: ')) {
+							const json = line.slice(6).trim();
+							observer?.onActivity?.('event');
+							if (json) yield JSON.parse(json) as AgentEvent;
+						} else if (line.startsWith(':')) {
+							// Heartbeats are comments, but still prove the connection is alive.
+							observer?.onActivity?.('heartbeat');
+						}
 					}
-					// SSE comment frames (`:...\n`) are silently skipped
-					// (used for heartbeats).
 				}
+			} finally {
+				reader.releaseLock();
 			}
-		} finally {
-			reader.releaseLock();
+			observer?.onClose?.();
+		} catch (error) {
+			if (!(error instanceof DOMException && error.name === 'AbortError')) {
+				observer?.onClose?.(error as Error);
+			}
+			throw error;
 		}
 	},
 };

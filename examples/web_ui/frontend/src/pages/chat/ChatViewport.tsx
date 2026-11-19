@@ -310,6 +310,12 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	const {
 		msgs,
 		loading: messagesLoading,
+		error: messagesError,
+		streamError,
+		runStage,
+		activeToolName,
+		connectionState,
+		lastActivity,
 		phase,
 		activeReplyId,
 		queuedCount,
@@ -1090,6 +1096,12 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									className={'max-w-[var(--chat-content-w)] w-full'}
 									msgs={msgs}
 									loading={messagesLoading}
+									streamError={streamError}
+									error={messagesError}
+									runStage={runStage}
+									activeToolName={activeToolName}
+									connectionState={connectionState}
+									lastActivity={lastActivity}
 									agentId={agentId}
 									sessionId={sessionId}
 									cwd={view?.session.config.cwd ?? null}
