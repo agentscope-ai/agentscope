@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import posixpath
 import shlex
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ...tool import BackendBase, ExecResult
@@ -33,9 +34,20 @@ class E2BBackend(BackendBase):
         workdir (`str`):
             Default working directory for ``exec_shell`` calls inside
             the sandbox.
+        renew_hook (`Callable[[], Awaitable[bool]] | None`, optional):
+            Workspace-supplied lease-renewal hook (usually
+            :meth:`E2BWorkspace.prepare_for_reuse`), invoked before
+            every sandbox round-trip. Returning ``False`` (lease
+            conclusively lost) fails the call fast. ``None`` disables
+            renewal.
     """
 
-    def __init__(self, sandbox: Any, workdir: str) -> None:
+    def __init__(
+        self,
+        sandbox: Any,
+        workdir: str,
+        renew_hook: Callable[[], Awaitable[bool]] | None = None,
+    ) -> None:
         """Initialize the E2B backend.
 
         Args:
@@ -44,9 +56,30 @@ class E2BBackend(BackendBase):
             workdir (`str`):
                 Default working directory for ``exec_shell`` calls
                 inside the sandbox.
+            renew_hook (`Callable[[], Awaitable[bool]] | None`, optional):
+                Lease-renewal hook invoked before each round-trip.
+                ``None`` (default) disables renewal.
         """
         self._sandbox = sandbox
         self._workdir = workdir
+        self._renew_hook = renew_hook
+
+    async def _renew_lease(self) -> None:
+        """Run the workspace-supplied lease-renewal hook, if bound.
+
+        Raises:
+            `RuntimeError`:
+                If the hook reports the sandbox conclusively gone —
+                failing fast instead of surfacing a raw SDK 404 from
+                the subsequent call.
+        """
+        if self._renew_hook is None:
+            return
+        if not await self._renew_hook():
+            raise RuntimeError(
+                "E2B sandbox lease is lost (sandbox reclaimed by the "
+                "provider); re-initialize the workspace",
+            )
 
     # ── exec ───────────────────────────────────────────────────────
 
@@ -95,6 +128,7 @@ class E2BBackend(BackendBase):
         """
         from e2b import CommandExitException
 
+        await self._renew_lease()
         command_line = " ".join(shlex.quote(arg) for arg in command)
         kwargs: dict[str, Any] = {"cwd": cwd or self._workdir}
         if timeout is not None:
@@ -138,6 +172,7 @@ class E2BBackend(BackendBase):
         """
         from e2b import FileNotFoundException
 
+        await self._renew_lease()
         try:
             data = await self._sandbox.files.read(path, format="bytes")
         except FileNotFoundException as exc:
@@ -157,6 +192,7 @@ class E2BBackend(BackendBase):
             data (`bytes`):
                 The raw bytes to write.
         """
+        await self._renew_lease()
         parent = posixpath.dirname(path)
         if parent:
             await self.exec_shell(["mkdir", "-p", parent])
