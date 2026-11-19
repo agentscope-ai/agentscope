@@ -57,14 +57,12 @@ const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
  *
  * - ``idle`` — no in-flight reply; the send button is enabled.
  * - ``streaming`` — a reply is in progress (either actively producing
- *   events or parked awaiting HITL). A separate Stop button is shown,
- *   while Send remains available to enqueue another turn. The
- *   parked-vs-generating distinction is not tracked here; HITL cards
+ *   events or parked awaiting HITL). The parked-vs-generating
+ *   distinction is not tracked here; HITL cards
  *   render themselves from message content when a
  *   ``RequireUserConfirmEvent`` block is present.
  * - ``interrupting`` — the user has requested a stop and we are
- *   waiting for the backend's terminating ``ReplyEndEvent``. Stop
- *   button is shown but disabled so users cannot spam it. Falls back
+ *   waiting for the backend's terminating ``ReplyEndEvent``. Falls back
  *   to ``idle`` after a 10s safety timeout in case the terminating
  *   event never arrives (dropped SSE frame, backend bug, etc.).
  */
