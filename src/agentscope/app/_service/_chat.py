@@ -15,7 +15,7 @@ import asyncio
 import inspect
 import json
 from dataclasses import dataclass
-from typing import Any, Coroutine, Literal, TYPE_CHECKING
+from typing import Any, Coroutine, Literal, Sequence, TYPE_CHECKING
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -36,6 +36,11 @@ from .._chat_input_store import INPUT_EXECUTION, get_submission
 from ._session import SessionService, SessionStatus
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
+from ..channel._approval import (
+    prune_session_approvals,
+    remember_reply_requester,
+    requester_for_input,
+)
 from ..storage import (
     StorageBase,
     TTSModelConfig,
@@ -552,10 +557,14 @@ class ChatService:
                 background wakeup), in which case naming is skipped and
                 left for a later turn.
         """
-        if not session_record.config.naming.auto or not trigger_text:
+        if not session_record.config.naming.auto or not trigger_text.strip():
             return
 
-        name = trigger_text[:_NAMING_NAME_LIMIT]
+        # The name is shown on one line in the session list, so collapse
+        # the opening message's whitespace just as the model's title is
+        # stripped. A multi-line or whitespace-only turn must not put
+        # newlines or a blank string into the UI.
+        name = " ".join(trigger_text.split())[:_NAMING_NAME_LIMIT]
         try:
             res = await model.generate_structured_output(
                 messages=[
@@ -1660,6 +1669,17 @@ class ChatService:
             # ----------------------------------------------------------------
             # 7. Run the agent (still under the session lock)
             # -----------------------------------------------------------------
+            # Resolve before input_msg changes during inbox draining. Persist
+            # only if the run pauses, independently of platform delivery.
+            requester_id = (
+                await requester_for_input(
+                    self._message_bus,
+                    session_id,
+                    input_msg,
+                )
+                if isinstance(session_record.origin, ChannelOrigin)
+                else ""
+            )
             # Channel-bound run: start streaming the reply back to the
             # platform chat. Delivery is plain REST, so this node does it
             # rather than handing the run to whichever one holds the
@@ -2065,9 +2085,12 @@ class ChatService:
                         await self._save_checkpoint(
                             user_id,
                             session_record,
-                            [*reply_msgs, *bound_inputs],
+                            reply_msgs,
                             agent.state,
                             checkpoint_cursor,
+                            agent_name=agent_record.data.name,
+                            requester_id=requester_id,
+                            bound_inputs=bound_inputs,
                         )
                     finally:
                         try:
@@ -2182,6 +2205,7 @@ class ChatService:
             [reply] if reply is not None else [],
             state,
             cursor,
+            agent_name=agent.data.name,
             replay_from=start_cursor,
         )
         await self._notify_leader_of_failure(
@@ -2196,10 +2220,13 @@ class ChatService:
         self,
         user_id: str,
         session: SessionRecord,
-        messages: list[Msg],
+        reply_msgs: list[Msg],
         state: AgentState,
         cursor: str | None,
         *,
+        agent_name: str,
+        requester_id: str = "",
+        bound_inputs: Sequence[Msg] = (),
         replay_from: str | None = None,
     ) -> None:
         """Commit reply messages and state before advancing the SSE cursor."""
@@ -2207,7 +2234,7 @@ class ChatService:
             MessageBusKeys.session_event_checkpoint_lock(session.id),
             ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
         ):
-            for msg in messages:
+            for msg in (*reply_msgs, *bound_inputs):
                 await self._storage.upsert_message(user_id, session.id, msg)
             await self._storage.update_session_state(
                 user_id=user_id,
@@ -2215,6 +2242,32 @@ class ChatService:
                 session_id=session.id,
                 state=state,
             )
+            if isinstance(session.origin, ChannelOrigin):
+                if state.has_awaiting_tool_calls(agent_name):
+                    await remember_reply_requester(
+                        self._message_bus,
+                        session_id=session.id,
+                        reply_id=state.reply_id,
+                        requester_id=requester_id,
+                    )
+                try:
+                    await prune_session_approvals(
+                        self._message_bus,
+                        session.id,
+                        state,
+                        agent_name,
+                        completed_reply_ids=(
+                            msg.id
+                            for msg in reply_msgs
+                            if msg.finished_reason is not None
+                        ),
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception(
+                        "Failed to clean up channel approvals "
+                        "for session '%s'",
+                        session.id,
+                    )
             if cursor is not None:
                 await self._message_bus.registry_set(
                     MessageBusKeys.session_event_checkpoint(session.id),

@@ -108,7 +108,8 @@ class DashScopeASRModel(ASRModelBase):
                 The filename used to determine the audio format and MIME
                 type.
             **kwargs (`Any`):
-                Additional options passed to the DashScope API.
+                Additional options passed to the DashScope API. A ``model``
+                override applies only to this call.
 
         Returns:
             `ASRResponse`:
@@ -131,7 +132,8 @@ class DashScopeASRModel(ASRModelBase):
         data_uri = f"data:{media_type};base64,{encoded_audio}"
         options = self.parameters.model_dump(exclude_none=True)
         options.update(kwargs)
-        for parameter in _UNSUPPORTED_PARAMETERS.get(self.model, set()):
+        model = options.pop("model", self.model)
+        for parameter in _UNSUPPORTED_PARAMETERS.get(model, set()):
             options.pop(parameter, None)
         options["format"] = options.get("format", audio_format)
 
@@ -141,7 +143,7 @@ class DashScopeASRModel(ASRModelBase):
             dashscope.MultiModalConversation.call,
             api_key=self.api_key,
             base_address=self.base_address,
-            model=self.model,
+            model=model,
             messages=[
                 {
                     "role": "user",

@@ -126,6 +126,13 @@ class RealtimeModelCard(BaseModel):
             elif param in properties:
                 properties[param] = {**properties[param], **override}
 
+        # Drop null deletion markers after applying them to the schema.
+        overrides = {
+            name: override
+            for name, override in overrides.items()
+            if override is not None
+        }
+
         return cls(
             **config,
             parameter_schema={"type": "object", "properties": properties},

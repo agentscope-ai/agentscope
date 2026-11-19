@@ -1,14 +1,32 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for Content-Type dispatch in ``IndexWorker``."""
+"""Regression tests for Content-Type dispatch and PDF indexing status."""
+from io import BytesIO
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+from PIL import Image
+from pypdf import PdfWriter
+
+from rag_parser_test import (
+    _PNG_PIXEL,
+    _make_pdf,
+    _make_pptx_rich,
+    _make_pptx_with_image,
+)
 from utils import AnyString
 
 from agentscope.app._service._index_worker import IndexWorker
-from agentscope.rag import Chunk, Section, TextParser
-from agentscope.message import TextBlock
+from agentscope.rag import (
+    Chunk,
+    ExcelParser,
+    ImageParser,
+    PDFParser,
+    PPTParser,
+    Section,
+    TextParser,
+)
+from agentscope.message import DataBlock, TextBlock
 
 
 class _Parser:
@@ -81,6 +99,7 @@ class _Knowledge:
     def __init__(self) -> None:
         self.inserted_chunks: list[Chunk] = []
         self.inserted_metadata: dict[str, object] = {}
+        self.embedding_model = SimpleNamespace(supports_multimodal=False)
 
     async def delete_document(self, document_id: str) -> None:
         """Accept the worker's cleanup call."""
@@ -281,6 +300,84 @@ def _worker(
         node_id="test-node",
     )
     return worker, manager
+
+
+class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
+    """Distinguish a scan from a mixed PDF with searchable pages."""
+
+    async def test_index_status_reflects_searchable_pdf_content(self) -> None:
+        """A scan needs OCR, while a mixed file indexes its text page."""
+        scan = BytesIO()
+        Image.new("RGB", (16, 16), "white").save(scan, format="PDF")
+        mixed = BytesIO()
+        writer = PdfWriter()
+        writer.append(BytesIO(scan.getvalue()))
+        writer.append(BytesIO(_make_pdf(["Cell structure"])))
+        writer.write(mixed)
+
+        for payload, status, expected in (
+            (
+                scan.getvalue(),
+                "error",
+                {
+                    "statuses": ["parsing", "chunking", "error"],
+                    "chunks": [],
+                },
+            ),
+            (
+                mixed.getvalue(),
+                "ready",
+                {
+                    "statuses": ["parsing", "chunking", "indexing", "ready"],
+                    "chunks": [
+                        {
+                            "content": {
+                                "type": "text",
+                                "text": "Cell structure\n",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            "source": "lesson.pdf",
+                            "chunk_index": 0,
+                            "total_chunks": 1,
+                            "metadata": {"page": 2},
+                        },
+                    ],
+                },
+            ),
+        ):
+            with self.subTest(status=status):
+                storage = _Storage("application/pdf", filename="lesson.pdf")
+                storage.update_knowledge_document_status = AsyncMock(
+                    wraps=storage.update_knowledge_document_status,
+                )
+                worker, manager = _worker(storage, [PDFParser()])
+                worker.blob_content = payload
+
+                with patch.multiple(
+                    storage,
+                    acquire_knowledge_document_lease=AsyncMock(
+                        return_value=True,
+                    ),
+                    release_knowledge_document_lease=AsyncMock(),
+                    create=True,
+                ):
+                    await worker.process("user-1", "kb-1", "doc-1")
+
+                self.assertEqual(
+                    {
+                        "statuses": storage.statuses,
+                        "chunks": [
+                            chunk.model_dump()
+                            for chunk in manager.knowledge.inserted_chunks
+                        ],
+                    },
+                    expected,
+                )
+                if status == "error":
+                    update = storage.update_knowledge_document_status
+                    self.assertTrue(update.await_args.kwargs["error"])
 
 
 class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):
@@ -487,3 +584,236 @@ class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):
         ):
             await worker.run_pipeline()
         self.assertListEqual(parser.calls, [])
+
+
+class _LegacyExcelParser(_Parser):
+    """Record calls routed to the legacy Excel media type."""
+
+    supported_media_types = ["application/vnd.ms-excel"]
+    extensions = [".xls"]
+
+
+class IndexWorkerCsvLegacyExcelTypeTest(IsolatedAsyncioTestCase):
+    """A ``.csv`` labelled as legacy Excel must be indexed as text."""
+
+    payload = b"chapter,topic\n1,Photosynthesis\n"
+
+    async def test_csv_with_legacy_excel_type_is_indexed_as_text(
+        self,
+    ) -> None:
+        """Route explicit and inferred legacy Excel types to ``text/csv``."""
+        for content_type in (
+            "application/vnd.ms-excel",
+            "Application/VND.MS-Excel; charset=utf-8",
+            None,
+            "",
+            "application/octet-stream",
+        ):
+            with self.subTest(content_type=content_type):
+                storage = _Storage(
+                    content_type,
+                    filename="lesson.CSV",
+                    size=len(self.payload),
+                )
+                worker, manager = _worker(
+                    storage,
+                    [TextParser(), ExcelParser()],
+                )
+                worker.blob_content = self.payload
+
+                # Windows' MIME table maps ``.csv`` to the legacy Excel type.
+                with patch(
+                    "mimetypes.guess_type",
+                    return_value=("application/vnd.ms-excel", None),
+                ):
+                    await worker.run_pipeline()
+
+                self.assertEqual(
+                    {
+                        "statuses": storage.statuses,
+                        "text": [
+                            chunk.content.text
+                            for chunk in manager.knowledge.inserted_chunks
+                        ],
+                        "media_type": manager.knowledge.inserted_metadata[
+                            "media_type"
+                        ],
+                    },
+                    {
+                        "statuses": [
+                            "parsing",
+                            "chunking",
+                            "indexing",
+                            "ready",
+                        ],
+                        "text": [self.payload.decode()],
+                        "media_type": "text/csv",
+                    },
+                )
+
+    async def test_xls_workbook_keeps_excel_route(self) -> None:
+        """A real ``.xls`` workbook still reaches the Excel parser."""
+        for content_type in ("application/vnd.ms-excel", None):
+            with self.subTest(content_type=content_type):
+                storage = _Storage(content_type, filename="lesson.xls")
+                excel = _LegacyExcelParser()
+                worker, manager = _worker(storage, [TextParser(), excel])
+
+                await worker.run_pipeline()
+
+                self.assertListEqual(
+                    excel.calls,
+                    [(b"# AgentScope", "lesson.xls")],
+                )
+                self.assertEqual(
+                    manager.knowledge.inserted_metadata["media_type"],
+                    "application/vnd.ms-excel",
+                )
+
+    async def test_csv_without_text_csv_parser_keeps_route(self) -> None:
+        """Without a ``text/csv`` parser the caller's routing is kept."""
+        storage = _Storage("application/vnd.ms-excel", filename="lesson.csv")
+        excel = _LegacyExcelParser()
+        worker, _ = _worker(storage, [excel])
+
+        await worker.run_pipeline()
+
+        self.assertListEqual(excel.calls, [(b"# AgentScope", "lesson.csv")])
+
+    async def test_csv_with_unrelated_type_is_not_overridden(self) -> None:
+        """An explicit unrelated type stays authoritative for ``.csv``."""
+        storage = _Storage("image/png", filename="lesson.csv")
+        worker, manager = _worker(storage, [TextParser(), ExcelParser()])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "No parser registered for media type 'image/png'",
+        ):
+            await worker.run_pipeline()
+        self.assertEqual(manager.knowledge.inserted_metadata, {})
+
+
+class IndexWorkerPPTImageTest(IsolatedAsyncioTestCase):
+    """Index a deck according to the selected embedding model."""
+
+    async def test_mixed_deck_respects_embedding_capability(self) -> None:
+        """Retain dense text chunks and keep images for multimodal models."""
+        for supports_multimodal in (False, True):
+            with self.subTest(supports_multimodal=supports_multimodal):
+                storage = _Storage(
+                    PPTParser.supported_media_types[0],
+                    filename="lesson.pptx",
+                )
+                worker, manager = _worker(storage, [PPTParser()])
+                worker.blob_content = _make_pptx_rich()
+                manager.knowledge.embedding_model = SimpleNamespace(
+                    supports_multimodal=supports_multimodal,
+                )
+
+                await worker.run_pipeline()
+
+                chunks = manager.knowledge.inserted_chunks
+                self.assertTrue(chunks)
+                self.assertEqual(storage.statuses[-1], "ready")
+                self.assertEqual(
+                    any(
+                        isinstance(chunk.content, DataBlock)
+                        for chunk in chunks
+                    ),
+                    supports_multimodal,
+                )
+                self.assertEqual(
+                    [chunk.chunk_index for chunk in chunks],
+                    list(range(len(chunks))),
+                )
+                self.assertTrue(
+                    all(chunk.total_chunks == len(chunks) for chunk in chunks),
+                )
+
+    async def test_text_model_reports_image_only_input(self) -> None:
+        """Give image-only uploads a clear configuration error."""
+        storage = _Storage("image/png", filename="diagram.png")
+        worker, manager = _worker(storage, [ImageParser()])
+        worker.blob_content = _PNG_PIXEL
+        manager.knowledge.embedding_model = SimpleNamespace(
+            supports_multimodal=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires a multimodal"):
+            await worker.run_pipeline()
+
+        self.assertEqual(manager.knowledge.inserted_chunks, [])
+
+    async def test_text_model_rejects_image_only_pptx(self) -> None:
+        """Slide wrappers must not make an image-only deck indexable."""
+        for options in (
+            {},
+            {"slide_prefix": "Page {index}", "slide_suffix": "End"},
+            {"slide_prefix": None, "slide_suffix": None},
+        ):
+            with self.subTest(options=options):
+                storage = _Storage(
+                    PPTParser.supported_media_types[0],
+                    filename="diagram.pptx",
+                )
+                worker, manager = _worker(storage, [PPTParser(**options)])
+                worker.blob_content = _make_pptx_with_image(_PNG_PIXEL)
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "requires a multimodal",
+                ):
+                    await worker.run_pipeline()
+
+                self.assertEqual(
+                    {
+                        "statuses": storage.statuses,
+                        "chunks": manager.knowledge.inserted_chunks,
+                        "metadata": manager.knowledge.inserted_metadata,
+                    },
+                    {
+                        "statuses": ["parsing", "chunking", "indexing"],
+                        "chunks": [],
+                        "metadata": {},
+                    },
+                )
+
+    async def test_multimodal_model_indexes_image_only_pptx(self) -> None:
+        """Keep the image without creating synthetic text chunks."""
+        storage = _Storage(
+            PPTParser.supported_media_types[0],
+            filename="diagram.pptx",
+        )
+        worker, manager = _worker(storage, [PPTParser()])
+        worker.blob_content = _make_pptx_with_image(_PNG_PIXEL)
+        manager.knowledge.embedding_model.supports_multimodal = True
+
+        await worker.run_pipeline()
+
+        self.assertEqual(
+            {
+                "statuses": storage.statuses,
+                "chunks": [
+                    {
+                        "type": chunk.content.type,
+                        "source": chunk.source,
+                        "chunk_index": chunk.chunk_index,
+                        "total_chunks": chunk.total_chunks,
+                        "metadata": chunk.metadata,
+                    }
+                    for chunk in manager.knowledge.inserted_chunks
+                ],
+            },
+            {
+                "statuses": ["parsing", "chunking", "indexing", "ready"],
+                "chunks": [
+                    {
+                        "type": "data",
+                        "source": "diagram.pptx",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {"slide": 1, "media_type": "image/png"},
+                    },
+                ],
+            },
+        )
