@@ -20,6 +20,7 @@ from utils import AnyString
 from agentscope.app.message_bus import (
     InMemoryMessageBus,
     MessageBus,
+    MessageBusKeys,
     RedisMessageBus,
 )
 
@@ -841,6 +842,10 @@ class TestSessionDomainHelpers(IsolatedAsyncioTestCase):
         task = asyncio.create_task(_consumer())
         await asyncio.wait_for(ready.wait(), timeout=2.0)
 
+        await self.bus.publish(
+            MessageBusKeys.session_events(sid),
+            {MessageBusKeys.SESSION_BARRIER_FIELD: "other"},
+        )
         await self.bus.session_publish_event(sid, {"hello": "world"})
         await asyncio.wait_for(task, timeout=2.0)
 

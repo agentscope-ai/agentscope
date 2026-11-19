@@ -128,6 +128,9 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
 
     _SESSION_EVENTS = "agentscope:session:events:{sid}"
 
+    SESSION_BARRIER_FIELD: Final = "_session_subscription_barrier"
+    """Reserved field for live subscription markers on the session channel."""
+
     SESSION_REPLAY_MAX_LEN = 1000
     """Replay log length cap; older events are trimmed on append."""
 
@@ -140,7 +143,10 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
 
     @classmethod
     def session_events(cls, session_id: str) -> str:
-        """Replay log + live pub/sub channel key for a session."""
+        """Replay log + live channel key for a session.
+
+        Raw subscribers should skip frames carrying SESSION_BARRIER_FIELD.
+        """
         return cls._SESSION_EVENTS.format(sid=session_id)
 
     @classmethod

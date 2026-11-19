@@ -5,6 +5,7 @@ import inspect
 import json
 from collections import OrderedDict
 from typing import AsyncGenerator, Awaitable, Callable
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -888,6 +889,41 @@ def _subscribe_session_events(
     return subscribe(key, on_ready=on_ready, on_barrier=on_barrier)
 
 
+class _LegacySessionBarrier:
+    """Confirm FIFO delivery on a readiness-only session subscription."""
+
+    def __init__(self, bus: MessageBus, key: str) -> None:
+        self.bus = bus
+        self.key = key
+        self.token: str | None = None
+        self.received = asyncio.Event()
+
+    async def flush(self) -> None:
+        """Receive our own live marker after preceding session events."""
+        self.token = uuid4().hex
+        self.received.clear()
+        marker = {MessageBusKeys.SESSION_BARRIER_FIELD: self.token}
+        while not self.received.is_set():
+            await self.bus.publish(self.key, marker)
+            try:
+                await asyncio.wait_for(
+                    self.received.wait(),
+                    timeout=_HEARTBEAT_INTERVAL_SECS,
+                )
+            except asyncio.TimeoutError:
+                # A best-effort broadcast may drop a marker. Retry this
+                # flush with the same token so either copy can confirm it.
+                continue
+
+    def consume(self, event: dict) -> bool:
+        """Hide all markers and acknowledge only the current local flush."""
+        if MessageBusKeys.SESSION_BARRIER_FIELD not in event:
+            return False
+        if event[MessageBusKeys.SESSION_BARRIER_FIELD] == self.token:
+            self.received.set()
+        return True
+
+
 class _SessionEventReplay:
     """Merge the append-ordered log and live events using opaque cursors."""
 
@@ -1091,7 +1127,8 @@ async def stream_session_events(
     async def _sse_generator() -> AsyncGenerator[str, None]:
         events_key = MessageBusKeys.session_events(session_id)
         ready = asyncio.Event()
-        flush: Callable[[], Awaitable[None]] | None = None
+        legacy_barrier = _LegacySessionBarrier(message_bus, events_key)
+        flush: Callable[[], Awaitable[None]] = legacy_barrier.flush
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         replay = _SessionEventReplay(message_bus, events_key, after)
@@ -1111,23 +1148,22 @@ async def stream_session_events(
                 return
             # The subscription can still hold trimmed frames even when the
             # feeder queue is empty. Its ordered marker covers both buffers.
-            if flush is not None:
-                flushing = asyncio.ensure_future(flush())
-                try:
-                    while not flushing.done():
-                        done, _ = await asyncio.wait(
-                            (flushing, feeder_task),
-                            timeout=_HEARTBEAT_INTERVAL_SECS,
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                        if feeder_task in done and not flushing.done():
-                            return
-                        if not done:
-                            yield ":\n\n"
-                    await flushing
-                finally:
-                    flushing.cancel()
-                    await asyncio.gather(flushing, return_exceptions=True)
+            flushing = asyncio.ensure_future(flush())
+            try:
+                while not flushing.done():
+                    done, _ = await asyncio.wait(
+                        (flushing, feeder_task),
+                        timeout=_HEARTBEAT_INTERVAL_SECS,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if feeder_task in done and not flushing.done():
+                        return
+                    if not done:
+                        yield ":\n\n"
+                await flushing
+            finally:
+                flushing.cancel()
+                await asyncio.gather(flushing, return_exceptions=True)
             for _ in range(queue.qsize()):
                 item = queue.get_nowait()
                 if item is None:
@@ -1157,6 +1193,8 @@ async def stream_session_events(
                     ready.set,
                     register_barrier,
                 ):
+                    if legacy_barrier.consume(evt):
+                        continue
                     if (entry_id := evt.get("_entry_id")) is not None:
                         replay.queued.add(entry_id)
                     await queue.put(evt)

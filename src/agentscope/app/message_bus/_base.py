@@ -818,7 +818,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
 
     @deprecated(
         "Use subscribe(MessageBusKeys.session_events(sid), ...) directly, "
-        "stripping _entry_id from each payload.",
+        "skipping SESSION_BARRIER_FIELD markers and stripping _entry_id.",
     )
     async def session_subscribe_events(
         self,
@@ -829,7 +829,8 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """Live-subscribe to session events, stripping _entry_id."""
         key = self._SESSION_EVENTS_KEY.format(sid=session_id)
         async for payload in self.subscribe(key, on_ready=on_ready):
-            yield {k: v for k, v in payload.items() if k != "_entry_id"}
+            if MessageBusKeys.SESSION_BARRIER_FIELD not in payload:
+                yield {k: v for k, v in payload.items() if k != "_entry_id"}
 
     # Cross-process cancel ---------------------------------------------
 

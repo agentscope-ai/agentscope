@@ -114,6 +114,52 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
         async with _LegacyBus() as bus:
             await self._assert_replay_then_live(bus)
 
+    async def test_legacy_snapshot_retries_its_own_marker(self) -> None:
+        """Replay idle history even if the first marker is lost."""
+        bus = _LegacyBus()
+        key = MessageBusKeys.session_events("s")
+        history = {"frame": "history"}
+        entry_id = await publish_session_event(bus, "s", history)
+        publish = bus.publish
+        markers = []
+
+        async def lose_first_marker(key: str, payload: dict) -> None:
+            markers.append(payload)
+            if len(markers) == 1:
+                payload = {MessageBusKeys.SESSION_BARRIER_FIELD: "other"}
+            await publish(key, payload)
+
+        response = await stream_session_events(
+            session_id="s",
+            agent_id="a",
+            user_id="u",
+            storage=_Storage(),  # type: ignore[arg-type]
+            message_bus=bus,
+            after=None,
+        )
+        with (
+            patch.object(bus, "publish", side_effect=lose_first_marker),
+            patch(
+                "agentscope.app._router._session._HEARTBEAT_INTERVAL_SECS",
+                0.02,
+            ),
+        ):
+            async with aclosing(response.body_iterator) as stream:
+
+                async def first_data() -> dict:
+                    async for frame in stream:
+                        if frame != ":\n\n":
+                            return _decode(frame)
+                    self.fail("Stream closed before replay")
+
+                self.assertEqual(
+                    await asyncio.wait_for(first_data(), 1),
+                    history,
+                )
+        self.assertEqual(len(markers), 2)
+        self.assertEqual(markers[0], markers[1])
+        self.assertEqual(await bus.log_read(key), [(entry_id, history)])
+
     async def test_replay_and_resume_with_opaque_cursors(self) -> None:
         """Replay in append order and skip late duplicate notifications."""
         key = MessageBusKeys.session_events("s")
@@ -347,7 +393,23 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
 
     async def test_snapshot_ahead_of_subscription_feeder(self) -> None:
         """A delta in the transport buffer must precede the snapshot end."""
-        bus = InMemoryMessageBus()
+        for bus_type in (InMemoryMessageBus, _LegacyBus):
+            for resume in (False, True):
+                with self.subTest(bus=bus_type.__name__, resume=resume):
+                    async with bus_type() as bus:
+                        await self._assert_snapshot_ahead_of_feeder(
+                            bus,
+                            resume,
+                        )
+
+    async def _assert_snapshot_ahead_of_feeder(
+        self,
+        bus: MessageBus,
+        resume: bool,
+    ) -> None:
+        after = None
+        if resume:
+            after = await publish_session_event(bus, "s", {"frame": "prior"})
         read = bus.log_read
         injected = False
 
@@ -371,7 +433,7 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
             user_id="u",
             storage=_Storage(),  # type: ignore[arg-type]
             message_bus=bus,
-            after=None,
+            after=after,
         )
         async with aclosing(response.body_iterator) as stream:
             with patch.object(bus, "log_read", side_effect=read_after_trim):
