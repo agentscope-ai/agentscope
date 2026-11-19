@@ -301,9 +301,10 @@ class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
         writer.append(BytesIO(_make_pdf(["Cell structure"])))
         writer.write(mixed)
 
-        for payload, expected in (
+        for payload, status, expected in (
             (
                 scan.getvalue(),
+                "error",
                 {
                     "statuses": ["parsing", "chunking", "error"],
                     "chunks": [],
@@ -311,6 +312,7 @@ class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
             ),
             (
                 mixed.getvalue(),
+                "ready",
                 {
                     "statuses": ["parsing", "chunking", "indexing", "ready"],
                     "chunks": [
@@ -331,7 +333,7 @@ class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
                 },
             ),
         ):
-            with self.subTest(status=expected["statuses"][-1]):
+            with self.subTest(status=status):
                 storage = _Storage("application/pdf", filename="lesson.pdf")
                 storage.update_knowledge_document_status = AsyncMock(
                     wraps=storage.update_knowledge_document_status,
@@ -359,7 +361,7 @@ class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
                     },
                     expected,
                 )
-                if expected["statuses"][-1] == "error":
+                if status == "error":
                     update = storage.update_knowledge_document_status
                     self.assertTrue(update.await_args.kwargs["error"])
 
