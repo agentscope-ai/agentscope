@@ -14,6 +14,7 @@ Add new business keys here as needed. As legacy keys are migrated off
 """
 
 from typing import Final
+from urllib.parse import quote
 
 
 class MessageBusKeys:  # pylint: disable=too-many-public-methods
@@ -579,11 +580,17 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         chat_id: str,
         user_id: str,
     ) -> str:
-        """Queue key buffering media until the next text message."""
+        """Queue key buffering media until the next text message.
+
+        The three ids come from external channel adapters and may carry
+        ``:``, the Redis key separator (e.g. Matrix-style room and user
+        ids). Percent-encode each segment so distinct triples can never
+        alias the same buffer key, while leaving ordinary ids unchanged.
+        """
         return cls._CHANNEL_MEDIA.format(
-            cid=channel_id,
-            chat=chat_id,
-            uid=user_id,
+            cid=quote(channel_id, safe=""),
+            chat=quote(chat_id, safe=""),
+            uid=quote(user_id, safe=""),
         )
 
     @classmethod
