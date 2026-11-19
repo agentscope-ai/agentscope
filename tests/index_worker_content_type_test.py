@@ -4,6 +4,11 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+from rag_parser_test import (
+    _PNG_PIXEL,
+    _make_pptx_rich,
+    _make_pptx_with_image,
+)
 from utils import AnyString
 
 from agentscope.app._service._index_worker import IndexWorker
@@ -88,6 +93,7 @@ class _Knowledge:
     def __init__(self) -> None:
         self.inserted_chunks: list[Chunk] = []
         self.inserted_metadata: dict[str, object] = {}
+        self.embedding_model = SimpleNamespace(supports_multimodal=False)
 
     async def delete_document(self, document_id: str) -> None:
         """Accept the worker's cleanup call."""
@@ -608,8 +614,6 @@ class IndexWorkerPPTImageTest(IsolatedAsyncioTestCase):
 
     async def test_mixed_deck_respects_embedding_capability(self) -> None:
         """Retain dense text chunks and keep images for multimodal models."""
-        from rag_parser_test import _make_pptx_rich
-
         for supports_multimodal in (False, True):
             with self.subTest(supports_multimodal=supports_multimodal):
                 storage = _Storage(
@@ -628,7 +632,10 @@ class IndexWorkerPPTImageTest(IsolatedAsyncioTestCase):
                 self.assertTrue(chunks)
                 self.assertEqual(storage.statuses[-1], "ready")
                 self.assertEqual(
-                    any(isinstance(chunk.content, DataBlock) for chunk in chunks),
+                    any(
+                        isinstance(chunk.content, DataBlock)
+                        for chunk in chunks
+                    ),
                     supports_multimodal,
                 )
                 self.assertEqual(
@@ -641,8 +648,6 @@ class IndexWorkerPPTImageTest(IsolatedAsyncioTestCase):
 
     async def test_text_model_reports_image_only_input(self) -> None:
         """Give image-only uploads a clear configuration error."""
-        from rag_parser_test import _PNG_PIXEL
-
         storage = _Storage("image/png", filename="diagram.png")
         worker, manager = _worker(storage, [ImageParser()])
         worker.blob_content = _PNG_PIXEL
@@ -654,3 +659,77 @@ class IndexWorkerPPTImageTest(IsolatedAsyncioTestCase):
             await worker.run_pipeline()
 
         self.assertEqual(manager.knowledge.inserted_chunks, [])
+
+    async def test_text_model_rejects_image_only_pptx(self) -> None:
+        """Slide wrappers must not make an image-only deck indexable."""
+        for options in (
+            {},
+            {"slide_prefix": "Page {index}", "slide_suffix": "End"},
+            {"slide_prefix": None, "slide_suffix": None},
+        ):
+            with self.subTest(options=options):
+                storage = _Storage(
+                    PPTParser.supported_media_types[0],
+                    filename="diagram.pptx",
+                )
+                worker, manager = _worker(storage, [PPTParser(**options)])
+                worker.blob_content = _make_pptx_with_image(_PNG_PIXEL)
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "requires a multimodal",
+                ):
+                    await worker.run_pipeline()
+
+                self.assertEqual(
+                    {
+                        "statuses": storage.statuses,
+                        "chunks": manager.knowledge.inserted_chunks,
+                        "metadata": manager.knowledge.inserted_metadata,
+                    },
+                    {
+                        "statuses": ["parsing", "chunking", "indexing"],
+                        "chunks": [],
+                        "metadata": {},
+                    },
+                )
+
+    async def test_multimodal_model_indexes_image_only_pptx(self) -> None:
+        """Keep the image without creating synthetic text chunks."""
+        storage = _Storage(
+            PPTParser.supported_media_types[0],
+            filename="diagram.pptx",
+        )
+        worker, manager = _worker(storage, [PPTParser()])
+        worker.blob_content = _make_pptx_with_image(_PNG_PIXEL)
+        manager.knowledge.embedding_model.supports_multimodal = True
+
+        await worker.run_pipeline()
+
+        self.assertEqual(
+            {
+                "statuses": storage.statuses,
+                "chunks": [
+                    {
+                        "type": chunk.content.type,
+                        "source": chunk.source,
+                        "chunk_index": chunk.chunk_index,
+                        "total_chunks": chunk.total_chunks,
+                        "metadata": chunk.metadata,
+                    }
+                    for chunk in manager.knowledge.inserted_chunks
+                ],
+            },
+            {
+                "statuses": ["parsing", "chunking", "indexing", "ready"],
+                "chunks": [
+                    {
+                        "type": "data",
+                        "source": "diagram.pptx",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {"slide": 1, "media_type": "image/png"},
+                    },
+                ],
+            },
+        )

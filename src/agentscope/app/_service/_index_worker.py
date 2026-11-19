@@ -485,7 +485,8 @@ class IndexWorker:
             and not knowledge.embedding_model.supports_multimodal
         ):
             text_chunks = [
-                chunk for chunk in chunks
+                chunk
+                for chunk in chunks
                 if not isinstance(chunk.content, DataBlock)
             ]
             if not text_chunks:
