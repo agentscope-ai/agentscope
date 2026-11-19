@@ -72,6 +72,7 @@ import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
+import { getChatAttachmentInputTypes, readChatTextAttachment } from '@/lib/chat-attachments';
 import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 
 const REALTIME_EXCLUDED_ENUM_VALUES: Record<string, unknown[]> = {
@@ -1179,17 +1180,12 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 											/>
 										) : null
 									}
-									allowedInputTypes={(
-										selectedModelCard?.input_types ?? []
-									).filter(
-										(t) =>
-											/^(image|video|audio|text)\/.+/.test(t) ||
-											t === 'application/pdf' ||
-											t.startsWith('application/vnd.') ||
-											t.startsWith('application/msword') ||
-											t.startsWith('application/vnd.openxmlformats'),
+									allowedInputTypes={getChatAttachmentInputTypes(
+										selectedModelCard?.input_types ?? [],
 									)}
 									fileProcessor={async (file) => {
+										const textAttachment = await readChatTextAttachment(file);
+										if (textAttachment) return textAttachment;
 										const filePath = (file as File & { path?: string }).path;
 										if (filePath) {
 											return {
@@ -1202,15 +1198,6 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 														file.type || 'application/octet-stream',
 												},
 												name: file.name,
-												created_at: new Date().toISOString(),
-											};
-										}
-										if (file.type === 'text/plain') {
-											const text = await file.text();
-											return {
-												id: crypto.randomUUID(),
-												type: 'text' as const,
-												text: `[File: ${file.name}]\n${text}`,
 												created_at: new Date().toISOString(),
 											};
 										}
