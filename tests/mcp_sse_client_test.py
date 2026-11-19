@@ -186,7 +186,11 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         )
 
         self.toolkit.clear()
-        self.assertListEqual(self.toolkit.tool_groups, [])
+        # Only the reserved empty "basic" group is left
+        self.assertListEqual(
+            [_.name for _ in self.toolkit.tool_groups],
+            ["basic"],
+        )
 
         # Try to add the mcp client
         self.toolkit = Toolkit(mcps=[stateless_client])
@@ -273,7 +277,11 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
 
         # mcp client level test
         self.toolkit.clear()
-        self.assertListEqual(self.toolkit.tool_groups, [])
+        # Only the reserved empty "basic" group is left
+        self.assertListEqual(
+            [_.name for _ in self.toolkit.tool_groups],
+            ["basic"],
+        )
 
         self.toolkit = Toolkit(mcps=[stateful_client])
         self.assertListEqual(
