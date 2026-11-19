@@ -2,14 +2,24 @@
 """Regression tests for the session SSE replay/live seam."""
 
 import asyncio
+from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
 import json
+import os
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
+from uuid import uuid4
+
+from redis.asyncio import ConnectionPool
 
 from agentscope.app._bus_ops import publish_session_event
 from agentscope.app._router._session import stream_session_events
-from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
+from agentscope.app.message_bus import (
+    InMemoryMessageBus,
+    MessageBus,
+    MessageBusKeys,
+    RedisMessageBus,
+)
 
 
 class _Storage:
@@ -44,6 +54,21 @@ class _SeamBus(InMemoryMessageBus):
         )
 
 
+class _LegacyBus(InMemoryMessageBus):
+    """Expose the original readiness-only subscription signature."""
+
+    async def subscribe(
+        self,
+        key: str,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        """Notify readiness and forward incoming broadcasts."""
+        async with aclosing(super().subscribe(key, on_ready=on_ready)) as sub:
+            async for event in sub:
+                yield event
+
+
 def _decode(frame: str | bytes) -> dict:
     """Decode one SSE data frame."""
     if isinstance(frame, bytes):
@@ -53,6 +78,61 @@ def _decode(frame: str | bytes) -> dict:
 
 class SessionEventStreamTest(IsolatedAsyncioTestCase):
     """The session route changes from replay to live without a gap."""
+
+    async def _assert_replay_then_live(self, bus: MessageBus) -> None:
+        """Read a snapshot and keep live data across a checkpoint trim."""
+        sid = uuid4().hex
+        key = MessageBusKeys.session_events(sid)
+        try:
+            await publish_session_event(bus, sid, {"frame": "replay"})
+            response = await stream_session_events(
+                session_id=sid,
+                agent_id="a",
+                user_id="u",
+                storage=_Storage(),  # type: ignore[arg-type]
+                message_bus=bus,
+                after=None,
+            )
+            async with aclosing(response.body_iterator) as stream:
+                frames = [_decode(await asyncio.wait_for(anext(stream), 2))]
+                await publish_session_event(bus, sid, {"frame": "delta"})
+                end = await publish_session_event(bus, sid, {"frame": "end"})
+                await bus.log_trim(key, before_id=end)
+                await publish_session_event(bus, sid, {"frame": "next"})
+                for _ in range(3):
+                    frame = await asyncio.wait_for(anext(stream), 2)
+                    frames.append(_decode(frame))
+            self.assertEqual(
+                frames,
+                [{"frame": f} for f in ("replay", "delta", "end", "next")],
+            )
+        finally:
+            await bus.log_trim(key)
+
+    async def test_legacy_subscribe_signature(self) -> None:
+        """Readiness-only custom buses can replay and stay subscribed."""
+        async with _LegacyBus() as bus:
+            await self._assert_replay_then_live(bus)
+
+    async def test_real_redis_protocols(self) -> None:
+        """Exercise decoded PING replies on real RESP2 and RESP3 sockets."""
+        url = os.getenv("AGENTSCOPE_TEST_REDIS_URL")
+        if not url:
+            self.skipTest(
+                "Set AGENTSCOPE_TEST_REDIS_URL to run against Redis.",
+            )
+        for protocol in (2, 3):
+            with self.subTest(protocol=protocol):
+                pool = ConnectionPool.from_url(
+                    url,
+                    protocol=protocol,
+                    decode_responses=True,
+                )
+                try:
+                    async with RedisMessageBus(connection_pool=pool) as bus:
+                        await self._assert_replay_then_live(bus)
+                finally:
+                    await pool.aclose()
 
     async def test_event_at_replay_live_seam_is_delivered_once(self) -> None:
         """A seam event is deduplicated without hiding the next event."""

@@ -778,8 +778,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 on_ready()
             while True:
                 try:
-                    message = await pubsub.get_message(
-                        ignore_subscribe_messages=True,
+                    response = await pubsub.parse_response(
+                        block=False,
                         timeout=self._SUBSCRIBE_POLL_TIMEOUT_SECS,
                     )
                 except redis_exceptions.TimeoutError:
@@ -788,8 +788,17 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     # connections). No message arrived in this window;
                     # keep listening rather than crashing the loop.
                     continue
+                if response is None:
+                    continue
+                # RESP3 returns the PING payload as a scalar. Normalize it
+                # before redis-py can discard a decoded string as an ack.
+                if response in (marker, marker.encode()):
+                    response = ["pong", response]
+                message = await pubsub.handle_message(
+                    response,
+                    ignore_subscribe_messages=True,
+                )
                 if message is None:
-                    # No payload within the poll window — keep waiting.
                     continue
                 if message.get("type") == "pong" and message.get("data") in (
                     marker,

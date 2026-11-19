@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Session router — create, list, update, delete, stream, and get messages."""
 import asyncio
+import inspect
 import json
 from collections import deque
 from typing import AsyncGenerator, Awaitable, Callable
@@ -33,6 +34,7 @@ from ._schema import (
     UpdateSessionRequest,
 )
 from ..message_bus import MessageBus, MessageBusKeys
+from ..message_bus._base import RegisterSubscriptionBarrier
 from .._service import (
     AgentView,
     ResourceAccessService,
@@ -867,6 +869,25 @@ _SUBSCRIBE_TIMEOUT_SECS = 5.0
 # Interval between SSE heartbeat comment frames (``:\\n\\n``).
 
 
+def _subscribe_session_events(
+    bus: MessageBus,
+    key: str,
+    on_ready: Callable[[], None],
+    on_barrier: RegisterSubscriptionBarrier,
+) -> AsyncGenerator[dict, None]:
+    """Subscribe with an ordered barrier when the backend accepts it."""
+    subscribe = bus.subscribe
+    try:
+        inspect.signature(subscribe).bind(
+            key,
+            on_ready=on_ready,
+            on_barrier=on_barrier,
+        )
+    except (TypeError, ValueError):
+        return subscribe(key, on_ready=on_ready)
+    return subscribe(key, on_ready=on_ready, on_barrier=on_barrier)
+
+
 async def _worker_still_asking(
     storage: StorageBase,
     user_id: str,
@@ -979,9 +1000,8 @@ async def stream_session_events(
 
     async def _sse_generator() -> AsyncGenerator[str, None]:
         events_key = MessageBusKeys.session_events(session_id)
-        barrier: asyncio.Future[
-            Callable[[], Awaitable[None]]
-        ] = asyncio.get_running_loop().create_future()
+        ready = asyncio.Event()
+        flush: Callable[[], Awaitable[None]] | None = None
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         cursor = after
@@ -1034,22 +1054,23 @@ async def stream_session_events(
             last_id, last_event = buffered[-1]
             # The subscription can still hold trimmed frames even when the
             # feeder queue is empty. Its ordered marker covers both buffers.
-            flushing = asyncio.ensure_future(flush())
-            try:
-                while not flushing.done():
-                    done, _ = await asyncio.wait(
-                        (flushing, feeder_task),
-                        timeout=_HEARTBEAT_INTERVAL_SECS,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if feeder_task in done and not flushing.done():
-                        return
-                    if not done:
-                        yield ":\n\n"
-                await flushing
-            finally:
-                flushing.cancel()
-                await asyncio.gather(flushing, return_exceptions=True)
+            if flush is not None:
+                flushing = asyncio.ensure_future(flush())
+                try:
+                    while not flushing.done():
+                        done, _ = await asyncio.wait(
+                            (flushing, feeder_task),
+                            timeout=_HEARTBEAT_INTERVAL_SECS,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if feeder_task in done and not flushing.done():
+                            return
+                        if not done:
+                            yield ":\n\n"
+                    await flushing
+                finally:
+                    flushing.cancel()
+                    await asyncio.gather(flushing, return_exceptions=True)
             for _ in range(queue.qsize()):
                 item = queue.get_nowait()
                 if item is None:
@@ -1060,6 +1081,11 @@ async def stream_session_events(
             async for frame in deliver({**last_event, "_entry_id": last_id}):
                 yield frame
 
+        def register_barrier(callback: Callable[[], Awaitable[None]]) -> None:
+            nonlocal flush
+            flush = callback
+            ready.set()
+
         async def _feeder() -> None:
             """Read from the bus subscription and forward to the queue.
 
@@ -1067,9 +1093,11 @@ async def stream_session_events(
             (which in practice only happens if the bus shuts down).
             """
             try:
-                async for evt in message_bus.subscribe(
+                async for evt in _subscribe_session_events(
+                    message_bus,
                     events_key,
-                    on_barrier=barrier.set_result,
+                    ready.set,
+                    register_barrier,
                 ):
                     await queue.put(evt)
             except asyncio.CancelledError:
@@ -1085,8 +1113,8 @@ async def stream_session_events(
         try:
             # Subscribe first, then replay. Events arriving across that
             # seam are present in both paths and deduplicated by entry id.
-            flush = await asyncio.wait_for(
-                barrier,
+            await asyncio.wait_for(
+                ready.wait(),
                 timeout=_SUBSCRIBE_TIMEOUT_SECS,
             )
             async for frame in replay_snapshot():
