@@ -116,7 +116,9 @@ export function AgentFormFields({ schema, values, onChange }: Props) {
 							<SchemaForm
 								schema={sectionSchema}
 								values={values[sectionKey]}
-								skipFields={sectionKey === 'react_config' ? REACT_SKIP_FIELDS : undefined}
+								skipFields={
+									sectionKey === 'react_config' ? REACT_SKIP_FIELDS : undefined
+								}
 								onChange={(k, v) => onChange(sectionKey, k, v)}
 								idPrefix={`agent-form-${sectionI18n}`}
 								labelFor={(k, prop) =>
