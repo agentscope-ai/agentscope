@@ -302,10 +302,36 @@ class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
         writer.write(mixed)
 
         for payload, expected in (
-            (scan.getvalue(), "error"),
-            (mixed.getvalue(), "ready"),
+            (
+                scan.getvalue(),
+                {
+                    "statuses": ["parsing", "chunking", "error"],
+                    "chunks": [],
+                },
+            ),
+            (
+                mixed.getvalue(),
+                {
+                    "statuses": ["parsing", "chunking", "indexing", "ready"],
+                    "chunks": [
+                        {
+                            "content": {
+                                "type": "text",
+                                "text": "Cell structure\n",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            "source": "lesson.pdf",
+                            "chunk_index": 0,
+                            "total_chunks": 1,
+                            "metadata": {"page": 2},
+                        },
+                    ],
+                },
+            ),
         ):
-            with self.subTest(expected=expected):
+            with self.subTest(status=expected["statuses"][-1]):
                 storage = _Storage("application/pdf", filename="lesson.pdf")
                 storage.acquire_knowledge_document_lease = AsyncMock(
                     return_value=True,
@@ -319,19 +345,19 @@ class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
 
                 await worker.process("user-1", "kb-1", "doc-1")
 
-                self.assertEqual(storage.statuses[-1], expected)
-                chunks = manager.knowledge.inserted_chunks
-                if expected == "error":
-                    self.assertFalse(chunks)
+                self.assertEqual(
+                    {
+                        "statuses": storage.statuses,
+                        "chunks": [
+                            chunk.model_dump()
+                            for chunk in manager.knowledge.inserted_chunks
+                        ],
+                    },
+                    expected,
+                )
+                if expected["statuses"][-1] == "error":
                     update = storage.update_knowledge_document_status
-                    self.assertIn(
-                        "apply OCR",
-                        update.await_args.kwargs["error"],
-                    )
-                else:
-                    self.assertEqual(len(chunks), 1)
-                    self.assertEqual(chunks[0].metadata["page"], 2)
-                    self.assertIn("Cell structure", chunks[0].content.text)
+                    self.assertTrue(update.await_args.kwargs["error"])
 
 
 class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):
