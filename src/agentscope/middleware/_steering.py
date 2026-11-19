@@ -5,7 +5,11 @@ from contextlib import aclosing
 from typing import Any, AsyncGenerator, Callable, TYPE_CHECKING
 
 from ._base import MiddlewareBase
-from ._steering_queue import SteeringInput, SteeringSource
+from ._steering_queue import (
+    SteeringAcknowledgementUncertainError,
+    SteeringInput,
+    SteeringSource,
+)
 from ..event import (
     ExternalExecutionResultEvent,
     HintBlockEvent,
@@ -161,15 +165,18 @@ class SteeringMiddleware(MiddlewareBase):
                     cancellation = exc
             except Exception:
                 break
+        uncertainty: SteeringAcknowledgementUncertainError | None = None
         try:
             acknowledgement.result()
+        except SteeringAcknowledgementUncertainError as exc:
+            uncertainty = exc
         except BaseException as exc:
             rollback()
             if cancellation is not None:
                 raise cancellation from exc
             raise
-        # Project every committed hint before propagating cancellation. The
-        # service persists replies built from events, not the agent context.
+        # Project committed or uncertain hints before propagating errors.
+        # The service persists replies from events, not the agent context.
         for hint in hints:
             yield HintBlockEvent(
                 reply_id=reply_id,
@@ -185,7 +192,9 @@ class SteeringMiddleware(MiddlewareBase):
             if cancellation is None:
                 cancellation = exc
         if cancellation is not None:
-            raise cancellation
+            raise cancellation from uncertainty
+        if uncertainty is not None:
+            raise uncertainty
 
     def _to_hints(self, item_id: str, messages: list[Msg]) -> list[HintBlock]:
         """Convert one steering input into correlated multimodal hints.

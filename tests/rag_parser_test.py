@@ -10,6 +10,7 @@ import io
 import json
 import os
 import zipfile
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -238,6 +239,38 @@ def _make_docx_simple(paragraphs: list[str]) -> bytes:
         doc.add_paragraph(text)
     buffer = io.BytesIO()
     doc.save(buffer)
+    return buffer.getvalue()
+
+
+def _append_tracked_move(paragraph: Any) -> None:
+    """Add a complete move pair with text between its two locations."""
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    fragment = parse_xml(
+        f'<w:p {nsdecls("w")}>'
+        '<w:moveToRangeStart w:id="0" w:name="move1" '
+        'w:author="Example" w:date="2026-11-16T00:00:00Z"/>'
+        '<w:moveTo w:id="1" w:author="Example">'
+        '<w:r><w:t xml:space="preserve">Moved sentence. </w:t></w:r>'
+        '</w:moveTo><w:moveToRangeEnd w:id="0"/>'
+        "<w:r><w:t>Other sentence.</w:t></w:r>"
+        '<w:moveFromRangeStart w:id="2" w:name="move1" '
+        'w:author="Example" w:date="2026-11-16T00:00:00Z"/>'
+        '<w:moveFrom w:id="3" w:author="Example">'
+        '<w:r><w:t xml:space="preserve">Moved sentence. </w:t>'
+        "<w:tab/><w:br/></w:r>"
+        '</w:moveFrom><w:moveFromRangeEnd w:id="2"/>'
+        "</w:p>",
+    )
+    for element in list(fragment):
+        paragraph.append(element)
+
+
+def _document_bytes(document: Any) -> bytes:
+    """Serialize an in-memory DOCX fixture."""
+    buffer = io.BytesIO()
+    document.save(buffer)
     return buffer.getvalue()
 
 
@@ -548,6 +581,51 @@ def _make_docx_content_control(*, wrapped: bool) -> bytes:
     return buffer.getvalue()
 
 
+def _make_docx_table_content_control(wrapped: str | None) -> bytes:
+    """Build a DOCX with a 3x2 table, part of it in a content control.
+
+    Args:
+        wrapped (`str | None`):
+            Which part of the table to wrap in a ``w:sdt``: ``"row"`` (the
+            last row, like a repeating section), ``"cell"`` (the first cell
+            of the second row), ``"paragraph"`` (the paragraph of the second
+            cell of the second row), or ``None`` for no content control.
+
+    Returns:
+        `bytes`:
+            The DOCX bytes.
+    """
+    from docx import Document as DocxDocument
+    from docx.oxml import parse_xml
+
+    doc = DocxDocument()
+    table = doc.add_table(rows=3, cols=2)
+    for r, row in enumerate(
+        [["Name", "Role"], ["Alice", "Engineer"], ["Bob", "Manager"]],
+    ):
+        for c, value in enumerate(row):
+            table.cell(r, c).text = value
+
+    rows = table._tbl.tr_lst  # pylint: disable=protected-access
+    element = None
+    if wrapped == "row":
+        element = rows[2]
+    elif wrapped == "cell":
+        element = rows[1].tc_lst[0]
+    elif wrapped == "paragraph":
+        element = rows[1].tc_lst[1].p_lst[0]
+    if element is not None:
+        sdt = parse_xml(
+            f'<w:sdt xmlns:w="{_W_NS}"><w:sdtContent/></w:sdt>',
+        )
+        element.addprevious(sdt)
+        sdt[0].append(element)
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_xlsx_simple(
     sheets: dict[str, list[list[str]]],
 ) -> bytes:
@@ -792,6 +870,30 @@ class PDFParserTest(IsolatedAsyncioTestCase):
             ) as context:
                 await PDFParser().parse(
                     _make_pdf(["Hello"]),
+                    "broken-stream.pdf",
+                )
+        self.assertIs(context.exception.__cause__, error)
+
+    async def test_text_extraction_pypdf_error_raises_value_error(
+        self,
+    ) -> None:
+        """Other pypdf parsing failures honor the ValueError contract."""
+        from unittest.mock import patch
+        from pypdf import PageObject, PdfWriter
+        from pypdf.errors import LimitReachedError
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        buffer = io.BytesIO()
+        writer.write(buffer)
+        error = LimitReachedError("content stream too large")
+        with patch.object(PageObject, "extract_text", side_effect=error):
+            with self.assertRaisesRegex(
+                ValueError,
+                r"Failed to parse 'broken-stream\.pdf' as PDF:",
+            ) as context:
+                await PDFParser().parse(
+                    buffer.getvalue(),
                     "broken-stream.pdf",
                 )
         self.assertIs(context.exception.__cause__, error)
@@ -2046,6 +2148,36 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_json_preserves_cell_whitespace(self) -> None:
+        """Keep cell whitespace in JSON and trim it in Markdown."""
+        values = ["  SKU-123  ", "  ", "\tSKU-123\t", ""]
+        workbook = _make_xlsx_simple(
+            {"Data": [["Padded", "Spaces only", "Tabs", "Empty"], values]},
+        )
+
+        for coordinates in (False, True):
+            with self.subTest(coordinates=coordinates):
+                parser = ExcelParser(
+                    table_format="json",
+                    include_cell_coordinates=coordinates,
+                    include_sheet_names=False,
+                )
+                sections = await parser.parse(workbook, "whitespace.xlsx")
+                row = json.loads(sections[0].content.text.splitlines()[-1])
+                expected = (
+                    dict(zip(("A2", "B2", "C2", "D2"), values, strict=True))
+                    if coordinates
+                    else values
+                )
+                self.assertEqual(row, expected)
+
+        parser = ExcelParser(include_sheet_names=False)
+        sections = await parser.parse(workbook, "whitespace.xlsx")
+        self.assertEqual(
+            sections[0].content.text.splitlines()[-1],
+            "| SKU-123 |  | SKU-123 |  |",
+        )
+
     async def test_native_error_cells_preserved(self) -> None:
         """Stored Excel error values stay visible in both renderers.
 
@@ -2897,7 +3029,59 @@ class WordParserTest(IsolatedAsyncioTestCase):
 
 
 class WordParserInlineSeparatorTest(IsolatedAsyncioTestCase):
-    """Regression coverage for inline tabs and breaks in Word paragraphs."""
+    """Regression coverage for inline character elements such as tabs and
+    breaks in Word paragraphs and table cells."""
+
+    async def test_table_cell_preserves_run_tab(self) -> None:
+        """Keep ordinary and inserted tabs, excluding deleted tabs/settings."""
+        from docx import Document
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+        from docx.shared import Inches
+
+        doc = Document()
+        table = doc.add_table(rows=3, cols=1)
+        paragraph = table.cell(0, 0).paragraphs[0]
+        paragraph.paragraph_format.tab_stops.add_tab_stop(Inches(1))
+        paragraph.add_run("Trial\tVoltage")
+        for row, revision in enumerate(("ins", "del"), start=1):
+            paragraph = table.cell(row, 0).paragraphs[0]
+            paragraph.add_run("micro")
+            paragraph._element.append(  # pylint: disable=protected-access
+                parse_xml(
+                    f'<w:{revision} {nsdecls("w")} '
+                    'w:id="1" w:author="test">'
+                    f"<w:r><w:tab/></w:r></w:{revision}>",
+                ),
+            )
+            paragraph.add_run("scope")
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        expected = {
+            "json": (
+                "<system-info>A table loaded as a JSON array:</system-info>\n"
+                + json.dumps(
+                    [["Trial\tVoltage"], ["micro\tscope"], ["microscope"]],
+                )
+            ),
+            "markdown": (
+                "| Trial\tVoltage |\n| --- |\n"
+                "| micro\tscope |\n| microscope |\n"
+            ),
+        }
+        for table_format, text in expected.items():
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format=table_format,
+                ).parse(buffer.getvalue(), "demo.docx")
+
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections(text),
+                )
 
     async def test_inline_tabs_and_soft_breaks_are_preserved(self) -> None:
         """Tabs and consecutive soft breaks remain inside a paragraph."""
@@ -3066,6 +3250,81 @@ class WordParserInlineSeparatorTest(IsolatedAsyncioTestCase):
                 )
 
                 self.assertEqual([s.content.text for s in sections], ["-"])
+
+    async def test_nonbreaking_hyphen_in_table_cells_is_kept(self) -> None:
+        """A ``w:noBreakHyphen`` in a cell survives both table formats."""
+        from docx import Document as DocxDocument
+        from docx.oxml import OxmlElement
+
+        document = DocxDocument()
+        table = document.add_table(rows=2, cols=1)
+        table.cell(0, 0).text = "ISBN"
+        paragraph = table.cell(1, 0).paragraphs[0]
+        # pylint: disable-next=protected-access
+        paragraph.add_run("ISBN")._r.append(
+            OxmlElement("w:noBreakHyphen"),
+        )
+        paragraph.add_run("978")
+        buffer = io.BytesIO()
+        document.save(buffer)
+
+        for table_format, expected_tail in (
+            ("markdown", "| ISBN-978 |"),
+            ("json", '[["ISBN"], ["ISBN-978"]]'),
+        ):
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format=table_format,
+                ).parse(buffer.getvalue(), "demo.docx")
+                self.assertEqual(len(sections), 1)
+                self.assertIn(expected_tail, sections[0].content.text)
+
+    async def test_table_nonbreaking_hyphens_respect_revisions(self) -> None:
+        """Keep normal and inserted hyphens, but omit deleted ones."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        document = DocxDocument()
+        table = document.add_table(rows=2, cols=1)
+        table.cell(0, 0).text = "ISBN"
+        paragraph = parse_xml(
+            f'<w:p {nsdecls("w")}>'
+            "<w:r><w:t>ISBN</w:t><w:noBreakHyphen/>"
+            "<w:t>97</w:t></w:r>"
+            '<w:del w:id="1" w:author="test">'
+            "<w:r><w:noBreakHyphen/></w:r></w:del>"
+            "<w:r><w:t>8</w:t></w:r>"
+            '<w:ins w:id="2" w:author="test">'
+            "<w:r><w:noBreakHyphen/><w:t>1</w:t></w:r></w:ins>"
+            "</w:p>",
+        )
+        cell = table.cell(1, 0)
+        # pylint: disable-next=protected-access
+        cell._tc.replace(cell.paragraphs[0]._p, paragraph)
+        buffer = io.BytesIO()
+        document.save(buffer)
+
+        for table_format, expected in (
+            ("markdown", "| ISBN |\n| --- |\n| ISBN-978-1 |\n"),
+            (
+                "json",
+                "<system-info>A table loaded as a JSON array:</system-info>"
+                '\n[["ISBN"], ["ISBN-978-1"]]',
+            ),
+        ):
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format=table_format,
+                ).parse(buffer.getvalue(), "demo.docx")
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections(expected),
+                )
 
 
 class WordParserParagraphTest(IsolatedAsyncioTestCase):
@@ -3313,6 +3572,29 @@ class WordParserParagraphTest(IsolatedAsyncioTestCase):
             _expected_word_sections("Paragraph text\nCallout\nCallout\nAfter"),
         )
 
+    async def test_nonbreaking_hyphen_inside_text_is_kept(self) -> None:
+        """A ``w:noBreakHyphen`` between text runs is not dropped."""
+        from docx import Document as DocxDocument
+        from docx.oxml import OxmlElement
+
+        document = DocxDocument()
+        paragraph = document.add_paragraph()
+        # pylint: disable-next=protected-access
+        paragraph.add_run("ISBN")._r.append(
+            OxmlElement("w:noBreakHyphen"),
+        )
+        paragraph.add_run("978")
+        buffer = io.BytesIO()
+        document.save(buffer)
+        sections = await WordParser(include_image=False).parse(
+            buffer.getvalue(),
+            "demo.docx",
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_sections("ISBN-978"),
+        )
+
     async def test_paragraph_with_only_nonbreaking_hyphens_is_kept(
         self,
     ) -> None:
@@ -3366,6 +3648,92 @@ class WordParserParagraphTest(IsolatedAsyncioTestCase):
         )
 
 
+class WordTrackedMovesTest(IsolatedAsyncioTestCase):
+    """Keep moved text once, at its destination, in the public parser."""
+
+    async def test_paragraph_keeps_only_move_destination(self) -> None:
+        """Omit source runs and their separators without losing neighbours."""
+        from docx import Document
+
+        document = Document()
+        document.add_paragraph("Before")
+        paragraph = document.add_paragraph()
+        _append_tracked_move(
+            paragraph._element,  # pylint: disable=protected-access
+        )
+        document.add_paragraph("After")
+
+        sections = await WordParser(include_image=False).parse(
+            _document_bytes(document),
+            "moves.docx",
+        )
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(
+            sections[0].content.text,
+            "Before\nMoved sentence. Other sentence.\nAfter",
+        )
+        self.assertEqual(sections[0].source, "moves.docx")
+
+    async def test_text_box_keeps_only_move_destination(self) -> None:
+        """Apply the same revision handling to anchored text-box content."""
+        from docx import Document
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls, qn
+
+        document = Document()
+        paragraph = document.add_paragraph("Outside")
+        drawing = parse_xml(
+            f'<w:r {nsdecls("w")} '
+            'xmlns:v="urn:schemas-microsoft-com:vml">'
+            "<w:pict><v:shape><v:textbox><w:txbxContent><w:p/>"
+            "</w:txbxContent></v:textbox></v:shape></w:pict></w:r>",
+        )
+        text_box_paragraph = drawing.find(".//" + qn("w:p"))
+        _append_tracked_move(text_box_paragraph)
+        paragraph._element.append(drawing)  # pylint: disable=protected-access
+
+        sections = await WordParser(include_image=False).parse(
+            _document_bytes(document),
+            "moves.docx",
+        )
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(
+            sections[0].content.text,
+            "Outside\nMoved sentence. Other sentence.",
+        )
+
+    async def test_table_keeps_only_move_destination(self) -> None:
+        """Markdown and JSON must both omit the obsolete cell text."""
+        from docx import Document
+
+        document = Document()
+        table = document.add_table(rows=2, cols=1)
+        table.cell(0, 0).text = "Header"
+        paragraph = table.cell(1, 0).paragraphs[0]
+        _append_tracked_move(
+            paragraph._element,  # pylint: disable=protected-access
+        )
+        expected = {
+            "markdown": "| Header |\n| --- |\n"
+            "| Moved sentence. Other sentence. |\n",
+            "json": "<system-info>A table loaded as a JSON array:"
+            '</system-info>\n[["Header"], '
+            '["Moved sentence. Other sentence."]]',
+        }
+        for table_format, text in expected.items():
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format=table_format,
+                ).parse(_document_bytes(document), "moves.docx")
+
+                self.assertEqual(len(sections), 1)
+                self.assertEqual(sections[0].content.text, text)
+
+
 class WordParserContentControlTest(IsolatedAsyncioTestCase):
     """Regression coverage for block-level Word content controls."""
 
@@ -3400,6 +3768,26 @@ class WordParserContentControlTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_table_content_controls_are_transparent(self) -> None:
+        """Rows, cells and cell paragraphs inside ``w:sdt`` are kept."""
+        parser = WordParser(include_image=False)
+        expected = (
+            "| Name | Role |\n"
+            "| --- | --- |\n"
+            "| Alice | Engineer |\n"
+            "| Bob | Manager |\n"
+        )
+        for wrapped in (None, "row", "cell", "paragraph"):
+            with self.subTest(wrapped=wrapped):
+                sections = await parser.parse(
+                    _make_docx_table_content_control(wrapped),
+                    "form.docx",
+                )
+                self.assertEqual(
+                    [s.content.text for s in sections],
+                    [expected],
+                )
 
     async def test_content_control_is_transparent(self) -> None:
         """The same content parses the same wrapped or unwrapped."""

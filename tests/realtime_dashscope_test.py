@@ -8,6 +8,7 @@ import json
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, call, patch
+from urllib.parse import parse_qs, urlsplit
 
 from agentscope.credential import DashScopeCredential
 from agentscope.realtime import (
@@ -422,6 +423,18 @@ class DashScopeCardsTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Invalid DashScope"):
             _realtime_url("not-a-url", "model-x")
+
+    def test_adapter_encodes_realtime_model_name(self) -> None:
+        """Model names remain a single query value after URL encoding."""
+        for model in ("qwen-plus&injected=1#fragment+%", "模型 v1"):
+            with self.subTest(model=model):
+                url = _realtime_url(WORKSPACE_BASE_URL, model)
+                self.assertTrue(url.isascii())
+                self.assertNotIn(" ", url)
+                self.assertEqual(
+                    parse_qs(urlsplit(url).query),
+                    {"model": [model]},
+                )
 
     def test_credential_maps_card_back_to_class(self) -> None:
         """The service-layer lookup: card.model_type -> class, no scan."""

@@ -52,6 +52,9 @@ class TurnAggregator:
                 bare acknowledgement.
         """
         text = transcript.strip()
+        # A transcript that is not a turn did not continue the previous
+        # turn either, so do not leave merges_with_previous() stale.
+        self._merges = False
         if len(text) < self.min_chars:
             return None
         if text.strip(_TRAILING) in self.backchannels:

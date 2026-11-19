@@ -363,3 +363,35 @@ class VectorStoreBase(ABC):
         raise NotImplementedError(
             f"{type(self).__name__} does not implement list_chunks().",
         )
+
+
+def _reject_none_metadata_values(
+    store: str,
+    metadata_filter: dict[str, Any] | None,
+) -> None:
+    """Raise for ``None`` values in a metadata filter.
+
+    Only some backends can tell an explicitly null metadata field from a
+    missing key. Stores that cannot call this so that a ``None`` value
+    fails clearly instead of raising a backend error or silently matching
+    records that lack the key, which would widen a scoping filter.
+
+    Args:
+        store (`str`):
+            The store class name, used in the error message.
+        metadata_filter (`dict[str, Any] | None`):
+            The flat ``{key: value}`` filter to check.
+
+    Raises:
+        `ValueError`:
+            If any filter value is ``None``.
+    """
+    null_keys = [
+        key for key, value in (metadata_filter or {}).items() if value is None
+    ]
+    if null_keys:
+        raise ValueError(
+            f"{store} does not support None values in metadata_filter "
+            f"(keys: {', '.join(map(repr, null_keys))}): the backend cannot "
+            "tell an explicitly null field from a missing key.",
+        )

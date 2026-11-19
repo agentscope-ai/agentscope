@@ -152,11 +152,16 @@ class ModelCard(BaseModel):
                         **override,
                     }
 
-        # Build final parameter schema
+        # Keep required fields consistent with the filtered properties.
+        required = [
+            name
+            for name in base_schema.get("required", [])
+            if name in properties
+        ]
         final_schema = {
             "type": "object",
             "properties": properties,
-            "required": base_schema.get("required", []),
+            "required": required,
         }
         if "$defs" in base_schema:
             final_schema["$defs"] = copy.deepcopy(base_schema["$defs"])
@@ -173,5 +178,9 @@ class ModelCard(BaseModel):
             context_size=config["context_size"],
             output_size=config["output_size"],
             parameter_schema=final_schema,
-            parameters_overrides=config.get("parameter_overrides", {}),
+            parameters_overrides={
+                k: v
+                for k, v in config.get("parameter_overrides", {}).items()
+                if v is not None
+            },
         )

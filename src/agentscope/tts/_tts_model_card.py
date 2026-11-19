@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The TTS model card class."""
 import copy
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal, Self, Type
 
 import yaml
@@ -33,6 +33,12 @@ class TTSModelCard(BaseModel):
         title="Deprecation date",
     )
     """The model deprecated at."""
+
+    release_date: date | None = Field(
+        default=None,
+        description="The model release date, if known.",
+    )
+    """The date this model version became available from its provider."""
 
     input_types: list[str] = Field(
         description="The supported model input types.",
@@ -135,10 +141,15 @@ class TTSModelCard(BaseModel):
             label=config["label"],
             status=config.get("status", "active"),
             deprecated_at=config.get("deprecated_at"),
+            release_date=config.get("release_date"),
             input_types=config.get("input_types", ["text/plain"]),
             output_types=config.get("output_types", ["audio/wav"]),
             realtime=config.get("realtime", False),
             voice_cloning=config.get("voice_cloning", False),
             parameter_schema=final_schema,
-            parameters_overrides=config.get("parameter_overrides", {}),
+            parameters_overrides={
+                k: v
+                for k, v in config.get("parameter_overrides", {}).items()
+                if v is not None
+            },
         )
