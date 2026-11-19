@@ -2,13 +2,22 @@
 """Tests for keeping the MCP tool result content that carries the payload."""
 import base64
 import json
-from typing import Any
+from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
 import mcp.types
 from utils import AnyString
 
-from agentscope.tool import MCPTool
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.message import (
+    AssistantMsg,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+)
+from agentscope.state import AgentState
+from agentscope.tool import MCPTool, Toolkit, ToolResponse
 
 
 _PNG_BASE64 = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode("ascii")
@@ -131,8 +140,8 @@ class MCPStructuredResultTest(IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_existing_text_content_is_preserved(self) -> None:
-        """Existing text is preserved without appending structured JSON."""
+    async def test_text_summary_keeps_structured_result(self) -> None:
+        """Keep the summary and fields available only in structured JSON."""
         chunk = await _tool(
             mcp.types.CallToolResult(
                 content=[
@@ -153,12 +162,173 @@ class MCPStructuredResultTest(IsolatedAsyncioTestCase):
                         "created_at": AnyString(),
                         "finished_at": None,
                     },
+                    {
+                        "type": "text",
+                        "text": '{"city": "Paris", "temperature_c": 21.5}',
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
                 "state": "running",
                 "is_last": True,
                 "metadata": {},
                 "id": AnyString(),
             },
+        )
+
+    async def test_text_results_keep_structured_payload_and_state(
+        self,
+    ) -> None:
+        """Empty text, errors and empty objects must retain structured data."""
+        for text, structured, expected_json, is_error in (
+            ("", {"city": "Paris"}, '{"city": "Paris"}', False),
+            ("Lookup failed", {"code": 404}, '{"code": 404}', True),
+            ("No rows", {}, "{}", False),
+        ):
+            with self.subTest(text=text, is_error=is_error):
+                chunk = await _tool(
+                    mcp.types.CallToolResult(
+                        content=[
+                            mcp.types.TextContent(type="text", text=text),
+                        ],
+                        structured_content=structured,
+                        is_error=is_error,
+                    ),
+                ).call(city="Paris")
+
+                self.assertEqual(
+                    [
+                        block.text
+                        for block in chunk.content
+                        if isinstance(block, TextBlock)
+                    ],
+                    [text, expected_json],
+                )
+                self.assertEqual(
+                    chunk.state,
+                    ToolResultState.ERROR
+                    if is_error
+                    else ToolResultState.RUNNING,
+                )
+
+    async def test_streamed_result_keeps_summary_and_structured_payload(
+        self,
+    ) -> None:
+        """The final progress-stream chunk retains the complete result."""
+        tool = _tool(
+            mcp.types.CallToolResult(
+                content=[
+                    mcp.types.TextContent(type="text", text="Query completed"),
+                ],
+                structured_content={"city": "Paris", "temperature_c": 21.5},
+            ),
+        )
+        tool.stream_progress = True
+        stream = await tool.call(city="Paris")
+        assert isinstance(stream, AsyncGenerator)
+        chunks = [chunk async for chunk in stream]
+
+        self.assertEqual(len(chunks), 1)
+        self.assertTrue(chunks[0].is_last)
+        self.assertEqual(
+            [block.text for block in chunks[0].content],
+            [
+                "Query completed",
+                '{"city": "Paris", "temperature_c": 21.5}',
+            ],
+        )
+
+    async def test_serialized_structured_result_is_not_duplicated(
+        self,
+    ) -> None:
+        """Find an existing JSON payload even after an ordinary summary."""
+        texts = ["Query completed", '{"city": "Paris", "temperature_c": 21.5}']
+        chunk = await _tool(
+            mcp.types.CallToolResult(
+                content=[
+                    mcp.types.TextContent(type="text", text=text)
+                    for text in texts
+                ],
+                structured_content={"city": "Paris", "temperature_c": 21.5},
+            ),
+        ).call(city="Paris")
+
+        self.assertEqual(
+            [
+                block.text
+                for block in chunk.content
+                if isinstance(block, TextBlock)
+            ],
+            texts,
+        )
+
+    async def test_text_without_structured_content_stays_unchanged(
+        self,
+    ) -> None:
+        """Legacy text-only results must not gain a JSON null block."""
+        chunk = await _tool(
+            mcp.types.CallToolResult(
+                content=[
+                    mcp.types.TextContent(type="text", text="Legacy result"),
+                ],
+            ),
+        ).call(city="Paris")
+
+        self.assertEqual(
+            [
+                block.text
+                for block in chunk.content
+                if isinstance(block, TextBlock)
+            ],
+            ["Legacy result"],
+        )
+
+    async def test_mixed_result_reaches_model_through_toolkit(self) -> None:
+        """The model request must contain both the summary and JSON fields."""
+        tool = _tool(
+            mcp.types.CallToolResult(
+                content=[
+                    mcp.types.TextContent(type="text", text="Query completed"),
+                ],
+                structured_content={"city": "北京", "temperature_c": 21.5},
+            ),
+        )
+        tool_call = ToolCallBlock(
+            id="call_weather",
+            name=tool.name,
+            input='{"city": "北京"}',
+        )
+        toolkit = Toolkit(tools=[tool])
+        results = [
+            chunk async for chunk in toolkit.call_tool(tool_call, AgentState())
+        ]
+        response = next(
+            item for item in results if isinstance(item, ToolResponse)
+        )
+        self.assertEqual(response.state, ToolResultState.SUCCESS)
+
+        messages = await OpenAIChatFormatter().format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        tool_call,
+                        ToolResultBlock(
+                            id=tool_call.id,
+                            name=tool_call.name,
+                            output=response.content,
+                            state=response.state,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        tool_message = next(msg for msg in messages if msg["role"] == "tool")
+        self.assertIn("Query completed", tool_message["content"])
+        self.assertIn(
+            '{"city": "北京", "temperature_c": 21.5}',
+            tool_message["content"],
         )
 
     async def test_structured_result_is_kept_next_to_media(self) -> None:
