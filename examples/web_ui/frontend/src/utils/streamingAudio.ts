@@ -34,7 +34,7 @@ export interface StreamingAudioState {
 	url: string | null;
 	/** Cause for ``status === 'error'``. */
 	error?: string;
-	/** Incremented each time a newer reply interrupts this block. */
+	/** Incremented to pause the block's replay control. */
 	interruptCount: number;
 }
 
@@ -371,21 +371,29 @@ export class StreamingAudioManager {
 		void el.play().catch(() => undefined);
 	}
 
-	/** Close unfinished blocks when the reply ends without a DATA_BLOCK_END. */
+	/** Stop this reply's playback and finalize any unfinished blocks for replay. */
 	interruptReply(replyId: string): void {
 		for (const [blockId, session] of this.sessions) {
 			if (session.replyId !== replyId) continue;
 			session.autoplay = false;
-			if (session.state.status !== 'streaming') continue;
-			session.livePlayer?.dispose();
-			session.livePlayer = null;
-			if (session.totalBytes) {
-				void this.end(blockId);
-			} else {
+			this.stopBlockPlayback(session);
+			if (session.state.status === 'streaming') {
+				if (session.totalBytes) {
+					void this.end(blockId);
+					continue;
+				}
 				session.state = { ...session.state, status: 'error' };
-				this.emit(blockId);
 			}
+			this.emit(blockId);
 		}
+	}
+
+	private stopBlockPlayback(session: Session): void {
+		session.autoplayElement?.pause();
+		session.autoplayElement = null;
+		session.livePlayer?.dispose();
+		session.livePlayer = null;
+		session.state = { ...session.state, interruptCount: session.state.interruptCount + 1 };
 	}
 
 	/**
@@ -413,16 +421,7 @@ export class StreamingAudioManager {
 	stopAllPlayback(): void {
 		for (const [blockId, session] of this.sessions) {
 			if (typeof session.autoplay !== 'boolean') session.autoplay = false;
-			session.autoplayElement?.pause();
-			session.autoplayElement = null;
-			if (session.livePlayer) {
-				session.livePlayer.dispose();
-				session.livePlayer = null;
-			}
-			session.state = {
-				...session.state,
-				interruptCount: session.state.interruptCount + 1,
-			};
+			this.stopBlockPlayback(session);
 			this.emit(blockId);
 		}
 	}
