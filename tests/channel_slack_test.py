@@ -18,7 +18,12 @@ from unittest.mock import patch
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.web.async_slack_response import AsyncSlackResponse
 
-from agentscope.app.channel._base import ChannelEvent, ChatKind
+from agentscope.app.channel._approval import WEB_UI_APPROVAL_NOTICE
+from agentscope.app.channel._base import (
+    ChannelDecisionStatus,
+    ChannelEvent,
+    ChatKind,
+)
 from agentscope.app.channel._slack._card_templates import (
     _build_approval_blocks,
     _parse_action,
@@ -59,6 +64,7 @@ class _FakeWeb:
         self.client_kwargs = kwargs
         self.posts: list[dict] = []
         self.updates: list[dict] = []
+        self.ephemerals: list[dict] = []
         self.uploads: list[dict] = []
         self.list_pages: list[dict] = []
         self.list_calls: list[dict] = []
@@ -80,6 +86,10 @@ class _FakeWeb:
 
     async def chat_update(self, **kwargs: Any) -> dict:
         self.updates.append(dict(kwargs))
+        return {"ok": True}
+
+    async def chat_postEphemeral(self, **kwargs: Any) -> dict:
+        self.ephemerals.append(dict(kwargs))
         return {"ok": True}
 
     async def files_upload_v2(
@@ -351,19 +361,35 @@ class SendResponseTest(IsolatedAsyncioTestCase):
                             input='{"command": "ls"}',
                         ),
                     ],
+                    metadata={"channel_approval_ids": {"call-1": "appr-1"}},
                 ),
             ],
         )
         card = next(p for p in web.posts if p.get("blocks"))
         actions = next(b for b in card["blocks"] if b["type"] == "actions")
         parsed = [_parse_action(e["value"]) for e in actions["elements"]]
-        self.assertEqual(len(parsed), 2)
-        for entry in parsed:
-            self.assertIsNotNone(entry)
-            self.assertEqual(entry[0], "call-1")
-            self.assertEqual(entry[1], "C1")
-        self.assertTrue(parsed[0][2])
-        self.assertFalse(parsed[1][2])
+        self.assertListEqual(
+            parsed,
+            [("C1", True, "appr-1"), ("C1", False, "appr-1")],
+        )
+
+    async def test_confirmation_without_approval_id_points_to_web_ui(
+        self,
+    ) -> None:
+        _, web = await self._deliver(
+            [
+                ReplyStartEvent(session_id="s", reply_id=_RID, name="a"),
+                RequireUserConfirmEvent(
+                    id="req-1",
+                    reply_id=_RID,
+                    tool_calls=[
+                        ToolCallBlock(id="call-1", name="Bash", input="{}"),
+                    ],
+                ),
+            ],
+        )
+        self.assertFalse(any(p.get("blocks") for p in web.posts))
+        self.assertIn(WEB_UI_APPROVAL_NOTICE, [p["text"] for p in web.posts])
 
 
 class InteractionTest(IsolatedAsyncioTestCase):
@@ -382,32 +408,54 @@ class InteractionTest(IsolatedAsyncioTestCase):
         channel, web = _channel()
         emitted: list = []
 
-        async def _emit(event: Any) -> None:
+        async def _emit(event: Any) -> ChannelDecisionStatus:
             emitted.append(event)
+            return ChannelDecisionStatus.ACCEPTED
 
         channel._emit = _emit
-        blocks = _build_approval_blocks(
-            "call-1",
-            "C1",
-            "Bash",
-            "ls",
-            "agent-1",
-            "sess-1",
-        )
+        blocks = _build_approval_blocks("C1", "Bash", "ls", "appr-1")
         value = blocks[-1]["elements"][0]["value"]
         await channel._on_interaction(self._payload(value))
 
         self.assertEqual(len(emitted), 1)
         decision = emitted[0]
-        self.assertEqual(decision.tool_call_id, "call-1")
-        self.assertEqual(decision.agent_id, "agent-1")
-        self.assertEqual(decision.session_id, "sess-1")
+        self.assertEqual(decision.approval_id, "appr-1")
+        self.assertEqual(decision.chat_id, "C1")
         self.assertEqual(decision.channel_user_id, "U9")
         # Who actually clicked, recorded for auditing.
         self.assertEqual(decision.actor, "U9")
         self.assertTrue(decision.approved)
         self.assertEqual(len(web.updates), 1)
         self.assertEqual(web.updates[0]["ts"], "42.0001")
+        self.assertEqual(web.ephemerals, [])
+
+    async def test_rejected_click_keeps_card_and_tells_only_clicker(
+        self,
+    ) -> None:
+        value = _build_approval_blocks("C1", "Bash", "ls", "appr-1")[-1][
+            "elements"
+        ][0]["value"]
+        for status, notice in (
+            (ChannelDecisionStatus.UNAUTHORIZED, "Only the requester"),
+            (ChannelDecisionStatus.STALE, "no longer pending"),
+            (ChannelDecisionStatus.ERROR, "could not be verified"),
+        ):
+            with self.subTest(status=status):
+                channel, web = _channel()
+
+                async def _emit(
+                    _: Any,
+                    result: ChannelDecisionStatus = status,
+                ) -> ChannelDecisionStatus:
+                    return result
+
+                channel._emit = _emit
+                await channel._on_interaction(self._payload(value))
+                self.assertEqual(web.updates, [])
+                self.assertEqual(len(web.ephemerals), 1)
+                self.assertEqual(web.ephemerals[0]["user"], "U9")
+                self.assertEqual(web.ephemerals[0]["channel"], "C1")
+                self.assertIn(notice, web.ephemerals[0]["text"])
 
     async def test_foreign_button_is_ignored(self) -> None:
         channel, web = _channel()
@@ -423,43 +471,54 @@ class InteractionTest(IsolatedAsyncioTestCase):
 
 
 class ActionValueTest(IsolatedAsyncioTestCase):
-    """The button value round-trips the routing keys."""
+    """The button value round-trips the approval id."""
 
     async def test_round_trip(self) -> None:
-        blocks = _build_approval_blocks("c1", "C1", "Bash", "ls", "a1", "s1")
+        blocks = _build_approval_blocks("C1", "Bash", "ls", "appr-1")
         approve, deny = blocks[-1]["elements"]
         self.assertEqual(
             _parse_action(approve["value"]),
-            ("c1", "C1", True, "a1", "s1"),
+            ("C1", True, "appr-1"),
         )
         self.assertEqual(
             _parse_action(deny["value"]),
-            ("c1", "C1", False, "a1", "s1"),
+            ("C1", False, "appr-1"),
         )
 
     async def test_rejects_foreign_values(self) -> None:
         self.assertIsNone(_parse_action("not json"))
         self.assertIsNone(_parse_action('{"type": "something_else"}'))
         self.assertIsNone(_parse_action(None))
+        # A card from before approval ids has nothing to authorize against.
+        self.assertIsNone(
+            _parse_action(
+                json.dumps(
+                    {
+                        "type": "tool_guard_approval",
+                        "tool_call_id": "call-1",
+                        "chat_id": "C1",
+                        "action": "approve",
+                    },
+                ),
+            ),
+        )
 
     async def test_button_value_fits_slack_limit(self) -> None:
         blocks = _build_approval_blocks(
-            "c" * 200,
             "C" * 200,
             "Bash",
             "x" * 5000,
             "a" * 200,
-            "s" * 200,
         )
         for element in blocks[-1]["elements"]:
             self.assertLessEqual(len(element["value"]), 2000)
-            self.assertEqual(_parse_action(element["value"])[0], "c" * 200)
+            self.assertEqual(_parse_action(element["value"])[2], "a" * 200)
         section = blocks[1]["text"]["text"]
         self.assertLessEqual(len(section), 3000)
 
     async def test_oversized_value_is_refused_not_cut(self) -> None:
         with self.assertRaises(ValueError):
-            _build_approval_blocks("c1", "C1", "Bash", "ls", "a" * 2000, "s1")
+            _build_approval_blocks("C1", "Bash", "ls", "a" * 2000)
 
     async def test_oversized_card_falls_back_to_plain_text(self) -> None:
         channel, web = _channel()
@@ -468,7 +527,6 @@ class ActionValueTest(IsolatedAsyncioTestCase):
                 channel_id="chan-1",
                 channel_user_id="U1",
                 chat_id="C1",
-                metadata={"agent_id": "a" * 2000, "session_id": "s1"},
             ),
             RequireUserConfirmEvent(
                 id="req-1",
@@ -476,6 +534,7 @@ class ActionValueTest(IsolatedAsyncioTestCase):
                 tool_calls=[
                     ToolCallBlock(id="call-1", name="Bash", input="{}"),
                 ],
+                metadata={"channel_approval_ids": {"call-1": "a" * 2000}},
             ),
         )
         self.assertEqual(len(web.posts), 1)

@@ -10,10 +10,10 @@ that ack is separate from the user-visible reply, so a run is free to
 take as long as it takes: the channel posts one message on the first
 output and edits it in place with ``chat.update`` as more arrives.
 
-Approval cards carry their lookup keys in the button ``value`` (Slack
-allows 2000 characters there), so a click resolves without any in-process
-state and this channel stays correct when several nodes each hold a
-Socket Mode connection for the same app.
+Approval cards carry an opaque approval id in the button ``value``, so a
+click resolves without any in-process state and this channel stays
+correct when several nodes each hold a Socket Mode connection for the
+same app.
 
 A user id given as a send target is resolved to its direct-message
 conversation with ``conversations.open`` first, which needs the
@@ -29,9 +29,11 @@ from pydantic import BaseModel, Field
 from ...._logging import logger
 from ....event import ReplyEndEvent, RequireUserConfirmEvent
 from ....message import Base64Source, DataBlock, Msg, TextBlock
+from .._approval import WEB_UI_APPROVAL_NOTICE, approval_id_for
 from .._base import (
     ChannelBase,
     ChannelCapability,
+    ChannelDecisionStatus,
     ChannelEvent,
     ChannelConfirmationResultEvent,
     ChannelStatus,
@@ -188,7 +190,7 @@ class SlackChannel(ChannelBase):
         self,
         emit: Callable[
             [ChannelEvent | ChannelConfirmationResultEvent],
-            Awaitable[None],
+            Awaitable[ChannelDecisionStatus | None],
         ],
     ) -> None:
         """Open the Socket Mode connection, supervise it, and close
@@ -655,7 +657,8 @@ class SlackChannel(ChannelBase):
         )
 
     async def _on_interaction(self, payload: dict) -> None:
-        """Emit an approval-card click as a decision and freeze the card.
+        """Emit an approval-card click as a decision and freeze the card
+        once the decision is accepted.
 
         Args:
             payload (`dict`): The ``interactive`` envelope payload.
@@ -673,24 +676,38 @@ class SlackChannel(ChannelBase):
         )
         if parsed is None:
             return
-        tool_call_id, chat_id, approved, agent_id, session_id = parsed
+        chat_id, approved, approval_id = parsed
         clicker = (payload.get("user") or {}).get("id", "")
+        target = (payload.get("channel") or {}).get("id") or chat_id
+        status = ChannelDecisionStatus.ACCEPTED
         if self._emit:
-            await self._emit(
+            emitted = await self._emit(
                 ChannelConfirmationResultEvent(
                     channel_id=self._channel_id,
                     chat_id=chat_id,
                     channel_user_id=clicker,
-                    agent_id=agent_id,
-                    session_id=session_id,
-                    tool_call_id=tool_call_id,
                     approved=approved,
                     actor=clicker,
+                    approval_id=approval_id,
                 ),
             )
+            status = emitted or ChannelDecisionStatus.ACCEPTED
+        if status is not ChannelDecisionStatus.ACCEPTED:
+            if status is ChannelDecisionStatus.UNAUTHORIZED:
+                notice = (
+                    "Only the requester can approve or deny this tool call."
+                )
+            elif status is ChannelDecisionStatus.ERROR:
+                notice = (
+                    "Your approval permission could not be verified. Please "
+                    "try again later."
+                )
+            else:
+                notice = "This approval request is no longer pending."
+            await self._post_ephemeral(target, clicker, notice)
+            return
         message = payload.get("message") or {}
         ts = message.get("ts") or ""
-        target = (payload.get("channel") or {}).get("id") or chat_id
         if ts and target:
             await self._update(
                 target,
@@ -1068,22 +1085,24 @@ class SlackChannel(ChannelBase):
         event: ChannelEvent,
         req: RequireUserConfirmEvent,
     ) -> None:
-        """Post one approval card per tool call, each carrying its own
-        lookup keys in the button values.
+        """Post one approval card per tool call; each button carries an
+        opaque approval id and the chat id for origin validation.
 
         Args:
             event (`ChannelEvent`): The send target (channel id).
             req (`RequireUserConfirmEvent`): The approval request to show.
         """
         for tool in req.tool_calls:
+            approval_id = approval_id_for(req, tool.id)
+            if not approval_id:
+                await self._post(event.chat_id, WEB_UI_APPROVAL_NOTICE)
+                continue
             try:
                 blocks = _build_approval_blocks(
-                    tool.id,
                     event.chat_id,
                     tool.name,
                     tool.input,
-                    event.metadata.get("agent_id", ""),
-                    event.metadata.get("session_id", ""),
+                    approval_id,
                 )
             except ValueError as e:
                 logger.warning(
@@ -1269,6 +1288,31 @@ class SlackChannel(ChannelBase):
             self.status.last_error = str(e)
             logger.warning("Slack post to '%s' failed: %s", chat_id, e)
             return None
+
+    async def _post_ephemeral(
+        self,
+        chat_id: str,
+        user: str,
+        text: str,
+    ) -> None:
+        """Show ``text`` to one user only, leaving the card untouched.
+
+        Args:
+            chat_id (`str`): The conversation the user clicked in.
+            user (`str`): The user who should see the notice.
+            text (`str`): The notice.
+        """
+        web = self._web_client()
+        if not chat_id or not user or web is None:
+            return
+        try:
+            await web.chat_postEphemeral(channel=chat_id, user=user, text=text)
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(
+                "Slack ephemeral notice to '%s' failed: %s",
+                chat_id,
+                e,
+            )
 
     async def _update(
         self,
