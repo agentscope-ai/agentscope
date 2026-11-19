@@ -3,9 +3,17 @@
 from typing import Any, AsyncGenerator, Callable
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from utils import MockModel
-from agentscope.agent import Agent
-from agentscope.message import UserMsg, TextBlock, ToolCallBlock, HintBlock
+from pydantic import BaseModel
+
+from utils import AnyString, MockModel
+from agentscope.agent import Agent, ReActConfig
+from agentscope.message import (
+    UserMsg,
+    TextBlock,
+    ToolCallBlock,
+    HintBlock,
+    Msg,
+)
 from agentscope.middleware import MiddlewareBase, ReplyBudgetControlMiddleware
 from agentscope.model import ChatResponse, ChatUsage
 from agentscope.permission import (
@@ -18,7 +26,7 @@ from agentscope.event import (
     ReplyEndEvent,
     UserConfirmResultEvent,
 )
-from agentscope.tool import ToolBase, Toolkit, ToolChunk
+from agentscope.tool import ToolBase, Toolkit, ToolChoice, ToolChunk
 
 
 def _response(
@@ -94,6 +102,44 @@ class ConfirmRequiredTool(ToolBase):
         return ToolChunk(content=[TextBlock(text="confirmed result")])
 
 
+class Answer(BaseModel):
+    """The structured output schema used in the tests."""
+
+    city: str
+
+
+class ToolChoiceModel(MockModel):
+    """Model that follows ``tool_choice`` as a provider does: text only
+    under ``"none"``. The first call runs the dummy tool for 300 tokens."""
+
+    def __init__(self, calls_offered_tool: bool) -> None:
+        """Initialize the recorded tool choices."""
+        super().__init__()
+        self.stream = False
+        self.calls_offered_tool = calls_offered_tool
+        self.tool_choices: list = []
+
+    async def _call_api(self, *args: Any, **kwargs: Any) -> ChatResponse:
+        """Record tool_choice and answer by it."""
+        tool_choice = kwargs.get("tool_choice")
+        self.tool_choices.append(tool_choice)
+        mode = getattr(tool_choice, "mode", None)
+        usage = ChatUsage(input_tokens=200, output_tokens=100, time=0.0)
+        if len(self.tool_choices) == 1:
+            block = ToolCallBlock(id="tc_1", name="dummy", input="{}")
+        elif mode == "GenerateStructuredOutput" or (
+            mode != "none" and self.calls_offered_tool
+        ):
+            block = ToolCallBlock(
+                id=f"tc_{len(self.tool_choices)}",
+                name="GenerateStructuredOutput",
+                input='{"city": "Paris"}',
+            )
+        else:
+            block = TextBlock(text="Paris")
+        return ChatResponse(content=[block], is_last=True, usage=usage)
+
+
 def _has_hint_block(msg: Any, hint_message: str) -> bool:
     """Return True if *msg* contains a HintBlock with *hint_message*."""
     content = getattr(msg, "content", None)
@@ -167,6 +213,80 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
             if _has_hint_block(m, middleware.hint_message)
         ]
         self.assertGreater(len(hint_msgs), 0)
+
+    async def test_hint_does_not_join_the_previous_reply_message(
+        self,
+    ) -> None:
+        """A wrap-up hint belongs to the current reply message."""
+        middleware = ReplyBudgetControlMiddleware(token_budget=0)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=MockModel(),
+            toolkit=self.toolkit,
+            middlewares=[middleware],
+        )
+        middleware_key = await middleware.get_middleware_key()
+        old_reply = Msg(
+            id="previous-reply",
+            role="assistant",
+            name=agent.name,
+            content=[TextBlock(text="Earlier answer")],
+        )
+        old_reply_before = old_reply.model_dump()
+        agent.state.context.append(old_reply)
+        agent.state.middle_context[middleware_key] = {
+            agent.state.reply_id: 100,
+        }
+
+        async def next_handler(**_: Any) -> AsyncGenerator:
+            """Yield a sentinel and finish normally.
+
+            Args:
+                **_ (`Any`):
+                    Unused reasoning arguments.
+
+            Yields:
+                `None`:
+                    A sentinel forwarded by the middleware.
+            """
+            yield None
+
+        chain = middleware.on_reasoning(
+            agent=agent,
+            input_kwargs={},
+            next_handler=next_handler,
+        )
+        self.assertEqual([event async for event in chain], [None])
+        self.assertEqual(
+            [message.model_dump() for message in agent.state.context],
+            [
+                old_reply_before,
+                {
+                    "id": agent.state.reply_id,
+                    "name": agent.name,
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "hint",
+                            "hint": middleware.hint_message,
+                            "id": AnyString(),
+                            "source": '{"label": "System", "sublabel": '
+                            '"Reply Budget Exhausted"}',
+                            "created_at": AnyString(),
+                            "finished_at": AnyString(),
+                        },
+                    ],
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "usage": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+            ],
+        )
 
     async def test_budget_exceeded_forces_tool_choice_none(self) -> None:
         """When budget is exceeded, tool_choice forwarded to model is none.
@@ -368,6 +488,63 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
             {agent.state.reply_id: 28},
         )
 
+    async def test_new_reply_does_not_inherit_the_previous_budget_hint(
+        self,
+    ) -> None:
+        """A wrap-up hint belongs to one reply; the next reply starts clean.
+
+        Reply 1 spends its whole 300-token budget on the first step, so the
+        second step runs under the hint. Reply 2 starts with a fresh counter
+        and must not see that wrap-up instruction again.
+        """
+        toolkit = Toolkit(tools=[DummyTool()])
+
+        model = MockModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(id="tc_1", name="dummy", input="{}"),
+                    ],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=200,
+                        output_tokens=100,
+                        time=0.0,
+                    ),
+                ),
+                _response("wrapped up", input_tokens=5, output_tokens=5),
+                _response("fresh reply", input_tokens=5, output_tokens=5),
+            ],
+        )
+
+        middleware = ReplyBudgetControlMiddleware(token_budget=300)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=model,
+            toolkit=toolkit,
+            middlewares=[middleware],
+        )
+
+        await agent.reply(UserMsg("user", "first"))
+        self.assertTrue(
+            any(
+                _has_hint_block(message, middleware.hint_message)
+                for message in agent.state.context
+            ),
+            "the exhausted reply should have injected the wrap-up hint",
+        )
+
+        await agent.reply(UserMsg("user", "second"))
+        self.assertFalse(
+            any(
+                _has_hint_block(message, middleware.hint_message)
+                for message in agent.state.context
+            ),
+            "a fresh reply must not carry the previous reply's budget hint",
+        )
+
     async def test_swallowed_reply_end_keeps_counting(self) -> None:
         """A redo round forced by swallowing the ReplyEndEvent spends the
         budget of the same reply."""
@@ -534,4 +711,66 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         self.assertDictEqual(
             agent.state.middle_context[middleware_key],
             {reply_id: 370},
+        )
+
+    async def test_budget_exceeded_keeps_structured_output_tool(self) -> None:
+        """A spent budget still lets a structured reply end."""
+        model = ToolChoiceModel(calls_offered_tool=True)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=model,
+            toolkit=Toolkit(tools=[DummyTool()]),
+            middlewares=[ReplyBudgetControlMiddleware(token_budget=300)],
+        )
+
+        res = await agent.reply(
+            UserMsg("user", "Capital of France?"),
+            structured_schema=Answer,
+        )
+
+        self.assertEqual(res.structured_output, {"city": "Paris"})
+        self.assertListEqual(
+            model.tool_choices,
+            [
+                None,
+                ToolChoice(
+                    mode="auto",
+                    tools=["GenerateStructuredOutput"],
+                ),
+            ],
+        )
+
+    async def test_budget_exceeded_keeps_forced_structured_output(
+        self,
+    ) -> None:
+        """The agent's forced structured output call is kept."""
+        model = ToolChoiceModel(calls_offered_tool=False)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=model,
+            toolkit=Toolkit(tools=[DummyTool()]),
+            middlewares=[ReplyBudgetControlMiddleware(token_budget=300)],
+            react_config=ReActConfig(max_iters=3),
+        )
+
+        res = await agent.reply(
+            UserMsg("user", "Capital of France?"),
+            structured_schema=Answer,
+        )
+
+        self.assertEqual(res.structured_output, {"city": "Paris"})
+        offered = ToolChoice(mode="auto", tools=["GenerateStructuredOutput"])
+        self.assertListEqual(
+            model.tool_choices,
+            [
+                None,
+                offered,
+                offered,
+                ToolChoice(
+                    mode="GenerateStructuredOutput",
+                    tools=["GenerateStructuredOutput"],
+                ),
+            ],
         )

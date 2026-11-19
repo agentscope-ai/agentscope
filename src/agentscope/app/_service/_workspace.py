@@ -359,9 +359,10 @@ class WorkspaceService:
             `str`: The single top-level directory every path sits under.
 
         Raises:
-            SkillUploadError: If a limit is exceeded, a path is unsafe,
-                the paths span more than one root, no ``SKILL.md`` is
-                present, or the parts do not match the manifest.
+            SkillUploadError: If a limit is exceeded, a path is unsafe
+                or duplicated, the paths span more than one root,
+                no ``SKILL.md`` is present, or the parts do not match
+                the manifest.
         """
         entries = manifest.entries
         if not entries:
@@ -379,6 +380,7 @@ class WorkspaceService:
 
         total = 0
         roots: set[str] = set()
+        paths: set[str] = set()
         for entry in entries:
             if entry.size > MAX_FILE_BYTES:
                 raise SkillUploadError(
@@ -387,11 +389,17 @@ class WorkspaceService:
                 )
             total += entry.size
 
-            parts = entry.path.replace("\\", "/").split("/")
+            path = entry.path.replace("\\", "/")
+            parts = path.split("/")
             if len(parts) < 2 or any(p in ("", ".", "..") for p in parts):
                 raise SkillUploadError(f"Unsafe upload path: {entry.path!r}")
             if entry.path.startswith("/"):
                 raise SkillUploadError(f"Unsafe upload path: {entry.path!r}")
+            if path in paths:
+                raise SkillUploadError(
+                    f"Duplicate upload path: {entry.path!r}",
+                )
+            paths.add(path)
             roots.add(parts[0])
 
         if total > MAX_TOTAL_BYTES:
@@ -405,7 +413,7 @@ class WorkspaceService:
             )
 
         root = roots.pop()
-        if not any(e.path == f"{root}/SKILL.md" for e in manifest.entries):
+        if f"{root}/SKILL.md" not in paths:
             raise SkillUploadError(f"No SKILL.md at the root of {root!r}.")
         return root
 
@@ -459,7 +467,7 @@ class WorkspaceService:
                 declared size.
         """
         for entry, upload in zip(manifest.entries, files):
-            info = tarfile.TarInfo(name=entry.path)
+            info = tarfile.TarInfo(name=entry.path.replace("\\", "/"))
             info.size = entry.size
             info.mtime = 0
             yield info.tobuf(tarfile.GNU_FORMAT)

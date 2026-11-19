@@ -5,6 +5,15 @@ status: active
 input_types:
   - text/plain
   - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - video/mp4
+  - video/mpeg
+  - video/quicktime
+  - video/avi
+  - video/webm
 
 output_types:
   - text/plain

@@ -32,6 +32,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
+          version: "0.13.4"
           python-version: '3.11'
 
       - name: Create kind cluster
@@ -42,7 +43,7 @@ jobs:
 
       - name: Build K8s workspace test image
         run: |
-          docker build \
+          docker build --pull --no-cache \
             -f tests/docker/k8s_workspace_test.Dockerfile \
             -t agentscope-k8s-test:ci .
 

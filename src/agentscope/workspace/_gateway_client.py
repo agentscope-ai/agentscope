@@ -73,6 +73,7 @@ class GatewayMCPTool(ToolBase):
         gateway: "GatewayClient",
         agent_id: str = "",
         session_id: str = "",
+        trust_annotations: bool = True,
     ) -> None:
         """Build a gateway-backed MCP tool.
 
@@ -85,9 +86,9 @@ class GatewayMCPTool(ToolBase):
                 ``mcp__{mcp}__{tool}`` name and the URL path.
             tool (`mcp.types.Tool`):
                 Raw upstream tool descriptor as returned by the gateway.
-                ``inputSchema`` is forwarded verbatim;
-                ``annotations.readOnlyHint`` drives the permission
-                policy.
+                ``input_schema`` is forwarded verbatim;
+                ``annotations.read_only_hint`` drives the permission
+                policy when ``trust_annotations`` is `True`.
             gateway (`GatewayClient`):
                 Facade dispatching every call through
                 :meth:`GatewayClient.exec_request`.
@@ -95,6 +96,11 @@ class GatewayMCPTool(ToolBase):
                 The agent whose gateway-side session to run against.
             session_id (`str`, defaults to ``""``):
                 The session whose gateway-side session to run against.
+            trust_annotations (`bool`, defaults to `True`):
+                Whether to trust the tool annotations reported by the
+                upstream MCP server. If `False`, the ``readOnlyHint``
+                annotation is ignored and the tool is never treated as
+                read-only.
         """
         self.mcp_name = mcp_name
         self._agent_id = agent_id
@@ -102,7 +108,7 @@ class GatewayMCPTool(ToolBase):
         self.name = f"mcp__{mcp_name}__{tool.name}"
         self.description = tool.description or ""
 
-        schema = dict(tool.inputSchema) if tool.inputSchema else {}
+        schema = dict(tool.input_schema) if tool.input_schema else {}
         schema.setdefault("type", "object")
         schema.setdefault("properties", {})
         schema.setdefault("required", [])
@@ -111,9 +117,19 @@ class GatewayMCPTool(ToolBase):
         self.is_concurrency_safe = False
         self.is_external_tool = False
 
+        # Only honor the self-reported read-only hint for trusted servers,
+        # mirroring :class:`agentscope.tool.MCPTool`.
         self.is_read_only = False
-        if tool.annotations and hasattr(tool.annotations, "readOnlyHint"):
-            self.is_read_only = tool.annotations.readOnlyHint or False
+        if tool.annotations and tool.annotations.read_only_hint:
+            if trust_annotations:
+                self.is_read_only = True
+            else:
+                logger.debug(
+                    "Ignored the read-only hint of MCP tool '%s' as the "
+                    "annotations of MCP '%s' are not trusted.",
+                    tool.name,
+                    mcp_name,
+                )
 
         self._tool = tool
         self._gateway = gateway
@@ -178,8 +194,8 @@ class GatewayMCPClient(MCPClient):
     from user input via :meth:`GatewayClient.make_client`). The local
     MCP machinery is short-circuited entirely:
 
-    * ``model_post_init`` does nothing (parent's ``_initialize_client``
-      is never called — no stdio context manager is built).
+    * ``model_post_init`` skips local configuration validation; no local
+      transport is constructed by the proxy.
     * ``connect`` registers the MCP on the gateway via ``POST /mcps``.
     * ``close`` deregisters via ``DELETE /mcps/{name}``.
     * ``set_runtime_headers`` updates the registered live client.
@@ -191,9 +207,7 @@ class GatewayMCPClient(MCPClient):
     _session_id: str = PrivateAttr(default="")
 
     def model_post_init(self, __context: Any) -> None:
-        """No-op — the parent builds local stdio/HTTP transport, which
-        the gateway-relayed client does not need.
-        """
+        """Leave configuration validation to the gateway-side MCP client."""
         return
 
     # ── lifecycle ─────────────────────────────────────────────────
@@ -276,10 +290,23 @@ class GatewayMCPClient(MCPClient):
     async def close(self, ignore_errors: bool = True) -> None:
         """Deregister this MCP via ``DELETE /mcps/{name}``.
 
+        A scoped missing-registration response counts as success, allowing
+        retries after a successful DELETE whose response was lost. Strict
+        failures leave the connection flag set so the request can be retried.
+
         Args:
             ignore_errors (`bool`, defaults to `True`):
-                Suppress "not connected" precondition and gateway
-                4xx/5xx. Mirrors :meth:`MCPClient.close`.
+                Suppress "not connected" precondition, gateway errors,
+                and request exceptions. If `False`, propagate failures
+                without clearing the connection flag.
+
+        Raises:
+            `RuntimeError`:
+                If `ignore_errors` is `False` and the client is not
+                connected or the gateway rejects the removal.
+            `Exception`:
+                If `ignore_errors` is `False`, underlying gateway request
+                exceptions propagate unchanged.
         """
         if not self._is_connected:
             if ignore_errors:
@@ -297,7 +324,24 @@ class GatewayMCPClient(MCPClient):
                     "session_id": self._session_id,
                 },
             )
-            if status >= 400 and not ignore_errors:
+            missing = False
+            if status == 404:
+                try:
+                    data = json.loads(resp_body)
+                    # Match _build_app._lookup in _mcp_gateway_app.py;
+                    # unrelated route/proxy 404s must remain failures.
+                    expected = (
+                        f"{self.name!r} not found for "
+                        f"agent={self._agent_id!r} "
+                        f"session={self._session_id!r}"
+                    )
+                    missing = (
+                        isinstance(data, dict)
+                        and data.get("detail") == expected
+                    )
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+            if status >= 400 and not missing and not ignore_errors:
                 raise RuntimeError(
                     f"gateway failed to remove MCP {self.name!r}: "
                     f"{_safe_detail(status, resp_body)}",
@@ -440,6 +484,7 @@ class GatewayMCPClient(MCPClient):
             gateway=self._gateway,
             agent_id=self._agent_id,
             session_id=self._session_id,
+            trust_annotations=self.trust_annotations,
         )
 
 

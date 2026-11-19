@@ -74,6 +74,8 @@ class LocalWorkspace(WorkspaceBase):
         └── sessions/     # per-session context and tool-result files
     """
 
+    is_alive: bool
+
     def __init__(
         self,
         *,
@@ -124,7 +126,7 @@ class LocalWorkspace(WorkspaceBase):
         )
 
         # ── runtime state ───────────────────────────────────────
-        self._backend = LocalBackend()
+        self._backend = LocalBackend(workdir=self.workdir)
 
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()
@@ -223,7 +225,9 @@ class LocalWorkspace(WorkspaceBase):
             base_dir = _sanitize_dir_name(raw_name)
             dir_name = base_dir
             counter = 1
-            while dir_name in existing_dir_names:
+            while dir_name in existing_dir_names or os.path.exists(
+                os.path.join(skills_dir, dir_name),
+            ):
                 dir_name = f"{base_dir}_{counter}"
                 counter += 1
 
@@ -356,7 +360,8 @@ class LocalWorkspace(WorkspaceBase):
 
             # Read and parse SKILL.md
             raw = await self._backend.read_file(skill_md_path)
-            content_str = raw.decode("utf-8")
+            # Strip an optional UTF-8 BOM before parsing front matter.
+            content_str = raw.decode("utf-8-sig")
 
             # Parse frontmatter
             content = frontmatter.loads(content_str)
@@ -650,7 +655,8 @@ class LocalWorkspace(WorkspaceBase):
                 updated_at = 0.0
 
             raw = await self._backend.read_file(skill_md_path)
-            content_str = raw.decode("utf-8")
+            # Strip an optional UTF-8 BOM before parsing front matter.
+            content_str = raw.decode("utf-8-sig")
             content = frontmatter.loads(content_str)
 
             description = content.get("description")
@@ -683,7 +689,7 @@ class LocalWorkspace(WorkspaceBase):
         *,
         agent_id: str | None = None,
         session_id: str | None = None,
-    ) -> None:
+    ) -> MCPClient:
         """Add an MCP client for one agent/session and persist it.
 
         Args:
@@ -693,6 +699,10 @@ class LocalWorkspace(WorkspaceBase):
                 The owning agent. ``None`` means the legacy ``""``.
             session_id (`str | None`, optional):
                 The owning session. ``None`` means the legacy ``""``.
+
+        Returns:
+            `MCPClient`:
+                The input client, which is stored and used directly.
 
         Raises:
             `ValueError`:
@@ -720,6 +730,7 @@ class LocalWorkspace(WorkspaceBase):
             # persisted copy is self-contained.
             self._mcp_specs[(agent_id, session_id)] = [*specs, mcp_client]
             await self._save_mcp_file()
+            return mcp_client
 
     async def remove_mcp(
         self,
@@ -829,7 +840,9 @@ class LocalWorkspace(WorkspaceBase):
             base_dir = _sanitize_dir_name(raw_name)
             dir_name = base_dir
             counter = 1
-            while dir_name in existing_dir_names:
+            while dir_name in existing_dir_names or os.path.exists(
+                os.path.join(skills_dir, dir_name),
+            ):
                 dir_name = f"{base_dir}_{counter}"
                 counter += 1
 
@@ -842,12 +855,36 @@ class LocalWorkspace(WorkspaceBase):
                     f"Skill path {skill_path!r} resolves outside skills_dir.",
                 )
 
-            await asyncio.to_thread(
-                shutil.copytree,
-                skill_path,
-                dest_path,
-                dirs_exist_ok=False,
+            # Reserve this destination so cancellation can safely roll it back.
+            # The worker outlives cancellation of its asyncio waiter.
+            os.mkdir(dest_path)
+            copy_task = asyncio.create_task(
+                asyncio.to_thread(
+                    shutil.copytree,
+                    skill_path,
+                    dest_path,
+                    dirs_exist_ok=True,
+                ),
             )
+            try:
+                await asyncio.shield(copy_task)
+            except asyncio.CancelledError:
+
+                async def rollback() -> None:
+                    """Finish writing before removing this install's files."""
+                    await asyncio.gather(copy_task, return_exceptions=True)
+                    await self._backend.delete_path(dest_path)
+
+                cleanup = asyncio.create_task(rollback())
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        # Repeated cancellation must not release _skill_lock
+                        # while the worker or its rollback can still write.
+                        continue
+                cleanup.result()
+                raise
 
             logger.info(
                 "Copied skill '%s' (agent name: '%s') from %s to %s",

@@ -761,6 +761,19 @@ class LocalBackend(BackendBase):
     # OS is the host OS.
     os_name = os.name
 
+    def __init__(self, workdir: str | None = None) -> None:
+        """Initialize the local backend.
+
+        Args:
+            workdir (`str | None`, optional):
+                Directory returned by :meth:`getcwd`, resolved to an
+                absolute path. When ``None``, use the host process's
+                current working directory at call time.
+        """
+        self._workdir = (
+            os.path.abspath(workdir) if workdir is not None else None
+        )
+
     async def exec_shell(
         self,
         command: list[str],
@@ -798,10 +811,19 @@ class LocalBackend(BackendBase):
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
+                # Inheriting a stdin pipe can hang CPython startup on Windows.
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 **kwargs,
             )
+        except NotImplementedError as exc:
+            # Windows SelectorEventLoop doesn't support subprocesses.
+            raise RuntimeError(
+                "The current event loop doesn't support subprocesses "
+                "(e.g. SelectorEventLoop on Windows), use a "
+                "ProactorEventLoop instead.",
+            ) from exc
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
             # The executable could not be found or spawned. A shell would
             # have returned 127 ("command not found"); mirror that so
@@ -900,13 +922,13 @@ class LocalBackend(BackendBase):
                 yield chunk
 
     async def getcwd(self) -> str:
-        """Return the host process's current working directory.
+        """Return the configured directory or the host process's current one.
 
         Returns:
             `str`:
-                ``os.getcwd()`` — avoids spawning a ``pwd`` subprocess.
+                The configured workdir, or ``os.getcwd()`` when unset.
         """
-        return os.getcwd()
+        return self._workdir if self._workdir is not None else os.getcwd()
 
     async def expanduser(self, path: str) -> str:
         """Expand ``~`` using the host process's ``$HOME``.
@@ -1063,12 +1085,17 @@ class LocalBackend(BackendBase):
     async def delete_path(self, path: str) -> None:
         """Delete a local file or directory tree.
 
-        No-op if *path* does not exist.
+        Symbolic links are removed without following their targets,
+        including when the target no longer exists. No-op if *path*
+        does not exist.
 
         Args:
             path (`str`):
                 Path to delete.
         """
+        if os.path.islink(path):
+            os.remove(path)
+            return
         if not os.path.exists(path):
             return
         if os.path.isdir(path):

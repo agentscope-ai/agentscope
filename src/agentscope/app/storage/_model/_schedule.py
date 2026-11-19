@@ -66,7 +66,7 @@ class ScheduleData(BaseModel):
 
     started_at: datetime = Field(
         description="The date and time the schedule was started.",
-        default_factory=datetime.now,
+        default_factory=lambda: datetime.now().astimezone(),
     )
 
     ended_at: datetime | None = Field(

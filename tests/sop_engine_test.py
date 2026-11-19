@@ -19,6 +19,7 @@ from agentscope.event import (
 )
 from agentscope.message import (
     AssistantMsg,
+    Msg,
     TextBlock,
     ToolCallBlock,
     UserMsg,
@@ -95,6 +96,20 @@ class _Noting(SOPStepBase):
         state.note = "kept"
         state.submission = [TextBlock(type="text", text="done")]
         self.record(state, True)
+
+
+class _Abandoning(SOPStepBase):
+    """A step that gives up on the run without filing a verdict."""
+
+    async def reply_stream(  # pylint: disable=invalid-overridden-method
+        self,
+        inputs: Any,
+        state: Any,
+    ) -> AsyncGenerator[Any, None]:
+        """Mark the step failed, failing loudly if restarted after that."""
+        assert state.phase is not SOPPhase.FAILED, "restarted a failed step"
+        yield _finished("abandoning", {})
+        state.phase = SOPPhase.FAILED
 
 
 class _Scripted:
@@ -602,5 +617,25 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
             [
                 ("SOP_STEP_STARTED", {"step": "A", "attempt": 1}),
                 ("SOP_STEP_ENDED", {"step": "A", "phase": "pending"}),
+            ],
+        )
+
+    async def test_a_step_that_fails_itself_ends_the_run(self) -> None:
+        """A step that marks itself failed is not restarted."""
+        sop = SOP(name="demo", description="d", steps=[_Abandoning("A", "a")])
+        engine = SOPEngine(sop)
+
+        events = await self._drive(engine, UserMsg(name="user", content="go"))
+
+        self.assertEqual(engine.phase, SOPPhase.FAILED)
+        self.assertListEqual(
+            [
+                (_.name, _.value) if isinstance(_, CustomEvent) else type(_)
+                for _ in events
+            ],
+            [
+                ("SOP_STEP_STARTED", {"step": "A", "attempt": 1}),
+                Msg,
+                ("SOP_STEP_ENDED", {"step": "A", "phase": "failed"}),
             ],
         )

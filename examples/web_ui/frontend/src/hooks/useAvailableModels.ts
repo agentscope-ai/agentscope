@@ -15,8 +15,7 @@ export interface CredentialWithModels {
  *
  * One credential list plus one model list per provider — the most expensive
  * fan-out on the page, and every model picker in the app mounts it. Cached
- * under the shared default window and re-fetched on demand through
- * `refetch`, which is what the "credential just added" trigger calls.
+ * under a shared query key that credential mutations invalidate.
  */
 async function fetchGroups(): Promise<Record<string, CredentialWithModels[]>> {
 	const { credentials } = await credentialApi.list();
@@ -29,14 +28,18 @@ async function fetchGroups(): Promise<Record<string, CredentialWithModels[]>> {
 			if (!result[type]) result[type] = [];
 			try {
 				const { models } = await modelApi.list(type);
-				// Reverse-alphabetical, which is how the providers' naming
-				// schemes rank themselves — gpt-5 before gpt-4, qwen3 before
-				// qwen2 — so the strongest models sit at the top of the picker.
+				// Newest releases first; unknown dates last, then model name.
 				result[type].push({
 					credential,
-					models: [...models].sort((a, b) =>
-						b.name.localeCompare(a.name, undefined, { numeric: true }),
-					),
+					models: [...models].sort((a, b) => {
+						const byReleaseDate = (b.release_date ?? '').localeCompare(
+							a.release_date ?? '',
+						);
+						return (
+							byReleaseDate ||
+							b.name.localeCompare(a.name, undefined, { numeric: true })
+						);
+					}),
 				});
 			} catch {
 				result[type].push({ credential, models: [] });
@@ -54,7 +57,7 @@ async function fetchGroups(): Promise<Record<string, CredentialWithModels[]>> {
 export const AVAILABLE_MODELS_KEY = ['available-models'];
 
 export function useAvailableModels() {
-	const { data, isPending, error, refetch } = useQuery({
+	const { data, isPending, error } = useQuery({
 		queryKey: AVAILABLE_MODELS_KEY,
 		queryFn: fetchGroups,
 	});
@@ -63,6 +66,5 @@ export function useAvailableModels() {
 		groups: data ?? {},
 		loading: isPending,
 		error: error as Error | null,
-		refetch: () => void refetch(),
 	};
 }

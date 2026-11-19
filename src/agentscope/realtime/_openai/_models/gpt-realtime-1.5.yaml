@@ -2,6 +2,8 @@ type: realtime_model
 name: gpt-realtime-1.5
 label: GPT Realtime 1.5
 status: active
+# Release date: https://developers.openai.com/api/docs/changelog
+release_date: 2026-02-23
 
 input_types:
   - audio/pcm

@@ -67,7 +67,12 @@ class RoutingConfig(BaseModel):
     match_value)`` pairs.
     """
 
-    bindings: list[ChannelBinding] = Field(default_factory=list)
+    bindings: list[ChannelBinding] = Field(
+        description=(
+            "Ordered routing rules; the last one must be a catch-all "
+            "(match_value='*')."
+        ),
+    )
 
     @field_validator("bindings")
     @classmethod
@@ -108,7 +113,7 @@ class RoutingConfig(BaseModel):
 
 
 class SessionSettings(BaseModel):
-    """Settings applied when a channel creates an agent session."""
+    """Settings for a session a channel or SOP run opens for a user."""
 
     chat_model_config: dict[str, Any]
     """Model configuration for channel-created sessions. Required — there

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal, List
 
 from ._embedding_usage import EmbeddingUsage
-from .._utils._common import _get_timestamp
+from .._utils._common import _generate_timestamp, _get_timestamp
 from .._utils._mixin import DictMixin
 from ..types import Embedding
 
@@ -19,7 +19,7 @@ class EmbeddingResponse(DictMixin):
     id: str = field(default_factory=lambda: _get_timestamp(True))
     """The identity of the embedding response"""
 
-    created_at: str = field(default_factory=_get_timestamp)
+    created_at: str = field(default_factory=_generate_timestamp)
     """The timestamp of the embedding response creation"""
 
     type: Literal["embedding"] = field(default_factory=lambda: "embedding")

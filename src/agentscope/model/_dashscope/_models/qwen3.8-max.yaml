@@ -1,6 +1,8 @@
 name: qwen3.8-max
 label: Qwen3.8-Max
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2026-08-02
 
 input_types:
   - text/plain

@@ -10,8 +10,10 @@ reconciled with storage.
 """
 from ._base import (
     ChannelBase,
+    ChannelAuthConfirmationResultEvent,
     ChannelCapability,
     ChannelConfirmationResultEvent,
+    ChannelDecisionStatus,
     ChannelEvent,
     ChannelHeartbeat,
     ChannelStatus,
@@ -34,9 +36,11 @@ from ._slack import SlackChannel
 
 __all__ = [
     "ChannelBase",
+    "ChannelAuthConfirmationResultEvent",
     "ChannelClients",
     "ChannelCapability",
     "ChannelConfirmationResultEvent",
+    "ChannelDecisionStatus",
     "ChannelError",
     "ChannelHeartbeat",
     "ChannelEvent",
