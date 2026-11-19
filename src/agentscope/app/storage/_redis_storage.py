@@ -2,6 +2,7 @@
 # pylint: disable=too-many-public-methods
 """The Redis storage implementation."""
 
+import re
 import warnings
 from datetime import datetime, timedelta
 from typing import Any, TYPE_CHECKING, Self
@@ -1194,6 +1195,62 @@ class RedisStorage(StorageBase):
         records.sort(key=lambda r: r.created_at, reverse=True)
         return records
 
+    def _schedule_global_token(self, user_id: str, schedule_id: str) -> str:
+        """Encode (user_id, schedule_id) for the global schedule index.
+
+        ``user_id`` comes verbatim from the ``X-User-ID`` header, so it
+        may contain the ``:`` this token is joined with; see
+        :meth:`_encode_index_segment`.
+        """
+        return ":".join(
+            self._encode_index_segment(part) for part in (user_id, schedule_id)
+        )
+
+    @classmethod
+    def _parse_schedule_global_token(
+        cls,
+        token: str,
+    ) -> tuple[str, str] | None:
+        """Recover ``(user_id, schedule_id)`` from an index token."""
+        parts = token.split(":", 1)
+        if len(parts) != 2:
+            return None
+        return (
+            cls._decode_index_segment(parts[0]),
+            cls._decode_index_segment(parts[1]),
+        )
+
+    async def _schedule_from_index_token(
+        self,
+        token: str,
+    ) -> ScheduleRecord | None:
+        """Load the schedule an index token points at.
+
+        Falls back to the token read verbatim when the escaped form does
+        not resolve, so entries indexed before segments were escaped stay
+        reachable after the upgrade.
+        """
+        parsed = self._parse_schedule_global_token(token)
+        if parsed is None:
+            return None
+
+        candidates = [parsed]
+        legacy = tuple(token.split(":", 1))
+        if len(legacy) == 2 and legacy != parsed:
+            candidates.append(legacy)
+
+        for user_id, schedule_id in candidates:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.schedule,
+                    user_id=user_id,
+                    schedule_id=schedule_id,
+                ),
+            )
+            if raw:
+                return ScheduleRecord.model_validate_json(raw)
+        return None
+
     async def upsert_schedule(
         self,
         user_id: str,
@@ -1211,7 +1268,7 @@ class RedisStorage(StorageBase):
         await self._client.sadd(index_key, record.id)
         await self._client.sadd(
             self.key_config.schedule_global_index,
-            f"{user_id}:{record.id}",
+            self._schedule_global_token(user_id, record.id),
         )
         return record.id
 
@@ -1286,8 +1343,9 @@ class RedisStorage(StorageBase):
         index_key = self._key(self.key_config.schedule_index, user_id=user_id)
         await self._client.delete(key)
         await self._client.srem(index_key, schedule_id)
-        await self._client.srem(
+        await self._drop_index_token(
             self.key_config.schedule_global_index,
+            self._schedule_global_token(user_id, schedule_id),
             f"{user_id}:{schedule_id}",
         )
         return True
@@ -1307,16 +1365,9 @@ class RedisStorage(StorageBase):
         )
         records = []
         for entry in entries:
-            user_id, schedule_id = entry.split(":", 1)
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.schedule,
-                    user_id=user_id,
-                    schedule_id=schedule_id,
-                ),
-            )
-            if raw:
-                records.append(ScheduleRecord.model_validate_json(raw))
+            record = await self._schedule_from_index_token(entry)
+            if record is not None:
+                records.append(record)
         return records
 
     # ------------------------------------------------------------------
@@ -2219,14 +2270,98 @@ class RedisStorage(StorageBase):
             knowledge_base_id=knowledge_base_id,
         )
 
+    @staticmethod
+    def _encode_index_segment(segment: str) -> str:
+        """Escape the token separator inside one id segment."""
+        return segment.replace("%", "%25").replace(":", "%3A")
+
+    @staticmethod
+    def _decode_index_segment(segment: str) -> str:
+        """Undo :meth:`_encode_index_segment` in a single pass."""
+        return re.sub(
+            r"%(25|3A)",
+            lambda match: "%" if match.group(1) == "25" else ":",
+            segment,
+        )
+
+    async def _drop_index_token(
+        self,
+        index_key: str,
+        token: str,
+        legacy_token: str,
+    ) -> None:
+        """Drop ``token`` from ``index_key``, plus its pre-escape form.
+
+        Existing index members are never rewritten, so a record indexed
+        before segments were escaped would otherwise leave its entry
+        behind on delete.
+        """
+        await self._client.srem(index_key, token)
+        if legacy_token != token:
+            await self._client.srem(index_key, legacy_token)
+
     def _document_global_token(
         self,
         user_id: str,
         knowledge_base_id: str,
         document_id: str,
     ) -> str:
-        """Encode (user_id, kb_id, doc_id) for the global sweeper index."""
-        return f"{user_id}:{knowledge_base_id}:{document_id}"
+        """Encode (user_id, kb_id, doc_id) for the global sweeper index.
+
+        The sweeps split this token on ``:``, so each segment is escaped
+        first. ``user_id`` arrives verbatim from the ``X-User-ID``
+        header, so an id such as ``tenant:alice`` would otherwise shift
+        the segment boundaries: the sweeper would rebuild a document key
+        that does not exist and silently skip the record, leaving it
+        stuck in ``pending``/``indexing`` forever.
+        """
+        return ":".join(
+            self._encode_index_segment(part)
+            for part in (user_id, knowledge_base_id, document_id)
+        )
+
+    @classmethod
+    def _parse_document_global_token(
+        cls,
+        token: str,
+    ) -> tuple[str, str, str] | None:
+        """Recover ``(user_id, kb_id, doc_id)`` from an index token."""
+        parts = token.split(":", 2)
+        if len(parts) != 3:
+            return None
+        return (
+            cls._decode_index_segment(parts[0]),
+            cls._decode_index_segment(parts[1]),
+            cls._decode_index_segment(parts[2]),
+        )
+
+    async def _document_from_index_token(
+        self,
+        token: str,
+    ) -> KnowledgeDocumentRecord | None:
+        """Load the document an index token points at.
+
+        Falls back to the token read verbatim when the escaped form does
+        not resolve, so records indexed before segments were escaped — a
+        ``user_id`` containing a literal ``%``, say — stay reachable
+        after the upgrade.
+        """
+        parsed = self._parse_document_global_token(token)
+        if parsed is None:
+            return None
+
+        candidates = [parsed]
+        legacy = tuple(token.split(":", 2))
+        if len(legacy) == 3 and legacy != parsed:
+            candidates.append(legacy)
+
+        for user_id, kb_id, document_id in candidates:
+            raw = await self._client.get(
+                self._document_key(user_id, kb_id, document_id),
+            )
+            if raw:
+                return KnowledgeDocumentRecord.model_validate_json(raw)
+        return None
 
     async def upsert_knowledge_document(
         self,
@@ -2334,13 +2469,14 @@ class RedisStorage(StorageBase):
             self._document_index_key(user_id, knowledge_base_id),
             document_id,
         )
-        await self._client.srem(
+        await self._drop_index_token(
             self.key_config.knowledge_document_global_index,
             self._document_global_token(
                 user_id,
                 knowledge_base_id,
                 document_id,
             ),
+            f"{user_id}:{knowledge_base_id}:{document_id}",
         )
         return deleted > 0
 
@@ -2532,16 +2668,9 @@ class RedisStorage(StorageBase):
         )
         records: list[KnowledgeDocumentRecord] = []
         for token in tokens:
-            try:
-                user_id, kb_id, document_id = token.split(":", 2)
-            except ValueError:
+            record = await self._document_from_index_token(token)
+            if record is None:
                 continue
-            raw = await self._client.get(
-                self._document_key(user_id, kb_id, document_id),
-            )
-            if not raw:
-                continue
-            record = KnowledgeDocumentRecord.model_validate_json(raw)
             if record.status in terminal:
                 continue
             if record.processing_node is None:
@@ -2563,16 +2692,9 @@ class RedisStorage(StorageBase):
         )
         records: list[KnowledgeDocumentRecord] = []
         for token in tokens:
-            try:
-                user_id, kb_id, document_id = token.split(":", 2)
-            except ValueError:
+            record = await self._document_from_index_token(token)
+            if record is None:
                 continue
-            raw = await self._client.get(
-                self._document_key(user_id, kb_id, document_id),
-            )
-            if not raw:
-                continue
-            record = KnowledgeDocumentRecord.model_validate_json(raw)
             if record.status != "pending":
                 continue
             if record.created_at < threshold:
