@@ -226,6 +226,7 @@ class WavStreamPlayer {
 
 interface Session {
 	mediaType: string;
+	autoplay: boolean;
 	chunks: Bytes[];
 	totalBytes: number;
 	livePlayer: WavStreamPlayer | null;
@@ -265,12 +266,13 @@ export class StreamingAudioManager {
 		return this.sessions.get(blockId)?.state ?? null;
 	}
 
-	/** Called on DATA_BLOCK_START for an audio block. */
-	start(blockId: string, mediaType: string): void {
+	/** Track an audio block; disable autoplay when another player owns output. */
+	start(blockId: string, mediaType: string, autoplay = true): void {
 		if (this.sessions.has(blockId)) return;
-		const livePlayer = mediaType === 'audio/wav' ? new WavStreamPlayer() : null;
+		const livePlayer = autoplay && mediaType === 'audio/wav' ? new WavStreamPlayer() : null;
 		this.sessions.set(blockId, {
 			mediaType,
+			autoplay,
 			chunks: [],
 			totalBytes: 0,
 			livePlayer,
@@ -332,7 +334,7 @@ export class StreamingAudioManager {
 		};
 		this.emit(blockId);
 
-		if (!hadLivePlayback) {
+		if (session.autoplay && !hadLivePlayback) {
 			// Non-wav: no live playback path, so kick off autoplay now. Some
 			// browsers gate this behind a user gesture; if blocked, the user
 			// can still hit play on the <audio controls> element.

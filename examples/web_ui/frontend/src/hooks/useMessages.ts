@@ -419,12 +419,13 @@ export function useMessages(
 			// Route streaming audio DataBlocks to the audio manager. They still
 			// flow through `appendEvent` above (which builds up `source.data`
 			// in the Msg), but MessageBubble reads playback state from the
-			// manager so it can show progress and autoplay on completion.
-			if (audioManager && !voiceOwnsAudio) {
+			// manager so it can show progress and offer replay on completion.
+			// Voice sessions own playback, but still need this stream state.
+			if (audioManager) {
 				if (event.type === EventType.DATA_BLOCK_START) {
 					const e = event as DataBlockStartEvent;
 					if (e.media_type.startsWith('audio/')) {
-						audioManager.start(e.block_id, e.media_type);
+						audioManager.start(e.block_id, e.media_type, !voiceOwnsAudio);
 					}
 				} else if (event.type === EventType.DATA_BLOCK_DELTA) {
 					const e = event as DataBlockDeltaEvent;
