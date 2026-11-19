@@ -198,6 +198,7 @@ export function useMessages(
 		applyQueueSnapshot,
 		startItem,
 		finishItem,
+		removeUnstartedItem,
 		updateQueued,
 		deleteQueued,
 		steerQueued,
@@ -237,13 +238,13 @@ export function useMessages(
 
 	const removeUnstartedInput = useCallback(
 		(value: ChatInputTerminalValue) => {
-			const provisionalIds = finishItem(value);
-			if (provisionalIds.size) {
-				msgsRef.current = msgsRef.current.filter((msg) => !provisionalIds.has(msg.id));
+			const provisional = removeUnstartedItem(value);
+			if (provisional.size) {
+				msgsRef.current = msgsRef.current.filter((msg) => !provisional.has(msg));
 				scheduleUpdate();
 			}
 		},
-		[finishItem, scheduleUpdate],
+		[removeUnstartedItem, scheduleUpdate],
 	);
 
 	/** Apply a single AgentEvent to the in-progress reply. */
@@ -317,7 +318,8 @@ export function useMessages(
 					const value = custom.value as { items?: ChatQueueItem[] };
 					applyQueueSnapshot(value.items ?? []);
 				} else if (custom.name === 'chat_input_removed') {
-					removeUnstartedInput(custom.value as ChatInputTerminalValue);
+					const value = custom.value as ChatInputTerminalValue;
+					if (value.queue_item_id) removeUnstartedInput(value);
 				} else if (custom.name === 'chat_input_failed') {
 					const value = custom.value as ChatInputTerminalValue;
 					setStartingInputId((id) => (id === value.queue_item_id ? null : id));
@@ -655,9 +657,15 @@ export function useMessages(
 				);
 				if (observer?.signal?.aborted || (observer?.isCurrent && !observer.isCurrent()))
 					return;
-				observer?.accepted(response.queue_item_id);
-				if (activeSessionRef.current !== session) return;
-				acceptOptimistic(optimisticId, response.queue_item_id);
+				const queueId = response.queue_item_id;
+				if (
+					activeSessionRef.current === session &&
+					queueId &&
+					acceptOptimistic(userMsg.id, queueId)
+				) {
+					removeUnstartedInput({ queue_item_id: queueId, message_ids: [userMsg.id] });
+				}
+				observer?.accepted(queueId);
 			} catch (e) {
 				// SSE may already have committed this input and its reply.
 				if (

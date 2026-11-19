@@ -20,6 +20,13 @@ export interface ChatInputTerminalValue {
 	message?: string;
 }
 
+interface LocalChatInput {
+	message: Msg;
+	optimisticId: string;
+	queueId: string | null;
+	removedIds: Set<string>;
+}
+
 /** Return every message carried by queue items in FIFO order. */
 export const getQueueMessages = (items: ChatQueueItem[]): Msg[] =>
 	items.flatMap((item) => (Array.isArray(item.input) ? item.input : [item.input]));
@@ -39,6 +46,8 @@ export function useChatQueue(
 	const [conversationMessageIds, setConversationMessageIds] = useState<Set<string>>(new Set());
 	const itemsRef = useRef<ChatQueueItem[]>([]);
 	const conversationMessageIdsRef = useRef<Set<string>>(new Set());
+	// Keep receipt identity even when a queue snapshot omits the local row.
+	const localInputs = useRef(new Map<string, LocalChatInput>());
 	const snapshotVersionRef = useRef(0);
 	const refreshSequenceRef = useRef(0);
 	// Object identity distinguishes A -> B -> A from the original A visit.
@@ -66,6 +75,7 @@ export function useChatQueue(
 	}, []);
 
 	const reset = useCallback(() => {
+		localInputs.current.clear();
 		updateItems([]);
 		updateConversationMessageIds((ids) => ids.clear());
 	}, [updateConversationMessageIds, updateItems]);
@@ -143,6 +153,12 @@ export function useChatQueue(
 	const addOptimistic = useCallback(
 		(message: Msg, shownInConversation: boolean): string => {
 			const optimisticId = `${OPTIMISTIC_ITEM_PREFIX}${crypto.randomUUID()}`;
+			localInputs.current.set(message.id, {
+				message,
+				optimisticId,
+				queueId: null,
+				removedIds: new Set(),
+			});
 			if (shownInConversation) {
 				updateConversationMessageIds((ids) => ids.add(message.id));
 			}
@@ -162,19 +178,27 @@ export function useChatQueue(
 	);
 
 	const acceptOptimistic = useCallback(
-		(optimisticId: string, queueItemId: string | null) => {
-			if (!queueItemId) return;
+		(messageId: string, queueItemId: string) => {
+			const local = localInputs.current.get(messageId);
+			if (!local) return false;
+			local.queueId = queueItemId;
+			const removed = local.removedIds.has(queueItemId);
+			local.removedIds.clear();
+			if (removed) return true;
+			const { optimisticId } = local;
 			updateItems(
 				itemsRef.current.map((item) =>
 					item.id === optimisticId ? { ...item, id: queueItemId } : item,
 				),
 			);
+			return false;
 		},
 		[updateItems],
 	);
 
 	const rollbackOptimistic = useCallback(
 		(optimisticId: string, messageId: string) => {
+			localInputs.current.delete(messageId);
 			updateItems(itemsRef.current.filter((item) => item.id !== optimisticId));
 			updateConversationMessageIds((ids) => ids.delete(messageId));
 		},
@@ -186,7 +210,10 @@ export function useChatQueue(
 		(value: ChatInputStartedValue): ChatQueueItem | undefined => {
 			const startedIds = new Set(value.message_ids ?? []);
 			updateConversationMessageIds((ids) => {
-				for (const messageId of startedIds) ids.delete(messageId);
+				for (const messageId of startedIds) {
+					localInputs.current.delete(messageId);
+					ids.delete(messageId);
+				}
 			});
 			const localItem = itemsRef.current.find(
 				(item) =>
@@ -222,13 +249,42 @@ export function useChatQueue(
 						),
 				),
 			);
-			const provisionalIds = new Set<string>();
 			updateConversationMessageIds((ids) => {
 				for (const id of terminalIds) {
-					if (ids.delete(id)) provisionalIds.add(id);
+					localInputs.current.delete(id);
+					ids.delete(id);
 				}
 			});
-			return provisionalIds;
+		},
+		[updateConversationMessageIds, updateItems],
+	);
+
+	/** A local cancellation receipt can also confirm removal before the POST returns. */
+	const removeUnstartedItem = useCallback(
+		({ queue_item_id: queueId, message_ids = [] }: ChatInputTerminalValue) => {
+			const removedRows = new Set(queueId ? [queueId] : []);
+			const provisionalMessages = new Set<Msg>();
+			for (const id of message_ids) {
+				const local = localInputs.current.get(id);
+				if (!local) continue;
+				if (queueId && queueId !== local.queueId) {
+					if (!local.queueId) local.removedIds.add(queueId);
+					continue;
+				}
+				localInputs.current.delete(id);
+				removedRows.add(local.optimisticId);
+				if (local.queueId) removedRows.add(local.queueId);
+				if (conversationMessageIdsRef.current.has(id)) {
+					provisionalMessages.add(local.message);
+				}
+			}
+			updateItems(itemsRef.current.filter((item) => !removedRows.has(item.id)));
+			if (provisionalMessages.size) {
+				updateConversationMessageIds((ids) => {
+					for (const msg of provisionalMessages) ids.delete(msg.id);
+				});
+			}
+			return provisionalMessages;
 		},
 		[updateConversationMessageIds, updateItems],
 	);
@@ -419,6 +475,7 @@ export function useChatQueue(
 		applyQueueSnapshot,
 		startItem,
 		finishItem,
+		removeUnstartedItem,
 		updateQueued,
 		deleteQueued,
 		steerQueued,

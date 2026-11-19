@@ -989,33 +989,58 @@ async def stream_session_events(
             """Compare Redis and in-memory stream IDs numerically."""
             return tuple(map(int, value.split("-")))
 
-        async def replay(
-            through: str | None = None,
-        ) -> AsyncGenerator[str, None]:
-            """Catch up in log order and retain later entries for reuse."""
+        async def deliver(item: dict) -> AsyncGenerator[str, None]:
+            """Fill log gaps through this notification, then deliver it."""
             nonlocal cursor
-            emitted = 0
-            while through is not None or emitted < (
-                MessageBusKeys.SESSION_REPLAY_MAX_LEN
-            ):
-                if not buffered:
-                    buffered.extend(
-                        await message_bus.log_read(events_key, since=cursor),
-                    )
-                if not buffered:
+            entry_id = item.get("_entry_id")
+            if entry_id is not None:
+                target = stream_id(entry_id)
+                if cursor and target <= stream_id(cursor):
                     return
-                entry_id, payload = buffered[0]
-                if through is not None and stream_id(entry_id) > stream_id(
-                    through,
-                ):
-                    return
-                buffered.popleft()
+                while True:
+                    if not buffered:
+                        buffered.extend(
+                            await message_bus.log_read(
+                                events_key,
+                                since=cursor,
+                            ),
+                        )
+                    if not buffered or stream_id(buffered[0][0]) > target:
+                        break
+                    cursor, payload = buffered.popleft()
+                    data = json.dumps(payload, ensure_ascii=False)
+                    yield f"data: {data}\n\n"
+                    if cursor == entry_id:
+                        return
+                # A checkpoint may already have trimmed this live payload.
                 cursor = entry_id
-                emitted += 1
-                data = json.dumps(payload, ensure_ascii=False)
-                yield f"data: {data}\n\n"
-                if entry_id == through:
-                    return
+            payload = {k: v for k, v in item.items() if k != "_entry_id"}
+            data = json.dumps(payload, ensure_ascii=False)
+            yield f"data: {data}\n\n"
+
+        async def replay_snapshot() -> AsyncGenerator[str, None]:
+            """Merge a fixed log snapshot with pending live notifications."""
+            buffered.extend(
+                await message_bus.log_read(
+                    events_key,
+                    since=buffered[-1][0] if buffered else cursor,
+                    max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
+                ),
+            )
+            if not buffered:
+                return
+            last_id, last_event = buffered[-1]
+            # A live event older than the snapshot tail may only exist in
+            # this queue after a checkpoint. Process it before the tail.
+            for _ in range(queue.qsize()):
+                item = queue.get_nowait()
+                if item is None:
+                    queue.put_nowait(None)
+                    break
+                async for frame in deliver(item):
+                    yield frame
+            async for frame in deliver({**last_event, "_entry_id": last_id}):
+                yield frame
 
         async def _feeder() -> None:
             """Read from the bus subscription and forward to the queue.
@@ -1046,7 +1071,7 @@ async def stream_session_events(
                 ready.wait(),
                 timeout=_SUBSCRIBE_TIMEOUT_SECS,
             )
-            async for frame in replay():
+            async for frame in replay_snapshot():
                 yield frame
 
             # Inject pending subagent HITL cards projected onto this
@@ -1096,32 +1121,15 @@ async def stream_session_events(
                     except asyncio.TimeoutError:
                         continue
                 else:
-                    async for frame in replay():
+                    async for frame in replay_snapshot():
                         yield frame
                     next_check = loop.time() + _HEARTBEAT_INTERVAL_SECS
                     yield ":\n\n"
                     continue
                 if item is None:
                     break
-                entry_id = item.get("_entry_id")
-                if entry_id is not None:
-                    entry_id = str(entry_id)
-                    if cursor and stream_id(entry_id) <= stream_id(cursor):
-                        continue
-                    async for frame in replay(through=entry_id):
-                        yield frame
-                    if cursor == entry_id:
-                        continue
-                    # A checkpoint can trim a queued live frame before
-                    # this subscriber consumes it.
-                    cursor = entry_id
-                payload = {
-                    key: value
-                    for key, value in item.items()
-                    if key != "_entry_id"
-                }
-                data = json.dumps(payload, ensure_ascii=False)
-                yield f"data: {data}\n\n"
+                async for frame in deliver(item):
+                    yield frame
         finally:
             feeder_task.cancel()
             try:

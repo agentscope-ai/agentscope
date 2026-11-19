@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from agentscope.app._bus_ops import publish_session_event
 from agentscope.app._router._session import stream_session_events
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 
 
 class _Storage:
@@ -79,6 +79,80 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
             [first, second, third],
             [{"sequence": 1}, {"sequence": 2}, {"sequence": 3}],
         )
+
+    async def test_checkpoint_during_replay_keeps_live_delta(self) -> None:
+        """A trimmed live delta precedes the retained end exactly once."""
+        bus = InMemoryMessageBus()
+        start = {"type": "REPLY_START", "reply_id": "r"}
+        delta = {
+            "type": "TEXT_BLOCK_DELTA",
+            "reply_id": "r",
+            "block_id": "b",
+            "delta": "hello",
+        }
+        end = {"type": "REPLY_END", "reply_id": "r"}
+        await publish_session_event(bus, "s", start)
+        response = await stream_session_events(
+            session_id="s",
+            agent_id="a",
+            user_id="u",
+            storage=_Storage(),  # type: ignore[arg-type]
+            message_bus=bus,
+            after=None,
+        )
+        async with aclosing(response.body_iterator) as stream:
+            frames = [_decode(await anext(stream))]
+            await publish_session_event(bus, "s", delta)
+            cursor = await publish_session_event(bus, "s", end)
+            await bus.log_trim(
+                MessageBusKeys.session_events("s"),
+                before_id=cursor,
+            )
+            sentinel = {"sequence": "next"}
+            await publish_session_event(bus, "s", sentinel)
+            while frames[-1] != sentinel:
+                frame = await asyncio.wait_for(anext(stream), 1)
+                frames.append(_decode(frame))
+        self.assertEqual(frames, [start, delta, end, sentinel])
+
+    async def test_live_frames_received_during_snapshot_read(self) -> None:
+        """Merge a queued frame that was trimmed before the read returned."""
+        bus = InMemoryMessageBus()
+        reading = asyncio.Event()
+        release = asyncio.Event()
+        log_read = bus.log_read
+
+        async def delayed_read(
+            key: str,
+            since: str | None = None,
+            max_count: int = 100,
+        ) -> list[tuple[str, dict]]:
+            reading.set()
+            await release.wait()
+            return await log_read(key, since=since, max_count=max_count)
+
+        response = await stream_session_events(
+            session_id="s",
+            agent_id="a",
+            user_id="u",
+            storage=_Storage(),  # type: ignore[arg-type]
+            message_bus=bus,
+            after=None,
+        )
+        async with aclosing(response.body_iterator) as stream:
+            with patch.object(bus, "log_read", side_effect=delayed_read):
+                first = asyncio.create_task(anext(stream))
+                await asyncio.wait_for(reading.wait(), 1)
+                await publish_session_event(bus, "s", {"sequence": 1})
+                tail = await publish_session_event(bus, "s", {"sequence": 2})
+                await bus.log_trim(MessageBusKeys.session_events("s"), tail)
+                release.set()
+                frames = [_decode(await asyncio.wait_for(first, 1))]
+            await publish_session_event(bus, "s", {"sequence": 3})
+            for _ in range(2):
+                frame = await asyncio.wait_for(anext(stream), 1)
+                frames.append(_decode(frame))
+        self.assertEqual(frames, [{"sequence": n} for n in (1, 2, 3)])
 
     async def test_connected_client_recovers_failed_live_delivery(
         self,

@@ -87,6 +87,7 @@ export class PipelineVoiceSession {
 	private submissionPending = false;
 	private submissionAttempt: { controller: AbortController; terminal: boolean } | null = null;
 	private queueId: string | null = null;
+	private removedBeforeAcceptance = new Set<string>();
 	private inputStarted = false;
 	private clearPendingInput: ((beforeClaim: boolean) => void) | null = null;
 	private cancelledReply: Promise<string | null> | null = null;
@@ -286,6 +287,17 @@ export class PipelineVoiceSession {
 				reply_id?: string;
 				queue_item_id?: string;
 			};
+			if (custom.name === 'chat_input_removed') {
+				if (
+					this.userMessageId &&
+					value.message_ids?.includes(this.userMessageId) &&
+					value.queue_item_id
+				) {
+					if (this.queueId === value.queue_item_id) this.onInputRemoved();
+					else if (!this.queueId) this.removedBeforeAcceptance.add(value.queue_item_id);
+				}
+				return handled;
+			}
 			if (this.stopped && (!this.queueId || value.queue_item_id !== this.queueId))
 				return handled;
 			if (
@@ -306,14 +318,12 @@ export class PipelineVoiceSession {
 					false,
 				);
 			if (
-				['chat_input_failed', 'chat_input_cancelled', 'chat_input_removed'].includes(
-					custom.name,
-				) &&
+				['chat_input_failed', 'chat_input_cancelled'].includes(custom.name) &&
 				(!this.queueId || !value.queue_item_id || this.queueId === value.queue_item_id) &&
 				this.userMessageId &&
 				value.message_ids?.includes(this.userMessageId)
 			) {
-				this.finishCancellation(custom.name === 'chat_input_removed');
+				this.finishCancellation();
 				this.fail(new Error('The voice turn could not be completed.'));
 			}
 			return handled;
@@ -465,7 +475,10 @@ export class PipelineVoiceSession {
 					this.finishCancellation();
 					return;
 				}
-				if (!this.queueId) this.queueId = result.queue_item_id;
+				if (!this.queueId && result.queue_item_id) {
+					this.bindQueueItem(result.queue_item_id);
+				}
+				if (!this.cancellationPending) return;
 			}
 			if (this.userMessageId && this.submissionId) {
 				const result = await this.options.inputResult(
@@ -539,6 +552,19 @@ export class PipelineVoiceSession {
 		this.resolveCancelledReply?.(replyId);
 	}
 
+	private bindQueueItem(queueId: string): void {
+		this.queueId = queueId;
+		const removed = this.removedBeforeAcceptance.has(queueId);
+		this.removedBeforeAcceptance.clear();
+		if (removed) this.onInputRemoved();
+	}
+
+	private onInputRemoved(): void {
+		if (this.inputFinished) return;
+		this.finishCancellation(true);
+		this.fail(new Error('The voice turn could not be completed.'));
+	}
+
 	private finishCancellation(beforeClaim = false): void {
 		this.resolveCancelledReply?.(this.replyId);
 		this.clearPendingInput?.(beforeClaim);
@@ -561,6 +587,7 @@ export class PipelineVoiceSession {
 		this.clearPendingInput = null;
 		this.submissionId = null;
 		this.queueId = null;
+		this.removedBeforeAcceptance.clear();
 		this.inputStarted = false;
 		this.inputFinished = false;
 		this.replyEnded = false;
@@ -673,7 +700,7 @@ export class PipelineVoiceSession {
 							accepted: (id) => {
 								if (this.submissionAttempt !== attempt || signal.aborted) return;
 								accepted = true;
-								this.queueId = id;
+								if (id) this.bindQueueItem(id);
 								if (this.stopped && this.cancelOnStop) this.continueCancellation();
 							},
 						},
