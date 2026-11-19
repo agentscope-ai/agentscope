@@ -4,6 +4,7 @@
 import inspect
 import os
 from abc import abstractmethod, ABC
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import AsyncGenerator, Any, Callable, List, TYPE_CHECKING
 
@@ -221,6 +222,8 @@ class ToolBase(ABC):
                 return self.call(**kwargs)
             return await self.call(**kwargs)
 
+        streams = AsyncExitStack()
+
         async def execute_chain(
             index: int = 0,
             **chain_kwargs: Any,
@@ -234,33 +237,44 @@ class ToolBase(ABC):
                 # Normalize both into a single stream so middlewares never have
                 # to distinguish them.
                 if inspect.isasyncgenfunction(self.call):
-                    async for chunk in self.call(**chain_kwargs):
-                        yield chunk
+                    result = self.call(**chain_kwargs)
                 else:
                     result = await self.call(**chain_kwargs)
-                    if isinstance(result, AsyncGenerator):
-                        async for chunk in result:
-                            yield chunk
-                    else:
-                        yield result
+                if isinstance(result, AsyncGenerator):
+                    streams.push_async_callback(result.aclose)
+                    async for chunk in result:
+                        yield chunk
+                else:
+                    yield result
             else:
                 mw = middlewares[index]
                 input_kwargs = dict(chain_kwargs)
 
-                async def next_handler(
+                def next_handler(
                     **kw: Any,
                 ) -> AsyncGenerator[ToolChunk, None]:
-                    async for chunk in execute_chain(index + 1, **kw):
-                        yield chunk
+                    stream = execute_chain(index + 1, **kw)
+                    streams.push_async_callback(stream.aclose)
+                    return stream
 
-                async for chunk in mw.on_tool_call(
+                stream = mw.on_tool_call(
                     tool=self,
                     input_kwargs=input_kwargs,
                     next_handler=next_handler,
-                ):
+                )
+                streams.push_async_callback(stream.aclose)
+                async for chunk in stream:
                     yield chunk
 
-        return execute_chain(**kwargs)
+        async def _stream() -> AsyncGenerator[ToolChunk, None]:
+            # Own forwarded streams even when middleware only iterates them.
+            async with streams:
+                stream = execute_chain(**kwargs)
+                streams.push_async_callback(stream.aclose)
+                async for chunk in stream:
+                    yield chunk
+
+        return _stream()
 
     @abstractmethod
     async def check_permissions(
