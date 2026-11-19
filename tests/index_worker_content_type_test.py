@@ -333,17 +333,21 @@ class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
         ):
             with self.subTest(status=expected["statuses"][-1]):
                 storage = _Storage("application/pdf", filename="lesson.pdf")
-                storage.acquire_knowledge_document_lease = AsyncMock(
-                    return_value=True,
-                )
-                storage.release_knowledge_document_lease = AsyncMock()
                 storage.update_knowledge_document_status = AsyncMock(
                     wraps=storage.update_knowledge_document_status,
                 )
                 worker, manager = _worker(storage, [PDFParser()])
                 worker.blob_content = payload
 
-                await worker.process("user-1", "kb-1", "doc-1")
+                with patch.multiple(
+                    storage,
+                    acquire_knowledge_document_lease=AsyncMock(
+                        return_value=True,
+                    ),
+                    release_knowledge_document_lease=AsyncMock(),
+                    create=True,
+                ):
+                    await worker.process("user-1", "kb-1", "doc-1")
 
                 self.assertEqual(
                     {
