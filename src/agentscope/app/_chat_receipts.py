@@ -152,6 +152,9 @@ async def reap_receipts(
                 MessageBusKeys.CHAT_RECEIPT_QUERY_TIMEOUT_SECS,
             ):
                 message_ids = record.get("message_ids") or [None]
+                if record.get("reply_id"):
+                    # All inputs in this submission share one bound reply.
+                    message_ids = message_ids[:1]
                 results = [
                     await input_result(
                         user_id,

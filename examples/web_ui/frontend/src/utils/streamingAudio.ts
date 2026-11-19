@@ -307,9 +307,14 @@ export class StreamingAudioManager {
 	 * after the whole model stream (text included) finishes — make the
 	 * user perceive audio as starting only after text streaming completes.
 	 */
-	end(blockId: string): void {
+	async end(blockId: string, playbackDone?: Promise<void>): Promise<void> {
 		const session = this.sessions.get(blockId);
 		if (!session) return;
+		if (playbackDone) {
+			await playbackDone;
+			if (this.sessions.get(blockId) !== session) return;
+		}
+		if (session.state.status === 'ready') return;
 
 		const hadLivePlayback = session.hadLivePlayer;
 		if (session.livePlayer) {

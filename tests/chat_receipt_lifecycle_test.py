@@ -702,12 +702,13 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     queue._chat_service.run = AsyncMock(
                         side_effect=bind_reply,
                     )
+                    inputs = [UserMsg("u", text) for text in ("a", "b", "c")]
                     await enqueue_chat_input(
                         bus,
                         "u",
                         "s",
                         "a",
-                        UserMsg("u", "voice"),
+                        inputs,
                         submission_id=sid,
                     )
                     self.now = 10000
@@ -724,7 +725,16 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                         "state": "finished",
                         "reply_id": "R",
                     }
+                    lookup = queue._chat_service.input_result
+                    lookup.reset_mock()
                     await queue._recover_pending_chat_inputs_locked()
+                    lookup.assert_awaited_once_with(
+                        "u",
+                        "s",
+                        "a",
+                        inputs[0].id,
+                        submission_id=sid,
+                    )
                     record["retire_at"] = 13600
                     self.assertEqual(
                         json.loads(await bus.registry_get(key, sid)),

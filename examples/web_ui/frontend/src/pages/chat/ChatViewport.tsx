@@ -337,7 +337,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 			// Keep mode switching available when browser storage is unavailable.
 		}
 	}, [voiceMode]);
-	const pipelineEventsRef = useRef<(event: AgentEvent) => boolean>(() => false);
+	const pipelineEventsRef = useRef<(event: AgentEvent) => boolean | Promise<void>>(() => false);
 	const pipelineStopRef = useRef<() => void>(() => undefined);
 	const {
 		msgs,

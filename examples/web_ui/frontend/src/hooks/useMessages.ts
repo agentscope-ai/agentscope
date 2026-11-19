@@ -108,8 +108,8 @@ export function useMessages(
 	agentId: string | null,
 	sessionId: string | null,
 	options?: {
-		/** Observe events; return true when this consumer owns audio playback. */
-		onVoiceEvent?: (event: AgentEvent) => boolean;
+		/** Return ownership, or the remaining playback on DATA_BLOCK_END. */
+		onVoiceEvent?: (event: AgentEvent) => boolean | Promise<void>;
 		onStreamClosed?: () => void;
 		/**
 		 * Called when a ``CUSTOM`` event with ``name="team_updated"``
@@ -234,7 +234,7 @@ export function useMessages(
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
 		(event: AgentEvent) => {
-			const voiceOwnsAudio = optionsRef.current?.onVoiceEvent?.(event) ?? false;
+			const voicePlayback = optionsRef.current?.onVoiceEvent?.(event) ?? false;
 			// Custom events are service-layer notifications, not agent
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
@@ -425,7 +425,7 @@ export function useMessages(
 				if (event.type === EventType.DATA_BLOCK_START) {
 					const e = event as DataBlockStartEvent;
 					if (e.media_type.startsWith('audio/')) {
-						audioManager.start(e.block_id, e.media_type, !voiceOwnsAudio);
+						audioManager.start(e.block_id, e.media_type, !voicePlayback);
 					}
 				} else if (event.type === EventType.DATA_BLOCK_DELTA) {
 					const e = event as DataBlockDeltaEvent;
@@ -436,7 +436,10 @@ export function useMessages(
 					const e = event as DataBlockEndEvent;
 					// `end` is a no-op when the block isn't being tracked, so
 					// we can call it unconditionally.
-					audioManager.end(e.block_id);
+					void audioManager.end(
+						e.block_id,
+						typeof voicePlayback === 'boolean' ? undefined : voicePlayback,
+					);
 				}
 			}
 

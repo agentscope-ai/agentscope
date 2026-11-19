@@ -5,7 +5,8 @@ interface AudioBlock {
 	mediaType: string;
 	bytes: Uint8Array<ArrayBuffer>;
 	header: ReturnType<typeof parseWavHeader>;
-	ended: boolean;
+	playbackDone?: Promise<void>;
+	finishPlayback?: () => void;
 	decoding: boolean;
 }
 
@@ -48,7 +49,6 @@ export class PipelineAudioPlayer {
 			mediaType,
 			bytes: new Uint8Array(),
 			header: null,
-			ended: false,
 			decoding: false,
 		});
 		this.onChange(true);
@@ -56,7 +56,7 @@ export class PipelineAudioPlayer {
 
 	append(id: string, data: string): void {
 		const block = this.blocks.find((item) => item.id === id);
-		if (!block || block.ended) return;
+		if (!block || block.playbackDone) return;
 		try {
 			const decoded = atob(data);
 			const bytes = new Uint8Array(block.bytes.length + decoded.length);
@@ -70,22 +70,27 @@ export class PipelineAudioPlayer {
 		}
 	}
 
-	end(id: string): void {
+	/** Resolve after this block's last source ends or playback is stopped. */
+	end(id: string): Promise<void> | undefined {
 		const block = this.blocks.find((item) => item.id === id);
 		if (!block) return;
-		block.ended = true;
+		block.playbackDone ??= new Promise<void>((resolve) => {
+			block.finishPlayback = resolve;
+		});
 		this.pump();
+		return block.playbackDone;
 	}
 
 	stop(): void {
 		this.generation++;
-		this.blocks = [];
 		for (const source of this.sources) {
 			source.onended = null;
 			source.stop();
 			source.disconnect();
 		}
 		this.sources.clear();
+		for (const block of this.blocks) block.finishPlayback?.();
+		this.blocks = [];
 		this.nextTime = 0;
 		this.onChange(false);
 	}
@@ -114,7 +119,7 @@ export class PipelineAudioPlayer {
 				if (!block.header) {
 					block.header = parseWavHeader(block.bytes);
 					if (!block.header) {
-						if (block.ended) throw new Error('Invalid WAV audio.');
+						if (block.playbackDone) throw new Error('Invalid WAV audio.');
 						return;
 					}
 					if (![8, 16].includes(block.header.bitsPerSample))
@@ -132,7 +137,7 @@ export class PipelineAudioPlayer {
 					block.bytes = block.bytes.slice(count);
 					if (buffer) this.play(buffer);
 				}
-			} else if (block.ended && block.bytes.length) {
+			} else if (block.playbackDone && block.bytes.length) {
 				block.decoding = true;
 				const generation = this.generation;
 				void this.context
@@ -148,8 +153,9 @@ export class PipelineAudioPlayer {
 					});
 				return;
 			}
-			if (block.ended && this.sources.size === 0) {
+			if (block.playbackDone && this.sources.size === 0) {
 				this.blocks.shift();
+				block.finishPlayback?.();
 				this.onChange(this.busy);
 				this.pump();
 			}

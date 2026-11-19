@@ -251,7 +251,7 @@ export class PipelineVoiceSession {
 	}
 
 	/** Return true for audio owned by this session, including cancelled replies. */
-	onEvent(event: AgentEvent): boolean {
+	onEvent(event: AgentEvent): boolean | Promise<void> {
 		const handled =
 			!this.stopped ||
 			('reply_id' in event && this.options.suppressedReplies.has(event.reply_id));
@@ -323,8 +323,7 @@ export class PipelineVoiceSession {
 					this.player.append(event.block_id, event.data);
 				break;
 			case EventType.DATA_BLOCK_END:
-				this.player.end(event.block_id);
-				break;
+				return this.player.end(event.block_id) ?? handled;
 			case EventType.REQUIRE_USER_CONFIRM:
 			case EventType.REQUIRE_EXTERNAL_EXECUTION:
 				this.waitingForConfirmation = true;
