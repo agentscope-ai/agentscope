@@ -916,6 +916,20 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             omitted.config.pipeline_voice_config.model_dump(mode="json"),
             voice,
         )
+        profile = self._configure_voice_profile()
+        profile.data.voice = "recloned"
+        bound = self.session.config.pipeline_voice_config.model_dump()
+        asr = {**bound["asr_model_config"], "model": "new-asr"}
+        changes = {"asr_model_config": asr, "chat_model_config": None}
+        saved = await update({"pipeline_voice_config": changes})
+        self.assertEqual(
+            saved.config.pipeline_voice_config.model_dump(),
+            {**bound, **changes},
+        )
+        with self.assertRaises(HTTPException) as stale:
+            edit = {"tts_model_config": bound["tts_model_config"]}
+            await update({"pipeline_voice_config": edit})
+        self.assertEqual(stale.exception.status_code, 400)
         cleared = await update({"pipeline_voice_config": None})
         self.assertEqual(
             {

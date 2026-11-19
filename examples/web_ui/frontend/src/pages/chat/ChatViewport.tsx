@@ -24,6 +24,7 @@ import type {
 	PermissionMode,
 	PipelineVoiceConfig,
 	RealtimeModelConfig,
+	SessionRecord,
 	SessionKnowledgeConfig,
 	TTSModelConfig,
 	UpdateSessionRequest,
@@ -81,6 +82,8 @@ import { useMessages } from '@/hooks/useMessages';
 import { usePipelineVoice } from '@/hooks/usePipelineVoice';
 import { useRealtimeVoice } from '@/hooks/useRealtimeVoice';
 import { useSessions } from '@/hooks/useSessions';
+import { useVoiceEngines } from '@/hooks/useVoiceEngines';
+import { useVoiceProfiles } from '@/hooks/useVoiceProfiles';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
@@ -449,12 +452,12 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	 * @param apply - Mirrors the change into local state on success.
 	 */
 	const patchConfig = useCallback(
-		async (body: UpdateSessionRequest, apply: () => void) => {
+		async (body: UpdateSessionRequest, apply: (session: SessionRecord) => void) => {
 			if (!sessionId || !agentId) return;
 			setConfigPending(true);
 			try {
-				await sessionApi.update(sessionId, agentId, body);
-				apply();
+				const session = await sessionApi.update(sessionId, agentId, body);
+				apply(session);
 				await refetchSessions();
 			} catch {
 				// Toast already shown; local state deliberately untouched.
@@ -757,9 +760,24 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 			pipelineASRCard.input_types.some((type) =>
 				['audio/wav', 'audio/x-wav', 'audio/*'].includes(type),
 			));
-	const pipelineUnsupportedPCM = pipelineTTS?.parameters?.response_format === 'pcm';
+	const storedPCM = pipelineTTS?.parameters?.response_format === 'pcm';
+	const checkProfile = storedPCM && !!pipelineTTS.voice_profile_id;
+	const { profiles, loading: profilesLoading } = useVoiceProfiles(checkProfile);
+	const { engineDetails, loading: enginesLoading } = useVoiceEngines(checkProfile);
+	const profile = profiles.find((item) => item.id === pipelineTTS?.voice_profile_id)?.data;
+	// A change of model or provider discards the saved format during server resolution.
+	const pipelineUnsupportedPCM =
+		storedPCM &&
+		(!pipelineTTS.voice_profile_id ||
+			(profile?.model === pipelineTTS.model &&
+				engineDetails.some(
+					(engine) =>
+						engine.name === profile.engine &&
+						engine.credential_type === pipelineTTS.type,
+				)));
 	const pipelineCanStart =
 		pipelineConfigured &&
+		!(checkProfile && (profilesLoading || enginesLoading)) &&
 		!pipelineUnsupportedPCM &&
 		streamConnected &&
 		!messagesLoading &&
@@ -952,13 +970,9 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 
 	/** Update pipeline speech settings without changing ordinary chat. */
 	const handlePipelineChange = async (patch: Partial<PipelineVoiceConfig>) => {
-		const config = {
-			asr_model_config: pipelineASR,
-			chat_model_config: pipelineConfig?.chat_model_config ?? null,
-			tts_model_config: pipelineTTS,
-			...patch,
-		};
-		await patchConfig({ pipeline_voice_config: config }, () => setPipelineConfig(config));
+		await patchConfig({ pipeline_voice_config: patch }, (session) =>
+			setPipelineConfig(session.config.pipeline_voice_config ?? null),
+		);
 	};
 
 	/** Persist the model used by browser realtime voice mode. */

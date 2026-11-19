@@ -250,7 +250,7 @@ export interface UpdateSessionRequest {
 	tts_model_config?: TTSModelConfig | null;
 	/** New ASR model, or null to disable speech input. */
 	asr_model_config?: ASRModelConfig | null;
-	pipeline_voice_config?: PipelineVoiceConfig | null;
+	pipeline_voice_config?: Partial<PipelineVoiceConfig> | null;
 	/** New realtime voice model, or null to disable voice mode. */
 	realtime_model_config?: RealtimeModelConfig | null;
 	/**

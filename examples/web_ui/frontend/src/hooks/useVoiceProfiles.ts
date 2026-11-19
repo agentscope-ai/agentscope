@@ -4,10 +4,11 @@ import { voiceProfileApi } from '@/api';
 
 export const VOICE_PROFILES_KEY = ['voice-profiles'];
 
-export function useVoiceProfiles() {
+export function useVoiceProfiles(enabled = true) {
 	const { data, isPending, refetch } = useQuery({
 		queryKey: VOICE_PROFILES_KEY,
 		queryFn: () => voiceProfileApi.list(),
+		enabled,
 	});
 
 	return { profiles: data?.profiles ?? [], loading: isPending, refetch };

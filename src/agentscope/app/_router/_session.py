@@ -658,6 +658,12 @@ async def update_session(
         exclude_unset=True,
         exclude={"permission_mode"},
     )
+    current_voice = existing.config.pipeline_voice_config
+    if body.pipeline_voice_config is not None and current_voice is not None:
+        config_updates["pipeline_voice_config"] = {
+            **current_voice.model_dump(),
+            **config_updates["pipeline_voice_config"],
+        }
 
     # An explicit rename settles the name for good — auto-naming must
     # not overwrite what the user just typed.

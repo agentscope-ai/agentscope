@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 
 import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
+import type { ApiScope } from '@/api/client';
 import { useAudioManager } from '@/context/AudioContext';
 import {
 	getQueueMessages,
@@ -582,6 +583,7 @@ export function useMessages(
 		async (
 			content: ContentBlock[],
 			observer?: {
+				scope: ApiScope;
 				submissionId?: string;
 				signal?: AbortSignal;
 				isCurrent?: () => boolean;
@@ -610,7 +612,7 @@ export function useMessages(
 						mode,
 						submission_id: observer?.submissionId,
 					},
-					{ signal: observer?.signal, silent: !!observer },
+					{ ...observer?.scope, signal: observer?.signal, silent: !!observer },
 				);
 				if (observer?.signal?.aborted || (observer?.isCurrent && !observer.isCurrent()))
 					return;

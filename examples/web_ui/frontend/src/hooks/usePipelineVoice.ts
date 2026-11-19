@@ -110,6 +110,7 @@ export function usePipelineVoice(options: Options) {
 		try {
 			const { agentId, sessionId } = current;
 			const session = new PipelineVoiceSession({
+				scope: requestScope,
 				asr: current.asr,
 				realtimeASR: current.realtimeASR,
 				suppressedReplies: suppressedRef.current,

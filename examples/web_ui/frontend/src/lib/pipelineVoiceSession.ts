@@ -9,7 +9,7 @@ import type { ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { MicVAD } from '@ricky0123/vad-web';
 
 import { asrApi } from '@/api/asr';
-import { ApiError } from '@/api/client';
+import { ApiError, type ApiScope } from '@/api/client';
 import type { InputResult } from '@/api/session';
 import type { ASRModelConfig } from '@/api/types';
 import { BrowserRealtimeASRTransport } from '@/lib/browserRealtimeASRTransport';
@@ -27,12 +27,14 @@ export type PipelineVoiceState =
 	| 'error';
 
 export interface PipelineVoiceOptions {
+	scope: ApiScope;
 	asr: ASRModelConfig;
 	realtimeASR: boolean;
 	suppressedReplies: Set<string>;
 	send: (
 		blocks: ContentBlock[],
 		observer: {
+			scope: ApiScope;
 			submissionId: string;
 			signal: AbortSignal;
 			isCurrent: () => boolean;
@@ -532,6 +534,7 @@ export class PipelineVoiceSession {
 		if (this.options.realtimeASR) {
 			const config = this.options.asr;
 			this.asr = new BrowserRealtimeASRTransport({
+				scope: this.options.scope,
 				config: {
 					credentialId: config.credential_id,
 					model: config.model,
@@ -570,6 +573,7 @@ export class PipelineVoiceSession {
 				const { utils } = await import('@ricky0123/vad-web');
 				const config = this.options.asr;
 				const result = await asrApi.transcribe({
+					scope: this.options.scope,
 					file: new File([utils.encodeWAV(audio, 1, 16000, 1, 16)], 'speech.wav', {
 						type: 'audio/wav',
 					}),
@@ -617,6 +621,7 @@ export class PipelineVoiceSession {
 						],
 						{
 							submissionId: this.submissionId,
+							scope: this.options.scope,
 							signal,
 							isCurrent: () =>
 								this.submissionAttempt === attempt && !attempt.terminal,

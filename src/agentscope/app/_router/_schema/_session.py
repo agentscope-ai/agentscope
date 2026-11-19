@@ -125,7 +125,7 @@ class UpdateSessionRequest(BaseModel):
     pipeline_voice_config: PipelineVoiceConfig | None = Field(
         default=None,
         description="Independent pipeline speech settings. "
-        "Pass null to clear; omit to leave unchanged.",
+        "Omitted models keep their values. Pass null to clear.",
     )
     name: str | None = Field(
         default=None,
