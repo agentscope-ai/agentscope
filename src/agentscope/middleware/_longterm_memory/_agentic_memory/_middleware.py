@@ -957,14 +957,18 @@ class AgenticMemoryMiddleware(MiddlewareBase):
         memory_dir_prefix = self._backend.join_path(memory_dir_norm, "")
         for entry in all_entries:
             entry_path = self._backend.normpath(entry)
-            if self._backend.isabs(entry_path):
-                if not entry_path.startswith(memory_dir_prefix):
-                    continue
+            # A recursive listing prefixes its entries with the directory
+            # that was listed, whether that directory is absolute or
+            # relative, so strip it to get the name inside the memory
+            # directory. Backends returning bare names are kept as they are.
+            if entry_path.startswith(memory_dir_prefix):
                 filename = entry_path[len(memory_dir_prefix) :]
-                full_path = entry_path
+            elif self._backend.isabs(entry_path):
+                # Outside the memory directory, so not a memory file
+                continue
             else:
                 filename = entry_path
-                full_path = self._backend.join_path(memory_dir, filename)
+            full_path = self._backend.join_path(memory_dir, filename)
 
             if not filename.endswith(".md") or filename in system_files:
                 continue
