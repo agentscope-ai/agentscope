@@ -328,6 +328,75 @@ class MediaBufferTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(content[0], DataBlock)
         self.assertIsInstance(content[-1], TextBlock)
 
+    async def test_media_buffer_keeps_colon_ids_in_their_own_conversation(
+        self,
+    ) -> None:
+        """Two triples that collide once unescaped stay separate.
+
+        ``("c", "a:b", "u")`` and ``("c", "a", "b:u")`` both render as
+        ``c:a:b:u`` without escaping, so the second conversation would
+        drain the first one's buffered image into its own turn.
+        """
+        bus = InMemoryMessageBus()
+        gw = ChannelGateway(
+            storage=None,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+        await gw._aggregate_media(
+            ChannelEvent(
+                channel_id="c",
+                channel_user_id="u",
+                chat_id="a:b",
+                content=[self._img("only-for-a-b.png")],
+            ),
+        )
+        content = await gw._aggregate_media(
+            ChannelEvent(
+                channel_id="c",
+                channel_user_id="b:u",
+                chat_id="a",
+                content=[TextBlock(text="look")],
+            ),
+        )
+        assert content is not None
+        # Nothing was buffered for this conversation, so the turn is the
+        # text alone — not the other conversation's image plus the text.
+        self.assertEqual(len(content), 1)
+        self.assertIsInstance(content[0], TextBlock)
+        self.assertEqual(content[0].text, "look")
+
+    def test_media_buffer_key_is_unchanged_for_ordinary_ids(self) -> None:
+        """The common id keeps the exact key an older node wrote."""
+        self.assertEqual(
+            MessageBusKeys.channel_media_buffer("matrix", "room", "alice"),
+            "agentscope:channel:media:matrix:room:alice",
+        )
+
+    def test_media_buffer_keys_are_distinct_for_colon_ids(self) -> None:
+        """Colon-bearing ids must not collapse onto one key."""
+        self.assertNotEqual(
+            MessageBusKeys.channel_media_buffer("chan", "a:b", "u"),
+            MessageBusKeys.channel_media_buffer("chan", "a", "b:u"),
+        )
+        self.assertNotEqual(
+            MessageBusKeys.channel_media_buffer(
+                "matrix",
+                "!room:example.org",
+                "@alice:example.org",
+            ),
+            MessageBusKeys.channel_media_buffer(
+                "matrix",
+                "!room",
+                "example.org:@alice:example.org",
+            ),
+        )
+        # A literal %3A must not be readable as the separator it encodes.
+        self.assertNotEqual(
+            MessageBusKeys.channel_media_buffer("chan", "a%3Ab", "u"),
+            MessageBusKeys.channel_media_buffer("chan", "a:b", "u"),
+        )
+
     async def test_new_media_refreshes_buffer_for_earlier_media(self) -> None:
         """All buffered images survive until the last push's deadline."""
         bus = InMemoryMessageBus()

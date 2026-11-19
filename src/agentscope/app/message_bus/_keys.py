@@ -572,6 +572,18 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         """Per-channel per-node status heartbeat namespace."""
         return cls._CHANNEL_LIVENESS.format(cid=channel_id)
 
+    @staticmethod
+    def _escape_key_segment(segment: str) -> str:
+        """Escape a key segment so it cannot forge a field separator.
+
+        Only the separator itself and the escape character are rewritten,
+        so a segment without ``%`` or ``:`` is returned unchanged — the
+        keys minted for ordinary ids stay byte-identical to the ones an
+        older node wrote. ``%`` goes first, or a literal ``%3A`` in an id
+        would decode into a separator.
+        """
+        return segment.replace("%", "%25").replace(":", "%3A")
+
     @classmethod
     def channel_media_buffer(
         cls,
@@ -579,11 +591,17 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         chat_id: str,
         user_id: str,
     ) -> str:
-        """Queue key buffering media until the next text message."""
+        """Queue key buffering media until the next text message.
+
+        The three ids are escaped before they are interpolated: channel
+        adapters mint ids that legitimately contain ``:`` (Matrix room
+        and user ids, for instance), and unescaped they would let two
+        different conversations share one buffer key.
+        """
         return cls._CHANNEL_MEDIA.format(
-            cid=channel_id,
-            chat=chat_id,
-            uid=user_id,
+            cid=cls._escape_key_segment(channel_id),
+            chat=cls._escape_key_segment(chat_id),
+            uid=cls._escape_key_segment(user_id),
         )
 
     @classmethod
