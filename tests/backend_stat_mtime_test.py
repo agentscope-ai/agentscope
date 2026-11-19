@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from agentscope.state import AgentState
-from agentscope.tool import Edit, Read, Write
+from agentscope.tool import Edit, Read, ToolChunk, Write
 from agentscope.tool._builtin._backend import (
     BackendBase,
     ExecResult,
@@ -126,14 +126,54 @@ class ShellMtimeFilesystemTest(unittest.IsolatedAsyncioTestCase):
         self.path.write_text(content, encoding="utf-8")
         os.utime(self.path, ns=(mtime_ns, mtime_ns))
 
+    def _assert_chunk(
+        self,
+        chunk: ToolChunk,
+        state: str,
+        text: str,
+        metadata: dict | None = None,
+    ) -> None:
+        """Compare the entire response except generated IDs and timestamps."""
+        self.assertEqual(
+            chunk.model_dump(
+                exclude={
+                    "id": True,
+                    "content": {
+                        "__all__": {"id", "created_at", "finished_at"},
+                    },
+                },
+            ),
+            {
+                "state": state,
+                "is_last": True,
+                "content": [{"type": "text", "text": text}],
+                "metadata": metadata or {},
+            },
+        )
+
     async def _cache_file(self) -> tuple[str, AgentState]:
         """Populate the real Read cache before another actor changes a file."""
         self._put_file("agent=old\nhuman=old\n", self.initial_ns)
         path = str(self.path)
         state = AgentState()
         result = await self.read(file_path=path, _agent_state=state)
-        self.assertEqual(result.state, "running")
-        self.assertEqual(len(state.tool_context.read_file_cache), 1)
+        self._assert_chunk(
+            result,
+            "running",
+            "     1\tagent=old\n     2\thuman=old",
+        )
+        cache = state.tool_context.read_file_cache
+        self.assertEqual(
+            [entry.model_dump() for entry in cache],
+            [
+                {
+                    "file_path": path,
+                    "lines": ["agent=old\n", "human=old\n"],
+                    "updated_at": self.initial_ns / 1_000_000_000,
+                    "bytes": len(b"agent=old\nhuman=old\n") / 1024,
+                },
+            ],
+        )
         return path, state
 
     def _external_change(self) -> None:
@@ -202,15 +242,30 @@ class ShellMtimeFilesystemTest(unittest.IsolatedAsyncioTestCase):
         path, state = await self._cache_file()
         self._external_change()
         result = await self.read(file_path=path, _agent_state=state)
-        self.assertEqual(result.state, "running")
-        self.assertIn("human=NEW", result.content[0].text)
+        self._assert_chunk(
+            result,
+            "running",
+            "     1\tagent=old\n     2\thuman=NEW",
+        )
         result = await self.edit(
             file_path=path,
             old_string="agent=old",
             new_string="agent=NEW",
             _agent_state=state,
         )
-        self.assertEqual(result.state, "running")
+        self._assert_chunk(
+            result,
+            "running",
+            f"Successfully replaced 1 occurrence in {path}",
+            {
+                "diff": (
+                    f"--- a/{path}\n+++ b/{path}\n@@ -1,2 +1,2 @@\n"
+                    "-agent=old\n+agent=NEW\n human=NEW\n"
+                ),
+                "file_path": path,
+                "occurrences": 1,
+            },
+        )
         self.assertEqual(
             self.path.read_text(encoding="utf-8"),
             "agent=NEW\nhuman=NEW\n",
@@ -226,8 +281,12 @@ class ShellMtimeFilesystemTest(unittest.IsolatedAsyncioTestCase):
             new_string="agent=NEW",
             _agent_state=state,
         )
-        self.assertEqual(result.state, "error")
-        self.assertIn("must first read", result.content[0].text)
+        self._assert_chunk(
+            result,
+            "error",
+            "Error: To edit a file, you must first read it "
+            "using the Read tool.",
+        )
         self.assertEqual(state.tool_context.read_file_cache, [])
         self.assertEqual(
             self.path.read_text(encoding="utf-8"),
@@ -243,8 +302,12 @@ class ShellMtimeFilesystemTest(unittest.IsolatedAsyncioTestCase):
             content="replacement\n",
             _agent_state=state,
         )
-        self.assertEqual(result.state, "error")
-        self.assertIn("read the file first", result.content[0].text)
+        self._assert_chunk(
+            result,
+            "error",
+            f"Error: File {path} exists but has not been read yet. "
+            "You must read the file first before writing to it.",
+        )
         self.assertEqual(state.tool_context.read_file_cache, [])
         self.assertEqual(
             self.path.read_text(encoding="utf-8"),
@@ -260,15 +323,30 @@ class ShellMtimeFilesystemTest(unittest.IsolatedAsyncioTestCase):
             wraps=self.backend.read_file,
         ) as read_file:
             result = await self.read(file_path=path, _agent_state=state)
-        self.assertEqual(result.state, "running")
-        self.assertIn("human=old", result.content[0].text)
+        self._assert_chunk(
+            result,
+            "running",
+            "     1\tagent=old\n     2\thuman=old",
+        )
         read_file.assert_not_awaited()
         result = await self.write(
             file_path=path,
             content="replacement\n",
             _agent_state=state,
         )
-        self.assertEqual(result.state, "running")
+        self._assert_chunk(
+            result,
+            "running",
+            f"The file {path} has been written successfully (1 lines).",
+            {
+                "diff": (
+                    f"--- a/{path}\n+++ b/{path}\n@@ -1,2 +1 @@\n"
+                    "-agent=old\n-human=old\n+replacement\n"
+                ),
+                "file_path": path,
+                "occurrences": 1,
+            },
+        )
         self.assertEqual(
             self.path.read_text(encoding="utf-8"),
             "replacement\n",
