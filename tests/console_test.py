@@ -3,6 +3,7 @@
 """Tests for the interactive console cancellation boundary."""
 
 import asyncio
+import signal
 from collections.abc import AsyncGenerator
 from io import StringIO
 from typing import cast
@@ -129,6 +130,46 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
             signal_callbacks[0]()
 
             self.assertIsNone(await task)
+        self.assertEqual(self.pending_requests, [])
+        self.assertIsNone(self.renderer.last_msg)
+        self.assertEqual(self.renderer._active_msgs, {})
+
+    async def test_run_reply_interrupts_reply_via_plain_sigint_fallback(
+        self,
+    ) -> None:
+        """On loops without ``add_signal_handler`` (e.g. Windows), Ctrl+C
+        must still interrupt only the active reply instead of cancelling
+        the whole console task."""
+        agent = _BlockingAgent()
+        loop = asyncio.get_running_loop()
+
+        with (
+            patch.object(
+                loop,
+                "add_signal_handler",
+                side_effect=NotImplementedError,
+            ),
+            patch(
+                "agentscope.console._console.signal.signal",
+            ) as mock_signal,
+        ):
+            reply_task = asyncio.create_task(
+                _run_reply(
+                    cast(Agent, agent),
+                    self.renderer,
+                    UserMsg(name="user", content="hello"),
+                    self.pending_requests,
+                ),
+            )
+            await agent.started.wait()
+
+            # The fallback hook is installed via ``signal.signal``; deliver
+            # Ctrl+C through it the way the OS would.
+            mock_signal.assert_called_once()
+            handler = mock_signal.call_args[0][1]
+            handler(signal.SIGINT, None)
+
+            self.assertIsNone(await reply_task)
         self.assertEqual(self.pending_requests, [])
         self.assertIsNone(self.renderer.last_msg)
         self.assertEqual(self.renderer._active_msgs, {})
