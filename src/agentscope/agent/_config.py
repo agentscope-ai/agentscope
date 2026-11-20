@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
-from pydantic import BaseModel, Field, field_validator
+import string
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..model import ChatModelBase
 
@@ -190,6 +192,45 @@ class ContextConfig(BaseModel):
     workspace (if an offloader is provided) and replaced by a hint that
     records the offloaded path; otherwise they are dropped and replaced by a
     hint without path information."""
+
+    @model_validator(mode="after")
+    def _check_summary_template_fields(self) -> "ContextConfig":
+        """Reject summary_template placeholders absent from summary_schema.
+
+        summary_template is rendered with summary_template.format(**res.content)
+        where res.content holds exactly the fields summary_schema declares.
+        A schema that drops a field the template still references causes a bare
+        KeyError mid-reply. Fail at construction time instead.
+        """
+        properties = self.summary_schema.get("properties")
+        if not isinstance(properties, dict):
+            # $ref/allOf/... cannot be introspected reliably; leave to runtime.
+            return self
+
+        def _referenced_fields(template: str) -> set:
+            names = set()
+            for _, field_name, format_spec, _ in string.Formatter().parse(
+                template,
+            ):
+                if field_name is None:
+                    continue
+                # {stats[count]} and {stats.total} only need base name "stats"
+                names.add(field_name.split("[", 1)[0].split(".", 1)[0])
+                if format_spec:
+                    names |= _referenced_fields(format_spec)
+            return names
+
+        referenced = _referenced_fields(self.summary_template)
+        undeclared = sorted(referenced - set(properties))
+        if undeclared:
+            raise ValueError(
+                f"summary_template references {undeclared}, which "
+                f"summary_schema does not declare, so formatting the "
+                f"summary would fail with a KeyError. Declare them in "
+                f"summary_schema['properties'] or remove them from "
+                f"summary_template.",
+            )
+        return self
 
 
 def _validate_context_config_ratios(
