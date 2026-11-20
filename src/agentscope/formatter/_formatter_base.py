@@ -10,6 +10,7 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, List
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
+import requests
 from pydantic import BaseModel, Field
 
 from ..message import (
@@ -58,6 +59,45 @@ def file_url_to_path(url: str) -> str:
             )
         path = "//" + parsed.netloc + path
     return url2pathname(path)
+
+
+def _read_local_file_as_base64(path: str) -> str:
+    """Read a local file and return its base64 encoding.
+
+    Kept synchronous so callers can run it through :func:`asyncio.to_thread`
+    instead of blocking the event-loop thread on disk IO.
+
+    Args:
+        path (`str`):
+            The local filesystem path to read.
+
+    Returns:
+        `str`:
+            The base64-encoded file content.
+    """
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+
+def _download_as_base64(url: str, timeout: float = 30) -> str:
+    """Download a remote URL and return its base64 encoding.
+
+    Kept synchronous so callers can run it through :func:`asyncio.to_thread`
+    instead of blocking the event-loop thread for up to ``timeout`` seconds.
+
+    Args:
+        url (`str`):
+            The remote URL to download.
+        timeout (`float`, defaults to ``30``):
+            The request timeout in seconds.
+
+    Returns:
+        `str`:
+            The base64-encoded response body.
+    """
+    response = requests.get(url, timeout=timeout)
+    response.raise_for_status()
+    return base64.b64encode(response.content).decode("utf-8")
 
 
 class FormatterBase(BaseModel):
