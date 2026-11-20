@@ -47,12 +47,15 @@ def _get_callable_docstring(tool_func: Callable) -> str:
         # set on the object itself — e.g. copied there by
         # functools.update_wrapper — still takes precedence.
         own_attrs = getattr(documented_func, "__dict__", None) or {}
-        if own_attrs.get("__doc__") is None:
+        if "__doc__" not in own_attrs:
             call_doc = getattr(
                 type(documented_func).__call__,
                 "__doc__",
                 None,
             )
+            if inspect.ismemberdescriptor(type(documented_func).__doc__):
+                # An unset slot falls back; an explicitly stored None wins.
+                return getattr(documented_func, "__doc__", call_doc) or ""
             if call_doc:
                 return call_doc
 

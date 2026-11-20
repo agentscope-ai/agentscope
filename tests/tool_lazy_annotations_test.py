@@ -623,6 +623,40 @@ class LazyAnnotationsTest(TestCase):
             "The catalog identifier.",
         )
 
+    def test_slotted_docstring_takes_precedence_when_assigned(self) -> None:
+        """A doc slot overrides the call docs only after assignment."""
+
+        class SlottedTool:
+            __slots__ = ("__doc__",)
+            __call__ = DocumentedCallableTool.__call__
+
+        func = SlottedTool()
+        tool = FunctionTool(func)
+        self.assertEqual(tool.description, "Search with a mode switch.")
+        for doc in ("Tenant-specific search.", None):
+            with self.subTest(doc=doc):
+                func.__doc__ = doc
+                tool = FunctionTool(func)
+                self.assertEqual(tool.description, doc or "")
+                self.assertNotIn(
+                    "description",
+                    tool.input_schema["properties"]["mode"],
+                )
+
+    def test_update_wrapper_preserves_absent_docstring(self) -> None:
+        """An undocumented wrapped function has no wrapper call docs."""
+
+        def undocumented(mode: str) -> str:
+            return mode
+
+        wrapped = update_wrapper(DocumentedCallableTool(), undocumented)
+        tool = FunctionTool(wrapped)
+        self.assertEqual(tool.description, "")
+        self.assertNotIn(
+            "description",
+            tool.input_schema["properties"]["mode"],
+        )
+
     def test_lru_cache_docstring_preserved(self) -> None:
         """An lru_cache-wrapped tool keeps its docstring-derived
         descriptions."""
