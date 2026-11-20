@@ -199,7 +199,7 @@ class Msg(BaseModel):
     @overload
     def get_content_blocks(
         self,
-        block_type: None = None,
+        block_type: list[ContentBlockTypes] | None = None,
     ) -> list[ContentBlock]:
         ...
 
