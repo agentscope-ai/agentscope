@@ -240,7 +240,8 @@
 			"setup": "The session could not be prepared — check the agent's model, tools and knowledge bases.",
 			"unknown": "The reply failed with an unknown error."
 		},
-		"copy": "Copy"
+		"copy": "Copy",
+		"downloadFile": "Download file"
 	},
 	"chat": {
 		"ttsFailed": "Speech generation failed. Text replies will continue.",
