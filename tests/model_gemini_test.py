@@ -1949,7 +1949,7 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         integer = {"type": "integer"}
         string = {"type": "string"}
         union = {"anyOf": [integer, string]}
-        cases = [
+        cases: list[tuple[dict[str, object], dict[str, object]]] = [
             ({"items": False}, {"maxItems": 1, "items": integer}),
             (
                 {"items": False, "maxItems": 0},
