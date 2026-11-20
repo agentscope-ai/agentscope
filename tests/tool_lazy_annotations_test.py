@@ -67,6 +67,15 @@ class CallableWrapper:
         return self.func(mode, limit)
 
 
+class SlottedCallableTool:
+    """A callable whose instances carry no own attribute storage."""
+
+    __slots__ = ()
+
+    def __call__(self, mode: Literal["fast", "full"]) -> str:
+        return mode
+
+
 def annotated_tool(
     query: Annotated[str, Field(description="The search query")],
     limit: int = 5,
@@ -558,4 +567,14 @@ class LazyAnnotationsTest(TestCase):
                 },
                 "required": ["query"],
             },
+        )
+
+    def test_slots_instance_keeps_call_hints(self) -> None:
+        """A callable instance without a ``__dict__`` still resolves its
+        call hints."""
+        schema = _extract_input_schema(SlottedCallableTool())
+
+        self.assertEqual(
+            schema["properties"]["mode"],
+            {"enum": ["fast", "full"], "type": "string"},
         )
