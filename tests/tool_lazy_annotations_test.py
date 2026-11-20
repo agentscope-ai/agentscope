@@ -89,6 +89,37 @@ def wrapped_tool(catalog: str, query: str) -> str:
     return f"{catalog}:{query}"
 
 
+MODE_SCHEMA = {
+    "type": "object",
+    "properties": {"mode": {"type": "string", "enum": ["fast", "full"]}},
+    "required": ["mode"],
+}
+
+DOCUMENTED_MODE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "mode": {
+            "type": "string",
+            "enum": ["fast", "full"],
+            "description": "The search mode to use.",
+        },
+    },
+    "required": ["mode"],
+}
+
+CATALOG_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "catalog": {
+            "type": "string",
+            "description": "The catalog identifier.",
+        },
+        "query": {"type": "string", "description": "The query to run."},
+    },
+    "required": ["catalog", "query"],
+}
+
+
 @lru_cache(maxsize=8)
 def cached_tool(catalog: str, query: str) -> str:
     """Search the cached catalog.
@@ -598,10 +629,9 @@ class LazyAnnotationsTest(TestCase):
         docstring, matching what a plain function would provide."""
         tool = FunctionTool(DocumentedCallableTool())
 
-        self.assertEqual(tool.description, "Search with a mode switch.")
         self.assertEqual(
-            tool.input_schema["properties"]["mode"]["description"],
-            "The search mode to use.",
+            (tool.description, tool.input_schema),
+            ("Search with a mode switch.", DOCUMENTED_MODE_SCHEMA),
         )
 
     def test_explicit_instance_docstring_takes_precedence(self) -> None:
@@ -610,17 +640,19 @@ class LazyAnnotationsTest(TestCase):
         tool_fn.__doc__ = "Explicit tool doc."
         tool = FunctionTool(tool_fn)
 
-        self.assertEqual(tool.description, "Explicit tool doc.")
+        self.assertEqual(
+            (tool.description, tool.input_schema),
+            ("Explicit tool doc.", MODE_SCHEMA),
+        )
 
     def test_update_wrapper_docstring_preserved(self) -> None:
         """A docstring copied onto the instance by update_wrapper is
         used for the tool description and parameter docs."""
         tool = FunctionTool(CallableWrapper(wrapped_tool))
 
-        self.assertEqual(tool.description, "Search the selected catalog.")
         self.assertEqual(
-            tool.input_schema["properties"]["catalog"]["description"],
-            "The catalog identifier.",
+            (tool.description, tool.input_schema),
+            ("Search the selected catalog.", CATALOG_SCHEMA),
         )
 
     def test_slotted_docstring_takes_precedence_when_assigned(self) -> None:
@@ -632,15 +664,17 @@ class LazyAnnotationsTest(TestCase):
 
         func = SlottedTool()
         tool = FunctionTool(func)
-        self.assertEqual(tool.description, "Search with a mode switch.")
+        self.assertEqual(
+            (tool.description, tool.input_schema),
+            ("Search with a mode switch.", DOCUMENTED_MODE_SCHEMA),
+        )
         for doc in ("Tenant-specific search.", None):
             with self.subTest(doc=doc):
                 func.__doc__ = doc
                 tool = FunctionTool(func)
-                self.assertEqual(tool.description, doc or "")
-                self.assertNotIn(
-                    "description",
-                    tool.input_schema["properties"]["mode"],
+                self.assertEqual(
+                    (tool.description, tool.input_schema),
+                    (doc or "", MODE_SCHEMA),
                 )
 
     def test_update_wrapper_preserves_absent_docstring(self) -> None:
@@ -651,10 +685,16 @@ class LazyAnnotationsTest(TestCase):
 
         wrapped = update_wrapper(DocumentedCallableTool(), undocumented)
         tool = FunctionTool(wrapped)
-        self.assertEqual(tool.description, "")
-        self.assertNotIn(
-            "description",
-            tool.input_schema["properties"]["mode"],
+        self.assertEqual(
+            (tool.description, tool.input_schema),
+            (
+                "",
+                {
+                    "type": "object",
+                    "properties": {"mode": {"type": "string"}},
+                    "required": ["mode"],
+                },
+            ),
         )
 
     def test_lru_cache_docstring_preserved(self) -> None:
@@ -662,8 +702,7 @@ class LazyAnnotationsTest(TestCase):
         descriptions."""
         tool = FunctionTool(cached_tool)
 
-        self.assertEqual(tool.description, "Search the cached catalog.")
         self.assertEqual(
-            tool.input_schema["properties"]["query"]["description"],
-            "The query to run.",
+            (tool.description, tool.input_schema),
+            ("Search the cached catalog.", CATALOG_SCHEMA),
         )
