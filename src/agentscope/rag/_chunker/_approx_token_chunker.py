@@ -22,9 +22,10 @@ class ApproxTokenChunker(ChunkerBase):
 
     Text sections are sliced into pieces of at most ``chunk_size``
     approximate tokens, with ``overlap`` approximate tokens shared
-    between two consecutive pieces.  The token count of a string is
-    approximated as ``len(text.encode("utf-8")) // 4``, so no
-    tokenizer dependency is required.
+    between two consecutive pieces.  A token is taken as four bytes of
+    UTF-8 - ``chunk_size * 4`` bytes per piece, which both the
+    no-split shortcut and the splitting path measure - so no tokenizer
+    dependency is required.
 
     Sections carrying a :class:`~agentscope.message.DataBlock`
     (images, video, etc.) are passed through unchanged as a single
@@ -184,14 +185,19 @@ class ApproxTokenChunker(ChunkerBase):
             `list[str]`:
                 The text pieces, in document order.
         """
-        if self._approx_count_tokens(text) <= self.chunk_size:
+        chunk_bytes = self.chunk_size * 4
+
+        # Compare bytes, not the floored token count: the token count is
+        # an approximation that rounds down, so a section just over the
+        # byte budget was still handed back whole while the splitting
+        # path below enforces ``chunk_bytes`` exactly.
+        if len(text.encode("utf-8")) <= chunk_bytes:
             return [text]
 
         # Cumulative UTF-8 byte length after each character, so that
         # the byte length of text[i:j] == byte_offsets[j] - byte_offsets[i]
         byte_offsets = [0, *accumulate(len(c.encode("utf-8")) for c in text)]
 
-        chunk_bytes = self.chunk_size * 4
         overlap_bytes = self.overlap * 4
 
         pieces: list[str] = []
@@ -224,17 +230,3 @@ class ApproxTokenChunker(ChunkerBase):
             start = max(next_start, start + 1)
 
         return pieces
-
-    @staticmethod
-    def _approx_count_tokens(text: str) -> int:
-        """The approx count of tokens.
-
-        Args:
-            text (`str`):
-                The text to be counted.
-
-        Returns:
-            `int`:
-                The approx count of tokens.
-        """
-        return len(text.encode("utf-8")) // 4

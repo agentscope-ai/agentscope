@@ -57,6 +57,43 @@ class ApproxTokenChunkerTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_no_split_path_honours_the_byte_budget(self) -> None:
+        """A section just over the byte budget is split, like any other.
+
+        The no-split shortcut used the floored approximate token count
+        (``bytes // 4``) while the splitting path caps chunks at
+        ``chunk_size * 4`` bytes, so a section one byte over the budget
+        came back whole as an over-budget chunk (chunk_size=32 means 128
+        bytes).
+        """
+        chunker = ApproxTokenChunker(
+            parameters=ApproxTokenChunker.Parameters(
+                chunk_size=32,
+                overlap=0,
+            ),
+        )
+
+        for text, expected in (
+            ("a" * 128, [128]),
+            ("a" * 129, [128, 1]),
+            ("a" * 132, [128, 4]),
+            # 43 x U+5149 is 129 bytes across 43 characters.
+            ("光" * 43, [126, 3]),
+        ):
+            chunks = await chunker.chunk(
+                [Section(content=TextBlock(text=text), source="a.txt")],
+            )
+
+            self.assertEqual(
+                [len(c.content.text.encode("utf-8")) for c in chunks],
+                expected,
+                text[:8],
+            )
+            self.assertEqual("".join(c.content.text for c in chunks), text)
+            self.assertTrue(
+                all(len(c.content.text.encode("utf-8")) <= 128 for c in chunks),
+            )
+
     async def test_long_text_split_with_overlap(self) -> None:
         """Long text should be split into overlapping chunks."""
         # chunk_size=10 tokens -> 40-byte window, overlap=2 -> 8-byte step
