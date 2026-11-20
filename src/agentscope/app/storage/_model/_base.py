@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The base attributes used in storage."""
 from datetime import datetime
+from typing import TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -24,3 +25,6 @@ class _RecordBase(BaseModel):
         default_factory=datetime.now,
     )
     """The created time."""
+
+
+_RecordT = TypeVar("_RecordT", bound=_RecordBase)
