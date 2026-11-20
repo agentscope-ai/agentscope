@@ -5,6 +5,7 @@ import type {
 	DocumentDownloadTokenResponse,
 	KbMiddlewareParametersSchemaResponse,
 	KnowledgeBaseView,
+	KnowledgeDocumentView,
 	ListChunkersResponse,
 	ListDocumentChunksResponse,
 	ListKbEmbeddingModelsResponse,
@@ -296,6 +297,11 @@ export const knowledgeBaseApi = {
 
 	uploadDocument: (knowledgeBaseId: string, file: File, options?: UploadDocumentOptions) =>
 		uploadDocumentXhr(knowledgeBaseId, file, options),
+
+	retryDocument: (knowledgeBaseId: string, documentId: string) =>
+		client.post<KnowledgeDocumentView>(
+			`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}/retry`,
+		),
 
 	deleteDocument: (knowledgeBaseId: string, documentId: string) =>
 		client.delete(`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}`),

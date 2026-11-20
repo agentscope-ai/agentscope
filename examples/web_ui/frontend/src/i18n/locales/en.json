@@ -445,7 +445,7 @@
 		},
 		"reindex": {
 			"title": "The knowledge base will be reindexed",
-			"description": "Saving will process {{documents}} document(s) again and incur new embedding-provider usage. Existing index entries remain searchable until each document is replaced.",
+			"description": "Saving reindexes all existing documents and may incur embedding charges.",
 			"submit": "Save and reindex"
 		},
 		"errors": {
@@ -517,6 +517,7 @@
 				"cancel": "Cancel",
 				"dismiss": "Dismiss",
 				"remove": "Remove",
+				"retry": "Retry",
 				"clearFinished": "Clear finished"
 			},
 			"title": "Documents"

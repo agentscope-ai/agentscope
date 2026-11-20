@@ -23,6 +23,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Self
 
 from ._dimension_policy import DimensionPolicy
+from ._published_knowledge import PublishedKnowledge
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -285,6 +286,25 @@ class KnowledgeBaseManagerBase(ABC):
     # ------------------------------------------------------------------
     # KnowledgeBase runtime
     # ------------------------------------------------------------------
+
+    async def get_write_knowledge(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> "KnowledgeBase":
+        """Return the underlying storage handle for the indexing worker."""
+        return await self.get_knowledge(user_id, knowledge_base_id)
+
+    async def get_published_knowledge(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> "KnowledgeBase":
+        """Resolve reads against each document's published vector slot."""
+        raw = await self.get_write_knowledge(user_id, knowledge_base_id)
+        return PublishedKnowledge(
+            raw, self._storage, user_id, knowledge_base_id
+        )
 
     @abstractmethod
     async def get_knowledge(

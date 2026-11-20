@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Resumable dispatch of a persisted knowledge-base reindex batch."""
+
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -35,7 +36,6 @@ async def resume_knowledge_base_reindex(
             document.processing_node = None
             document.lease_expires_at = None
             document.data.error = None
-            document.data.chunk_count = 0
             document.data.reindex_id = record.data.reindex_id
             await storage.upsert_knowledge_document(record.user_id, document)
         if document.status == "pending":

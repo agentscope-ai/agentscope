@@ -101,6 +101,13 @@ class KnowledgeDocumentData(BaseModel):
     reindex_id: str | None = None
     """The chunker-change batch for which this document was reset."""
 
+    alternate_index: bool = False
+    """Whether reads use the alternate vector ID for this document."""
+
+    def vector_id(self, document_id: str) -> str:
+        """Return the published vector ID for an application document."""
+        return f"~{document_id}" if self.alternate_index else document_id
+
     pending_since: datetime | None = None
     """Start of the current pending pass, in UTC; absent on legacy data."""
 

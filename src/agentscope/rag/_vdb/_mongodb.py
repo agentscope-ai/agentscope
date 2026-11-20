@@ -325,6 +325,8 @@ class MongoDBStore(VectorStoreBase):
         query_vector: list[float],
         top_k: int = 5,
         metadata_filter: dict[str, Any] | None = None,
+        *,
+        exclude_document_ids: set[str] | None = None,
     ) -> list[VectorSearchResult]:
         """Find the most similar records to a query vector.
 
@@ -356,6 +358,21 @@ class MongoDBStore(VectorStoreBase):
         if top_k > 10_000:
             raise ValueError("top_k cannot exceed MongoDB's 10000 ANN limit")
         filter_expr = self._build_metadata_filter(metadata_filter)
+        if exclude_document_ids:
+            if "document_id" not in self._filter_fields:
+                # An existing Atlas index may only cover custom metadata.
+                return await super().search_excluding(
+                    collection,
+                    query_vector,
+                    top_k,
+                    metadata_filter,
+                    exclude_document_ids=exclude_document_ids,
+                )
+            condition = {"document_id": {"$nin": sorted(exclude_document_ids)}}
+            if filter_expr:
+                filter_expr["$and"].append(condition)
+            else:
+                filter_expr = condition
         await self._ensure_index_ready(collection)
         col = self._col(collection)
 
@@ -390,6 +407,8 @@ class MongoDBStore(VectorStoreBase):
                 ),
             )
         return results
+
+    search_excluding = search
 
     @staticmethod
     def _build_metadata_filter(

@@ -2381,6 +2381,7 @@ class RedisStorage(StorageBase):
         chunk_count: int | None = None,
         *,
         expected_lease_token: str | None = None,
+        alternate_index: bool | None = None,
     ) -> None:
         """Atomically update status, optionally requiring lease ownership."""
         key = self._document_key(user_id, knowledge_base_id, document_id)
@@ -2404,6 +2405,8 @@ class RedisStorage(StorageBase):
                         record.data.error = error
                     if chunk_count is not None:
                         record.data.chunk_count = chunk_count
+                    if alternate_index is not None:
+                        record.data.alternate_index = alternate_index
                     record.updated_at = datetime.now()
                     pipe.multi()
                     pipe.set(key, record.model_dump_json())

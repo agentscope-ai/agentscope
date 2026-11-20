@@ -2074,6 +2074,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         chunk_count: int | None = None,
         *,
         expected_lease_token: str | None = None,
+        alternate_index: bool | None = None,
     ) -> None:
         """Update status and payload with an optional atomic token guard."""
         async with self._session() as sess:
@@ -2090,6 +2091,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 record.data.error = error
             if chunk_count is not None:
                 record.data.chunk_count = chunk_count
+            if alternate_index is not None:
+                record.data.alternate_index = alternate_index
             record.updated_at = _utcnow()
             new_row = _from_record(KnowledgeDocumentRow, record)
             statement = sa.update(KnowledgeDocumentRow).where(

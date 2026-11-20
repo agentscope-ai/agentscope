@@ -21,7 +21,7 @@ import tempfile
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
@@ -48,7 +48,8 @@ from agentscope.app.storage import (
     RedisStorage,
 )
 from agentscope.app.workspace_manager._base import WorkspaceManagerBase
-from agentscope.rag import VectorStoreBase
+from agentscope.embedding import EmbeddingModelBase, EmbeddingResponse
+from agentscope.rag import KnowledgeBase, VectorStoreBase
 from agentscope.rag._vdb._vector_store import (
     DocumentSummary,
     VectorRecord,
@@ -103,7 +104,15 @@ class _FakeVectorStore(VectorStoreBase):
         top_k: int = 5,
         metadata_filter: dict[str, Any] | None = None,
     ) -> list[VectorSearchResult]:
-        return []
+        """Rank the newest rows first to exercise unpublished search hits."""
+        return [
+            VectorSearchResult(
+                document_id=row.document_id,
+                chunk=row.chunk,
+                score=1.0,
+            )
+            for row in reversed(self._collections.get(collection, []))
+        ][:top_k]
 
     async def list_documents(
         self,
@@ -133,124 +142,8 @@ class _FakeVectorStore(VectorStoreBase):
         return matched[offset : offset + limit]
 
 
-class _FakeKnowledge:
-    """Minimal stand-in for :class:`KnowledgeBase` used by the worker.
-
-    Bypasses embedding-model construction — instead just funnels the
-    chunks into the bound :class:`_FakeVectorStore` with a fixed
-    zero-vector so ``insert_document`` succeeds end-to-end.
-    """
-
-    def __init__(
-        self,
-        vector_store: _FakeVectorStore,
-        collection_name: str,
-    ) -> None:
-        self._vector_store = vector_store
-        self._collection_name = collection_name
-
-    async def insert_document(
-        self,
-        chunks: list,
-        document_id: str | None = None,
-        document_metadata: dict | None = None,
-    ) -> str:
-        """Pretend to embed and insert ``chunks`` into the bound store.
-
-        The fake skips the real embedding step — it stamps a single
-        scalar vector on every record so the upload pipeline can be
-        exercised without an embedding model.
-
-        Args:
-            chunks (`list`):
-                The parsed and chunked document content.
-            document_id (`str | None`, optional):
-                Caller-supplied document id; the fake just echoes it
-                back rather than generating a UUID.
-            document_metadata (`dict | None`, optional):
-                Document-level metadata; ignored — the upload tests
-                don't assert on metadata propagation.
-
-        Returns:
-            `str`:
-                The (caller-supplied) document id, or ``""`` when
-                none was passed.
-        """
-        del document_metadata  # unused — see docstring
-        records = [
-            VectorRecord(
-                vector=[0.0],
-                document_id=document_id or "",
-                chunk=chunk,
-            )
-            for chunk in chunks
-        ]
-        await self._vector_store.insert(self._collection_name, records)
-        return document_id or ""
-
-    async def delete_document(self, document_id: str) -> None:
-        """Remove every record for ``document_id`` from the bound store.
-
-        Args:
-            document_id (`str`):
-                The document whose records should be deleted.
-        """
-        await self._vector_store.delete(self._collection_name, document_id)
-
-    async def list_chunks(
-        self,
-        document_id: str,
-        *,
-        offset: int = 0,
-        limit: int = 30,
-    ) -> list:
-        """Delegate chunk listing to the bound fake vector store.
-
-        Args:
-            document_id (`str`):
-                The document whose chunks should be listed.
-            offset (`int`, defaults to ``0``):
-                Number of leading chunks to skip.
-            limit (`int`, defaults to ``30``):
-                Maximum number of chunks to return.
-
-        Returns:
-            `list`:
-                The requested page of chunks.
-        """
-        return await self._vector_store.list_chunks(
-            self._collection_name,
-            document_id,
-            offset=offset,
-            limit=limit,
-        )
-
-    async def search(self, queries: list, top_k: int = 5) -> list:
-        """Return an empty result list — search is out of scope here.
-
-        Args:
-            queries (`list`):
-                The query inputs; ignored.
-            top_k (`int`, defaults to ``5``):
-                The maximum result count; ignored.
-
-        Returns:
-            `list`:
-                Always empty — the upload tests do not exercise
-                retrieval.
-        """
-        del queries, top_k  # unused — see docstring
-        return []
-
-
 class _FakeKbManager(KnowledgeBaseManagerBase):
-    """KB manager that uses the storage + a fake vector store directly.
-
-    Skips the real ``CollectionPerKbManager`` so we don't need a live
-    embedding model — the indexing pipeline only requires
-    ``insert_document`` / ``delete_document``, which the
-    :class:`_FakeKnowledge` returned here implements directly.
-    """
+    """Use the real knowledge runtime with deterministic test embeddings."""
 
     async def get_dimension_policy(self) -> DimensionPolicy:
         return DimensionPolicy(kind=DimensionPolicyKind.ANY, dimension=None)
@@ -303,7 +196,7 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
         self,
         user_id: str,
         knowledge_base_id: str,
-    ) -> _FakeKnowledge:
+    ) -> KnowledgeBase:
         record = await self._storage.get_knowledge_base(
             user_id,
             knowledge_base_id,
@@ -312,9 +205,18 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
             raise KnowledgeBaseNotFoundError(
                 f"Knowledge base {knowledge_base_id!r} not found.",
             )
-        return _FakeKnowledge(
-            vector_store=self._vector_store,
-            collection_name=record.data.collection_name,
+        embedding = AsyncMock(spec=EmbeddingModelBase)
+        embedding.dimensions = 1
+        embedding.supports_multimodal = False
+        embedding.side_effect = lambda chunks: EmbeddingResponse(
+            embeddings=[[0.0] for _ in chunks],
+        )
+        return KnowledgeBase(
+            record.data.name,
+            record.data.description,
+            embedding,
+            self._vector_store,
+            record.data.collection_name,
         )
 
 
@@ -482,6 +384,31 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             self.assertEqual(documents[0]["id"], document_id)
             self.assertEqual(documents[0]["status"], "ready")
             self.assertGreaterEqual(documents[0]["chunk_count"], 1)
+
+            retry = (
+                f"/knowledge_bases/{self._kb_id}/documents/{document_id}/retry"
+            )
+            self.assertEqual(
+                client.post(retry, headers=headers).status_code, 409
+            )
+            client.portal.call(
+                self._app.state.storage.update_knowledge_document_status,
+                "user-1",
+                self._kb_id,
+                document_id,
+                "error",
+            )
+            other = client.post(retry, headers={"X-User-ID": "other"})
+            self.assertIn(other.status_code, (403, 404))
+            retried = client.post(retry, headers=headers)
+            self.assertEqual(
+                (
+                    retried.status_code,
+                    retried.json()["id"],
+                    retried.json()["status"],
+                ),
+                (202, document_id, "pending"),
+            )
 
             # Delete and confirm the listing comes back empty.
             resp = client.delete(

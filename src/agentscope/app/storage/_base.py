@@ -1276,6 +1276,7 @@ class StorageBase(ABC):
         chunk_count: int | None = None,
         *,
         expected_lease_token: str | None = None,
+        alternate_index: bool | None = None,
     ) -> None:
         """Update only the status-related fields of a document record.
 
@@ -1301,6 +1302,8 @@ class StorageBase(ABC):
             chunk_count (`int | None`, optional):
                 The final chunk count, set when ``status == 'ready'``.
                 ``None`` leaves the existing value unchanged.
+            alternate_index (`bool | None`, optional):
+                Publish this vector slot atomically with the ready status.
             expected_lease_token (`str | None`, optional):
                 Atomically update only if ``processing_node`` matches
                 this token. A missing record or mismatched token is a

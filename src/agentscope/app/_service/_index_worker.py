@@ -301,6 +301,7 @@ class IndexWorker:
             ),
             name=f"lease-renew:{document_id}",
         )
+        release_lease = True
         try:
             # Race the pipeline against the heartbeat: if the heartbeat
             # returns first, the lease was stolen mid-flight (e.g. the
@@ -335,6 +336,8 @@ class IndexWorker:
                 await heartbeat_task
             await pipeline_task
         except asyncio.CancelledError:
+            # The sweeper recovers interrupted stages by their expired lease.
+            release_lease = False
             pipeline_task.cancel()
             heartbeat_task.cancel()
             await asyncio.gather(
@@ -354,12 +357,13 @@ class IndexWorker:
         finally:
             # The holder identifies this attempt, not just this worker.
             # Delayed cleanup cannot release a newer attempt's lease.
-            await self._storage.release_knowledge_document_lease(
-                user_id=user_id,
-                knowledge_base_id=knowledge_base_id,
-                document_id=document_id,
-                processing_node=lease_token,
-            )
+            if release_lease:
+                await self._storage.release_knowledge_document_lease(
+                    user_id=user_id,
+                    knowledge_base_id=knowledge_base_id,
+                    document_id=document_id,
+                    processing_node=lease_token,
+                )
 
     async def _guarded_pipeline(
         self,
@@ -508,7 +512,7 @@ class IndexWorker:
             "indexing",
             expected_lease_token=lease_token,
         )
-        knowledge = await self._manager.get_knowledge(
+        knowledge = await self._manager.get_write_knowledge(
             user_id,
             knowledge_base_id,
         )
@@ -535,6 +539,19 @@ class IndexWorker:
                 )
                 for index, chunk in enumerate(text_chunks)
             ]
+        replacing = data.reindex_id is not None
+        previous_id = data.vector_id(document_id) if replacing else document_id
+        alternate = replacing and not data.alternate_index
+        target_id = f"~{document_id}" if alternate else document_id
+        records = await knowledge.prepare_document(
+            chunks=chunks,
+            document_id=target_id,
+            document_metadata={
+                "filename": data.filename,
+                "media_type": media_type,
+                "size_bytes": data.size,
+            },
+        )
         async with self._bus.acquire_lock(
             MessageBusKeys.knowledge_base_mutation_lock(
                 user_id,
@@ -572,19 +589,19 @@ class IndexWorker:
                 lease_ttl=self._lease_ttl,
             ):
                 return
-            # Replace all previous chunks so shorter reindexes do not
-            # leave an old tail. Hold the lock through both writes and
-            # the ready transition so deletion sees a complete result.
-            await knowledge.delete_document(document_id)
-            await knowledge.insert_document(
-                chunks=chunks,
-                document_id=document_id,
-                document_metadata={
-                    "filename": data.filename,
-                    "media_type": media_type,
-                    "size_bytes": data.size,
-                },
-            )
+            # Clear partial writes from an earlier attempt in the target slot.
+            await knowledge.delete_document(target_id)
+            try:
+                await knowledge.write_document_records(records)
+            except Exception:
+                # Bulk inserts may have committed only a prefix. The target
+                # is still unpublished, even if this cleanup also fails.
+                if replacing:
+                    try:
+                        await knowledge.delete_document(target_id)
+                    except Exception:
+                        logger.exception("Failed to discard %s", target_id)
+                raise
             await self._storage.update_knowledge_document_status(
                 user_id,
                 knowledge_base_id,
@@ -592,7 +609,25 @@ class IndexWorker:
                 "ready",
                 chunk_count=len(chunks),
                 expected_lease_token=lease_token,
+                alternate_index=alternate,
             )
+            if replacing:
+                # A lost lease can turn the publication into a no-op.
+                try:
+                    published = await self._storage.get_knowledge_document(
+                        user_id,
+                        knowledge_base_id,
+                        document_id,
+                    )
+                    if (
+                        published
+                        and published.data.alternate_index == alternate
+                    ):
+                        await knowledge.delete_document(previous_id)
+                except Exception:
+                    # Reads ignore retired vectors. The next attempt or
+                    # document deletion will reclaim this slot.
+                    logger.exception("Failed to retire %s", previous_id)
 
     def _csv_media_type(
         self,

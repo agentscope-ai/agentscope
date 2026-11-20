@@ -109,6 +109,25 @@ class QdrantMetricTest(IsolatedAsyncioTestCase):
         """Close the store after each test."""
         await self._exit_stack.aclose()
 
+    async def test_unpublished_documents_do_not_consume_top_k(self) -> None:
+        """A lower-ranked published hit survives filtering before ranking."""
+        await self.store.create_collection("kb", dimensions=2)
+        await self.store.insert(
+            "kb",
+            [
+                _make_record("old", [0.9, 0.1], "doc"),
+                _make_record("new", [1.0, 0.0], "~doc"),
+            ],
+        )
+        hits = await self.store.search_excluding(
+            "kb",
+            [1.0, 0.0],
+            1,
+            None,
+            exclude_document_ids={"~doc"},
+        )
+        self.assertEqual([hit.document_id for hit in hits], ["doc"])
+
     async def test_existing_collection_metric_controls_ranking(self) -> None:
         """Reopened collections retain distance ranking and thresholds."""
 

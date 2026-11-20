@@ -50,6 +50,7 @@ class _StubStorage:
         chunk_count: int | None = None,
         *,
         expected_lease_token: str | None = None,
+        alternate_index: bool | None = None,
     ) -> None:
         """Apply status updates with the storage backends' semantics."""
         del user_id, knowledge_base_id, document_id, expected_lease_token
@@ -57,6 +58,8 @@ class _StubStorage:
         self.record.status = status
         if error is not None:
             self.record.data.error = error
+        if alternate_index is not None:
+            self.record.data.alternate_index = alternate_index
         if chunk_count is not None:
             self.record.data.chunk_count = chunk_count
 
@@ -88,7 +91,7 @@ class IndexWorkerDuplicateTaskTest(IsolatedAsyncioTestCase):
                     data=SimpleNamespace(chunker_config=None),
                 ),
             ),
-            get_knowledge=AsyncMock(return_value=knowledge),
+            get_write_knowledge=AsyncMock(return_value=knowledge),
         )
         self.worker = IndexWorker(
             message_bus=InMemoryMessageBus(),
@@ -200,7 +203,7 @@ class IndexWorkerDuplicateTaskTest(IsolatedAsyncioTestCase):
                 self.vectors.delete.await_count,
                 self.vectors.insert.await_count,
             ),
-            ("ready", "", 1, 2, 2, 1),
+            ("ready", "", 1, 2, 1, 1),
         )
 
     async def test_ready_document_is_reindexed_after_status_reset(

@@ -155,8 +155,6 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 		);
 	}, [chunkers, knowledgeBase, selectedChunkerType, submittedParameters]);
 
-	const willReindex = chunkerChanged && (knowledgeBase?.document_count ?? 0) > 0;
-
 	const handleSubmit = async () => {
 		if (!knowledgeBase) return;
 		const trimmedName = name.trim();
@@ -206,14 +204,12 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 						{t('dialog-knowledge-base-edit.description')}
 					</DialogDescription>
 				</DialogHeader>
-				{willReindex && knowledgeBase && (
+				{chunkerChanged && (
 					<Alert>
 						<RefreshCw className="size-4" />
 						<AlertTitle>{t('dialog-knowledge-base-edit.reindex.title')}</AlertTitle>
 						<AlertDescription>
-							{t('dialog-knowledge-base-edit.reindex.description', {
-								documents: knowledgeBase.document_count,
-							})}
+							{t('dialog-knowledge-base-edit.reindex.description')}
 						</AlertDescription>
 					</Alert>
 				)}
@@ -313,7 +309,7 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 						)}
 						{submitting
 							? t('common.saving')
-							: willReindex
+							: chunkerChanged
 								? t('dialog-knowledge-base-edit.reindex.submit')
 								: t('common.save')}
 					</Button>

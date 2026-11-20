@@ -1250,6 +1250,20 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
                 now,
             ),
         )
+        for token, expected in (
+            ("worker-B", ("pending", False)),
+            ("worker-A", ("ready", True)),
+        ):
+            await self.storage.update_knowledge_document_status(
+                "user-1", kb.id, doc.id, "ready",
+                expected_lease_token=token,
+                alternate_index=True,
+            )
+            row = await self.storage.get_knowledge_document(
+                "user-1", kb.id, doc.id,
+            )
+            self.assertEqual((row.status, row.data.alternate_index), expected)
+
         # Release from a stranger is a no-op; from the holder clears it.
         await self.storage.release_knowledge_document_lease(
             "user-1",
@@ -1325,6 +1339,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
                     "chunk_count": 3,
                     "reindex_id": None,
                     "pending_since": None,
+                    "alternate_index": False,
                 },
             },
         )

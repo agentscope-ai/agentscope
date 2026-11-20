@@ -102,6 +102,7 @@ function DetailPanel({ knowledgeBase, documentRefreshKey, onTest, onEdit }: Deta
 					<KnowledgeDocumentsPanel
 						key={`${knowledgeBase.id}:${documentRefreshKey}`}
 						knowledgeBaseId={knowledgeBase.id}
+						editable={knowledgeBase.editable}
 					/>
 				</div>
 			</div>

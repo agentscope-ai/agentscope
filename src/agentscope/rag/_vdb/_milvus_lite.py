@@ -325,6 +325,8 @@ class MilvusLiteStore(VectorStoreBase):
         query_vector: list[float],
         top_k: int = 5,
         metadata_filter: dict[str, Any] | None = None,
+        *,
+        exclude_document_ids: set[str] | None = None,
     ) -> list[VectorSearchResult]:
         """Find the most similar records to a query vector.
 
@@ -348,6 +350,14 @@ class MilvusLiteStore(VectorStoreBase):
                 semantics for L2 as exposed by Milvus.
         """
         filter_expr = self._build_metadata_filter(metadata_filter)
+        if exclude_document_ids:
+            ids = json.dumps(sorted(exclude_document_ids), ensure_ascii=False)
+            exclusion = f"document_id not in {ids}"
+            filter_expr = (
+                f"({filter_expr}) and {exclusion}"
+                if filter_expr
+                else exclusion
+            )
         client = self.get_client()
         await self._ensure_loaded(client, collection)
 
@@ -371,6 +381,8 @@ class MilvusLiteStore(VectorStoreBase):
             )
             for hit in hits
         ]
+
+    search_excluding = search
 
     # ------------------------------------------------------------------
     # Document listing

@@ -112,17 +112,21 @@ class _Knowledge:
         """Accept the worker's cleanup call."""
         del document_id
 
-    async def insert_document(
+    async def prepare_document(
         self,
         *,
         chunks: list[Chunk],
         document_id: str,
         document_metadata: dict[str, object],
-    ) -> None:
-        """Record the chunks and metadata produced for the document."""
+    ) -> list[Chunk]:
+        """Record the metadata passed to the embedding stage."""
         del document_id
-        self.inserted_chunks = chunks
         self.inserted_metadata = document_metadata
+        return chunks
+
+    async def write_document_records(self, chunks: list[Chunk]) -> None:
+        """Record the chunks committed by the worker."""
+        self.inserted_chunks = chunks
 
 
 class _Manager:
@@ -139,7 +143,7 @@ class _Manager:
             data=SimpleNamespace(chunker_config=None),
         )
 
-    async def get_knowledge(self, *args: str) -> _Knowledge:
+    async def get_write_knowledge(self, *args: str) -> _Knowledge:
         """Return the vector-store facade."""
         del args
         return self.knowledge

@@ -445,7 +445,7 @@
 		},
 		"reindex": {
 			"title": "将重建知识库索引",
-			"description": "保存后将重新处理 {{documents}} 个文档，并产生新的 Embedding 调用费用。重建期间仍可搜索尚未被替换的旧索引。",
+			"description": "保存后会重新处理库中已有的全部文档，可能产生新的 Embedding 调用费用。",
 			"submit": "保存并重建索引"
 		},
 		"errors": {
@@ -517,6 +517,7 @@
 				"cancel": "取消",
 				"dismiss": "关闭",
 				"remove": "删除",
+				"retry": "重试",
 				"clearFinished": "清除已完成"
 			},
 			"title": "文档"

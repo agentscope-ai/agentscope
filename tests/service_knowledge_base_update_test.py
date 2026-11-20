@@ -121,6 +121,142 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
         )
         await self._storage.upsert_knowledge_document("user-1", record)
 
+    async def test_partial_replacement_keeps_both_documents_searchable(
+        self,
+    ) -> None:
+        """Publish each full replacement and retry only the failed document."""
+        owner, kb = "user-1", self._knowledge_base_id
+        worker = IndexWorker(
+            message_bus=self._bus,
+            storage=self._storage,
+            blob_store=self._service._blob_store,
+            knowledge_base_manager=self._manager,
+            parsers=[TextParser()],
+            node_id="worker",
+        )
+        for doc_id in ("a", "b"):
+            await self._store_document(doc_id, "pending")
+            row = await self._storage.get_knowledge_document(owner, kb, doc_id)
+            row.data.blob_uri = await self._service._blob_store.write_stream(
+                key=doc_id,
+                stream=BytesIO((doc_id * 256).encode()),
+            )
+            await self._storage.upsert_knowledge_document(owner, row)
+            await worker.process(owner, kb, doc_id)
+
+        reader = await self._manager.get_published_knowledge(owner, kb)
+        await self._service.update_knowledge_base(
+            owner,
+            kb,
+            chunker_config=ChunkerConfig(
+                type="approx_token",
+                parameters={"chunk_size": 4, "overlap": 0},
+            ),
+        )
+        await self._assert_dispatched(["a", "b"])
+        await worker.process(owner, kb, "b")
+        store = self._manager._vector_store
+        insert = store.insert
+
+        async def partial_insert(collection: str, records: list) -> None:
+            await insert(collection, records[:1])
+            # The staging vector ranks first. A top-1 query must look past it.
+            hits = await reader.search(["query"], top_k=1)
+            self.assertEqual([hit.document_id for hit in hits], ["b"])
+            old = await reader.list_chunks("a")
+            self.assertEqual([c.content.text for c in old], ["a" * 256])
+            raise RuntimeError("partial write")
+
+        with patch.object(store, "insert", side_effect=partial_insert):
+            await worker.process(owner, kb, "a")
+
+        a, b = [
+            await self._storage.get_knowledge_document(owner, kb, doc_id)
+            for doc_id in ("a", "b")
+        ]
+        self.assertEqual(
+            [
+                (r.status, r.data.chunk_count, r.data.alternate_index)
+                for r in (a, b)
+            ],
+            [("error", 1, False), ("ready", 16, True)],
+        )
+        self.assertEqual(a.data.error, "RuntimeError: partial write")
+        hits = await reader.search(["query"], top_k=32)
+        self.assertEqual(
+            [(hit.document_id, hit.chunk.content.text) for hit in hits],
+            [("b", "b" * 16)] * 16 + [("a", "a" * 256)],
+        )
+        await self._service.retry_document(owner, kb, "a")
+        with self.assertRaises(HTTPException) as duplicate:
+            await self._service.retry_document(owner, kb, "a")
+        self.assertEqual(duplicate.exception.status_code, 409)
+        await self._assert_dispatched(["a"])
+        await worker.process(owner, kb, "a")
+        self.assertEqual(
+            [len(await reader.list_chunks(doc_id)) for doc_id in ("a", "b")],
+            [16, 16],
+        )
+        self.assertEqual(
+            await self._storage.get_knowledge_document(owner, kb, "b"), b
+        )
+
+    async def test_cancelled_embedding_recovers_after_lease_expiry(
+        self,
+    ) -> None:
+        """Allow edits during embedding and recover on worker restart."""
+        owner, kb = "user-1", self._knowledge_base_id
+        doc = await self._service.register_document(
+            owner, kb, "note.txt", BytesIO(b"note"), 4, "text/plain",
+        )
+        await self._assert_dispatched([doc.id])
+        raw = await self._manager.get_write_knowledge(owner, kb)
+        entered = asyncio.Event()
+
+        async def blocked_embedding(*args: Any, **kwargs: Any) -> None:
+            del args, kwargs
+            entered.set()
+            await asyncio.Event().wait()
+
+        worker = IndexWorker(
+            message_bus=self._bus,
+            storage=self._storage,
+            blob_store=self._service._blob_store,
+            knowledge_base_manager=self._manager,
+            parsers=[TextParser()],
+            node_id="worker",
+        )
+        with (
+            patch.object(
+                self._manager, "get_write_knowledge", return_value=raw,
+            ),
+            patch.object(
+                raw, "prepare_document", side_effect=blocked_embedding,
+            ),
+        ):
+            task = asyncio.create_task(worker.process(owner, kb, doc.id))
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=2)
+                updated = await asyncio.wait_for(
+                    self._service.update_knowledge_base(owner, kb, name="new"),
+                    timeout=2,
+                )
+                self.assertEqual(updated.data.name, "new")
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+        row = await self._storage.get_knowledge_document(owner, kb, doc.id)
+        self.assertEqual(row.status, "indexing")
+        self.assertIsNotNone(row.processing_node)
+        row.lease_expires_at = datetime.now() - timedelta(seconds=1)
+        await self._storage.upsert_knowledge_document(owner, row)
+        await IndexSweeper(self._storage, self._bus)._sweep_once()
+        await self._assert_dispatched([doc.id])
+        await worker.process(owner, kb, doc.id)
+        row = await self._storage.get_knowledge_document(owner, kb, doc.id)
+        self.assertEqual((row.status, row.data.chunk_count), ("ready", 1))
+
     async def test_empty_knowledge_base_updates_without_queueing(self) -> None:
         """An empty knowledge base only needs a metadata update."""
         requested = ChunkerConfig(
@@ -178,8 +314,8 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             document_state,
             [
-                ("doc-error", "pending", None, None, None, 0),
-                ("doc-ready", "pending", None, None, None, 0),
+                ("doc-error", "pending", None, None, None, 3),
+                ("doc-ready", "pending", None, None, None, 3),
             ],
         )
         self.assertEqual(
@@ -908,7 +1044,7 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
                 )
                 chunks = await self._manager._vector_store.list_chunks(
                     "kb_collection",
-                    document.id,
+                    final.data.vector_id(document.id),
                 )
                 self.assertEqual(
                     (
@@ -1396,22 +1532,22 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Parameter validation remains authoritative on update."""
-        requested = ChunkerConfig(
-            type="approx_token",
-            parameters={"chunk_size": 8, "overlap": 8},
-        )
-
-        with self.assertRaises(HTTPException) as raised:
-            await self._service.update_knowledge_base(
-                user_id="user-1",
-                knowledge_base_id=self._knowledge_base_id,
-                chunker_config=requested,
-            )
+        for parameters in ({"chunk_size": 8, "overlap": 8}, {"chunk_szie": 8}):
+            with self.subTest(parameters=parameters):
+                with self.assertRaises(HTTPException) as raised:
+                    await self._service.update_knowledge_base(
+                        user_id="user-1",
+                        knowledge_base_id=self._knowledge_base_id,
+                        chunker_config=ChunkerConfig(
+                            type="approx_token",
+                            parameters=parameters,
+                        ),
+                    )
+                self.assertEqual(raised.exception.status_code, 422)
 
         stored = await self._storage.get_knowledge_base(
             "user-1",
             self._knowledge_base_id,
         )
-        self.assertEqual(raised.exception.status_code, 422)
         self.assertIsNotNone(stored)
         self.assertEqual(stored.data.chunker_config, self._original_chunker)

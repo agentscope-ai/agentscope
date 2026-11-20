@@ -237,7 +237,7 @@ class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(storage.released), 1)
 
-    async def test_external_cancel_stops_child_tasks_and_releases(
+    async def test_external_cancel_stops_tasks_and_leaves_recoverable_lease(
         self,
     ) -> None:
         """Caller cancellation must tear down pipeline and heartbeat."""
@@ -275,7 +275,7 @@ class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
             [u for u in storage.status_updates if u["status"] == "error"],
             [],
         )
-        self.assertEqual(len(storage.released), 1)
+        self.assertEqual(storage.released, [])
 
     async def test_not_acquired_short_circuits(self) -> None:
         """When the lease is already held by another worker, do nothing."""

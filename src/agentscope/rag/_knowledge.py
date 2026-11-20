@@ -253,12 +253,7 @@ class KnowledgeBase:
 
         results_per_query = await asyncio.gather(
             *(
-                self._vector_store.search(
-                    collection=self._collection,
-                    query_vector=vector,
-                    top_k=top_k,
-                    metadata_filter=self._metadata_filter,
-                )
+                self._search_vector(vector, top_k)
                 for vector in response.embeddings
             ),
         )
@@ -285,6 +280,19 @@ class KnowledgeBase:
             reverse=True,
         )
         return merged[:top_k]
+
+    async def _search_vector(
+        self,
+        vector: list[float],
+        top_k: int,
+    ) -> list[VectorSearchResult]:
+        """Retrieve ranked hits for one already embedded query."""
+        return await self._vector_store.search(
+            collection=self._collection,
+            query_vector=vector,
+            top_k=top_k,
+            metadata_filter=self._metadata_filter,
+        )
 
     # ------------------------------------------------------------------
     # Document management
@@ -336,11 +344,24 @@ class KnowledgeBase:
                 If the embedding model returns a number of vectors
                 that does not match the number of chunks.
         """
-        if not chunks:
-            return document_id or _generate_id()
         document_id = document_id or _generate_id()
+        records = await self.prepare_document(
+            chunks,
+            document_id,
+            document_metadata,
+        )
+        await self.write_document_records(records)
+        return document_id
 
-        await self.ensure_collection()
+    async def prepare_document(
+        self,
+        chunks: list[Chunk],
+        document_id: str,
+        document_metadata: dict | None = None,
+    ) -> list[VectorRecord]:
+        """Embed a document without modifying the backing collection."""
+        if not chunks:
+            return []
 
         # Precedence: metadata_filter wins (security boundary), then
         # chunk metadata, then document_metadata.  See docstring.
@@ -367,7 +388,7 @@ class KnowledgeBase:
                 f"vectors for {len(chunks)} chunks.",
             )
 
-        records = [
+        return [
             VectorRecord(
                 vector=vector,
                 document_id=document_id,
@@ -375,8 +396,14 @@ class KnowledgeBase:
             )
             for vector, chunk in zip(response.embeddings, chunks)
         ]
-        await self._vector_store.insert(self._collection, records)
-        return document_id
+
+    async def write_document_records(
+        self, records: list[VectorRecord]
+    ) -> None:
+        """Write previously prepared chunks without invoking the model."""
+        if records:
+            await self.ensure_collection()
+            await self._vector_store.insert(self._collection, records)
 
     async def delete_document(self, document_id: str) -> None:
         """Remove every record for one source document within this scope.

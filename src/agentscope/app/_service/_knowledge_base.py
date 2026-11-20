@@ -165,7 +165,7 @@ class KnowledgeBaseService:
         """
         if chunker_config is None:
             chunker_config = self._default_chunker_config()
-        self._validate_chunker_config(chunker_config)
+        chunker_config = self._validate_chunker_config(chunker_config)
 
         try:
             return await self._manager.create_knowledge_base(
@@ -334,7 +334,7 @@ class KnowledgeBaseService:
         documents: list[KnowledgeDocumentRecord] = []
         chunker_changed = False
         if chunker_config is not None:
-            self._validate_chunker_config(chunker_config)
+            chunker_config = self._validate_chunker_config(chunker_config)
             current = await self._manager.get_knowledge_base(
                 owner_id,
                 knowledge_base_id,
@@ -397,8 +397,8 @@ class KnowledgeBaseService:
     def _validate_chunker_config(
         self,
         chunker_config: ChunkerConfig,
-    ) -> None:
-        """Validate a persisted chunker type and parameter payload."""
+    ) -> ChunkerConfig:
+        """Validate and normalize the explicitly supplied parameters."""
         chunker_cls = self._chunkers_by_type.get(chunker_config.type)
         if chunker_cls is None:
             raise HTTPException(
@@ -409,12 +409,28 @@ class KnowledgeBaseService:
                 ),
             )
         try:
-            chunker_cls.Parameters(**chunker_config.parameters)
+            params = chunker_cls.Parameters.model_validate(
+                chunker_config.parameters,
+                extra=(
+                    "allow"
+                    if chunker_cls.Parameters.model_config.get("extra")
+                    == "allow"
+                    else "forbid"
+                ),
+            )
         except (TypeError, ValueError, ValidationError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Invalid chunker parameters: {exc}",
             ) from exc
+
+        normalized = params.model_dump(
+            mode="json", by_alias=True, exclude_unset=True, round_trip=True,
+        )
+        # A custom schema can have different input and serialization aliases.
+        if normalized.keys() != chunker_config.parameters.keys():
+            return chunker_config
+        return ChunkerConfig(type=chunker_config.type, parameters=normalized)
 
     def _chunker_configs_match(
         self,
@@ -903,6 +919,52 @@ class KnowledgeBaseService:
 
         return document, size, _iter_content()
 
+    async def retry_document(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> KnowledgeDocumentRecord:
+        """Queue one failed document using the current chunker."""
+        owner = await self._require_edit(user_id, knowledge_base_id)
+        async with self._bus.acquire_lock(
+            MessageBusKeys.knowledge_base_mutation_lock(
+                owner,
+                knowledge_base_id,
+            ),
+        ):
+            doc = await self._storage.get_knowledge_document(
+                owner,
+                knowledge_base_id,
+                document_id,
+            )
+            if doc is None:
+                raise HTTPException(404, detail="Document not found.")
+            if doc.status != "error":
+                raise HTTPException(
+                    409, detail="Only failed documents can be retried."
+                )
+            kb = await self._manager.get_knowledge_base(
+                owner,
+                knowledge_base_id,
+            )
+            if kb is None:
+                raise HTTPException(404, detail="Knowledge base not found.")
+            doc.data.reindex_id = kb.data.reindex_id or uuid.uuid4().hex
+            doc.status = "pending"
+            doc.data.error = None
+            doc.data.pending_since = datetime.now(timezone.utc)
+            doc.processing_node = None
+            doc.lease_expires_at = None
+            await self._storage.upsert_knowledge_document(owner, doc)
+            await enqueue_index_task(
+                self._bus,
+                user_id=owner,
+                knowledge_base_id=knowledge_base_id,
+                document_id=document_id,
+            )
+            return doc
+
     async def delete_document(
         self,
         user_id: str,
@@ -969,7 +1031,7 @@ class KnowledgeBaseService:
             return
 
         try:
-            knowledge = await self._manager.get_knowledge(
+            knowledge = await self._manager.get_write_knowledge(
                 owner_id,
                 knowledge_base_id,
             )
@@ -979,6 +1041,8 @@ class KnowledgeBaseService:
                 detail=str(exc),
             ) from exc
         await knowledge.delete_document(document_id)
+        if record.data.reindex_id is not None:
+            await knowledge.delete_document(f"~{document_id}")
         await self._storage.delete_knowledge_document(
             owner_id,
             knowledge_base_id,
@@ -1062,7 +1126,7 @@ class KnowledgeBaseService:
             knowledge_base_id,
         )
         try:
-            return await self._manager.get_knowledge(
+            return await self._manager.get_published_knowledge(
                 record.user_id,
                 knowledge_base_id,
             )
