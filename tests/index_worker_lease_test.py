@@ -24,7 +24,7 @@ class _LeaseStorage:
 
     def __init__(self) -> None:
         self.acquire_returns: bool = True
-        self.renew_results: list[bool] = []
+        self.renew_results: list[bool | BaseException] = []
         self.released: list[dict] = []
         self.status_updates: list[dict] = []
         self.renew_calls = 0
@@ -41,12 +41,19 @@ class _LeaseStorage:
         self,
         **kwargs: Any,
     ) -> bool:
-        """Pop next staged renew result; default to ``True`` once drained."""
+        """Pop next staged renew result; default to ``True`` once drained.
+
+        An exception instance in the queue is raised instead of returned,
+        modelling a transient storage failure.
+        """
         del kwargs
         self.renew_calls += 1
         if not self.renew_results:
             return True
-        return self.renew_results.pop(0)
+        result = self.renew_results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
 
     async def release_knowledge_document_lease(
         self,
@@ -193,6 +200,35 @@ class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
         self.assertTrue(worker.pipeline_completed)
         self.assertFalse(worker.pipeline_cancelled)
         # No error update on the happy path.
+        self.assertEqual(
+            [u for u in storage.status_updates if u["status"] == "error"],
+            [],
+        )
+        self.assertEqual(len(storage.released), 1)
+
+    async def test_transient_renew_error_keeps_pipeline_alive(self) -> None:
+        """A failed renew call is not a lost lease.
+
+        ``renew_knowledge_document_lease`` may raise on a transient
+        storage/network error. Letting that escape kills the heartbeat,
+        which ``process`` reads as "another worker took over": it
+        cancels a healthy pipeline and marks the document ``error``.
+        """
+        storage = _LeaseStorage()
+        storage.renew_results = [RuntimeError("redis blip")]
+        worker = _SlowPipelineWorker(storage, pipeline_seconds=0.3)
+
+        await asyncio.wait_for(
+            worker.process("u", "kb", "doc-transient"),
+            timeout=3.0,
+        )
+
+        self.assertTrue(
+            worker.pipeline_completed,
+            "A transient lease-renewal error aborted the pipeline.",
+        )
+        self.assertFalse(worker.pipeline_cancelled)
+        self.assertGreaterEqual(storage.renew_calls, 2)
         self.assertEqual(
             [u for u in storage.status_updates if u["status"] == "error"],
             [],
