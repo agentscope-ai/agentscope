@@ -15,11 +15,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from utils import AnyString
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import XAIChatModel
+from agentscope.model import FinishedReason, XAIChatModel
 from agentscope.credential import XAICredential
 from agentscope.tool import ToolChoice
 
 A = AnyString()
+
+_XAI_FINISH_REASONS = {
+    "REASON_INVALID": 0,
+    "REASON_MAX_LEN": 1,
+    "REASON_MAX_CONTEXT": 2,
+    "REASON_STOP": 3,
+    "REASON_TOOL_CALLS": 4,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -27,9 +35,36 @@ A = AnyString()
 # ---------------------------------------------------------------------------
 
 
+def _install_xai_finish_reason_stub(xai_sdk: ModuleType) -> None:
+    """Attach the finish-reason enum the model parser imports."""
+    sample_pb2 = ModuleType("xai_sdk.proto.sample_pb2")
+
+    class _FinishReason:
+        """Minimal protobuf enum wrapper used by the model parser."""
+
+        @staticmethod
+        def Name(value: int) -> str:  # pylint: disable=invalid-name
+            """Return the symbolic name for a finish-reason value."""
+            for name, number in _XAI_FINISH_REASONS.items():
+                if number == value:
+                    return name
+            raise ValueError(value)
+
+    sample_pb2.FinishReason = _FinishReason
+    xai_proto = ModuleType("xai_sdk.proto")
+    xai_proto.sample_pb2 = sample_pb2
+    xai_sdk.proto = xai_proto
+    sys.modules["xai_sdk.proto"] = xai_proto
+    sys.modules["xai_sdk.proto.sample_pb2"] = sample_pb2
+
+
 def _build_xai_sdk_stub() -> None:
     """Register stub modules for xai_sdk so imports don't fail."""
-    if "xai_sdk" in sys.modules:
+    existing_xai_sdk = sys.modules.get("xai_sdk")
+    if existing_xai_sdk is not None and hasattr(existing_xai_sdk, "__path__"):
+        return
+    if existing_xai_sdk is not None:
+        _install_xai_finish_reason_stub(existing_xai_sdk)
         return
 
     chat_pb2 = ModuleType("xai_sdk.chat.chat_pb2")
@@ -97,6 +132,7 @@ def _build_xai_sdk_stub() -> None:
     xai_sdk = ModuleType("xai_sdk")
     xai_sdk.chat = xai_chat
     xai_sdk.AsyncClient = MagicMock()
+    _install_xai_finish_reason_stub(xai_sdk)
 
     sys.modules["xai_sdk"] = xai_sdk
     sys.modules["xai_sdk.chat"] = xai_chat
@@ -125,6 +161,7 @@ def _mock_completion(
     reasoning: str = "",
     tool_calls: list | None = None,
     response_id: str = "xai-resp-1",
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock xAI non-streaming response."""
     resp = MagicMock()
@@ -133,6 +170,15 @@ def _mock_completion(
     resp.reasoning_content = reasoning
     resp.tool_calls = None
     resp.usage = None
+    resp.finish_reason = finish_reason
+    resp.proto.outputs = [
+        MagicMock(
+            finish_reason=_XAI_FINISH_REASONS.get(
+                finish_reason or "REASON_INVALID",
+                99,
+            ),
+        ),
+    ]
 
     if tool_calls:
         tc_mocks = []
@@ -284,6 +330,30 @@ class TestXAINonStream(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(result.id, "xai-resp-1")
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_context_limit_finish_reason_is_normalized(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """xAI's context limit is retained and mapped to LENGTH."""
+        mock_chat = _MockChatStream(
+            sample_response=_mock_completion(
+                finish_reason="REASON_MAX_CONTEXT",
+            ),
+        )
+        # The convenience attribute must not override the proto reason.
+        mock_chat._sample_response.finish_reason = "REASON_TOOL_CALLS"
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
+
+        result = await self.model([])
+
+        self.assertEqual(result.finished_reason, FinishedReason.LENGTH)
+        self.assertEqual(
+            result.metadata,
+            {"raw_finish_reason": "REASON_MAX_CONTEXT"},
+        )
 
     @patch("xai_sdk.AsyncClient")
     async def test_tool_call_response(
@@ -459,6 +529,33 @@ class TestXAIStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_stream_ignores_invalid_then_keeps_length_reason(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """REASON_INVALID must not hide the later terminal reason."""
+        unfinished = _mock_completion()
+        truncated = _mock_completion(finish_reason="REASON_MAX_LEN")
+        mock_chat = _MockChatStream(
+            stream_items=[
+                (unfinished, _MockStreamChunk(content="partial")),
+                (truncated, _MockStreamChunk()),
+            ],
+        )
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
+
+        gen = await self.model([])
+        responses = [response async for response in gen]
+
+        self.assertEqual(responses[-1].finished_reason, FinishedReason.LENGTH)
+        self.assertEqual(
+            responses[-1].metadata,
+            {"raw_finish_reason": "REASON_MAX_LEN"},
+        )
+        self.assertEqual(responses[-1].content[-1].text, "partial")
 
     @patch("xai_sdk.AsyncClient")
     async def test_stream_thinking_and_text(
