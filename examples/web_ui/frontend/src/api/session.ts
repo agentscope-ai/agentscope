@@ -150,40 +150,54 @@ export const sessionApi = {
 		signal?: AbortSignal,
 		after?: string | null,
 		onConnected?: () => void,
-		options?: Pick<ApiRequestOptions, 'baseUrl' | 'userId' | 'silent'>,
+		options?: Pick<ApiRequestOptions, 'baseUrl' | 'userId' | 'silent'> & {
+			onReplayComplete?: () => void;
+		},
 	): AsyncGenerator<AgentEvent> {
+		const { onReplayComplete, ...requestOptions } = options ?? {};
 		const res = await client.stream(`/sessions/${sessionId}/stream`, {
 			method: 'GET',
 			params: {
 				agent_id: agentId,
 				...(after != null && { after }),
+				...(onReplayComplete && { replay_notice: 'true' }),
 			},
 			signal,
-			...options,
+			...requestOptions,
 		});
 
 		const reader = res.body!.getReader();
 		onConnected?.();
 		const decoder = new TextDecoder();
-		let buffer = '';
+		const fragments: string[] = [];
+		let finishReplay = onReplayComplete;
 
 		try {
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) break;
 
-				buffer += decoder.decode(value, { stream: true });
-				const lines = buffer.split('\n');
-				buffer = lines.pop() ?? '';
-
-				for (const line of lines) {
+				const lines = decoder.decode(value, { stream: true }).split('\n');
+				const tail = lines.pop()!;
+				for (let line of lines) {
+					if (fragments.length) {
+						fragments.push(line);
+						line = fragments.join('');
+						fragments.length = 0;
+					}
 					if (line.startsWith('data: ')) {
 						const json = line.slice(6).trim();
 						if (json) yield JSON.parse(json) as AgentEvent;
+					} else if (finishReplay && line.startsWith(':')) {
+						// Older servers send only unlabelled heartbeats.
+						const comment = line.trimEnd();
+						if (comment === ': replay-complete' || comment === ':') {
+							finishReplay();
+							finishReplay = undefined;
+						}
 					}
-					// SSE comment frames (`:...\n`) are silently skipped
-					// (used for heartbeats).
 				}
+				if (tail) fragments.push(tail);
 			}
 		} finally {
 			reader.releaseLock();

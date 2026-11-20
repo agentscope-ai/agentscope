@@ -116,6 +116,44 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
         async with _LegacyBus() as bus:
             await self._assert_replay_then_live(bus)
 
+    async def test_replay_notice_follows_all_log_pages(self) -> None:
+        """Complete replay after the final page, including an empty log."""
+        async with _LegacyBus() as bus, asyncio.timeout(3):
+            read_page = bus.log_read
+
+            async def read_one(
+                key: str,
+                since: str | None = None,
+                max_count: int = 1,
+            ) -> list[tuple[str, dict]]:
+                return await read_page(key, since, min(max_count, 1))
+
+            with patch.object(bus, "log_read", read_one):
+                for count in (0, 3):
+                    for number in range(count):
+                        await publish_session_event(bus, "s", {"n": number})
+                    response = await stream_session_events(
+                        session_id="s",
+                        agent_id="a",
+                        user_id="u",
+                        storage=_Storage(),  # type: ignore[arg-type]
+                        message_bus=bus,
+                        after=None,
+                        replay_notice=True,
+                    )
+                    async with aclosing(response.body_iterator) as stream:
+                        self.assertEqual(
+                            [
+                                _decode(await anext(stream))
+                                for _ in range(count)
+                            ],
+                            [{"n": n} for n in range(count)],
+                        )
+                        self.assertEqual(
+                            await anext(stream),
+                            ": replay-complete\n\n",
+                        )
+
     async def test_legacy_snapshot_retries_its_own_marker(self) -> None:
         """Replay idle history even if the first marker is lost."""
         bus = _LegacyBus()
@@ -335,7 +373,7 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
                 message_bus=bus,
                 after=cursor,
             )
-            response = await connect()
+            response = await connect(replay_notice=True)
             frames = []
             with (
                 patch.object(PubSub, "handle_message", lose_pong),
@@ -344,13 +382,21 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
             ):
                 async with aclosing(response.body_iterator) as stream:
                     async for frame in stream:
-                        if frame != ":\n\n":
-                            frames.append(_decode(frame))
-                            if frames[-1] == {"frame": "new"}:
-                                break
+                        if frame == ": replay-pending\n\n":
+                            continue
+                        if frame == ": replay-complete\n\n":
+                            frames.append(frame)
+                            break
+                        frames.append(_decode(frame))
             self.assertEqual(
                 frames,
-                [] if drop_all else [{"frame": "history"}, {"frame": "new"}],
+                []
+                if drop_all
+                else [
+                    {"frame": "history"},
+                    {"frame": "new"},
+                    ": replay-complete\n\n",
+                ],
             )
             self.assertEqual(len(set(markers)), 3 if drop_all else 2)
             if drop_all:

@@ -1089,6 +1089,7 @@ async def stream_session_events(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     message_bus: MessageBus = Depends(get_message_bus),
+    replay_notice: bool = False,
 ) -> StreamingResponse:
     """Subscribe to a session's live event stream.
 
@@ -1116,6 +1117,8 @@ async def stream_session_events(
             Injected storage backend (ownership check only).
         message_bus (`MessageBus`):
             Injected message bus (replay + live subscription).
+        replay_notice (`bool`):
+            Send an SSE comment when the initial replay is complete.
 
     Returns:
         `StreamingResponse`:
@@ -1144,11 +1147,17 @@ async def stream_session_events(
                 data = json.dumps(payload, ensure_ascii=False)
                 yield f"data: {data}\n\n"
 
-        async def replay_snapshot() -> AsyncGenerator[str, None]:
+        async def replay_snapshot(
+            notify: bool = False,
+        ) -> AsyncGenerator[str, None]:
             """Merge a fixed log snapshot with pending live notifications."""
-            await replay.read()
+            rows = await replay.read()
+            # A bus may return short pages. Read through the backlog before
+            # acknowledging replay, stopping once we reach a live frame.
+            while notify and rows and rows[-1][0] not in replay.queued:
+                rows = await replay.read()
             last_id = next(reversed(replay.pending), None)
-            if last_id is None:
+            if last_id is None and not notify:
                 return
             # The subscription can still hold trimmed frames even when the
             # feeder queue is empty. Its ordered marker covers both buffers.
@@ -1163,7 +1172,7 @@ async def stream_session_events(
                     if feeder_task in done and not flushing.done():
                         return
                     if not done:
-                        yield ":\n\n"
+                        yield ": replay-pending\n\n" if notify else ":\n\n"
                 try:
                     await flushing
                 except TimeoutError as exc:
@@ -1178,9 +1187,11 @@ async def stream_session_events(
                     break
                 async for frame in deliver(item):
                     yield frame
-            if last_id in replay.pending:
+            if last_id is not None and last_id in replay.pending:
                 async for frame in deliver({"_entry_id": last_id}):
                     yield frame
+            if notify and not feeder_task.done():
+                yield ": replay-complete\n\n"
 
         def register_barrier(callback: Callable[[], Awaitable[None]]) -> None:
             nonlocal flush
@@ -1222,7 +1233,7 @@ async def stream_session_events(
                 ready.wait(),
                 timeout=_SUBSCRIBE_TIMEOUT_SECS,
             )
-            async for frame in replay_snapshot():
+            async for frame in replay_snapshot(replay_notice):
                 yield frame
 
             # Inject pending subagent HITL cards projected onto this

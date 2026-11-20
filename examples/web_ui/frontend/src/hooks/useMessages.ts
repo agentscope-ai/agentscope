@@ -551,10 +551,8 @@ export function useMessages(
 			let connected = false;
 			try {
 				let eventCursor: string | null = null;
+				const requests = new Map(reconnecting ? externalSubmissionsRef.current : []);
 				if (reconnecting || !takeFreshlyCreated(sessionId)) {
-					const requests = reconnecting
-						? [...externalSubmissionsRef.current.entries()]
-						: [];
 					const options = {
 						signal: controller.signal,
 						silent: reconnecting,
@@ -608,15 +606,12 @@ export function useMessages(
 					const messages = pages.reverse().flat();
 					savedHistory = messages;
 					savedCursor = eventCursor;
+					const tail = messages.at(-1);
 					if (reconnecting) {
-						// The checkpoint can precede audio we played before disconnecting.
-						for (const msg of msgsRef.current) {
-							for (const block of msg.content) {
-								if (audioManager?.suppressAutoplayOnReplay(block.id))
-									playedBlocks.add(block.id);
-							}
+						if (tail && !msgsRef.current.some((msg) => msg.id === tail.id)) {
+							audioManager?.stopAllPlayback();
 						}
-						audioManager?.disposeAll();
+						audioManager?.restoreCheckpoint(messages, playedBlocks);
 						setSubagentHitl([]);
 					}
 					const restored = reconnecting
@@ -632,16 +627,17 @@ export function useMessages(
 								request.toolCallIds.delete(block.id);
 							}
 						}
-						externalSubmissionsRef.current.delete(id);
-						if (!request.toolCallIds.size) request.resolve();
-						else request.reject(new Error(t('chat.externalExecution.unconfirmed')));
+						if (!request.toolCallIds.size) {
+							externalSubmissionsRef.current.delete(id);
+							requests.delete(id);
+							request.resolve();
+						}
 					}
 					msgsRef.current = restored;
 					startingQueueRef.current = null;
 					replyQueueRef.current = null;
 					setStartingInputId(null);
 					clearInterruptTimer();
-					const tail = messages[messages.length - 1];
 					const parked = getPendingHitlCalls(messages)[0];
 					const active =
 						is_running && !parked && tail?.role === 'assistant' && !tail.finished_reason
@@ -655,6 +651,15 @@ export function useMessages(
 					setMsgs([...msgsRef.current]);
 				} else oldestVisible = null;
 				setLoadedKey(`${agentId}:${sessionId}`);
+				const finishReplay = () => {
+					if (controller.signal.aborted) return;
+					for (const [id, request] of requests) {
+						if (externalSubmissionsRef.current.get(id) !== request) continue;
+						externalSubmissionsRef.current.delete(id);
+						request.reject(new Error(t('chat.externalExecution.unconfirmed')));
+					}
+					requests.clear();
+				};
 				for await (const event of sessionApi.streamEvents(
 					sessionId,
 					agentId,
@@ -666,7 +671,10 @@ export function useMessages(
 						setStreamConnected(true);
 						if (reconnecting) setError(null);
 					},
-					{ silent: reconnecting },
+					{
+						silent: reconnecting,
+						onReplayComplete: requests.size ? finishReplay : undefined,
+					},
 				)) {
 					if (controller.signal.aborted) return;
 					retryDelay = 1000;

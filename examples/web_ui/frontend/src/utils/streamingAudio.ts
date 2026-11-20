@@ -23,6 +23,9 @@
  * cut short by the end event arriving mid-playback.
  */
 
+import { ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
+import type { Msg } from '@agentscope-ai/agentscope/message';
+
 /** Status of a streaming audio block. */
 export type StreamingAudioStatus = 'streaming' | 'ready' | 'error';
 
@@ -271,13 +274,33 @@ export class StreamingAudioManager {
 		return this.sessions.get(blockId)?.state ?? null;
 	}
 
-	/** Keep replay silent for audio already played or owned by another player. */
-	suppressAutoplayOnReplay(blockId: string): boolean {
-		const session = this.sessions.get(blockId);
-		return (
-			!!session &&
-			(session.autoplay !== true || session.playedBlob || !!session.livePlayer?.started)
-		);
+	/** Keep completed checkpoint audio playing and rebuild other blocks from replay. */
+	restoreCheckpoint(messages: Msg[], playedBlocks: Set<string>): void {
+		if (!this.sessions.size && !playedBlocks.size) return;
+		const replayed = new Set(this.sessions.keys());
+		for (const msg of messages) {
+			for (const block of msg.content) {
+				if (block.type !== 'data' || !block.finished_at) continue;
+				playedBlocks.delete(block.id);
+				if (!replayed.delete(block.id)) continue;
+				const session = this.sessions.get(block.id);
+				if (
+					session?.state.status !== 'ready' ||
+					session.replyId !== msg.id ||
+					session.mediaType !== block.source.media_type ||
+					(msg.finished_reason && msg.finished_reason !== ReplyFinishedReason.COMPLETED)
+				) {
+					this.dispose(block.id);
+				}
+			}
+		}
+		for (const id of replayed) {
+			const session = this.sessions.get(id)!;
+			if (session.autoplay !== true || session.playedBlob || session.livePlayer?.started) {
+				playedBlocks.add(id);
+			}
+			this.dispose(id);
+		}
 	}
 
 	/** Track an audio block; disable autoplay when another player owns output. */
