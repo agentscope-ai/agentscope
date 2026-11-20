@@ -52,6 +52,7 @@ from agentscope.app._router._schema import (
     ChatRequest,
     UpdateChatQueueItemRequest,
 )
+from agentscope.event import UserConfirmResultEvent
 from agentscope.state import AgentState
 from agentscope.message import (
     AssistantMsg,
@@ -115,6 +116,25 @@ class _FakeStorage:
     ) -> None:
         """Record messages durably persisted before queued execution."""
         self.persisted_messages.append((user_id, session_id, message))
+
+
+class _OwnerScopedStorage(_FakeStorage):
+    """Storage that only knows about the sessions of one user."""
+
+    def __init__(self, owner: str = "owner") -> None:
+        super().__init__()
+        self.owner = owner
+
+    async def get_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> object | None:
+        """Return a session only to the user that owns it."""
+        if user_id != self.owner:
+            return None
+        return await super().get_session(user_id, agent_id, session_id)
 
 
 class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
@@ -975,8 +995,6 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
     async def test_resume_idle_spawns_with_parsed_event(self) -> None:
         """A ``resume`` trigger for an idle session spawns a run whose
         ``input_msg`` is the carried HITL event, rebuilt from its dump."""
-        from agentscope.event import UserConfirmResultEvent
-
         bus = _FakeBus()
         chat = _FakeChatService()
         event = UserConfirmResultEvent.model_construct(
@@ -1153,8 +1171,6 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
         is re-queued (with backoff) and dispatched once the session lock
         releases. This is the structural fix for the parked-run 409 race.
         """
-        from agentscope.event import UserConfirmResultEvent
-
         bus = _FakeBus()
         chat = _FakeChatService()
         lock_key = MessageBus._SESSION_LOCK_KEY.format(sid="w1")
@@ -2281,15 +2297,6 @@ class TestChatEndpointQueue(IsolatedAsyncioTestCase):
     ) -> None:
         """POST /chat cannot inject into another user's session queue."""
 
-        class _OwnerStorage(_FakeStorage):
-            async def get_session(
-                self,
-                user_id: str,
-                _agent_id: str,
-                _session_id: str,
-            ) -> object | None:
-                return object() if user_id == "owner" else None
-
         bus = _FakeBus()
         existing = await enqueue_chat_input(
             bus,
@@ -2306,7 +2313,7 @@ class TestChatEndpointQueue(IsolatedAsyncioTestCase):
                     input=UserMsg("user", "inject", id="attack"),
                 ),
                 user_id="attacker",
-                storage=_OwnerStorage(),
+                storage=_OwnerScopedStorage(),
                 chat_service=_FakeChatService(),
                 chat_run_registry=ChatRunRegistry(),
                 message_bus=bus,
@@ -2316,6 +2323,54 @@ class TestChatEndpointQueue(IsolatedAsyncioTestCase):
         self.assertEqual(
             [item["id"] for item in await list_chat_inputs(bus, "shared-sid")],
             [existing["id"]],
+        )
+
+    async def test_cross_user_continuation_is_rejected(self) -> None:
+        """POST /chat cannot continue another user's session with None."""
+
+        service = _FakeChatService()
+        with self.assertRaises(HTTPException) as raised:
+            await chat_endpoint(
+                request=ChatRequest(
+                    agent_id="a",
+                    session_id="victim-sid",
+                    input=None,
+                ),
+                user_id="attacker",
+                storage=_OwnerScopedStorage(),
+                chat_service=service,
+                chat_run_registry=ChatRunRegistry(),
+                message_bus=_FakeBus(),
+            )
+
+        self.assertEqual(raised.exception.status_code, 404)
+        self.assertEqual(service.calls, [])
+
+    async def test_cross_user_resume_is_rejected(self) -> None:
+        """POST /chat cannot resume a parked reply it does not own."""
+
+        bus = _FakeBus()
+        with self.assertRaises(HTTPException) as raised:
+            await chat_endpoint(
+                request=ChatRequest(
+                    agent_id="a",
+                    session_id="victim-sid",
+                    input=UserConfirmResultEvent(
+                        reply_id="r1",
+                        confirm_results=[],
+                    ),
+                ),
+                user_id="attacker",
+                storage=_OwnerScopedStorage(),
+                chat_service=_FakeChatService(),
+                chat_run_registry=ChatRunRegistry(),
+                message_bus=bus,
+            )
+
+        self.assertEqual(raised.exception.status_code, 404)
+        self.assertEqual(
+            await bus.queue_drain(MessageBusKeys.wakeup_queue(), max_count=10),
+            [],
         )
 
     def test_empty_message_lists_are_rejected_by_request_schemas(
