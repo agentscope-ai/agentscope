@@ -387,6 +387,33 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
             Msg.model_validate_json(line)
             json.loads(line)
 
+    async def test_offload_context_concurrent_calls_keep_every_batch(
+        self,
+    ) -> None:
+        """Concurrent offloads to one session must not drop a batch.
+
+        Each call reads the file and writes it back with its lines
+        appended; interleaved, the second write used to overwrite the
+        first batch.
+        """
+        session_id = "test_session_concurrent"
+        batches = [
+            [UserMsg(name="user", content=f"Message {i}")] for i in range(5)
+        ]
+
+        paths = await asyncio.gather(
+            *(
+                self.workspace.offload_context(session_id, msgs)
+                for msgs in batches
+            ),
+        )
+
+        async with aiofiles.open(paths[0], "r") as f:
+            lines = (await f.read()).splitlines()
+
+        expected = [msgs[0].model_dump_json() for msgs in batches]
+        self.assertCountEqual(lines, expected)
+
     async def test_offload_context_with_datablock(self) -> None:
         """Test offloading messages with DataBlock content.
 
