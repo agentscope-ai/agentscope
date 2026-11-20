@@ -485,20 +485,35 @@ class OpenAIChatModel(ChatModelBase):
 
                 # Tool call
                 for tool_call in getattr(delta, "tool_calls", None) or []:
-                    index = tool_call.index
+                    index = getattr(tool_call, "index", None)
                     fn = getattr(tool_call, "function", None)
                     delta_name = getattr(fn, "name", None) if fn else None
                     delta_args = getattr(fn, "arguments", None) if fn else None
 
+                    # Some OpenAI-compatible servers omit ``index``.
+                    # Key those deltas by id instead, so parallel calls
+                    # don't collapse into a single block: a delta that
+                    # carries a new id starts a new call, and a delta
+                    # without one continues the most recent call.
+                    if index is None:
+                        if tool_call.id:
+                            key = ("id", tool_call.id)
+                        elif tool_call_mapping:
+                            key = list(tool_call_mapping)[-1]
+                        else:
+                            key = ("anonymous", 0)
+                    else:
+                        key = index
+
                     # Record the id and name in case following deltas
                     # don't provide them
-                    if index not in tool_call_mapping:
-                        tool_call_mapping[index] = (
+                    if key not in tool_call_mapping:
+                        tool_call_mapping[key] = (
                             tool_call.id,
                             delta_name or "unknown",
                         )
 
-                    stored_id, stored_name = tool_call_mapping[index]
+                    stored_id, stored_name = tool_call_mapping[key]
 
                     delta_res.append_tool_call(
                         block_id=tool_call.id or stored_id,
