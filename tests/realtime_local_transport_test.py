@@ -135,6 +135,35 @@ class LocalAudioTransportTest(IsolatedAsyncioTestCase):
             (transport._max_queued, 3, (transport._max_queued + 2) % 256),
         )
 
+    async def test_close_finishes_cleanup_when_stop_raises(self) -> None:
+        """A failing stop() must not leak the peer stream or stall incoming().
+
+        PortAudio raises when the device disappears mid-call. Cleanup must
+        still close the other stream and enqueue the sentinel that ends
+        ``incoming()``.
+        """
+        sd = MagicMock()
+        in_stream = MagicMock(name="in_stream")
+        out_stream = MagicMock(name="out_stream")
+        sd.InputStream.return_value = in_stream
+        sd.OutputStream.return_value = out_stream
+        in_stream.stop.side_effect = RuntimeError("device lost")
+
+        transport = LocalAudioTransport()
+        with patch.dict(sys.modules, {"sounddevice": sd}):
+            await transport.start()
+        incoming = transport.incoming()
+
+        await transport.close()
+
+        in_stream.close.assert_called_once_with()
+        out_stream.stop.assert_called_once_with()
+        out_stream.close.assert_called_once_with()
+        self.assertIsNone(transport._in_stream)
+        self.assertIsNone(transport._out_stream)
+        with self.assertRaises(StopAsyncIteration):
+            await asyncio.wait_for(anext(incoming), timeout=1)
+
     async def test_restart_drops_previous_session_audio(self) -> None:
         """A reused transport starts with fresh capture and playout state."""
         transport = LocalAudioTransport()
