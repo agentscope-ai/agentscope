@@ -36,6 +36,9 @@ export interface InputResult {
  */
 const freshlyCreated = new Set<string>();
 
+// Legacy replay can spend three 30-second intervals waiting for its barrier.
+const LEGACY_REPLAY_GRACE_MS = 90_000;
+
 /**
  * Whether `sessionId` was created by this tab and not yet opened.
  * Consumes the flag, so a second call for the same id returns false.
@@ -171,6 +174,12 @@ export const sessionApi = {
 		const decoder = new TextDecoder();
 		const fragments: string[] = [];
 		let finishReplay = onReplayComplete;
+		let legacyDeadline: ReturnType<typeof setTimeout> | undefined;
+		const complete = () => {
+			clearTimeout(legacyDeadline);
+			finishReplay?.();
+			finishReplay = undefined;
+		};
 
 		try {
 			while (true) {
@@ -189,17 +198,18 @@ export const sessionApi = {
 						const json = line.slice(6).trim();
 						if (json) yield JSON.parse(json) as AgentEvent;
 					} else if (finishReplay && line.startsWith(':')) {
-						// Older servers send only unlabelled heartbeats.
 						const comment = line.trimEnd();
-						if (comment === ': replay-complete' || comment === ':') {
-							finishReplay();
-							finishReplay = undefined;
+						if (comment === ': replay-complete') complete();
+						else if (comment === ':' && legacyDeadline === undefined) {
+							// Older servers also send heartbeats while replay is pending.
+							legacyDeadline = setTimeout(complete, LEGACY_REPLAY_GRACE_MS);
 						}
 					}
 				}
 				if (tail) fragments.push(tail);
 			}
 		} finally {
+			clearTimeout(legacyDeadline);
 			reader.releaseLock();
 		}
 	},

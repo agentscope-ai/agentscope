@@ -15,7 +15,10 @@ from redis.asyncio.client import PubSub
 
 from agentscope.app._bus_ops import publish_session_event
 from agentscope.app._router import _session
-from agentscope.app._router._session import stream_session_events
+from agentscope.app._router._session import (
+    _LegacySessionBarrier,
+    stream_session_events,
+)
 from agentscope.app.message_bus import (
     InMemoryMessageBus,
     MessageBus,
@@ -162,11 +165,15 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
         entry_id = await publish_session_event(bus, "s", history)
         publish = bus.publish
         markers = []
+        barrier = _LegacySessionBarrier(bus, key)
 
         async def lose_first_marker(key: str, payload: dict) -> None:
             markers.append(payload)
             if len(markers) == 1:
-                payload = {MessageBusKeys.SESSION_BARRIER_FIELD: "other"}
+                other = {MessageBusKeys.SESSION_BARRIER_FIELD: "other"}
+                self.assertTrue(barrier.consume(other))
+                self.assertFalse(barrier.received.is_set())
+                raise TimeoutError
             await publish(key, payload)
 
         response = await stream_session_events(
@@ -178,24 +185,18 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
             after=None,
         )
         with (
-            patch.object(bus, "publish", side_effect=lose_first_marker),
-            patch(
-                "agentscope.app._router._session._HEARTBEAT_INTERVAL_SECS",
-                0.02,
+            patch.object(
+                _session,
+                "_LegacySessionBarrier",
+                return_value=barrier,
             ),
+            patch.object(bus, "publish", side_effect=lose_first_marker),
         ):
-            async with aclosing(response.body_iterator) as stream:
-
-                async def first_data() -> dict:
-                    async for frame in stream:
-                        if frame != ":\n\n":
-                            return _decode(frame)
-                    self.fail("Stream closed before replay")
-
-                self.assertEqual(
-                    await asyncio.wait_for(first_data(), 1),
-                    history,
-                )
+            async with (
+                asyncio.timeout(5),
+                aclosing(response.body_iterator) as stream,
+            ):
+                self.assertEqual(_decode(await anext(stream)), history)
         self.assertEqual(len(markers), 2)
         self.assertEqual(markers[0], markers[1])
         self.assertEqual(await bus.log_read(key), [(entry_id, history)])

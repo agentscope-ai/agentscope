@@ -29,7 +29,7 @@ import {
 import { useTranslation } from '@/i18n/useI18n';
 import { ASK_USER_TOOL_NAME, formatAskUserOutput, parseAskUserResult } from '@/lib/ask-user';
 import type { ClientExternalToolResult } from '@/lib/client-external-tools';
-import { appendMessageEvent } from '@/lib/message-events';
+import { appendMessageEvent, audioDeltaUrl } from '@/lib/message-events';
 import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 import type { VoicePlayback } from '@/lib/pipelineVoiceSession';
 
@@ -482,7 +482,7 @@ export function useMessages(
 				} else if (event.type === EventType.DATA_BLOCK_DELTA) {
 					const e = event as DataBlockDeltaEvent;
 					if (e.media_type.startsWith('audio/')) {
-						audioManager.append(e.block_id, e.data);
+						audioManager.append(e.block_id, e.data, audioDeltaUrl(e));
 					}
 				} else if (event.type === EventType.DATA_BLOCK_END) {
 					const e = event as DataBlockEndEvent;

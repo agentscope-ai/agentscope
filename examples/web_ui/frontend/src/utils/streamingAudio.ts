@@ -33,7 +33,7 @@ export type StreamingAudioStatus = 'streaming' | 'ready' | 'error';
 export interface StreamingAudioState {
 	status: StreamingAudioStatus;
 	mediaType: string;
-	/** Object URL for ``<audio>`` once playback-ready. */
+	/** Playback URL for ``<audio>`` once playback-ready. */
 	url: string | null;
 	/** Cause for ``status === 'error'``. */
 	error?: string;
@@ -232,6 +232,7 @@ class WavStreamPlayer {
 
 interface Session {
 	replyId?: string;
+	sourceUrl?: string;
 	mediaType: string;
 	autoplay: boolean | Promise<boolean>;
 	chunks: Bytes[];
@@ -239,7 +240,7 @@ interface Session {
 	livePlayer: WavStreamPlayer | null;
 	/** True if a live player was created — survives dispose. */
 	hadLivePlayer: boolean;
-	playedBlob: boolean;
+	playedUrl: boolean;
 	autoplayElement: HTMLAudioElement | null;
 	state: StreamingAudioState;
 }
@@ -288,6 +289,8 @@ export class StreamingAudioManager {
 					session?.state.status !== 'ready' ||
 					session.replyId !== msg.id ||
 					session.mediaType !== block.source.media_type ||
+					session.sourceUrl !==
+						(block.source.type === 'url' ? block.source.url : undefined) ||
 					(msg.finished_reason && msg.finished_reason !== ReplyFinishedReason.COMPLETED)
 				) {
 					this.dispose(block.id);
@@ -296,7 +299,7 @@ export class StreamingAudioManager {
 		}
 		for (const id of replayed) {
 			const session = this.sessions.get(id)!;
-			if (session.autoplay !== true || session.playedBlob || session.livePlayer?.started) {
+			if (session.autoplay !== true || session.playedUrl || session.livePlayer?.started) {
 				playedBlocks.add(id);
 			}
 			this.dispose(id);
@@ -322,7 +325,7 @@ export class StreamingAudioManager {
 			totalBytes: 0,
 			livePlayer,
 			hadLivePlayer: livePlayer !== null,
-			playedBlob: false,
+			playedUrl: false,
 			autoplayElement: null,
 			state: { status: 'streaming', mediaType, url: null, interruptCount: 0 },
 		});
@@ -333,7 +336,7 @@ export class StreamingAudioManager {
 				session.autoplay = allowed;
 				if (!allowed) return;
 				if (session.state.url) {
-					this.playBlob(session, session.state.url);
+					this.playUrl(session, session.state.url);
 				} else if (mediaType === 'audio/wav' && session.state.status === 'streaming') {
 					session.livePlayer = new WavStreamPlayer();
 					session.hadLivePlayer = true;
@@ -344,10 +347,15 @@ export class StreamingAudioManager {
 		this.emit(blockId);
 	}
 
-	/** Called on DATA_BLOCK_DELTA. ``data`` is the base64 chunk payload. */
-	append(blockId: string, data: string): void {
+	/** A delta carries either base64 audio bytes or a playable URL. */
+	append(blockId: string, data: string | null, url?: string): void {
 		const session = this.sessions.get(blockId);
-		if (!session || session.state.status !== 'streaming' || !data) return;
+		if (!session || session.state.status !== 'streaming') return;
+		if (url) {
+			session.sourceUrl = url;
+			return;
+		}
+		if (!data) return;
 		let bytes: Uint8Array;
 		try {
 			bytes = base64ToBytes(data);
@@ -389,29 +397,34 @@ export class StreamingAudioManager {
 			session.livePlayer.finalize();
 		}
 
-		const blob = new Blob(session.chunks as BlobPart[], { type: session.mediaType });
-		const url = URL.createObjectURL(blob);
+		let url = session.sourceUrl ?? null;
+		if (!url && session.totalBytes) {
+			const blob = new Blob(session.chunks as BlobPart[], { type: session.mediaType });
+			url = URL.createObjectURL(blob);
+		}
 
 		// Free the per-chunk buffers; the Blob owns the bytes from here on.
 		session.chunks = [];
 
 		session.state = {
-			status: 'ready',
+			status: url ? 'ready' : 'error',
 			mediaType: session.mediaType,
 			url,
 			interruptCount: session.state.interruptCount,
 		};
 		this.emit(blockId);
 
-		if (session.autoplay === true && !hadLivePlayback) this.playBlob(session, url);
+		if (url && session.autoplay === true && (!hadLivePlayback || session.sourceUrl)) {
+			this.playUrl(session, url);
+		}
 	}
 
-	private playBlob(session: Session, url: string): void {
+	private playUrl(session: Session, url: string): void {
 		const el = new Audio(url);
 		session.autoplayElement = el;
 		void el.play().then(
 			() => {
-				session.playedBlob = true;
+				session.playedUrl = true;
 			},
 			() => undefined,
 		);
@@ -424,7 +437,7 @@ export class StreamingAudioManager {
 			session.autoplay = false;
 			this.stopBlockPlayback(session);
 			if (session.state.status === 'streaming') {
-				if (session.totalBytes) {
+				if (session.totalBytes || session.sourceUrl) {
 					void this.end(blockId);
 					continue;
 				}
@@ -479,7 +492,7 @@ export class StreamingAudioManager {
 		if (!session) return;
 		session.autoplayElement?.pause();
 		session.livePlayer?.dispose();
-		if (session.state.url) URL.revokeObjectURL(session.state.url);
+		if (session.state.url && !session.sourceUrl) URL.revokeObjectURL(session.state.url);
 		this.sessions.delete(blockId);
 		this.listeners.delete(blockId);
 	}
