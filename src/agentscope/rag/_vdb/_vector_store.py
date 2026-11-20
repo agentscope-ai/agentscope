@@ -267,6 +267,31 @@ class VectorStoreBase(ABC):
                 score, e.g. by negating it.
         """
 
+    async def search_excluding(
+        self,
+        collection: str,
+        query_vector: list[float],
+        top_k: int,
+        metadata_filter: dict[str, Any] | None,
+        *,
+        exclude_document_ids: set[str],
+    ) -> list[VectorSearchResult]:
+        """Find the top eligible hits with legacy vector-store interfaces."""
+        limit = top_k
+        while True:
+            hits = await self.search(
+                collection,
+                query_vector,
+                limit,
+                metadata_filter,
+            )
+            visible = [
+                h for h in hits if h.document_id not in exclude_document_ids
+            ]
+            if len(visible) >= top_k or len(hits) < limit:
+                return visible[:top_k]
+            limit *= 2
+
     # ------------------------------------------------------------------
     # Document listing
     # ------------------------------------------------------------------

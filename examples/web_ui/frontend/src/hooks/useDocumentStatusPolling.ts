@@ -31,6 +31,7 @@ interface PollingResult {
 	statuses: Record<string, KnowledgeDocumentView>;
 	/** True while the loop is actively scheduling refreshes. */
 	polling: boolean;
+	setStatus: (doc: KnowledgeDocumentView) => void;
 }
 
 /**
@@ -131,6 +132,7 @@ export function useDocumentStatusPolling({
 
 	return {
 		statuses,
+		setStatus: (doc) => setStatuses((prev) => ({ ...prev, [doc.id]: doc })),
 		polling: watchIdsKey.length > 0,
 	};
 }

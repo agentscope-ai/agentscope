@@ -267,6 +267,23 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
         # normalizes it back to the raw cosine used by other backends.
         self.assertAlmostEqual(results[0].score, 0.9)
 
+    async def test_search_excludes_staging_before_knn_ranking(self) -> None:
+        self.client.search.return_value = {"hits": {"hits": []}}
+        await self.store.search_excluding(
+            "kb",
+            [1.0],
+            1,
+            {"tenant": "a"},
+            exclude_document_ids={"~doc"},
+        )
+        self.assertEqual(
+            self.client.search.await_args.kwargs["knn"]["filter"],
+            [
+                {"term": {"metadata.tenant": "a"}},
+                {"bool": {"must_not": [{"terms": {"document_id": ["~doc"]}}]}},
+            ],
+        )
+
     async def test_search_rejects_top_k_above_elasticsearch_limit(
         self,
     ) -> None:

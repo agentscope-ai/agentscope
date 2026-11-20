@@ -324,9 +324,11 @@ class RealtimeService:
                     user_id,
                     knowledge_id,
                 )
-                knowledge = await self._knowledge_base_manager.get_knowledge(
-                    record.user_id,
-                    knowledge_id,
+                knowledge = (
+                    await self._knowledge_base_manager.get_published_knowledge(
+                        record.user_id,
+                        knowledge_id,
+                    )
                 )
             except Exception:  # noqa: BLE001
                 logger.exception(

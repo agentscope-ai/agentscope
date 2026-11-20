@@ -1944,6 +1944,26 @@ class AsyncSQLAlchemyStorage(StorageBase):
             )
         return [_to_record(r, KnowledgeBaseRecord) for r in rows]
 
+    async def list_pending_knowledge_base_reindexes(
+        self,
+    ) -> list[KnowledgeBaseRecord]:
+        """Return unfinished batches stored in the KB JSON payload."""
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        sa.select(KnowledgeBaseRow).where(
+                            KnowledgeBaseRow.payload["data"]["reindex_pending"]
+                            .as_boolean()
+                            .is_(True),
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(row, KnowledgeBaseRecord) for row in rows]
+
     async def delete_knowledge_base(
         self,
         user_id: str,
@@ -2052,14 +2072,11 @@ class AsyncSQLAlchemyStorage(StorageBase):
         status: KnowledgeDocumentStatus,
         error: str | None = None,
         chunk_count: int | None = None,
+        *,
+        expected_lease_token: str | None = None,
+        alternate_index: bool | None = None,
     ) -> None:
-        """Fast-path column UPDATE + optional payload rewrite.
-
-        ``status`` is a column so it can always be updated with a
-        single ``UPDATE``; ``error`` / ``chunk_count`` live inside
-        :attr:`~KnowledgeDocumentRecord.data` (payload) and therefore
-        require the classic read-modify-write when they change.
-        """
+        """Update status and payload with an optional atomic token guard."""
         async with self._session() as sess:
             row = await sess.get(KnowledgeDocumentRow, document_id)
             if (
@@ -2074,11 +2091,27 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 record.data.error = error
             if chunk_count is not None:
                 record.data.chunk_count = chunk_count
+            if alternate_index is not None:
+                record.data.alternate_index = alternate_index
             record.updated_at = _utcnow()
             new_row = _from_record(KnowledgeDocumentRow, record)
-            row.status = new_row.status
-            row.payload = new_row.payload
-            row.updated_at = new_row.updated_at
+            statement = sa.update(KnowledgeDocumentRow).where(
+                KnowledgeDocumentRow.id == document_id,
+                KnowledgeDocumentRow.user_id == user_id,
+                KnowledgeDocumentRow.knowledge_base_id == knowledge_base_id,
+            )
+            if expected_lease_token is not None:
+                statement = statement.where(
+                    KnowledgeDocumentRow.processing_node
+                    == expected_lease_token,
+                )
+            await sess.execute(
+                statement.values(
+                    status=new_row.status,
+                    payload=new_row.payload,
+                    updated_at=new_row.updated_at,
+                ).execution_options(synchronize_session=False),
+            )
             await sess.commit()
 
     async def acquire_knowledge_document_lease(
@@ -2104,6 +2137,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
                     KnowledgeDocumentRow.user_id == user_id,
                     KnowledgeDocumentRow.knowledge_base_id
                     == knowledge_base_id,
+                    KnowledgeDocumentRow.status.notin_(("ready", "error")),
                     or_(
                         KnowledgeDocumentRow.processing_node.is_(None),
                         KnowledgeDocumentRow.lease_expires_at.is_(None),
@@ -2225,7 +2259,17 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 .scalars()
                 .all()
             )
-        return [_to_record(r, KnowledgeDocumentRecord) for r in rows]
+        records = [_to_record(r, KnowledgeDocumentRecord) for r in rows]
+        return [
+            record
+            for record in records
+            if (
+                _to_naive_utc(record.data.pending_since)
+                if record.data.pending_since is not None
+                else record.created_at
+            )
+            < threshold
+        ]
 
     # ---- Voice Profile ----
 

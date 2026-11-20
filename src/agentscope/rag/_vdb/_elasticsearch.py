@@ -194,6 +194,8 @@ class ElasticsearchStore(VectorStoreBase):
         query_vector: list[float],
         top_k: int = 5,
         metadata_filter: dict[str, Any] | None = None,
+        *,
+        exclude_document_ids: set[str] | None = None,
     ) -> list[VectorSearchResult]:
         """Run an approximate cosine kNN search."""
         if top_k <= 0:
@@ -211,6 +213,22 @@ class ElasticsearchStore(VectorStoreBase):
             "num_candidates": num_candidates,
         }
         filters = self._metadata_filters(metadata_filter)
+        if exclude_document_ids:
+            filters.append(
+                {
+                    "bool": {
+                        "must_not": [
+                            {
+                                "terms": {
+                                    "document_id": sorted(
+                                        exclude_document_ids,
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                },
+            )
         if filters:
             knn["filter"] = filters
 
@@ -228,6 +246,8 @@ class ElasticsearchStore(VectorStoreBase):
             )
             for hit in response["hits"]["hits"]
         ]
+
+    search_excluding = search
 
     async def list_documents(
         self,

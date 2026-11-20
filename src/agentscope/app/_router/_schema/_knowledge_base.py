@@ -35,8 +35,8 @@ class CreateKnowledgeBaseRequest(BaseModel):
         default=None,
         description=(
             "Chunker configuration determining how uploaded documents "
-            "are split into chunks.  Pinned at creation time and "
-            "cannot be changed afterwards.  Defaults to the first "
+            "are split into chunks. It can later be changed through "
+            "PATCH, which reindexes existing documents. Defaults to the first "
             "configured chunker with its default parameters."
         ),
     )
@@ -53,9 +53,10 @@ class CreateKnowledgeBaseResponse(BaseModel):
 class UpdateKnowledgeBaseRequest(BaseModel):
     """Request body for updating a knowledge base.
 
-    Only mutable fields can be set here.  The embedding model
-    configuration is pinned at creation time and cannot be changed —
-    switching it would invalidate every previously inserted vector.
+    The embedding model configuration is pinned at creation time and
+    cannot be changed — switching it would invalidate every previously
+    inserted vector. Changing the chunker configuration rebuilds every
+    existing document's index.
     """
 
     name: str | None = Field(
@@ -65,6 +66,13 @@ class UpdateKnowledgeBaseRequest(BaseModel):
     description: str | None = Field(
         default=None,
         description="New free-form description; omit to leave unchanged.",
+    )
+    chunker_config: ChunkerConfig | None = Field(
+        default=None,
+        description=(
+            "New chunker configuration; omit to leave unchanged. "
+            "Changing it reindexes every existing document."
+        ),
     )
 
 

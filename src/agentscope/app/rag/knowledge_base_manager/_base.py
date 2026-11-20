@@ -23,6 +23,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Self
 
 from ._dimension_policy import DimensionPolicy
+from ._published_knowledge import PublishedKnowledge
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -208,13 +209,15 @@ class KnowledgeBaseManagerBase(ABC):
         knowledge_base_id: str,
         name: str | None = None,
         description: str | None = None,
+        chunker_config: "ChunkerConfig | None" = None,
+        reindex_id: str | None = None,
     ) -> "KnowledgeBaseRecord | None":
         """Update mutable fields on an existing knowledge base record.
 
-        Only ``name`` and ``description`` are mutable.  The embedding
-        model configuration and the underlying collection are pinned
-        for the lifetime of the record because changing either would
-        invalidate every previously inserted vector.
+        The embedding model configuration and the underlying collection
+        are pinned for the lifetime of the record because changing either
+        would invalidate every previously inserted vector. Reindex
+        orchestration for a changed chunker is owned by the service layer.
 
         Args:
             user_id (`str`):
@@ -226,6 +229,10 @@ class KnowledgeBaseManagerBase(ABC):
             description (`str | None`, optional):
                 New description; ``None`` leaves the description
                 unchanged.
+            chunker_config (`ChunkerConfig | None`, optional):
+                New chunker configuration; ``None`` leaves it unchanged.
+            reindex_id (`str | None`, optional):
+                New batch to persist atomically with its configuration.
 
         Returns:
             `KnowledgeBaseRecord | None`:
@@ -242,6 +249,11 @@ class KnowledgeBaseManagerBase(ABC):
             record.data.name = name
         if description is not None:
             record.data.description = description
+        if chunker_config is not None:
+            record.data.chunker_config = chunker_config
+        if reindex_id is not None:
+            record.data.reindex_id = reindex_id
+            record.data.reindex_pending = True
         return await self._storage.upsert_knowledge_base(user_id, record)
 
     @abstractmethod
@@ -274,6 +286,28 @@ class KnowledgeBaseManagerBase(ABC):
     # ------------------------------------------------------------------
     # KnowledgeBase runtime
     # ------------------------------------------------------------------
+
+    async def get_write_knowledge(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> "KnowledgeBase":
+        """Return the underlying storage handle for the indexing worker."""
+        return await self.get_knowledge(user_id, knowledge_base_id)
+
+    async def get_published_knowledge(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> "KnowledgeBase":
+        """Resolve reads against each document's published vector slot."""
+        raw = await self.get_write_knowledge(user_id, knowledge_base_id)
+        return PublishedKnowledge(
+            raw,
+            self._storage,
+            user_id,
+            knowledge_base_id,
+        )
 
     @abstractmethod
     async def get_knowledge(

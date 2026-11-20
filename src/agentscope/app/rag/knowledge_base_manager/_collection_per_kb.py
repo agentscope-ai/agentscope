@@ -152,6 +152,14 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
         user_id: str,
         knowledge_base_id: str,
     ) -> KnowledgeBase:
+        """Return a read handle for the published document versions."""
+        return await self.get_published_knowledge(user_id, knowledge_base_id)
+
+    async def get_write_knowledge(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> KnowledgeBase:
         """Resolve a :class:`KnowledgeBase` runtime for one knowledge base.
 
         Looks the record up in storage (raising

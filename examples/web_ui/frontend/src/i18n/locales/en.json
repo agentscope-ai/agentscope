@@ -428,7 +428,7 @@
 	},
 	"dialog-knowledge-base-edit": {
 		"title": "Edit knowledge base",
-		"description": "Update the knowledge base name and description.",
+		"description": "Update knowledge-base details and chunking.",
 		"name": {
 			"label": "Name",
 			"placeholder": "My knowledge base"
@@ -443,8 +443,14 @@
 		"chunker": {
 			"label": "Chunker"
 		},
+		"reindex": {
+			"title": "The knowledge base will be reindexed",
+			"description": "Saving reindexes all existing documents and may incur embedding charges.",
+			"submit": "Save and reindex"
+		},
 		"errors": {
-			"nameRequired": "Please give the knowledge base a name."
+			"nameRequired": "Please give the knowledge base a name.",
+			"chunkerRequired": "Please pick a chunking strategy."
 		}
 	},
 	"dialog-knowledge-base-delete": {
@@ -511,6 +517,7 @@
 				"cancel": "Cancel",
 				"dismiss": "Dismiss",
 				"remove": "Remove",
+				"retry": "Retry",
 				"clearFinished": "Clear finished"
 			},
 			"title": "Documents"

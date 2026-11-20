@@ -152,6 +152,7 @@ async def run_worker(
         await stack.enter_async_context(knowledge_base_manager)
 
         worker = IndexWorker(
+            message_bus=message_bus,
             storage=storage,
             blob_store=blob_store,
             knowledge_base_manager=knowledge_base_manager,

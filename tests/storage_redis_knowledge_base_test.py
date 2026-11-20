@@ -43,6 +43,36 @@ def make_record(user_id: str, name: str = "kb") -> KnowledgeBaseRecord:
 class KnowledgeBaseStorageTest(IsolatedAsyncioTestCase):
     """Tests for the KnowledgeBaseRecord CRUD methods on RedisStorage."""
 
+    async def test_pending_reindex_index_tracks_record_state(self) -> None:
+        """Batch intent is discoverable across owners and clears on delete."""
+        storage = make_storage()
+        try:
+            pending = make_record("user-1")
+            pending.data.reindex_id = "batch-1"
+            pending.data.reindex_pending = True
+            other = make_record("user-2")
+            await storage.upsert_knowledge_base("user-1", pending)
+            await storage.upsert_knowledge_base("user-2", other)
+            self.assertEqual(
+                await storage.list_pending_knowledge_base_reindexes(),
+                [pending],
+            )
+            pending.data.reindex_pending = False
+            await storage.upsert_knowledge_base("user-1", pending)
+            self.assertEqual(
+                await storage.list_pending_knowledge_base_reindexes(),
+                [],
+            )
+            pending.data.reindex_pending = True
+            await storage.upsert_knowledge_base("user-1", pending)
+            await storage.delete_knowledge_base("user-1", pending.id)
+            self.assertEqual(
+                await storage.list_pending_knowledge_base_reindexes(),
+                [],
+            )
+        finally:
+            await storage._client.aclose()
+
     async def test_upsert_get_list_delete(self) -> None:
         """Round-trip and isolation across users."""
         storage = make_storage()

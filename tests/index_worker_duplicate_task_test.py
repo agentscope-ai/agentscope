@@ -2,12 +2,13 @@
 """Regression tests for duplicate index tasks, retries, and error views."""
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, create_autospec, patch
+from unittest.mock import ANY, AsyncMock, create_autospec, patch
 
 from agentscope.app._router._schema._knowledge_base import (
     KnowledgeDocumentView,
 )
 from agentscope.app._service._index_worker import IndexWorker
+from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.storage import (
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
@@ -47,13 +48,18 @@ class _StubStorage:
         status: KnowledgeDocumentStatus,
         error: str | None = None,
         chunk_count: int | None = None,
+        *,
+        expected_lease_token: str | None = None,
+        alternate_index: bool | None = None,
     ) -> None:
         """Apply status updates with the storage backends' semantics."""
-        del user_id, knowledge_base_id, document_id
+        del user_id, knowledge_base_id, document_id, expected_lease_token
         self.status_writes.append(status)
         self.record.status = status
         if error is not None:
             self.record.data.error = error
+        if alternate_index is not None:
+            self.record.data.alternate_index = alternate_index
         if chunk_count is not None:
             self.record.data.chunk_count = chunk_count
 
@@ -85,9 +91,10 @@ class IndexWorkerDuplicateTaskTest(IsolatedAsyncioTestCase):
                     data=SimpleNamespace(chunker_config=None),
                 ),
             ),
-            get_knowledge=AsyncMock(return_value=knowledge),
+            get_write_knowledge=AsyncMock(return_value=knowledge),
         )
         self.worker = IndexWorker(
+            message_bus=InMemoryMessageBus(),
             storage=self.storage,
             blob_store=object(),
             knowledge_base_manager=manager,
@@ -136,7 +143,7 @@ class IndexWorkerDuplicateTaskTest(IsolatedAsyncioTestCase):
             user_id="owner",
             knowledge_base_id="kb-1",
             document_id="doc-1",
-            processing_node="test-node",
+            processing_node=ANY,
         )
 
     async def test_duplicate_after_ready_survives_a_failing_rerun(
@@ -196,7 +203,7 @@ class IndexWorkerDuplicateTaskTest(IsolatedAsyncioTestCase):
                 self.vectors.delete.await_count,
                 self.vectors.insert.await_count,
             ),
-            ("ready", "", 1, 2, 2, 1),
+            ("ready", "", 1, 2, 1, 1),
         )
 
     async def test_ready_document_is_reindexed_after_status_reset(

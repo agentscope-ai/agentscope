@@ -1,10 +1,19 @@
-import { AlertCircle, CheckCircle2, FileText, Loader2, Plus, Trash2, X } from 'lucide-react';
+import {
+	AlertCircle,
+	CheckCircle2,
+	FileText,
+	Loader2,
+	Plus,
+	RotateCw,
+	Trash2,
+	X,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { knowledgeBaseApi } from '@/api';
-import type { KnowledgeDocumentStatus, KnowledgeDocumentView } from '@/api';
+import type { KnowledgeDocumentView } from '@/api';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { DocumentDetailDrawer } from '@/components/knowledge/DocumentDetailDrawer.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -26,6 +35,7 @@ import { cn } from '@/lib/utils';
 
 interface KnowledgeDocumentsPanelProps {
 	knowledgeBaseId: string;
+	editable: boolean;
 }
 
 /**
@@ -36,8 +46,6 @@ interface KnowledgeDocumentsPanelProps {
 type Row =
 	| { kind: 'server'; doc: KnowledgeDocumentView; localTask: UploadTask | null }
 	| { kind: 'local'; task: UploadTask };
-
-const TERMINAL_SERVER_STATUSES: KnowledgeDocumentStatus[] = ['ready', 'error'];
 
 function formatSize(bytes: number): string {
 	if (!bytes) return '—';
@@ -96,29 +104,19 @@ interface RowViewProps {
 	onCancel: (taskId: string) => void;
 	onDismiss: (taskId: string) => void;
 	onDelete: (doc: KnowledgeDocumentView) => void;
+	onRetry?: (doc: KnowledgeDocumentView) => Promise<void>;
 	onOpen: (doc: KnowledgeDocumentView) => void;
 }
 
-function RowView({ row, onCancel, onDismiss, onDelete, onOpen }: RowViewProps) {
+function RowView({ row, onCancel, onDismiss, onDelete, onOpen, onRetry }: RowViewProps) {
 	const { t } = useTranslation();
 
+	const [retrying, setRetrying] = useState(false);
 	const filename = row.kind === 'server' ? row.doc.filename : row.task.filename;
 	const size = row.kind === 'server' ? row.doc.size : row.task.size;
 
-	// Phase resolution — the local task wins while the server hasn't
-	// caught up; once the server says `ready` / `error`, that's the
-	// truth.
-	const phase: UploadPhase = (() => {
-		if (row.kind === 'local') return row.task.phase;
-		const localPhase = row.localTask?.phase;
-		if (
-			localPhase &&
-			!TERMINAL_SERVER_STATUSES.includes(row.doc.status as KnowledgeDocumentStatus)
-		) {
-			return localPhase;
-		}
-		return row.doc.status;
-	})();
+	// Persisted status also covers reindexing after the upload finished.
+	const phase: UploadPhase = row.kind === 'local' ? row.task.phase : row.doc.status;
 
 	// Progress bar logic: byte-level during `uploading`; otherwise a
 	// coarse phase-derived value so the user gets visible movement.
@@ -194,6 +192,24 @@ function RowView({ row, onCancel, onDismiss, onDelete, onOpen }: RowViewProps) {
 					className="flex shrink-0 items-center gap-x-1"
 					onClick={(e) => e.stopPropagation()}
 				>
+					{phase === 'error' && row.kind === 'server' && onRetry && (
+						<Button
+							variant="ghost"
+							size="sm"
+							disabled={retrying}
+							onClick={async () => {
+								setRetrying(true);
+								try {
+									await onRetry(row.doc);
+								} finally {
+									setRetrying(false);
+								}
+							}}
+						>
+							<RotateCw className="size-3.5" />
+							{t('knowledge.document.actions.retry')}
+						</Button>
+					)}
 					{phase === 'queued' || phase === 'uploading' ? (
 						<Button
 							variant="ghost"
@@ -252,7 +268,10 @@ function RowView({ row, onCancel, onDismiss, onDelete, onOpen }: RowViewProps) {
 	);
 }
 
-export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsPanelProps) {
+export function KnowledgeDocumentsPanel({
+	knowledgeBaseId,
+	editable,
+}: KnowledgeDocumentsPanelProps) {
 	const { t } = useTranslation();
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [dragOver, setDragOver] = useState(false);
@@ -262,7 +281,7 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 	const { enqueue, cancel, dismiss, tasksForKb, clearFinishedForKb } = useUploadContext();
 	const { documents, loading, refetch } = useKnowledgeDocuments(knowledgeBaseId);
 	const tasks = tasksForKb(knowledgeBaseId);
-	const { statuses } = useDocumentStatusPolling({
+	const { statuses, setStatus } = useDocumentStatusPolling({
 		knowledgeBaseId,
 		documents,
 	});
@@ -313,7 +332,15 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 	// upload response and the next list refresh — which only happens
 	// when indexing finishes.
 	const rows: Row[] = useMemo(() => {
-		const unclaimed = new Map(documents.map((doc) => [doc.id, doc]));
+		const unclaimed = new Map(
+			documents.map((doc) => {
+				const polled = statuses[doc.id];
+				return [
+					doc.id,
+					polled && polled.updated_at > doc.updated_at ? polled : doc,
+				] as const;
+			}),
+		);
 		const taskRows: Row[] = tasks.map((task) => {
 			const doc = task.documentId ? unclaimed.get(task.documentId) : undefined;
 			if (!doc) return { kind: 'local', task };
@@ -326,7 +353,7 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 			localTask: null,
 		}));
 		return [...taskRows, ...documentRows];
-	}, [documents, tasks]);
+	}, [documents, statuses, tasks]);
 
 	const onUploadClick = useCallback(() => {
 		fileInputRef.current?.click();
@@ -398,6 +425,17 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 			toast.error(t('knowledge.document.deleteError'));
 		}
 	}, [deleteTarget, knowledgeBaseId, refetch, t]);
+
+	const handleRetry = async (doc: KnowledgeDocumentView) => {
+		try {
+			const pending = await knowledgeBaseApi.retryDocument(knowledgeBaseId, doc.id);
+			lastRefetchedKey.current = '';
+			setStatus(pending);
+		} catch {
+			// The API client displays the error. Refresh after competing retries.
+		}
+		await refetch();
+	};
 
 	const hasFinishedLocalTasks = tasks.some((t) => !isInFlight(t.phase));
 
@@ -488,6 +526,7 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 								onCancel={cancel}
 								onDismiss={dismiss}
 								onDelete={setDeleteTarget}
+								onRetry={editable ? handleRetry : undefined}
 								onOpen={setDetailTarget}
 							/>
 						))}

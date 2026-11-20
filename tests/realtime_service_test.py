@@ -644,7 +644,7 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
         """Attach configured session knowledge to delegated Chat agents."""
         knowledge = object()
         manager = SimpleNamespace(
-            get_knowledge=AsyncMock(return_value=knowledge),
+            get_published_knowledge=AsyncMock(return_value=knowledge),
         )
         access = SimpleNamespace(
             resolve_knowledge_base=AsyncMock(
@@ -690,7 +690,7 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
             "user-1",
             "knowledge-1",
         )
-        manager.get_knowledge.assert_awaited_once_with(
+        manager.get_published_knowledge.assert_awaited_once_with(
             "owner-1",
             "knowledge-1",
         )

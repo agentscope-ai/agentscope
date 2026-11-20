@@ -17,12 +17,12 @@ lifecycle.  Given a ``document_id`` it:
 The worker is intentionally embeddable: a single instance can live
 inside the API process (embedded deployment) or inside a dedicated
 worker process (dedicated deployment).  Coordination across workers
-is done entirely through the storage lease — workers do not need to
-know about each other.
+uses the storage lease and the shared knowledge-base mutation lock.
 """
 import asyncio
 import contextlib
 import mimetypes
+import uuid
 from concurrent.futures import ProcessPoolExecutor
 from datetime import timedelta
 from typing import Any, TYPE_CHECKING
@@ -32,8 +32,10 @@ from pydantic import ValidationError
 from ..._logging import logger
 from ...message import DataBlock
 from ...rag import ApproxTokenChunker
+from ..message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
+    from ..message_bus import MessageBus
     from ..rag.blob_store import BlobStoreBase
     from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
     from ..storage import KnowledgeBaseRecord, StorageBase
@@ -138,6 +140,8 @@ class IndexWorker:
         max_concurrency: int = 4,
         lease_ttl: timedelta = timedelta(seconds=90),
         parser_executor: ProcessPoolExecutor | None = None,
+        *,
+        message_bus: "MessageBus",
         **kwargs: Any,
     ) -> None:
         """Initialize the worker.
@@ -166,9 +170,9 @@ class IndexWorker:
 
                 Same registry the upload service uses, passed in by DI.
             node_id (`str`):
-                Stable identifier for this worker process.  Used as
-                ``processing_node`` on the lease so the sweeper can
-                tell whose work expired.  Typically
+                Stable identifier for this worker process, used for
+                logging. Each processing attempt uses a separate UUID
+                as its lease holder. Typically
                 ``f"{hostname}:{pid}:{uuid}"``.
             chunkers (`list[type[ChunkerBase]] | None`, optional):
                 The chunker classes that can be rebuilt from a knowledge
@@ -190,6 +194,9 @@ class IndexWorker:
                 third-party byte-oriented parsers.  Injected so a
                 single pool can be shared across the app (built in
                 lifespan).
+            message_bus (`MessageBus`):
+                Shared with the API service. Serializes final vector
+                writes with document and knowledge-base deletion.
             **kwargs (`Any`):
                 Deprecated. ``chunker`` (a shared chunker instance) is
                 still accepted for backward compatibility; only its
@@ -213,6 +220,7 @@ class IndexWorker:
         self._storage = storage
         self._blob_store = blob_store
         self._manager = knowledge_base_manager
+        self._bus = message_bus
         self._parsers_by_media_type = _build_parser_registry(parsers)
         self._chunkers_by_type = {
             cls.chunker_type: cls for cls in chunker_classes
@@ -235,8 +243,8 @@ class IndexWorker:
 
         Steps:
 
-        1. **Lease** — CAS-acquire the processing lease; bail if some
-           other worker already holds it (duplicate dispatch / sweep).
+        1. **Lease** — CAS-acquire the processing lease; bail if already
+           terminal or another worker holds it (duplicate dispatch).
         2. **Throttle** — wait on the per-worker semaphore so the
            number of in-flight parses stays bounded.
         3. **Pipeline** — parse → chunk → embed + write vector store,
@@ -254,32 +262,46 @@ class IndexWorker:
             document_id (`str`):
                 The document to process.
         """
+        lease_token = uuid.uuid4().hex
         acquired = await self._storage.acquire_knowledge_document_lease(
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             document_id=document_id,
-            processing_node=self._node_id,
+            processing_node=lease_token,
             lease_ttl=self._lease_ttl,
         )
         if not acquired:
             logger.debug(
-                "Skipping %s — another worker holds the lease.",
+                "Skipping %s — document is not eligible for processing.",
                 document_id,
             )
             return
 
+        logger.debug(
+            "Processing %s on worker %s with lease %s.",
+            document_id,
+            self._node_id,
+            lease_token,
+        )
         pipeline_task = asyncio.create_task(
             self._guarded_pipeline(
                 user_id,
                 knowledge_base_id,
                 document_id,
+                lease_token,
             ),
             name=f"pipeline:{document_id}",
         )
         heartbeat_task = asyncio.create_task(
-            self._heartbeat(user_id, knowledge_base_id, document_id),
+            self._heartbeat(
+                user_id,
+                knowledge_base_id,
+                document_id,
+                lease_token,
+            ),
             name=f"lease-renew:{document_id}",
         )
+        release_lease = True
         try:
             # Race the pipeline against the heartbeat: if the heartbeat
             # returns first, the lease was stolen mid-flight (e.g. the
@@ -314,6 +336,8 @@ class IndexWorker:
                 await heartbeat_task
             await pipeline_task
         except asyncio.CancelledError:
+            # The sweeper recovers interrupted stages by their expired lease.
+            release_lease = False
             pipeline_task.cancel()
             heartbeat_task.cancel()
             await asyncio.gather(
@@ -328,23 +352,25 @@ class IndexWorker:
                 knowledge_base_id,
                 document_id,
                 exc,
+                lease_token,
             )
         finally:
-            # Release is CAS-guarded server-side on ``processing_node``
-            # (storage._base.release_knowledge_document_lease) — calling
-            # it after a stolen lease is a safe no-op.
-            await self._storage.release_knowledge_document_lease(
-                user_id=user_id,
-                knowledge_base_id=knowledge_base_id,
-                document_id=document_id,
-                processing_node=self._node_id,
-            )
+            # The holder identifies this attempt, not just this worker.
+            # Delayed cleanup cannot release a newer attempt's lease.
+            if release_lease:
+                await self._storage.release_knowledge_document_lease(
+                    user_id=user_id,
+                    knowledge_base_id=knowledge_base_id,
+                    document_id=document_id,
+                    processing_node=lease_token,
+                )
 
     async def _guarded_pipeline(
         self,
         user_id: str,
         knowledge_base_id: str,
         document_id: str,
+        lease_token: str,
     ) -> None:
         """Run the throttled pipeline inside the per-worker semaphore."""
         async with self._sem:
@@ -352,6 +378,7 @@ class IndexWorker:
                 user_id,
                 knowledge_base_id,
                 document_id,
+                lease_token,
             )
 
     # ------------------------------------------------------------------
@@ -363,6 +390,7 @@ class IndexWorker:
         user_id: str,
         knowledge_base_id: str,
         document_id: str,
+        lease_token: str,
     ) -> None:
         """Walk the document through parse → chunk → index."""
         record = await self._storage.get_knowledge_document(
@@ -456,6 +484,7 @@ class IndexWorker:
             "parsing",
             # Clear stale errors; None leaves the stored value unchanged.
             error="" if getattr(data, "error", None) else None,
+            expected_lease_token=lease_token,
         )
         file_bytes = await self._read_blob(data.blob_uri)
         sections = await self._parse(parser, file_bytes, data.filename)
@@ -466,6 +495,7 @@ class IndexWorker:
             knowledge_base_id,
             document_id,
             "chunking",
+            expected_lease_token=lease_token,
         )
         chunks = await chunker.chunk(sections)
         if not chunks and media_type == "application/pdf":
@@ -480,8 +510,9 @@ class IndexWorker:
             knowledge_base_id,
             document_id,
             "indexing",
+            expected_lease_token=lease_token,
         )
-        knowledge = await self._manager.get_knowledge(
+        knowledge = await self._manager.get_write_knowledge(
             user_id,
             knowledge_base_id,
         )
@@ -508,37 +539,95 @@ class IndexWorker:
                 )
                 for index, chunk in enumerate(text_chunks)
             ]
-        # A retry re-runs the whole pipeline. Records are keyed by
-        # (document_id, chunk_index), so re-inserting overwrites in
-        # place — but a re-parse that yields fewer chunks would leave
-        # the old tail behind, so drop the previous vectors first.
-        #
-        # The trade-off: between this delete and the insert below the
-        # document is unsearchable, where before it kept a complete but
-        # stale set; and a first-time index pays a no-op delete. The
-        # narrow alternative — insert, then drop only
-        # ``chunk_index >= len(chunks)`` — needs a vector-store API that
-        # deletes by more than ``document_id``, which is not worth a new
-        # abstract method for a retry-only window.
-        await knowledge.delete_document(document_id)
-        await knowledge.insert_document(
+        replacing = data.reindex_id is not None
+        previous_id = data.vector_id(document_id) if replacing else document_id
+        alternate = replacing and not data.alternate_index
+        target_id = f"~{document_id}" if alternate else document_id
+        records = await knowledge.prepare_document(
             chunks=chunks,
-            document_id=document_id,
+            document_id=target_id,
             document_metadata={
                 "filename": data.filename,
                 "media_type": media_type,
                 "size_bytes": data.size,
             },
         )
-
-        # ---- ready ----
-        await self._storage.update_knowledge_document_status(
-            user_id,
-            knowledge_base_id,
-            document_id,
-            "ready",
-            chunk_count=len(chunks),
-        )
+        async with self._bus.acquire_lock(
+            MessageBusKeys.knowledge_base_mutation_lock(
+                user_id,
+                knowledge_base_id,
+            ),
+        ):
+            # Deletion may have completed while parsing or waiting for
+            # the lock. Never recreate vectors for a removed document.
+            current = await self._storage.get_knowledge_document(
+                user_id,
+                knowledge_base_id,
+                document_id,
+            )
+            if (
+                current is None
+                or current.status in {"ready", "error"}
+                or current.data.reindex_id != data.reindex_id
+            ):
+                return
+            if (
+                await self._manager.get_knowledge_base(
+                    user_id,
+                    knowledge_base_id,
+                )
+                is None
+            ):
+                return
+            # CAS renewal verifies ownership and refreshes the lease
+            # immediately before writing; the heartbeat stays active.
+            if not await self._storage.renew_knowledge_document_lease(
+                user_id=user_id,
+                knowledge_base_id=knowledge_base_id,
+                document_id=document_id,
+                processing_node=lease_token,
+                lease_ttl=self._lease_ttl,
+            ):
+                return
+            # Clear partial writes from an earlier attempt in the target slot.
+            await knowledge.delete_document(target_id)
+            try:
+                await knowledge.write_document_records(records)
+            except Exception:
+                # Bulk inserts may have committed only a prefix. The target
+                # is still unpublished, even if this cleanup also fails.
+                if replacing:
+                    try:
+                        await knowledge.delete_document(target_id)
+                    except Exception:
+                        logger.exception("Failed to discard %s", target_id)
+                raise
+            await self._storage.update_knowledge_document_status(
+                user_id,
+                knowledge_base_id,
+                document_id,
+                "ready",
+                chunk_count=len(chunks),
+                expected_lease_token=lease_token,
+                alternate_index=alternate,
+            )
+            if replacing:
+                # A lost lease can turn the publication into a no-op.
+                try:
+                    published = await self._storage.get_knowledge_document(
+                        user_id,
+                        knowledge_base_id,
+                        document_id,
+                    )
+                    if (
+                        published
+                        and published.data.alternate_index == alternate
+                    ):
+                        await knowledge.delete_document(previous_id)
+                except Exception:
+                    # Reads ignore retired vectors. The next attempt or
+                    # document deletion will reclaim this slot.
+                    logger.exception("Failed to retire %s", previous_id)
 
     def _csv_media_type(
         self,
@@ -641,6 +730,7 @@ class IndexWorker:
         user_id: str,
         knowledge_base_id: str,
         document_id: str,
+        lease_token: str,
     ) -> None:
         """Renew the lease in the background while processing runs.
 
@@ -667,7 +757,7 @@ class IndexWorker:
                 user_id=user_id,
                 knowledge_base_id=knowledge_base_id,
                 document_id=document_id,
-                processing_node=self._node_id,
+                processing_node=lease_token,
                 lease_ttl=self._lease_ttl,
             )
             if not ok:
@@ -687,8 +777,9 @@ class IndexWorker:
         knowledge_base_id: str,
         document_id: str,
         exc: BaseException,
+        lease_token: str,
     ) -> None:
-        """Persist a sanitised error and mark the document failed."""
+        """Mark failed only while this attempt still owns the lease."""
         logger.exception(
             "Indexing failed for %s/%s",
             knowledge_base_id,
@@ -703,6 +794,7 @@ class IndexWorker:
                 document_id,
                 "error",
                 error=message,
+                expected_lease_token=lease_token,
             )
         except Exception:  # noqa: BLE001 — last-resort log
             logger.exception(

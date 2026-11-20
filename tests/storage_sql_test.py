@@ -1101,6 +1101,51 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             [],
         )
 
+    async def test_pending_reindex_query_and_document_batch(self) -> None:
+        """JSON batch markers survive SQL writes and status transitions."""
+        kb = _kb_record("user-1")
+        kb.data.reindex_id = "batch-1"
+        kb.data.reindex_pending = True
+        other = _kb_record("user-2")
+        await self.storage.upsert_knowledge_base("user-1", kb)
+        await self.storage.upsert_knowledge_base("user-2", other)
+        self.assertEqual(
+            await self.storage.list_pending_knowledge_base_reindexes(),
+            [kb],
+        )
+        doc = _kd_record("user-1", kb.id)
+        doc.data.reindex_id = kb.data.reindex_id
+        await self.storage.upsert_knowledge_document("user-1", doc)
+        await self.storage.update_knowledge_document_status(
+            "user-1",
+            kb.id,
+            doc.id,
+            "ready",
+            chunk_count=4,
+        )
+        stored = await self.storage.get_knowledge_document(
+            "user-1",
+            kb.id,
+            doc.id,
+        )
+        self.assertEqual(
+            (stored.status, stored.data.reindex_id, stored.data.chunk_count),
+            ("ready", "batch-1", 4),
+        )
+        kb.data.reindex_pending = False
+        await self.storage.upsert_knowledge_base("user-1", kb)
+        self.assertEqual(
+            await self.storage.list_pending_knowledge_base_reindexes(),
+            [],
+        )
+        kb.data.reindex_pending = True
+        await self.storage.upsert_knowledge_base("user-1", kb)
+        await self.storage.delete_knowledge_base("user-1", kb.id)
+        self.assertEqual(
+            await self.storage.list_pending_knowledge_base_reindexes(),
+            [],
+        )
+
     async def test_document_kb_foreign_key_is_enforced(self) -> None:
         """The document→KB FK is live (PRAGMA on): cascade + rejection.
 
@@ -1205,6 +1250,25 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
                 now,
             ),
         )
+        for token, expected in (
+            ("worker-B", ("pending", False)),
+            ("worker-A", ("ready", True)),
+        ):
+            await self.storage.update_knowledge_document_status(
+                "user-1",
+                kb.id,
+                doc.id,
+                "ready",
+                expected_lease_token=token,
+                alternate_index=True,
+            )
+            row = await self.storage.get_knowledge_document(
+                "user-1",
+                kb.id,
+                doc.id,
+            )
+            self.assertEqual((row.status, row.data.alternate_index), expected)
+
         # Release from a stranger is a no-op; from the holder clears it.
         await self.storage.release_knowledge_document_lease(
             "user-1",
@@ -1278,6 +1342,9 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
                     "blob_uri": "local://f.txt",
                     "error": None,
                     "chunk_count": 3,
+                    "reindex_id": None,
+                    "pending_since": None,
+                    "alternate_index": False,
                 },
             },
         )

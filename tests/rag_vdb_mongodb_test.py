@@ -606,6 +606,36 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_search_excludes_staging_within_scope(self) -> None:
+        collection = SimpleNamespace(
+            aggregate=AsyncMock(return_value=_FakeAsyncIterator([])),
+        )
+        with (
+            patch.object(
+                self.store,
+                "_ensure_index_ready",
+                new_callable=AsyncMock,
+            ),
+            patch.object(self.store, "_col", return_value=collection),
+        ):
+            await self.store.search_excluding(
+                "kb",
+                [1.0],
+                1,
+                {"tenant": "a"},
+                exclude_document_ids={"~doc"},
+            )
+        pipeline = collection.aggregate.await_args.args[0]
+        self.assertEqual(
+            pipeline[0]["$vectorSearch"]["filter"],
+            {
+                "$and": [
+                    {"chunk.metadata.tenant": {"$eq": "a"}},
+                    {"document_id": {"$nin": ["~doc"]}},
+                ],
+            },
+        )
+
     async def test_search_candidate_limits(self) -> None:
         """Search caps candidates while preserving the requested limit."""
         await self.store.create_collection("kb-1", dimensions=3)

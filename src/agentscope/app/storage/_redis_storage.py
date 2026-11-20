@@ -135,6 +135,7 @@ class RedisStorage(StorageBase):
             "agentscope:user:{user_id}:knowledge_base:{knowledge_base_id}"
         )
         knowledge_base_index: str = "agentscope:user:{user_id}:knowledge_bases"
+        knowledge_base_reindex_index: str = "agentscope:kb_reindexes"
 
         # Knowledge document keys
         knowledge_document: str = (
@@ -2071,8 +2072,14 @@ class RedisStorage(StorageBase):
             self.key_config.knowledge_base_index,
             user_id=user_id,
         )
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
+            pipe.sadd(index_key, record.id)
+            if record.data.reindex_pending:
+                pipe.sadd(self.key_config.knowledge_base_reindex_index, key)
+            else:
+                pipe.srem(self.key_config.knowledge_base_reindex_index, key)
+            await pipe.execute()
         return record
 
     async def get_knowledge_base(
@@ -2138,6 +2145,22 @@ class RedisStorage(StorageBase):
                 )
         return records
 
+    async def list_pending_knowledge_base_reindexes(
+        self,
+    ) -> list[KnowledgeBaseRecord]:
+        """Read the batch index committed atomically with KB records."""
+        index = self.key_config.knowledge_base_reindex_index
+        records = []
+        for key in await self._client.smembers(index):
+            raw = await self._client.get(key)
+            if raw:
+                record = KnowledgeBaseRecord.model_validate_json(raw)
+                if record.data.reindex_pending:
+                    records.append(record)
+            else:
+                await self._client.srem(index, key)
+        return records
+
     async def delete_knowledge_base(
         self,
         user_id: str,
@@ -2187,6 +2210,10 @@ class RedisStorage(StorageBase):
         )
         deleted = await self._client.delete(key)
         await self._client.srem(index_key, knowledge_base_id)
+        await self._client.srem(
+            self.key_config.knowledge_base_reindex_index,
+            key,
+        )
         return deleted > 0
 
     # ------------------------------------------------------------------
@@ -2352,26 +2379,44 @@ class RedisStorage(StorageBase):
         status: KnowledgeDocumentStatus,
         error: str | None = None,
         chunk_count: int | None = None,
+        *,
+        expected_lease_token: str | None = None,
+        alternate_index: bool | None = None,
     ) -> None:
-        """Update only the status-related fields of a document record.
-
-        Reads the record, mutates the status fields in memory, and
-        writes it back.  Not atomic across multiple writers — relies
-        on the indexing worker holding the lease, which serialises
-        status transitions for a single document.
-        """
+        """Atomically update status, optionally requiring lease ownership."""
         key = self._document_key(user_id, knowledge_base_id, document_id)
-        raw = await self._client.get(key)
-        if not raw:
-            return
-        record = KnowledgeDocumentRecord.model_validate_json(raw)
-        record.status = status
-        if error is not None:
-            record.data.error = error
-        if chunk_count is not None:
-            record.data.chunk_count = chunk_count
-        record.updated_at = datetime.now()
-        await self._set_with_ttl(key, record.model_dump_json())
+        async with self._client.pipeline(transaction=True) as pipe:
+            for attempt in range(3):
+                try:
+                    await pipe.watch(key)
+                    raw = await pipe.get(key)
+                    if not raw:
+                        await pipe.unwatch()
+                        return
+                    record = KnowledgeDocumentRecord.model_validate_json(raw)
+                    if (
+                        expected_lease_token is not None
+                        and record.processing_node != expected_lease_token
+                    ):
+                        await pipe.unwatch()
+                        return
+                    record.status = status
+                    if error is not None:
+                        record.data.error = error
+                    if chunk_count is not None:
+                        record.data.chunk_count = chunk_count
+                    if alternate_index is not None:
+                        record.data.alternate_index = alternate_index
+                    record.updated_at = datetime.now()
+                    pipe.multi()
+                    pipe.set(key, record.model_dump_json())
+                    if self.key_ttl is not None:
+                        pipe.expire(key, self.key_ttl)
+                    await pipe.execute()
+                    return
+                except _watch_error():
+                    if attempt == 2:
+                        raise
 
     async def acquire_knowledge_document_lease(
         self,
@@ -2410,7 +2455,7 @@ class RedisStorage(StorageBase):
                     record = KnowledgeDocumentRecord.model_validate_json(raw)
                     holder = record.processing_node
                     deadline = record.lease_expires_at
-                    if (
+                    if record.status in {"ready", "error"} or (
                         holder is not None
                         and deadline is not None
                         and deadline > now
@@ -2575,7 +2620,8 @@ class RedisStorage(StorageBase):
             record = KnowledgeDocumentRecord.model_validate_json(raw)
             if record.status != "pending":
                 continue
-            if record.created_at < threshold:
+            pending_since = record.data.pending_since or record.created_at
+            if pending_since.astimezone() < threshold.astimezone():
                 records.append(record)
         return records
 

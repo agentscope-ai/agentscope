@@ -293,6 +293,8 @@ class QdrantStore(VectorStoreBase):
         query_vector: list[float],
         top_k: int = 5,
         metadata_filter: dict[str, Any] | None = None,
+        *,
+        exclude_document_ids: set[str] | None = None,
     ) -> list[VectorSearchResult]:
         """Find the most similar records to a query vector.
 
@@ -327,12 +329,21 @@ class QdrantStore(VectorStoreBase):
         # The constructor's metric only applies to newly created collections.
         # Read the actual schema, including after an external recreation.
         distance = vectors.distance
+        query_filter = self._build_metadata_filter(metadata_filter)
+        if exclude_document_ids:
+            query_filter = query_filter or models.Filter()
+            query_filter.must_not = [
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchAny(any=sorted(exclude_document_ids)),
+                ),
+            ]
         response = await client.query_points(
             collection_name=collection,
             query=query_vector,
             limit=top_k,
             with_payload=True,
-            query_filter=self._build_metadata_filter(metadata_filter),
+            query_filter=query_filter,
         )
         # ``Euclid`` / ``Manhattan`` are distances, so negate them to
         # keep ``score`` higher-is-better like ``Cosine`` / ``Dot``.
@@ -349,6 +360,8 @@ class QdrantStore(VectorStoreBase):
             )
             for point in response.points
         ]
+
+    search_excluding = search
 
     # ------------------------------------------------------------------
     # Document listing
