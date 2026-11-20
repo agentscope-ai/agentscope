@@ -89,7 +89,8 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                 Minimum word count before the first realtime text chunk is
                 sent.
             max_retries (`int`, defaults to `3`):
-                Max retry attempts on realtime synthesis failure.
+                Maximum total realtime synthesis attempts. Set to ``0``
+                to make one attempt without retries.
             retry_delay (`float`, defaults to `5.0`):
                 Initial retry delay in seconds (exponential backoff).
         """
@@ -332,6 +333,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
 
         full_text = self._accumulated_text
         delay = self.retry_delay
+        max_attempts = max(1, self.max_retries)
 
         try:
             if not full_text and not unsent:
@@ -349,7 +351,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             if self._needs_reconnect:
                 await self._reconnect()
 
-            for attempt in range(self.max_retries):
+            for attempt in range(max_attempts):
                 try:
                     # The synthesizer cannot be reused after
                     # ``streaming_complete()``, nor after a failed attempt.
@@ -370,7 +372,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                             "CosyVoice TTS: timed out waiting for synthesis "
                             "completion (30s)",
                         )
-                        if attempt < self.max_retries - 1:
+                        if attempt < max_attempts - 1:
                             await asyncio.sleep(delay)
                             await self._reconnect()
                             unsent = full_text
@@ -381,12 +383,12 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                         )
 
                     if full_text and not self._callback.has_audio_data():
-                        if attempt < self.max_retries - 1:
+                        if attempt < max_attempts - 1:
                             logger.warning(
                                 "CosyVoice TTS: no audio received, retrying "
                                 "(%d/%d) in %.1fs...",
                                 attempt + 1,
-                                self.max_retries,
+                                max_attempts,
                                 delay,
                             )
                             await asyncio.sleep(delay)
@@ -396,19 +398,19 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                             continue
                         raise RuntimeError(
                             f"CosyVoice TTS synthesis failed: no audio after "
-                            f"{self.max_retries} attempts",
+                            f"{max_attempts} attempts",
                         )
                     break
 
                 except RuntimeError:
                     raise
                 except Exception as e:
-                    if attempt < self.max_retries - 1:
+                    if attempt < max_attempts - 1:
                         logger.warning(
                             "CosyVoice TTS error, retrying (%d/%d) in "
                             "%.1fs: %s",
                             attempt + 1,
-                            self.max_retries,
+                            max_attempts,
                             delay,
                             e,
                         )
