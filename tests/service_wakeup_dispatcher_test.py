@@ -325,6 +325,7 @@ class _FakeChatService:
         client_builtin_tools: list[str] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
+        wakeup: bool = False,
     ) -> None:
         """Record the call and signal a waiter."""
         call: dict[str, Any] = {
@@ -337,6 +338,8 @@ class _FakeChatService:
             call["client_external_tools"] = client_external_tools
         if client_builtin_tools is not None:
             call["client_builtin_tools"] = client_builtin_tools
+        if wakeup:
+            call["wakeup"] = wakeup
         self.calls.append(call)
         self.notify.set()
 
@@ -360,6 +363,7 @@ class _BlockingChatService(_FakeChatService):
         client_builtin_tools: list[str] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
+        wakeup: bool = False,
     ) -> None:
         await super().run(
             user_id,
@@ -370,6 +374,7 @@ class _BlockingChatService(_FakeChatService):
             input_persisted=input_persisted,
             client_external_tools=client_external_tools,
             client_builtin_tools=client_builtin_tools,
+            wakeup=wakeup,
         )
         if len(self.calls) == 1:
             await self.release_first.wait()
@@ -461,6 +466,32 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
             ],
         )
 
+    async def test_only_wake_kind_marks_the_run_as_a_wakeup(self) -> None:
+        """A channel ``message`` trigger carries real input and must not be
+        flagged as an inbox-only wake-up, which the empty-inbox guard in
+        ``ChatService._run_impl`` would otherwise drop."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        message = UserMsg("channel-user", "from channel", id="channel-msg")
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await enqueue_run_trigger(
+                bus,
+                user_id="u",
+                session_id="channel-session",
+                agent_id="a",
+                kind=MessageBusKeys.WAKEUP_KIND_MESSAGE,
+                inputs=message,
+            )
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertNotIn("wakeup", chat.calls[0])
+
     async def test_signal_drives_dispatch(self) -> None:
         """A wake-up signal causes the queue to be drained and each
         entry dispatched as a chat run."""
@@ -488,6 +519,7 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
                     "session_id": "s1",
                     "agent_id": "a1",
                     "input_msg": None,
+                    "wakeup": True,
                 },
             ],
         )
@@ -518,6 +550,7 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
                     "session_id": "pre",
                     "agent_id": "a",
                     "input_msg": None,
+                    "wakeup": True,
                 },
             ],
         )
@@ -576,6 +609,7 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
                     "session_id": "s2",
                     "agent_id": "a",
                     "input_msg": None,
+                    "wakeup": True,
                 },
             ],
         )
@@ -614,6 +648,7 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
                     "session_id": "live",
                     "agent_id": "a",
                     "input_msg": None,
+                    "wakeup": True,
                 },
             ],
         )
