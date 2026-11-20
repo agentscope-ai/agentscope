@@ -3,6 +3,7 @@
 """Unit tests for RedisStorage using fakeredis."""
 
 from datetime import datetime as DateTime
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
@@ -21,6 +22,10 @@ from agentscope.app.storage import (
     ScheduleRecord,
     ScheduleData,
     ChannelOrigin,
+    ChannelBinding,
+    ChannelRecord,
+    RoutingConfig,
+    SessionSettings,
     ScheduleOrigin,
     TeamData,
     TeamMember,
@@ -2201,3 +2206,181 @@ class TestRecordKeyTTL(IsolatedAsyncioTestCase):
         self.assertEqual(result, (record.model_dump_json(), AnyValue()))
         self.assertGreater(result[1], 0)
         self.assertLessEqual(result[1], 60)
+
+
+def _channel_record(
+    channel_id: str,
+    user_id: str = "user-1",
+) -> ChannelRecord:
+    """Build a minimal ChannelRecord for the strict-update tests."""
+    return ChannelRecord(
+        id=channel_id,
+        channel_type="feishu",
+        user_id=user_id,
+        credentials={"app_id": channel_id},
+        routing=RoutingConfig(
+            bindings=[ChannelBinding(match_value="*", agent_id="agent-1")],
+        ),
+        session=SessionSettings(
+            chat_model_config={
+                "type": "openai",
+                "credential_id": "cred-1",
+                "model": "gpt-4o",
+                "parameters": {},
+            },
+        ),
+    )
+
+
+class TestStrictUpdateDoesNotResurrect(IsolatedAsyncioTestCase):
+    """A strict update must never recreate a record a DELETE removed.
+
+    ``upsert_*`` is also the PATCH write path. Its default
+    read-then-write behaviour recreates a record that a concurrent
+    DELETE removed in between, so the deleted object reappears
+    (issue #4111). Passing ``create_if_missing=False`` makes the write
+    a strict update and raises ``KeyError`` instead.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.user_id = "user-1"
+        self.agent_id = "agent-1"
+
+    async def test_schedule_strict_update_after_delete_raises(self) -> None:
+        """A schedule deleted before the PATCH write is not recreated."""
+        schedule = make_schedule_record(self.user_id, self.agent_id)
+        await self.storage.upsert_schedule(self.user_id, schedule)
+        await self.storage.delete_schedule(self.user_id, schedule.id)
+
+        with self.assertRaises(KeyError):
+            await self.storage.upsert_schedule(
+                self.user_id,
+                schedule,
+                create_if_missing=False,
+            )
+
+        self.assertEqual(await self.storage.list_schedules(self.user_id), [])
+        self.assertIsNone(
+            await self.storage.get_schedule(self.user_id, schedule.id),
+        )
+        entries = await self.storage._client.smembers(
+            self.storage.key_config.schedule_global_index,
+        )
+        self.assertNotIn(f"{self.user_id}:{schedule.id}", entries)
+
+    async def test_session_strict_update_after_delete_raises(self) -> None:
+        """A session deleted before the PATCH write is not recreated."""
+        session = await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(),
+        )
+        await self.storage.delete_session(
+            self.user_id,
+            self.agent_id,
+            session.id,
+        )
+
+        with self.assertRaises(KeyError):
+            await self.storage.upsert_session(
+                self.user_id,
+                self.agent_id,
+                make_session_config(),
+                session_id=session.id,
+                create_if_missing=False,
+            )
+
+        self.assertEqual(
+            await self.storage.list_sessions(self.user_id, self.agent_id),
+            [],
+        )
+
+    async def test_channel_strict_update_after_delete_raises(self) -> None:
+        """A channel deleted before the PATCH write is not recreated."""
+        record = _channel_record("chan-1")
+        await self.storage.upsert_channel(record, "bot-1")
+        await self.storage.delete_channel(record.id, "bot-1")
+
+        record.name = "renamed"
+        with self.assertRaises(KeyError):
+            await self.storage.upsert_channel(
+                record,
+                "bot-1",
+                create_if_missing=False,
+            )
+
+        self.assertIsNone(await self.storage.get_channel(record.id))
+        self.assertEqual(
+            await self.storage.list_all_channels(),
+            [],
+        )
+        self.assertIsNone(
+            await self.storage.get_channel_id_by_platform_bot_id("bot-1"),
+        )
+
+    async def test_schedule_strict_update_when_present_still_writes(
+        self,
+    ) -> None:
+        """The strict path is still a normal update when the record lives."""
+        schedule = make_schedule_record(self.user_id, self.agent_id)
+        await self.storage.upsert_schedule(self.user_id, schedule)
+
+        schedule.data.name = "renamed"
+        await self.storage.upsert_schedule(
+            self.user_id,
+            schedule,
+            create_if_missing=False,
+        )
+
+        stored = await self.storage.get_schedule(self.user_id, schedule.id)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.data.name, "renamed")
+        self.assertEqual(
+            len(await self.storage.list_schedules(self.user_id)),
+            1,
+        )
+
+    async def test_schedule_strict_update_loses_race_to_delete(self) -> None:
+        """A DELETE landing between the read and the write still wins.
+
+        This is the exact interleaving from the issue: the PATCH reads
+        the record, the DELETE removes it and returns 204, then the
+        PATCH's write runs. Before the fix the plain SET recreated the
+        schedule; now the watched key aborts the write.
+        """
+        schedule = make_schedule_record(self.user_id, self.agent_id)
+        await self.storage.upsert_schedule(self.user_id, schedule)
+
+        original = self.storage._update_if_exists
+        calls = {"n": 0}
+
+        async def _delete_then_update(
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            if calls["n"] == 0:
+                calls["n"] += 1
+                await self.storage.delete_schedule(
+                    self.user_id,
+                    schedule.id,
+                )
+            return await original(*args, **kwargs)
+
+        with patch.object(
+            self.storage,
+            "_update_if_exists",
+            side_effect=_delete_then_update,
+        ):
+            with self.assertRaises(KeyError):
+                await self.storage.upsert_schedule(
+                    self.user_id,
+                    schedule,
+                    create_if_missing=False,
+                )
+
+        self.assertIsNone(
+            await self.storage.get_schedule(self.user_id, schedule.id),
+        )
+        self.assertEqual(await self.storage.list_schedules(self.user_id), [])

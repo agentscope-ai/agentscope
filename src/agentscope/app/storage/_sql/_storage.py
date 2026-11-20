@@ -414,6 +414,46 @@ class AsyncSQLAlchemyStorage(StorageBase):
             await sess.commit()
         return record
 
+    async def _update_row_if_exists(
+        self,
+        row_cls: type,
+        record: Any,
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> bool:
+        """Update an existing row; never insert.
+
+        The dialect-native upsert in :meth:`_write_row` always has an
+        INSERT branch, so a PATCH that reaches it after a concurrent
+        DELETE resurrects the record. Here the statement is a plain
+        ``UPDATE`` scoped to the primary key: if the row is gone the
+        statement matches nothing and we report it.
+
+        Returns:
+            `bool`: ``True`` if a row was updated, ``False`` if none
+            existed.
+        """
+        from sqlalchemy import update
+
+        record.updated_at = _utcnow()
+        new_row = _from_record(row_cls, record)
+        indexed = tuple(row_cls.get_indexed_fields())
+        indexed += tuple(row_cls.get_index_paths())
+        values = {
+            col: getattr(new_row, col)
+            for col in ("updated_at", "payload") + indexed
+        }
+        values.update(extra or {})
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                update(row_cls)
+                .where(row_cls.id == record.id)
+                .values(**values),
+            )
+            await sess.commit()
+        return bool(result.rowcount)
+
     # ------------------------------------------------------------------
     # Cascade-delete internals — every ``_delete_*_impl`` runs on the
     # caller-supplied ``sess`` WITHOUT committing, so the public
@@ -1228,6 +1268,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         source_chat_id: str | None = None,
         source_chat_name: str | None = None,
         source_channel_id: str | None = None,
+        create_if_missing: bool = True,
     ) -> SessionRecord:
         """Create or update a session — same shape as the Redis backend."""
         if session_id:
@@ -1238,8 +1279,13 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 record.config = config
                 if state is not None:
                     record.state = state
-                await self._write_row(SessionRow, record)
+                if not await self._update_row_if_exists(SessionRow, record):
+                    raise KeyError(
+                        f"Session {session_id!r} no longer exists.",
+                    )
                 return record
+            if not create_if_missing:
+                raise KeyError(f"Session {session_id!r} no longer exists.")
 
         new_id_kwargs = {"id": session_id} if session_id else {}
         record = SessionRecord(
@@ -1440,10 +1486,14 @@ class AsyncSQLAlchemyStorage(StorageBase):
         self,
         user_id: str,
         record: ScheduleRecord,
+        create_if_missing: bool = True,
     ) -> str:
         """Persist a schedule record (create or overwrite)."""
         _ = user_id
-        await self._write_row(ScheduleRow, record)
+        if create_if_missing:
+            await self._write_row(ScheduleRow, record)
+        elif not await self._update_row_if_exists(ScheduleRow, record):
+            raise KeyError(f"Schedule {record.id!r} no longer exists.")
         return record.id
 
     async def get_schedule(
@@ -1514,6 +1564,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         self,
         record: ChannelRecord,
         platform_bot_id: str,
+        create_if_missing: bool = True,
     ) -> str:
         """Persist a channel record and its bot-uniqueness column.
 
@@ -1555,11 +1606,18 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 f"Bot {platform_bot_id!r} already drives channel "
                 f"{holder!r}.",
             )
-        await self._write_row(
+        if create_if_missing:
+            await self._write_row(
+                ChannelRow,
+                record,
+                extra={"platform_bot_id": platform_bot_id},
+            )
+        elif not await self._update_row_if_exists(
             ChannelRow,
             record,
             extra={"platform_bot_id": platform_bot_id},
-        )
+        ):
+            raise KeyError(f"Channel {record.id!r} no longer exists.")
         return record.id
 
     async def get_channel(self, channel_id: str) -> ChannelRecord | None:
