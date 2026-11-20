@@ -1,0 +1,2017 @@
+# -*- coding: utf-8 -*-
+"""Tests for GPT-Live protocol and its minimal full-duplex agent path."""
+# pylint: disable=protected-access
+import asyncio
+import base64
+import json
+import unittest
+from typing import AsyncGenerator, AsyncIterator, Callable
+from unittest.mock import AsyncMock, patch
+
+from utils import MockModel
+
+from agentscope.agent import Agent, ContextConfig, RealtimeAgent
+from agentscope.agent._realtime._agent import _ClientDelegation
+from agentscope.credential import OpenAICredential
+from agentscope.event import (
+    AgentEvent,
+    ConfirmResult,
+    CustomEvent,
+    ExternalExecutionResultEvent,
+    ReplyEndEvent,
+    ReplyStartEvent,
+    RequireExternalExecutionEvent,
+    RequireUserConfirmEvent,
+    TextBlockDeltaEvent,
+    ToolCallEndEvent,
+    ToolCallStartEvent,
+    ToolResultDataDeltaEvent,
+    ToolResultEndEvent,
+    ToolResultStartEvent,
+    ToolResultTextDeltaEvent,
+    UserConfirmResultEvent,
+    UserInterruptEvent,
+)
+from agentscope.message import (
+    AssistantMsg,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+    UserMsg,
+)
+from agentscope.middleware import MiddlewareBase
+from agentscope.model import ChatResponse, StructuredResponse
+from agentscope.realtime import (
+    ControlFrame,
+    ControlFrameType,
+    DelegatedResponseEvent,
+    DelegationCreatedEvent,
+    OpenAILiveModel,
+    PlayoutPosition,
+    SessionClosedEvent,
+    SessionStartedEvent,
+    SessionUsageEvent,
+    TimelineAudioDeltaEvent,
+    TimelineTranscriptDeltaEvent,
+    TransportBase,
+    TransportFrame,
+)
+from agentscope.state import AgentState
+from agentscope.tool import FunctionTool, Toolkit
+
+CRED = OpenAICredential(api_key="sk-x")
+
+
+def _model() -> OpenAILiveModel:
+    """Build a Live model configured for client delegation."""
+    return OpenAILiveModel("gpt-live-1", CRED)
+
+
+class _FakeWebSocket:
+    """A controllable async WebSocket used by lifecycle tests."""
+
+    def __init__(self) -> None:
+        self.incoming: asyncio.Queue[str | None] = asyncio.Queue()
+        self.sent: list[dict] = []
+        self.closed = False
+
+    def __aiter__(self) -> "_FakeWebSocket":
+        return self
+
+    async def __anext__(self) -> str:
+        value = await self.incoming.get()
+        if value is None:
+            raise StopAsyncIteration
+        return value
+
+    async def send(self, raw: str) -> None:
+        """Record a command and enqueue its simulated server response."""
+        payload = json.loads(raw)
+        self.sent.append(payload)
+        if payload["type"] == "session.start":
+            self.incoming.put_nowait(
+                json.dumps(
+                    {
+                        "type": "session.started",
+                        "session": {"id": "live_1"},
+                    },
+                ),
+            )
+        elif payload["type"] == "session.close":
+            self.incoming.put_nowait(
+                json.dumps(
+                    {
+                        "type": "session.closed",
+                        "reason": "close_requested",
+                        "session": {"id": "live_1"},
+                        "usage": {"seconds": 4.5},
+                    },
+                ),
+            )
+
+    async def close(self) -> None:
+        """End the fake server event stream."""
+        self.closed = True
+        self.incoming.put_nowait(None)
+
+
+class _PendingStartupWebSocket(_FakeWebSocket):
+    """Pause startup either during send or while awaiting acknowledgement."""
+
+    def __init__(self, block_send: bool) -> None:
+        super().__init__()
+        self.block_send = block_send
+        self.startup_sent = asyncio.Event()
+        self.reading = asyncio.Event()
+
+    async def send(self, raw: str) -> None:
+        """Record startup without automatically acknowledging it."""
+        self.sent.append(json.loads(raw))
+        self.startup_sent.set()
+        if self.block_send:
+            await asyncio.Event().wait()
+
+    async def __anext__(self) -> str:
+        self.reading.set()
+        return await super().__anext__()
+
+
+class _FakeTransport(TransportBase):
+    """Capture output audio without opening a real sound device."""
+
+    input_sample_rate = 24000
+    output_sample_rate = 24000
+
+    def __init__(self) -> None:
+        self.audio: list[tuple[bytes, str]] = []
+        self.cleared = 0
+        self.frames: asyncio.Queue[TransportFrame | None] = asyncio.Queue()
+
+    async def start(self) -> None:
+        """Start the in-memory transport."""
+
+    async def close(self) -> None:
+        """Close the in-memory transport."""
+
+    async def incoming(self) -> AsyncIterator[TransportFrame]:
+        """Yield explicitly queued transport frames."""
+        while True:
+            frame = await self.frames.get()
+            if frame is None:
+                return
+            yield frame
+
+    async def send_audio(self, pcm: bytes, item_id: str) -> None:
+        """Capture one outgoing audio frame."""
+        self.audio.append((pcm, item_id))
+
+    async def clear_audio(self) -> PlayoutPosition:
+        """Record one playback clear request."""
+        self.cleared += 1
+        return self.playout()
+
+    def playout(self) -> PlayoutPosition:
+        """Return the current item with no simulated playback progress."""
+        return PlayoutPosition(item_id=self.audio[-1][1] if self.audio else "")
+
+
+class _FakeDelegationAgent:
+    """Return one deterministic task result without a provider call."""
+
+    name = "Friday"
+
+    def __init__(self) -> None:
+        self.state = AgentState()
+        self.inputs: list[Msg] = []
+
+    async def reply_stream(
+        self,
+        inputs: Msg,
+        yield_final_msg: bool,
+    ) -> AsyncIterator[Msg]:
+        """Capture the generated transcript prompt and return a result."""
+        self.inputs.append(inputs)
+        self.state.context.append(inputs)
+        result = AssistantMsg(name="Friday", content="Order 42 shipped.")
+        self.state.context.append(result)
+        if yield_final_msg:
+            yield result
+
+
+class _ConfirmingDelegationAgent:
+    """Pause once for permission, then return a completed result."""
+
+    name = "Friday"
+
+    def __init__(self) -> None:
+        self.state = AgentState()
+        self.tool_call = ToolCallBlock(
+            id="tool_1",
+            name="update_order",
+            input='{"order_id":"42"}',
+            state="asking",
+        )
+
+    async def reply_stream(
+        self,
+        inputs: Msg | UserConfirmResultEvent,
+        yield_final_msg: bool,
+    ) -> AsyncIterator[
+        Msg
+        | ReplyStartEvent
+        | ToolCallStartEvent
+        | ToolCallEndEvent
+        | ToolResultStartEvent
+        | ToolResultTextDeltaEvent
+        | ToolResultEndEvent
+        | RequireUserConfirmEvent
+    ]:
+        """Yield a confirmation on the first call and finish on resume."""
+        if isinstance(inputs, Msg):
+            self.state.reply_id = "backend_reply"
+            self.state.append_context("Friday", [self.tool_call])
+            yield ReplyStartEvent(
+                session_id=self.state.session_id,
+                reply_id="backend_reply",
+                name="Friday",
+            )
+            yield ToolCallStartEvent(
+                reply_id="backend_reply",
+                tool_call_id=self.tool_call.id,
+                tool_call_name=self.tool_call.name,
+            )
+            yield ToolCallEndEvent(
+                reply_id="backend_reply",
+                tool_call_id=self.tool_call.id,
+            )
+            yield RequireUserConfirmEvent(
+                reply_id="backend_reply",
+                tool_calls=[self.tool_call],
+            )
+            return
+        yield ToolResultStartEvent(
+            reply_id="backend_reply",
+            tool_call_id=self.tool_call.id,
+            tool_call_name=self.tool_call.name,
+        )
+        yield ToolResultTextDeltaEvent(
+            reply_id="backend_reply",
+            tool_call_id=self.tool_call.id,
+            delta="Updated",
+        )
+        yield ToolResultEndEvent(
+            reply_id="backend_reply",
+            tool_call_id=self.tool_call.id,
+            state=ToolResultState.SUCCESS,
+        )
+        self.tool_call.state = "finished"
+        self.state.append_context(
+            "Friday",
+            [
+                ToolResultBlock(
+                    id=self.tool_call.id,
+                    name=self.tool_call.name,
+                    output="Updated",
+                    state="success",
+                ),
+            ],
+        )
+        result = AssistantMsg(name="Friday", content="Order 42 updated.")
+        if yield_final_msg:
+            yield result
+
+
+class _ExternalDelegationAgent:
+    """Pause for an external executor, then finish after its result."""
+
+    name = "Friday"
+
+    def __init__(self) -> None:
+        self.state = AgentState()
+        self.tool_call = ToolCallBlock(
+            id="external_1",
+            name="ask_user",
+            input='{"question":"Which order?"}',
+            state="submitted",
+        )
+        self.received: list[
+            Msg | ExternalExecutionResultEvent | UserInterruptEvent
+        ] = []
+
+    async def reply_stream(
+        self,
+        inputs: Msg | ExternalExecutionResultEvent | UserInterruptEvent,
+        yield_final_msg: bool,
+    ) -> AsyncIterator[
+        Msg
+        | ReplyStartEvent
+        | ToolCallStartEvent
+        | ToolCallEndEvent
+        | RequireExternalExecutionEvent
+    ]:
+        """Request external execution once and finish on resumption."""
+        self.received.append(inputs)
+        if isinstance(inputs, Msg):
+            self.state.reply_id = "external_reply"
+            self.state.append_context("Friday", [self.tool_call])
+            yield ReplyStartEvent(
+                session_id=self.state.session_id,
+                reply_id="external_reply",
+                name="Friday",
+            )
+            yield ToolCallStartEvent(
+                reply_id="external_reply",
+                tool_call_id=self.tool_call.id,
+                tool_call_name=self.tool_call.name,
+            )
+            yield ToolCallEndEvent(
+                reply_id="external_reply",
+                tool_call_id=self.tool_call.id,
+            )
+            yield RequireExternalExecutionEvent(
+                reply_id="external_reply",
+                tool_calls=[self.tool_call],
+            )
+            return
+        self.tool_call.state = "finished"
+        if isinstance(inputs, UserInterruptEvent):
+            result = AssistantMsg(name="Friday", content="Interrupted.")
+            if yield_final_msg:
+                yield result
+            return
+        result = AssistantMsg(name="Friday", content="Order 42 selected.")
+        if yield_final_msg:
+            yield result
+
+
+class _StateDelegationAgent:
+    """Record one state mutation before returning a result."""
+
+    name = "Friday"
+
+    def __init__(self, state: AgentState, marker: str) -> None:
+        self.state = state
+        self.marker = marker
+
+    async def reply_stream(
+        self,
+        inputs: Msg,
+        yield_final_msg: bool,
+    ) -> AsyncIterator[Msg]:
+        """Append a marker that the next queued task must observe."""
+        del inputs
+        self.state.tool_context.activated_groups.append(self.marker)
+        if yield_final_msg:
+            yield AssistantMsg(name="Friday", content=self.marker)
+
+
+class OpenAILivePayloadTest(unittest.TestCase):
+    """Model discovery, startup payloads, and server event parsing."""
+
+    def test_card_and_credential_mapping(self) -> None:
+        """The Live card resolves to its own protocol adapter."""
+        cards = OpenAILiveModel.list_models()
+        classes = {
+            item.type: item for item in CRED.get_realtime_model_classes()
+        }
+        self.assertListEqual(
+            [
+                (
+                    card.name,
+                    card.model_type,
+                    card.interaction_mode,
+                    card.delegation_backend,
+                    card.supports_tools,
+                    classes[card.model_type].__name__,
+                )
+                for card in cards
+            ],
+            [
+                (
+                    "gpt-live-1",
+                    "openai_live",
+                    "full_duplex",
+                    "session_chat",
+                    False,
+                    "OpenAILiveModel",
+                ),
+            ],
+        )
+        self.assertDictEqual(
+            cards[0].parameter_schema,
+            {
+                "type": "object",
+                "properties": {
+                    "voice": {
+                        "default": "marin",
+                        "description": "The voice used for generated audio.",
+                        "title": "Voice",
+                        "type": "string",
+                    },
+                    "store": {
+                        "default": False,
+                        "description": (
+                            "Whether to request provider-side storage for "
+                            "the Live session."
+                        ),
+                        "title": "Store Session",
+                        "type": "boolean",
+                    },
+                    "startup_timeout_s": {
+                        "default": 15.0,
+                        "description": (
+                            "Maximum seconds to wait for the Live session "
+                            "to start."
+                        ),
+                        "exclusiveMinimum": 0,
+                        "title": "Startup Timeout",
+                        "type": "number",
+                    },
+                    "close_timeout_s": {
+                        "default": 15.0,
+                        "description": (
+                            "Maximum seconds to wait for graceful session "
+                            "closure."
+                        ),
+                        "exclusiveMinimum": 0,
+                        "title": "Close Timeout",
+                        "type": "number",
+                    },
+                },
+            },
+        )
+
+    def test_session_start_payload(self) -> None:
+        """Startup delegates backend tasks to the application."""
+        model = _model()
+        payload = model._session_start("Speak briefly.")
+        event_id = payload.pop("event_id")
+        self.assertTrue(event_id.startswith("start_"))
+        self.assertDictEqual(
+            payload,
+            {
+                "type": "session.start",
+                "session": {
+                    "model": "gpt-live-1",
+                    "instructions": "Speak briefly.",
+                    "input": [],
+                    "audio": {
+                        "format": {
+                            "type": "audio/pcm",
+                            "rate": 24000,
+                        },
+                        "output": {"voice": "marin"},
+                    },
+                    "delegation": {"type": "client"},
+                    "store": False,
+                },
+            },
+        )
+
+    def test_server_event_mapping(self) -> None:
+        """Live timelines and delegated Responses remain independent."""
+        model = _model()
+        encoded = base64.b64encode(b"\x01\x00").decode("ascii")
+        frames = [
+            {
+                "type": "session.started",
+                "session": {"id": "live_1"},
+            },
+            {
+                "type": "session.input_transcript.delta",
+                "delta": "hello",
+                "start_ms": 10,
+                "end_ms": 20,
+            },
+            {
+                "type": "session.output_transcript.delta",
+                "delta": "hi",
+                "start_ms": 15,
+                "end_ms": 25,
+            },
+            {"type": "session.output_audio.delta", "delta": encoded},
+            {
+                "type": "session.delegation.created",
+                "offset_ms": 30,
+                "delegation": {
+                    "id": "delegation_1",
+                    "target": "client",
+                },
+            },
+            {
+                "type": "response.event",
+                "delegation_id": "delegation_1",
+                "event": {
+                    "type": "response.output_text.delta",
+                    "delta": "working",
+                },
+            },
+            {
+                "type": "session.usage.updated",
+                "usage": {"seconds": 3.25},
+                "context_window": {"usage_ratio": 0.2},
+            },
+            {
+                "type": "session.closed",
+                "reason": "close_requested",
+                "session": {"id": "live_1"},
+                "usage": {"seconds": 4.5},
+            },
+        ]
+        self.assertListEqual(
+            [model._parse(frame) for frame in frames],
+            [
+                SessionStartedEvent(session_id="live_1"),
+                TimelineTranscriptDeltaEvent(
+                    role="user",
+                    delta="hello",
+                    start_ms=10,
+                    end_ms=20,
+                ),
+                TimelineTranscriptDeltaEvent(
+                    role="assistant",
+                    delta="hi",
+                    start_ms=15,
+                    end_ms=25,
+                ),
+                TimelineAudioDeltaEvent(
+                    pcm=b"\x01\x00",
+                    sample_rate=24000,
+                ),
+                DelegationCreatedEvent(
+                    delegation_id="delegation_1",
+                    target="client",
+                    offset_ms=30,
+                ),
+                DelegatedResponseEvent(
+                    delegation_id="delegation_1",
+                    event={
+                        "type": "response.output_text.delta",
+                        "delta": "working",
+                    },
+                ),
+                SessionUsageEvent(
+                    seconds=3.25,
+                    context_usage_ratio=0.2,
+                ),
+                SessionClosedEvent(
+                    session_id="live_1",
+                    reason="close_requested",
+                    usage_seconds=4.5,
+                ),
+            ],
+        )
+        self.assertEqual(model.usage_seconds, 4.5)
+
+    def test_long_commentary_is_split_at_a_safe_boundary(self) -> None:
+        """Long client results are returned as bounded Live updates."""
+        content = f"{'a' * 390} boundary {'b' * 20}"
+        self.assertListEqual(
+            OpenAILiveModel._commentary_chunks(content),
+            [f"{'a' * 390} boundary", "b" * 20],
+        )
+
+
+class OpenAILiveLifecycleTest(unittest.IsolatedAsyncioTestCase):
+    """Connection startup, audio validation, and graceful close."""
+
+    async def test_cancel_startup_releases_resources_and_reconnects(
+        self,
+    ) -> None:
+        """Cancellation closes resources before propagating to the caller."""
+        for block_send in (False, True):
+            with self.subTest(block_send=block_send):
+                ws = _PendingStartupWebSocket(block_send)
+                replacement = _FakeWebSocket()
+                model = _model()
+                self.addAsyncCleanup(model.close)
+                with patch(
+                    "websockets.connect",
+                    AsyncMock(side_effect=[ws, replacement]),
+                ):
+                    connection = asyncio.create_task(model.connect("Brief."))
+                    await asyncio.wait_for(ws.startup_sent.wait(), timeout=1)
+                    await asyncio.wait_for(ws.reading.wait(), timeout=1)
+                    reader, started = model._reader, model._started
+                    assert reader is not None and started is not None
+                    self.assertFalse(reader.done())
+                    connection.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await connection
+                    self.assertEqual(
+                        {
+                            "socket_closed": ws.closed,
+                            "socket": model._ws,
+                            "reader": model._reader,
+                            "reader_done": reader.done(),
+                            "startup_cancelled": started.cancelled(),
+                            "startup": model._started,
+                            "session_id": model._session_id,
+                        },
+                        {
+                            "socket_closed": True,
+                            "socket": None,
+                            "reader": None,
+                            "reader_done": True,
+                            "startup_cancelled": True,
+                            "startup": None,
+                            "session_id": "",
+                        },
+                    )
+                    await model.connect("Retry.")
+                    self.assertIs(model._ws, replacement)
+                    self.assertEqual(model._session_id, "live_1")
+                    self.assertEqual(
+                        await asyncio.wait_for(
+                            anext(model.events()),
+                            timeout=1,
+                        ),
+                        SessionStartedEvent(session_id="live_1"),
+                    )
+                    await model.close()
+                    self.assertTrue(replacement.closed)
+
+    async def test_startup_timeout_settles_the_shielded_future(self) -> None:
+        """Both startup phases time out and release their resources."""
+        for block_send in (False, True):
+            with self.subTest(block_send=block_send):
+                ws = _PendingStartupWebSocket(block_send)
+                model = _model()
+                model.parameters.startup_timeout_s = 0.1
+                self.addAsyncCleanup(model.close)
+                resources: list[asyncio.Future | None] = []
+
+                async def capture_startup(
+                    payload: dict,
+                    current: OpenAILiveModel = model,
+                    capture: Callable[
+                        [asyncio.Future | None],
+                        None,
+                    ] = resources.append,
+                ) -> None:
+                    """Save references before startup can suspend or expire."""
+                    capture(current._reader)
+                    capture(current._started)
+                    await OpenAILiveModel._send(current, payload)
+
+                with (
+                    patch("websockets.connect", AsyncMock(return_value=ws)),
+                    patch.object(model, "_send", capture_startup),
+                ):
+                    connection = asyncio.create_task(model.connect("Brief."))
+                    with self.assertRaises(asyncio.TimeoutError):
+                        await asyncio.wait_for(connection, timeout=1)
+                reader, started = resources
+                assert reader is not None and started is not None
+                self.assertEqual(
+                    {
+                        "guard_cancelled": connection.cancelled(),
+                        "socket_closed": ws.closed,
+                        "reader_done": reader.done(),
+                        "startup_cancelled": started.cancelled(),
+                        "socket": model._ws,
+                        "reader": model._reader,
+                        "startup": model._started,
+                    },
+                    {
+                        "guard_cancelled": False,
+                        "socket_closed": True,
+                        "reader_done": True,
+                        "startup_cancelled": True,
+                        "socket": None,
+                        "reader": None,
+                        "startup": None,
+                    },
+                )
+
+    async def test_startup_phases_share_one_timeout(self) -> None:
+        """Sending must consume part of the acknowledgement deadline."""
+        ws = _FakeWebSocket()
+        model = _model()
+        model.parameters.startup_timeout_s = 0.1
+        self.addAsyncCleanup(model.close)
+        acknowledgement: asyncio.TimerHandle | None = None
+
+        async def delayed_send(raw: str) -> None:
+            """Each phase fits alone, but their combined delay does not."""
+            nonlocal acknowledgement
+            ws.sent.append(json.loads(raw))
+            await asyncio.sleep(0.06)
+            acknowledgement = asyncio.get_running_loop().call_later(
+                0.06,
+                ws.incoming.put_nowait,
+                json.dumps(
+                    {"type": "session.started", "session": {"id": "late"}},
+                ),
+            )
+
+        with (
+            patch("websockets.connect", AsyncMock(return_value=ws)),
+            patch.object(ws, "send", delayed_send),
+        ):
+            with self.assertRaises(asyncio.TimeoutError):
+                try:
+                    await asyncio.wait_for(model.connect("Brief."), timeout=1)
+                finally:
+                    if acknowledgement is not None:
+                        acknowledgement.cancel()
+        self.assertEqual(
+            (ws.closed, model._ws, model._reader, model._started),
+            (True, None, None, None),
+        )
+
+    async def test_startup_error_is_preserved_after_cleanup(self) -> None:
+        """Provider startup errors still reach the caller after cleanup."""
+        ws = _PendingStartupWebSocket(False)
+        model = _model()
+        self.addAsyncCleanup(model.close)
+        with patch("websockets.connect", AsyncMock(return_value=ws)):
+            connection = asyncio.create_task(model.connect("Brief."))
+            await asyncio.wait_for(ws.reading.wait(), timeout=1)
+            reader = model._reader
+            assert reader is not None
+            ws.incoming.put_nowait(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": {"message": "Startup rejected"},
+                    },
+                ),
+            )
+            with self.assertRaisesRegex(RuntimeError, "Startup rejected"):
+                await connection
+        self.assertEqual(
+            (ws.closed, reader.done(), model._reader, model._started),
+            (True, True, None, None),
+        )
+
+    async def test_connect_audio_and_close(self) -> None:
+        """The adapter waits for startup and preserves final usage."""
+        ws = _FakeWebSocket()
+        connector = AsyncMock(return_value=ws)
+        model = _model()
+        with patch("websockets.connect", connector):
+            await model.connect("Be brief.")
+            await model.push_audio(b"\x01\x00")
+            await model.send_delegation_result(
+                "delegation_1",
+                "The order shipped.",
+            )
+            with self.assertRaises(ValueError):
+                await model.push_audio(b"\x01")
+            await model.close()
+
+        connector.assert_awaited_once()
+        assert connector.await_args is not None
+        args, kwargs = connector.await_args
+        self.assertEqual(args, ("wss://api.openai.com/v1/live/sessions",))
+        self.assertDictEqual(
+            kwargs,
+            {"additional_headers": {"Authorization": "Bearer sk-x"}},
+        )
+        self.assertListEqual(
+            [item["type"] for item in ws.sent],
+            [
+                "session.start",
+                "session.input_audio.append",
+                "session.commentary.append",
+                "session.close",
+            ],
+        )
+        self.assertEqual(ws.sent[1]["audio"], "AQA=")
+        commentary = ws.sent[2].copy()
+        commentary_id = commentary.pop("event_id")
+        self.assertTrue(commentary_id.startswith("delegation_result_"))
+        self.assertDictEqual(
+            commentary,
+            {
+                "type": "session.commentary.append",
+                "delegation_id": "delegation_1",
+                "content": "The order shipped.",
+            },
+        )
+        self.assertEqual(model.usage_seconds, 4.5)
+        self.assertTrue(ws.closed)
+
+
+class RealtimeAgentLiveTest(unittest.IsolatedAsyncioTestCase):
+    """Minimal projection of overlapping Live transcript and audio."""
+
+    async def test_mismatched_backend_name_fails_before_execution(
+        self,
+    ) -> None:
+        """Reject an incompatible backend without leaving a parked task."""
+        backend = Agent("TaskBot", "Be brief.", MockModel())
+        model = _model()
+        model.send_delegation_result = AsyncMock()
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            model,
+            delegation_agent_factory=lambda _: backend,
+        )
+        self.addAsyncCleanup(agent.close)
+        with (
+            patch.object(backend, "reply_stream") as reply_stream,
+            patch.object(agent, "_schedule_delegation_timeout") as timeout,
+        ):
+            with self.assertLogs("as", level="ERROR") as logs:
+                agent._start_client_delegation("bad-name")
+            await asyncio.gather(*list(agent._tasks))
+            reply_stream.assert_not_called()
+            timeout.assert_not_called()
+        self.assertIn(
+            "Delegation backend name 'TaskBot' must match "
+            "RealtimeAgent name 'Friday'.",
+            "\n".join(logs.output),
+        )
+        self.assertEqual(
+            {
+                "active": agent._active_delegation_id,
+                "delegations": agent._delegations,
+                "routes": agent._delegated_tool_calls,
+                "queue": list(agent._delegation_queue),
+                "tasks": agent._tasks,
+            },
+            {
+                "active": None,
+                "delegations": {},
+                "routes": {},
+                "queue": [],
+                "tasks": set(),
+            },
+        )
+        model.send_delegation_result.assert_awaited_once_with(
+            "bad-name",
+            "The delegated task could not be completed because the "
+            "session chat agent is unavailable.",
+        )
+
+    async def test_interrupt_control_stops_speech_and_keeps_delegation(
+        self,
+    ) -> None:
+        """Browser Stop clears speech without cancelling backend work."""
+        model = _model()
+        socket = _FakeWebSocket()
+        model._ws = socket
+        model.send_delegation_result = AsyncMock()
+        backend = _ExternalDelegationAgent()
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            model,
+            delegation_agent_factory=lambda _: backend,
+        )
+        self.addAsyncCleanup(agent.close)
+        transport = _FakeTransport()
+        agent._transport = transport
+        agent._connected = True
+        agent._start_client_delegation("task")
+        await asyncio.gather(*list(agent._tasks))
+        delegation = agent._delegations["task"]
+        timeout = delegation.timeout_task
+        await agent._on_model_event(SessionStartedEvent(session_id="live_1"))
+        await agent._on_model_event(
+            TimelineAudioDeltaEvent(pcm=b"\x01\x00", sample_rate=24000),
+        )
+        await agent._on_model_event(
+            TimelineTranscriptDeltaEvent(
+                role="assistant",
+                delta="Sure thing",
+                start_ms=10,
+                end_ms=20,
+            ),
+        )
+        reply_id = agent._live_replies["assistant"].reply_id
+        list(agent.drain_events())
+
+        await agent._on_control(ControlFrame(type=ControlFrameType.INTERRUPT))
+
+        self.assertEqual(
+            {
+                "cleared": transport.cleared,
+                "playout": transport.playout().model_dump(),
+                "audio_pending": agent._audio_pending,
+                "payloads": [
+                    {
+                        key: value
+                        for key, value in item.items()
+                        if key != "event_id"
+                    }
+                    for item in socket.sent
+                ],
+                "ends": [
+                    (event.reply_id, event.finished_reason)
+                    for event in agent.drain_events()
+                    if isinstance(event, ReplyEndEvent)
+                ],
+                "live_replies": agent._live_replies,
+                "transcript": [
+                    (msg.role, msg.get_text_content())
+                    for msg in agent.state.context
+                    if msg.id == reply_id
+                ],
+                "active": agent._active_delegation_id,
+                "routes": agent._delegated_tool_calls,
+                "backend_inputs": backend.received,
+            },
+            {
+                "cleared": 1,
+                "playout": {
+                    "item_id": "live:live_1",
+                    "played_ms": 0,
+                    "first_played_at": None,
+                },
+                "audio_pending": False,
+                "payloads": [
+                    {
+                        "type": "session.instructions.append",
+                        "delegation_id": None,
+                        "content": "Stop speaking now and listen to the user.",
+                    },
+                ],
+                "ends": [(reply_id, "interrupted")],
+                "live_replies": {},
+                "transcript": [("assistant", "Sure thing")],
+                "active": "task",
+                "routes": {"external_1": "task"},
+                "backend_inputs": [delegation.prompt],
+            },
+        )
+        self.assertIs(agent._delegations["task"], delegation)
+        self.assertIs(delegation.timeout_task, timeout)
+        assert timeout is not None
+        self.assertFalse(timeout.done())
+        model.send_delegation_result.assert_not_awaited()
+
+    async def test_overlapping_timeline_does_not_barge_in(self) -> None:
+        """User transcript growth does not clear assistant playback."""
+        model = _model()
+        agent = RealtimeAgent("Friday", "Be brief.", model)
+        transport = _FakeTransport()
+        agent._transport = transport
+        self.assertTrue(agent.allows_open_user_reply_checkpoint)
+
+        await agent._on_model_event(SessionStartedEvent(session_id="live_1"))
+        await agent._on_model_event(
+            TimelineAudioDeltaEvent(
+                pcm=b"\x01\x00",
+                sample_rate=24000,
+            ),
+        )
+        await agent._on_model_event(
+            TimelineTranscriptDeltaEvent(
+                role="assistant",
+                delta="Sure",
+                start_ms=10,
+                end_ms=20,
+            ),
+        )
+        await agent._on_model_event(
+            TimelineTranscriptDeltaEvent(
+                role="user",
+                delta="Wait",
+                start_ms=15,
+                end_ms=25,
+            ),
+        )
+
+        self.assertListEqual(
+            transport.audio,
+            [(b"\x01\x00", "live:live_1")],
+        )
+        self.assertEqual(transport.cleared, 0)
+        self.assertListEqual(
+            [
+                (message.role, message.get_text_content())
+                for message in agent.state.context
+            ],
+            [("assistant", "Sure"), ("user", "Wait")],
+        )
+
+    async def test_client_delegation_uses_live_transcript(self) -> None:
+        """A client delegation runs the configured session chat agent."""
+        model = _model()
+        state = AgentState()
+        state.context.append(
+            UserMsg(
+                id="live:user:historical",
+                name="user",
+                content="Earlier voice context.",
+            ),
+        )
+        backend = _FakeDelegationAgent()
+
+        def _factory(delegation_state: AgentState) -> _FakeDelegationAgent:
+            backend.state = delegation_state
+            return backend
+
+        model.send_delegation_result = (  # type: ignore[method-assign]
+            AsyncMock()
+        )
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            model,
+            state=state,
+            delegation_agent_factory=_factory,  # type: ignore[arg-type]
+        )
+
+        await agent._on_model_event(
+            TimelineTranscriptDeltaEvent(
+                role="user",
+                delta="Check order 42.",
+                start_ms=10,
+                end_ms=20,
+            ),
+        )
+        await agent._on_model_event(
+            DelegationCreatedEvent(
+                delegation_id="delegation_1",
+                target="client",
+            ),
+        )
+        tasks = list(agent._tasks)
+        await asyncio.gather(*tasks)
+
+        self.assertEqual(len(backend.inputs), 1)
+        prompt = backend.inputs[0].get_text_content()
+        self.assertIsNotNone(prompt)
+        assert prompt is not None
+        self.assertIn("User: Check order 42.", prompt)
+        backend_ids = {message.id for message in backend.state.context}
+        self.assertDictEqual(
+            {
+                "historical_text": (
+                    backend.state.context[0].get_text_content()
+                ),
+                "current_live_ids": backend_ids & agent._live_message_ids,
+                "backend_texts": [
+                    message.get_text_content()
+                    for message in backend.state.context
+                ],
+            },
+            {
+                "historical_text": "Earlier voice context.",
+                "current_live_ids": set(),
+                "backend_texts": [
+                    "Earlier voice context.",
+                    prompt,
+                    "Order 42 shipped.",
+                ],
+            },
+        )
+        model.send_delegation_result.assert_awaited_once_with(
+            "delegation_1",
+            "Order 42 shipped.",
+        )
+        self.assertDictEqual(agent._delegations, {})
+
+    async def test_completed_results_replay_before_interaction(self) -> None:
+        """Replay full hidden results with their persisted completion."""
+        for interaction_type in (
+            RequireUserConfirmEvent,
+            RequireExternalExecutionEvent,
+        ):
+            with self.subTest(interaction=interaction_type.__name__):
+                call = ToolCallBlock(id="read", name="Read", input="{}")
+                result = ToolResultBlock(
+                    id=call.id,
+                    name=call.name,
+                    output="contents",
+                    state=ToolResultState.SUCCESS,
+                )
+                events = [
+                    ReplyStartEvent(
+                        session_id="session",
+                        reply_id="backend",
+                        name="Friday",
+                    ),
+                    ToolCallStartEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                        tool_call_name=call.name,
+                    ),
+                    ToolCallEndEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                    ),
+                    ToolResultStartEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                        tool_call_name=call.name,
+                    ),
+                    ToolResultTextDeltaEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                        delta="contents",
+                    ),
+                    ToolResultDataDeltaEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                        media_type="image/png",
+                        data="aGVsbG8=",
+                    ),
+                    ToolResultEndEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    interaction_type(
+                        reply_id="backend",
+                        tool_calls=[
+                            ToolCallBlock(
+                                id="write",
+                                name="Write",
+                                input="{}",
+                            ),
+                        ],
+                    ),
+                ]
+
+                class Backend:
+                    """Persist a result after yielding its end event."""
+
+                    name = "Friday"
+
+                    def __init__(
+                        self,
+                        script: list[AgentEvent],
+                        completed: Msg,
+                    ) -> None:
+                        self.state = AgentState()
+                        self.script = script
+                        self.completed = completed
+
+                    # pylint: disable=unused-argument
+                    async def reply_stream(
+                        self,
+                        inputs: Msg,
+                        yield_final_msg: bool,
+                    ) -> AsyncIterator[AgentEvent]:
+                        """Complete Read before requesting outside input."""
+                        for event in self.script:
+                            yield event
+                            if isinstance(event, ToolResultEndEvent):
+                                self.state.context.append(self.completed)
+
+                    # pylint: enable=unused-argument
+
+                backend = Backend(
+                    events,
+                    AssistantMsg(
+                        id="backend",
+                        name="Friday",
+                        content=[call, result],
+                    ),
+                )
+                agent = RealtimeAgent(
+                    "Friday",
+                    "Be brief.",
+                    _model(),
+                    delegation_agent_factory=lambda _, current=backend: (
+                        current
+                    ),
+                )
+                await agent._on_model_event(
+                    DelegationCreatedEvent(
+                        delegation_id="task",
+                        target="client",
+                    ),
+                )
+                await asyncio.gather(*list(agent._tasks))
+                agent._cancel_delegation_timeout(agent._delegations["task"])
+                published = []
+                snapshots = []
+                checkpoints = []
+                for event in agent.drain_events():
+                    if isinstance(event, CustomEvent):
+                        checkpoints.append((event.name, event.value))
+                        snapshot = agent.checkpoint_snapshot(event)
+                        assert snapshot is not None
+                        self.assertEqual(
+                            snapshot.context[0].model_dump(),
+                            backend.state.context[0].model_dump(),
+                        )
+                        continue
+                    published.append(event.model_dump())
+                    if isinstance(event, ToolResultEndEvent):
+                        snapshot = agent.checkpoint_snapshot(event)
+                        assert snapshot is not None
+                        snapshots.append(snapshot.context[0].model_dump())
+                self.assertEqual(
+                    {
+                        "events": published,
+                        "snapshots": snapshots,
+                        "checkpoints": checkpoints,
+                    },
+                    {
+                        "events": [event.model_dump() for event in events],
+                        "snapshots": [backend.state.context[0].model_dump()],
+                        "checkpoints": [
+                            (
+                                "delegation_checkpoint",
+                                {
+                                    "delegation_id": "task",
+                                    "reply_id": "backend",
+                                    "tool_call_id": "read",
+                                },
+                            ),
+                        ],
+                    },
+                )
+
+    async def test_client_delegation_resumes_after_confirmation(self) -> None:
+        """Realtime control routes approval back to the delegated agent."""
+        model = _model()
+        backend = _ConfirmingDelegationAgent()
+        model.send_delegation_result = (  # type: ignore[method-assign]
+            AsyncMock()
+        )
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            model,
+            delegation_agent_factory=lambda _state: backend,
+        )
+
+        await agent._on_model_event(
+            DelegationCreatedEvent(
+                delegation_id="delegation_1",
+                target="client",
+            ),
+        )
+        await asyncio.gather(*list(agent._tasks))
+        self.assertDictEqual(
+            agent._delegated_tool_calls,
+            {"tool_1": "delegation_1"},
+        )
+        delegation = agent._delegations["delegation_1"]
+        self.assertListEqual(delegation.buffered_events, [])
+
+        sync_calls = 0
+        original_sync = agent._sync_delegation_state
+
+        def _count_sync(current: object) -> None:
+            nonlocal sync_calls
+            sync_calls += 1
+            original_sync(current)  # type: ignore[arg-type]
+
+        agent._sync_delegation_state = (  # type: ignore[method-assign]
+            _count_sync
+        )
+
+        await agent.send(
+            UserConfirmResultEvent(
+                reply_id="backend_reply",
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=backend.tool_call,
+                    ),
+                ],
+            ),
+        )
+        await asyncio.gather(*list(agent._tasks))
+
+        model.send_delegation_result.assert_awaited_once_with(
+            "delegation_1",
+            "Order 42 updated.",
+        )
+        self.assertDictEqual(agent._delegated_tool_calls, {})
+        self.assertEqual(sync_calls, 2)
+
+    async def test_delegations_preserve_middleware_state(self) -> None:
+        """Carry middleware data across tasks without sharing nested state."""
+        counts = []
+        backends = []
+
+        class Counter(MiddlewareBase):
+            """Record the number of replies in persistent middleware data."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                """Increment state before running the actual Agent reply."""
+                values = agent.state.middle_context.setdefault(
+                    "counter",
+                    {"count": 0, "history": []},
+                )
+                values["count"] += 1
+                values["history"].append(values["count"])
+                counts.append(values["count"])
+                async for item in next_handler(**input_kwargs):
+                    yield item
+
+        def create_backend(state: AgentState) -> Agent:
+            """Build a real Agent with deterministic model output."""
+            model = MockModel(context_size=10000)
+            model.set_responses(
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Done")],
+                        is_last=True,
+                    ),
+                ],
+            )
+            backend = Agent(
+                "Friday",
+                "Be brief.",
+                model,
+                state=state,
+                middlewares=[Counter()],
+            )
+            backends.append(backend)
+            return backend
+
+        model = _model()
+        model.send_delegation_result = AsyncMock()
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            model,
+            delegation_agent_factory=create_backend,
+        )
+        for task_id in ("first", "second"):
+            await agent._on_model_event(
+                DelegationCreatedEvent(
+                    delegation_id=task_id,
+                    target="client",
+                ),
+            )
+            while agent._tasks:
+                await asyncio.gather(*list(agent._tasks))
+
+        backends[0].state.middle_context["counter"]["history"].append(99)
+        backends[1].state.middle_context["counter"]["history"].append(100)
+        self.assertEqual(
+            {
+                "counts": counts,
+                "saved": agent.state.middle_context,
+                "backend_states": [
+                    backend.state.middle_context for backend in backends
+                ],
+            },
+            {
+                "counts": [1, 2],
+                "saved": {"counter": {"count": 2, "history": [1, 2]}},
+                "backend_states": [
+                    {"counter": {"count": 1, "history": [1, 99]}},
+                    {"counter": {"count": 2, "history": [1, 2, 100]}},
+                ],
+            },
+        )
+
+    async def test_client_delegations_use_latest_serial_state(self) -> None:
+        """Queued tasks are created only after the active task syncs state."""
+        model = _model()
+        model.send_delegation_result = (  # type: ignore[method-assign]
+            AsyncMock()
+        )
+        state = AgentState()
+        factory_snapshots: list[list[str]] = []
+
+        def _factory(snapshot: AgentState) -> _StateDelegationAgent:
+            factory_snapshots.append(
+                list(snapshot.tool_context.activated_groups),
+            )
+            marker = f"task-{len(factory_snapshots)}"
+            return _StateDelegationAgent(snapshot, marker)
+
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            model,
+            state=state,
+            delegation_agent_factory=_factory,  # type: ignore[arg-type]
+        )
+
+        await agent._on_model_event(
+            DelegationCreatedEvent(
+                delegation_id="delegation_1",
+                target="client",
+            ),
+        )
+        await agent._on_model_event(
+            DelegationCreatedEvent(
+                delegation_id="delegation_2",
+                target="client",
+            ),
+        )
+        while agent._tasks:
+            await asyncio.gather(*list(agent._tasks))
+
+        self.assertDictEqual(
+            {
+                "factory_snapshots": factory_snapshots,
+                "shared_groups": state.tool_context.activated_groups,
+                "delegations": agent._delegations,
+                "queue": list(agent._delegation_queue),
+                "active": agent._active_delegation_id,
+            },
+            {
+                "factory_snapshots": [[], ["task-1"]],
+                "shared_groups": ["task-1", "task-2"],
+                "delegations": {},
+                "queue": [],
+                "active": None,
+            },
+        )
+
+    async def test_client_delegation_resumes_external_execution(self) -> None:
+        """External results route back to the parked delegated agent."""
+        model = _model()
+        backend = _ExternalDelegationAgent()
+        model.send_delegation_result = (  # type: ignore[method-assign]
+            AsyncMock()
+        )
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            model,
+            delegation_agent_factory=lambda _state: backend,
+        )
+
+        await agent._on_model_event(
+            DelegationCreatedEvent(
+                delegation_id="delegation_1",
+                target="client",
+            ),
+        )
+        await asyncio.gather(*list(agent._tasks))
+        model.send_delegation_result.assert_not_awaited()
+        self.assertDictEqual(
+            agent._delegated_tool_calls,
+            {"external_1": "delegation_1"},
+        )
+        queued = []
+        while not agent._out.empty():
+            item = agent._out.get_nowait()
+            queued.append(
+                (type(item.event).__name__, item.checkpoint is not None),
+            )
+        self.assertIn(
+            ("RequireExternalExecutionEvent", True),
+            queued,
+        )
+
+        external_result = ExternalExecutionResultEvent(
+            reply_id="external_reply",
+            execution_results=[
+                ToolResultBlock(
+                    id="external_1",
+                    name="ask_user",
+                    output=[TextBlock(text="Order 42")],
+                    state=ToolResultState.SUCCESS,
+                ),
+            ],
+        )
+        await agent._on_control(
+            ControlFrame(
+                type=ControlFrameType.EXTERNAL_EXECUTION_RESULT,
+                data=external_result.model_dump(mode="json"),
+            ),
+        )
+        await asyncio.gather(*list(agent._tasks))
+
+        self.assertEqual(backend.received[-1], external_result)
+        model.send_delegation_result.assert_awaited_once_with(
+            "delegation_1",
+            "Order 42 selected.",
+        )
+        self.assertDictEqual(agent._delegated_tool_calls, {})
+
+    async def test_parked_delegation_intentionally_holds_fifo(self) -> None:
+        """A parked task holds FIFO until its input deadline expires."""
+        model = _model()
+        first = _ExternalDelegationAgent()
+        second = _FakeDelegationAgent()
+        created: list[object] = []
+
+        def _factory(state: AgentState) -> object:
+            del state
+            backend = first if not created else second
+            created.append(backend)
+            return backend
+
+        model.send_delegation_result = (  # type: ignore[method-assign]
+            AsyncMock()
+        )
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            model,
+            delegation_agent_factory=_factory,  # type: ignore[arg-type]
+        )
+
+        await agent._on_model_event(
+            DelegationCreatedEvent(
+                delegation_id="delegation_1",
+                target="client",
+            ),
+        )
+        await asyncio.gather(*list(agent._tasks))
+        await agent._on_model_event(
+            DelegationCreatedEvent(
+                delegation_id="delegation_2",
+                target="client",
+            ),
+        )
+
+        self.assertDictEqual(
+            {
+                "created": created,
+                "active": agent._active_delegation_id,
+                "queue": list(agent._delegation_queue),
+            },
+            {
+                "created": [first],
+                "active": "delegation_1",
+                "queue": ["delegation_2"],
+            },
+        )
+
+        delegation = agent._delegations["delegation_1"]
+        self.assertIsNotNone(delegation.timeout_task)
+        agent._cancel_delegation_timeout(delegation)
+        with patch(
+            "agentscope.agent._realtime._agent."
+            "_DELEGATION_INPUT_TIMEOUT_SECS",
+            0,
+        ):
+            await agent._expire_client_delegation(delegation)
+        while agent._tasks:
+            await asyncio.gather(*list(agent._tasks))
+
+        self.assertDictEqual(
+            {
+                "first_received": [
+                    type(item).__name__ for item in first.received
+                ],
+                "created": created,
+                "active": agent._active_delegation_id,
+                "queue": list(agent._delegation_queue),
+                "delegations": agent._delegations,
+                "expired": delegation.expiring,
+            },
+            {
+                "first_received": ["Msg", "UserInterruptEvent"],
+                "created": [first, second],
+                "active": None,
+                "queue": [],
+                "delegations": {},
+                "expired": True,
+            },
+        )
+        self.assertListEqual(
+            model.send_delegation_result.await_args_list,
+            [
+                unittest.mock.call(
+                    "delegation_1",
+                    "The delegated task was cancelled because the required "
+                    "user input or external execution was not provided in "
+                    "time.",
+                ),
+                unittest.mock.call(
+                    "delegation_2",
+                    "Order 42 shipped.",
+                ),
+            ],
+        )
+
+    async def test_unmatched_external_result_is_logged(self) -> None:
+        """An external result without a delegation is not silent."""
+        agent = RealtimeAgent("Friday", "Be brief.", _model())
+        event = ExternalExecutionResultEvent(
+            reply_id="external_reply",
+            execution_results=[
+                ToolResultBlock(
+                    id="unknown_tool",
+                    name="ask_user",
+                    output=[TextBlock(text="Order 42")],
+                    state=ToolResultState.SUCCESS,
+                ),
+            ],
+        )
+
+        with self.assertLogs("as", level="WARNING") as captured:
+            await agent.send(event)
+
+        self.assertListEqual(
+            captured.output,
+            [
+                "WARNING:as:RealtimeAgent: ignored external execution "
+                "results without an active delegation: ['unknown_tool']",
+            ],
+        )
+
+    async def test_live_transcript_samples_exact_snapshots(
+        self,
+    ) -> None:
+        """Only sampled deltas carry their exact persistence boundary."""
+        model = _model()
+        agent = RealtimeAgent("Friday", "Be brief.", model)
+        events = [
+            TimelineTranscriptDeltaEvent(
+                role="user",
+                delta=delta,
+                start_ms=start_ms,
+                end_ms=end_ms,
+            )
+            for delta, start_ms, end_ms in [
+                ("one", 0, 100),
+                ("two", 100, 200),
+                ("three", 2_000, 2_100),
+                ("four", 2_100, 2_200),
+            ]
+        ]
+
+        with patch(
+            "agentscope.agent._realtime._agent.time.monotonic",
+            return_value=1.0,
+        ):
+            for event in events:
+                await agent._on_model_event(event)
+
+        checkpoints = []
+        while not agent._out.empty():
+            queued = agent._out.get_nowait()
+            if isinstance(queued.event, TextBlockDeltaEvent):
+                checkpoints.append(
+                    {
+                        "delta": queued.event.delta,
+                        "checkpoint": (
+                            None
+                            if queued.checkpoint is None
+                            else queued.checkpoint.context[
+                                0
+                            ].get_text_content()
+                        ),
+                    },
+                )
+
+        self.assertListEqual(
+            checkpoints,
+            [
+                {"delta": "one", "checkpoint": "one"},
+                {"delta": "two", "checkpoint": None},
+                {"delta": "three", "checkpoint": "onetwothree"},
+                {"delta": "four", "checkpoint": None},
+            ],
+        )
+
+    async def test_live_transcript_keeps_a_timestamped_bounded_window(
+        self,
+    ) -> None:
+        """Prompt history stays bounded while retaining timeline metadata."""
+        model = _model()
+        agent = RealtimeAgent("Friday", "Be brief.", model)
+        events = [
+            TimelineTranscriptDeltaEvent(
+                role="user",
+                delta="12345",
+                start_ms=10,
+                end_ms=20,
+            ),
+            TimelineTranscriptDeltaEvent(
+                role="assistant",
+                delta="abcde",
+                start_ms=21,
+                end_ms=30,
+            ),
+            TimelineTranscriptDeltaEvent(
+                role="assistant",
+                delta="fg",
+                start_ms=31,
+                end_ms=35,
+            ),
+        ]
+
+        with patch(
+            "agentscope.agent._realtime._agent._HISTORY_MAX_TEXT_CHARS",
+            8,
+        ):
+            for event in events:
+                await agent._on_model_event(event)
+
+        self.assertDictEqual(
+            {
+                "transcript": list(agent._live_transcript),
+                "chars": agent._live_transcript_chars,
+            },
+            {
+                "transcript": [
+                    ("assistant", "abcde", 21, 30),
+                    ("assistant", "fg", 31, 35),
+                ],
+                "chars": 7,
+            },
+        )
+
+
+class RealtimeDelegationLifecycleTest(unittest.IsolatedAsyncioTestCase):
+    """Check delegation ownership across reconnects and compaction."""
+
+    async def _reconnect(
+        self,
+        agent: RealtimeAgent,
+        socket: _FakeWebSocket,
+    ) -> None:
+        """Wait for the provider disconnect before opening a new session."""
+        await socket.close()
+
+        async def wait_disconnected() -> None:
+            while agent._connected:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(wait_disconnected(), timeout=1)
+        await agent.connect()
+
+    async def test_reconnect_retires_parked_and_queued_delegations(
+        self,
+    ) -> None:
+        """Keep completed work, interrupt HITL and discard old queue items."""
+        sockets = [_FakeWebSocket(), _FakeWebSocket()]
+        executed = []
+        backends = []
+
+        def read() -> str:
+            """Record a completed read before the permission request."""
+            executed.append("read")
+            return "contents"
+
+        def write() -> str:
+            """Record a write only if the user approves it."""
+            executed.append("write")
+            return "written"
+
+        def factory(state: AgentState) -> Agent:
+            """Park the first task and let the next session finish normally."""
+            model = MockModel(context_size=10000)
+            responses = [
+                ChatResponse(content=[TextBlock(text="Done")], is_last=True),
+            ]
+            if not backends:
+                responses = [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=name,
+                                name=name,
+                                input="{}",
+                            ),
+                        ],
+                        is_last=True,
+                    )
+                    for name in ("read", "write")
+                ]
+            model.set_responses(responses)
+            backend = Agent(
+                "Friday",
+                "Be brief.",
+                model,
+                state=state,
+                toolkit=Toolkit(
+                    tools=[
+                        FunctionTool(read, is_read_only=True),
+                        FunctionTool(write),
+                    ],
+                ),
+            )
+            backends.append(backend)
+            return backend
+
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            _model(),
+            delegation_agent_factory=factory,
+        )
+        self.addAsyncCleanup(agent.close)
+        with patch("websockets.connect", AsyncMock(side_effect=sockets)):
+            await agent.connect()
+            agent._start_client_delegation("old")
+            while agent._tasks:
+                await asyncio.gather(*list(agent._tasks))
+            old = agent._delegations["old"]
+            timeout = old.timeout_task
+            agent._start_client_delegation("queued")
+            await self._reconnect(agent, sockets[0])
+            self.assertEqual(
+                {
+                    "active": agent._active_delegation_id,
+                    "queue": list(agent._delegation_queue),
+                    "delegations": agent._delegations,
+                    "routes": agent._delegated_tool_calls,
+                    "timeout_done": timeout is not None and timeout.done(),
+                    "awaiting": backends[0].state.has_awaiting_tool_calls(
+                        "Friday",
+                    ),
+                    "executed": executed,
+                    "results": [
+                        (block.id, block.state)
+                        for message in agent.state.context
+                        for block in message.get_content_blocks("tool_result")
+                    ],
+                },
+                {
+                    "active": None,
+                    "queue": [],
+                    "delegations": {},
+                    "routes": {},
+                    "timeout_done": True,
+                    "awaiting": False,
+                    "executed": ["read"],
+                    "results": [
+                        ("read", ToolResultState.SUCCESS),
+                        ("write", ToolResultState.INTERRUPTED),
+                    ],
+                },
+            )
+            # A late callback must not revive a task from the old connection.
+            await agent._drive_client_delegation(old, old.prompt)
+            agent._start_client_delegation("new")
+            while agent._tasks:
+                await asyncio.gather(*list(agent._tasks))
+            self.assertEqual(
+                {
+                    "backends": len(backends),
+                    "commentary": [
+                        (item["delegation_id"], item["content"])
+                        for item in sockets[1].sent
+                        if item["type"] == "session.commentary.append"
+                    ],
+                },
+                {"backends": 2, "commentary": [("new", "Done")]},
+            )
+
+    async def test_reconnect_cancels_running_backend_before_new_session(
+        self,
+    ) -> None:
+        """Do not send an old task's late result on the new connection."""
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class Backend(_FakeDelegationAgent):
+            """Keep a task running until reconnect cancels its execution."""
+
+            async def reply_stream(
+                self,
+                inputs: Msg,
+                yield_final_msg: bool,
+            ) -> AsyncIterator[Msg]:
+                """Return late output after receiving cancellation."""
+                self.state.middle_context["completed_operation"] = True
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                async for item in super().reply_stream(
+                    inputs,
+                    yield_final_msg,
+                ):
+                    yield item
+
+        backend = Backend()
+        sockets = [_FakeWebSocket(), _FakeWebSocket()]
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            _model(),
+            delegation_agent_factory=lambda _: backend,
+        )
+        self.addAsyncCleanup(agent.close)
+        with patch("websockets.connect", AsyncMock(side_effect=sockets)):
+            await agent.connect()
+            agent._start_client_delegation("old")
+            await asyncio.wait_for(started.wait(), timeout=1)
+            await self._reconnect(agent, sockets[0])
+            self.assertEqual(
+                {
+                    "cancelled": cancelled.is_set(),
+                    "tasks": len(agent._tasks),
+                    "active": agent._active_delegation_id,
+                    "state": agent.state.middle_context,
+                    "commentary": [
+                        item
+                        for item in sockets[1].sent
+                        if item["type"] == "session.commentary.append"
+                    ],
+                },
+                {
+                    "cancelled": True,
+                    "tasks": 0,
+                    "active": None,
+                    "state": {"completed_operation": True},
+                    "commentary": [],
+                },
+            )
+
+    async def test_compression_prunes_only_delegated_history(self) -> None:
+        """Sync real compression while retaining concurrent Live messages."""
+        recent = UserMsg("user", "3" * 40, id="recent")
+        parent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            _model(),
+            state=AgentState(
+                summary="old summary",
+                context=[
+                    UserMsg("user", "1" * 120, id="old1"),
+                    AssistantMsg("Friday", "2" * 40, id="old2"),
+                    recent,
+                ],
+            ),
+        )
+        model = MockModel(context_size=100)
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "Compressed",
+                    "current_state": "Done",
+                    "important_discoveries": "Facts",
+                    "next_steps": "Continue",
+                    "context_to_preserve": "Keep this",
+                },
+            ),
+        )
+        backend = Agent(
+            "Friday",
+            "0" * 80,
+            model,
+            toolkit=Toolkit(),
+            state=parent._copy_delegation_state(),
+            context_config=ContextConfig(trigger_ratio=0.7, reserve_ratio=0.4),
+        )
+        delegation = _ClientDelegation(
+            delegation_id="task",
+            prompt=UserMsg("user", "Task"),
+            generation=parent._connection_generation,
+            agent=backend,
+            baseline_ids={msg.id for msg in backend.state.context},
+        )
+        backend.state.context.insert(
+            2,
+            AssistantMsg(
+                "Friday",
+                id="tool_reply",
+                content=[
+                    ToolResultBlock(
+                        id="read",
+                        name="Read",
+                        output="contents " * 100,
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        )
+        parent._sync_delegation_state(delegation)
+        self.assertIn("tool_reply", [msg.id for msg in parent.state.context])
+        await parent._on_model_event(
+            TimelineTranscriptDeltaEvent(
+                role="user",
+                delta="Concurrent speech",
+                start_ms=0,
+                end_ms=10,
+            ),
+        )
+        await backend.compress_context()
+        self.assertEqual([msg.id for msg in backend.state.context], ["recent"])
+        self.assertNotEqual(backend.state.summary, "old summary")
+        await parent._on_model_event(
+            TimelineTranscriptDeltaEvent(
+                role="user",
+                delta=" continues",
+                start_ms=10,
+                end_ms=20,
+            ),
+        )
+        live = parent.state.context[-1].model_dump()
+        parent._sync_delegation_state(delegation)
+        # Repeated checkpoints must not reintroduce compacted tool messages.
+        parent._sync_delegation_state(delegation)
+        self.assertEqual(
+            {
+                "summary": parent.state.summary,
+                "messages": [msg.model_dump() for msg in parent.state.context],
+                "next_messages": [
+                    msg.model_dump()
+                    for msg in parent._copy_delegation_state().context
+                ],
+            },
+            {
+                "summary": backend.state.summary,
+                "messages": [recent.model_dump(), live],
+                "next_messages": [recent.model_dump()],
+            },
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

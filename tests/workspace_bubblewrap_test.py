@@ -24,6 +24,8 @@ import aiofiles
 from fastapi.testclient import TestClient
 from mcp.types import Tool, ToolAnnotations
 
+from sandbox_test_support import CheckoutWheelTestCase
+
 from agentscope.app.workspace_manager import BubblewrapWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.message import Base64Source, DataBlock, UserMsg
@@ -33,7 +35,11 @@ from agentscope.workspace._bubblewrap._constants import (
     BWRAP_SMOKE_PROBE_ARGV,
     SANDBOX_WORKDIR,
 )
-from agentscope.workspace._gateway_client import GatewayClient, GatewayMCPTool
+from agentscope.workspace._gateway_client import (
+    GatewayClient,
+    GatewayMCPClient,
+    GatewayMCPTool,
+)
 from agentscope.workspace._mcp_gateway._mcp_gateway_app import (
     _State,
     _build_app,
@@ -725,6 +731,46 @@ class TestGatewayMCPTool(unittest.TestCase):
 
         self.assertTrue(tool.is_read_only)
 
+    def test_ignores_untrusted_read_only_hint(self) -> None:
+        """Gateway tools ignore the read-only hint of untrusted servers."""
+        tool = GatewayMCPTool(
+            mcp_name="gateway",
+            tool=Tool(
+                name="read_data",
+                input_schema={"type": "object"},
+                annotations=ToolAnnotations(read_only_hint=True),
+            ),
+            gateway=MagicMock(spec=GatewayClient),
+            trust_annotations=False,
+        )
+
+        self.assertFalse(tool.is_read_only)
+
+    def test_client_forwards_trust_annotations(self) -> None:
+        """The gateway client forwards its trust setting to its tools."""
+        client = GatewayMCPClient.model_validate(
+            {
+                "name": "gateway",
+                "is_stateful": False,
+                "mcp_config": {
+                    "type": "http_mcp",
+                    "url": "http://127.0.0.1:1/mcp",
+                },
+                "trust_annotations": False,
+            },
+        )
+        client._gateway = MagicMock(spec=GatewayClient)
+
+        tool = client._wrap_tool(
+            Tool(
+                name="read_data",
+                input_schema={"type": "object"},
+                annotations=ToolAnnotations(read_only_hint=True),
+            ),
+        )
+
+        self.assertFalse(tool.is_read_only)
+
 
 class TestGatewayAuth(unittest.TestCase):
     """Pure FastAPI tests for optional gateway authentication."""
@@ -800,8 +846,10 @@ class TestGatewayAuth(unittest.TestCase):
     _BWRAP_OK and _BWRAP_INTEGRATION_ENABLED,
     _INTEGRATION_SKIP_REASON,
 )
-class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
+class TestBubblewrapWorkspace(CheckoutWheelTestCase):
     """Integration tests against live Bubblewrap."""
+
+    workspace_type = BubblewrapWorkspace
 
     _shared_workdir: tempfile.TemporaryDirectory[str]
     _shared_cache: tempfile.TemporaryDirectory[str]
@@ -1049,15 +1097,18 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
         self.assertGreater(len(tools), 0)
         tool = await mcps[0].get_tool("get_current_time")
         result = await tool(timezone="Asia/Tokyo")
-        self.assertIsNotNone(result)
+        self.assertTrue(result.is_last)
+        self.assertGreater(len(result.content), 0)
 
 
 @unittest.skipUnless(
     _BWRAP_OK and _BWRAP_INTEGRATION_ENABLED,
     _INTEGRATION_SKIP_REASON,
 )
-class TestBubblewrapWorkspaceConcurrency(IsolatedAsyncioTestCase):
+class TestBubblewrapWorkspaceConcurrency(CheckoutWheelTestCase):
     """Concurrency scenarios that need multiple live workspaces."""
+
+    workspace_type = BubblewrapWorkspace
 
     async def asyncSetUp(self) -> None:
         """Create a shared bootstrap cache for live concurrency tests."""

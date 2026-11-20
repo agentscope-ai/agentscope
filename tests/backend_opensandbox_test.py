@@ -22,16 +22,17 @@ which avoids duplicating the sandbox bring-up logic here.
 
 import os
 import unittest
-from typing import Any
-
 from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
+
+from sandbox_test_support import CheckoutWheelTestCase
 
 from agentscope.tool import ExecResult
 from agentscope.workspace import OpenSandboxWorkspace
 from agentscope.workspace import OpenSandboxBackend
 from agentscope.workspace._opensandbox._constants import SANDBOX_WORKDIR
+
 
 # ── OpenSandbox availability check ─────────────────────────────────
 
@@ -41,13 +42,15 @@ _SKIP_REASON = "OPENSANDBOX_DOMAIN environment variable is not set"
 
 
 @unittest.skipUnless(_DOMAIN, _SKIP_REASON)
-class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
+class TestOpenSandboxBackend(CheckoutWheelTestCase):
     """Test cases for ``OpenSandboxBackend`` against a live sandbox.
 
     Each test creates a real OpenSandbox sandbox via
     ``OpenSandboxWorkspace`` and tears it down (``close`` → sandbox
     pause) afterwards.
     """
+
+    workspace_type = OpenSandboxWorkspace
 
     async def asyncSetUp(self) -> None:
         """Start a workspace and reuse its wired backend."""
@@ -164,47 +167,6 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
 # ── write entry (no live sandbox required) ─────────────────────────
 
 
-class _FakeExecResult:
-    """Minimal ``commands.run`` result shape."""
-
-    exit_code = 0
-    stdout = b""
-    stderr = b""
-
-
-class _FakeCommands:
-    """Records the command lines the backend dispatches."""
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    async def run(
-        self, command_line: str, opts: Any = None
-    ) -> _FakeExecResult:
-        """Record *command_line* and report a successful execution."""
-        self.calls.append(command_line)
-        return _FakeExecResult()
-
-
-class _FakeFiles:
-    """Records the write entries handed to ``files.write_files``."""
-
-    def __init__(self) -> None:
-        self.entries: list[Any] = []
-
-    async def write_files(self, entries: list[Any]) -> None:
-        """Record *entries* instead of writing them anywhere."""
-        self.entries.extend(entries)
-
-
-class _FakeSandbox:
-    """Stand-in for ``opensandbox.sandbox.Sandbox``."""
-
-    def __init__(self) -> None:
-        self.commands = _FakeCommands()
-        self.files = _FakeFiles()
-
-
 class TestOpenSandboxWriteEntry(IsolatedAsyncioTestCase):
     """Test cases for the write entry ``write_file`` builds.
 
@@ -225,22 +187,27 @@ class TestOpenSandboxWriteEntry(IsolatedAsyncioTestCase):
 
     async def test_write_file_sends_that_mode(self) -> None:
         """``write_file`` passes the mode through to ``files.write_files``."""
-        sandbox = _FakeSandbox()
-        # The fake only implements the two calls this path makes.
-        backend = OpenSandboxBackend(
-            sandbox,  # type: ignore[arg-type]
-            SANDBOX_WORKDIR,
+        run = AsyncMock(
+            return_value=SimpleNamespace(exit_code=0, stdout=b"", stderr=b""),
         )
+        write_files = AsyncMock()
+        sandbox = SimpleNamespace(
+            commands=SimpleNamespace(run=run),
+            files=SimpleNamespace(write_files=write_files),
+        )
+        backend = OpenSandboxBackend(sandbox, workdir=SANDBOX_WORKDIR)
 
         path = f"{SANDBOX_WORKDIR}/a/b.txt"
         await backend.write_file(path, b"payload")
 
-        self.assertEqual(sandbox.commands.calls[0], "mkdir -p /workspace/a")
-        self.assertEqual(len(sandbox.files.entries), 1)
-        entry = sandbox.files.entries[0]
+        write_files.assert_awaited_once()
+        (entries,) = write_files.await_args.args
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
         self.assertEqual(entry.path, path)
         self.assertEqual(entry.data, b"payload")
         self.assertEqual(entry.mode, 644)
+
 
 class TestOpenSandboxBackendExitCode(IsolatedAsyncioTestCase):
     """Exit-code mapping, without a live sandbox."""

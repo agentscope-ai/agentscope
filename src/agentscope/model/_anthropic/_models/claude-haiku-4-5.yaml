@@ -1,6 +1,8 @@
 name: claude-haiku-4-5
 label: Claude Haiku 4.5
 status: active
+# Release date source: https://platform.claude.com/docs/en/release-notes/overview
+release_date: 2025-10-15
 
 input_types:
   - text/plain

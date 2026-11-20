@@ -362,10 +362,16 @@ async def _search_across(
     Each knowledge base handles its own filtering — it silently drops
     :class:`DataBlock` inputs when its embedding model is not
     multimodal — so callers can pass the same query list to every
-    knowledge base without per-KB pre-filtering.  Per-KB hits are
-    flattened, sorted by descending score, and truncated to ``top_k``.
-    With a ``rerank_model``, retrieval widens to ``rerank_candidate_k`` hits
-    and :func:`_rerank_results` picks the final ``top_k`` out of them.
+    knowledge base without per-KB pre-filtering.  That filtering is
+    best-effort: a multimodal model can still reject a block it does
+    not accept, and a knowledge base can fail for unrelated reasons
+    (unavailable embedding provider or vector store).  A failing
+    knowledge base is logged by name and skipped, so the others still
+    contribute; if none of them has a hit, the first error propagates
+    instead.  Per-KB hits are flattened, sorted by descending
+    score, and truncated to ``top_k``.  With a ``rerank_model``,
+    retrieval widens to ``rerank_candidate_k`` hits and
+    :func:`_rerank_results` picks the final ``top_k`` out of them.
     Rerank is best-effort — a failing model keeps the vector order.
 
     .. note::
@@ -411,18 +417,49 @@ async def _search_across(
         rerank_candidate_k = top_k
 
     queries_list = list(queries)
-    per_kb = await asyncio.gather(
-        *(
-            kb.search(
+
+    async def _search_one(
+        kb: "KnowledgeBase",
+    ) -> list["VectorSearchResult"] | Exception:
+        """Turn a per-KB failure into a value so the others still merge."""
+        try:
+            return await kb.search(
                 queries=queries_list,
                 top_k=rerank_candidate_k,
                 score_threshold=score_threshold,
             )
-            for kb in knowledge_bases
-        ),
-    )
+        except Exception as error:
+            return error
 
-    merged = [r for sub in per_kb for r in sub]
+    # One knowledge base must not erase the others' context.  Only
+    # ordinary exceptions are collected: ``CancelledError`` is a
+    # ``BaseException`` and stays uncaught so ``gather`` re-raises it at
+    # once instead of waiting for a slow sibling to finish.
+    per_kb = await asyncio.gather(*(_search_one(kb) for kb in knowledge_bases))
+
+    failures: list[tuple["KnowledgeBase", Exception]] = []
+    successful: list[list["VectorSearchResult"]] = []
+    for kb, hits in zip(knowledge_bases, per_kb):
+        if isinstance(hits, Exception):
+            failures.append((kb, hits))
+        else:
+            successful.append(hits)
+
+    merged = [r for sub in successful for r in sub]
+    if failures and not merged:
+        # Nothing else to show, so report the failure instead of
+        # "No relevant content found."  The caller logs it.
+        raise failures[0][1]
+
+    # Only the knowledge bases that are really skipped get a warning;
+    # one that left nothing to merge was re-raised above.
+    for kb, error in failures:
+        logger.warning(
+            "Knowledge base %r search failed; skipping it.",
+            kb.name,
+            exc_info=error,
+        )
+
     merged.sort(key=lambda r: r.score, reverse=True)
     results = merged[:rerank_candidate_k]
     if rerank_model is None or not results:
@@ -795,6 +832,12 @@ class RAGMiddleware(MiddlewareBase):
                     "hint_template must contain exactly one '{context}' "
                     f"placeholder; found {count}.",
                 )
+            try:
+                value.format(context="")
+            except (IndexError, KeyError) as e:
+                raise ValueError(
+                    f"hint_template has an unknown placeholder: {e}.",
+                ) from e
             return value
 
     def __init__(
@@ -944,7 +987,8 @@ class RAGMiddleware(MiddlewareBase):
         block is removed from the context right after the reasoning
         step it participated in — keyed on the block's id so other
         middlewares can append their own blocks to the same carrier
-        message without interfering.
+        message without interfering.  Cleanup also runs if the stream
+        is closed while yielding the hint event.
 
         Args:
             agent (`Agent`):
@@ -962,44 +1006,49 @@ class RAGMiddleware(MiddlewareBase):
         """
         hint: HintBlock | None = None
 
-        if (
-            self._parameters.mode == "static"
-            and agent.state.cur_iter == 0
-            and self._cached_inputs
-        ):
-            try:
-                results = await _search_across(
-                    self._knowledge_bases,
-                    self._cached_inputs,
-                    top_k=self._parameters.top_k,
-                    score_threshold=self._parameters.score_threshold,
-                    rerank_model=self._rerank_model,
-                    rerank_candidate_k=self._parameters.rerank_candidate_k,
-                    rerank_prompt=self._parameters.rerank_prompt,
-                )
-            except Exception:  # pylint: disable=broad-except
-                logger.exception(
-                    "Knowledge-base search failed; proceeding without "
-                    "matched context.",
-                )
-                results = []
-
-            blocks = _format_results(results)
-            if blocks:
-                hint = HintBlock(
-                    hint=_wrap_hint(self._parameters.hint_template, blocks),
-                    source=_HINT_SOURCE,
-                )
-                agent.state.append_context(agent.name, [hint])
-                if self._parameters.emit_hint_event:
-                    yield HintBlockEvent(
-                        reply_id=agent.state.reply_id,
-                        block_id=hint.id,
-                        source=hint.source,
-                        hint=hint.hint,
-                    )
-
         try:
+            if (
+                self._parameters.mode == "static"
+                and agent.state.cur_iter == 0
+                and self._cached_inputs
+            ):
+                try:
+                    results = await _search_across(
+                        self._knowledge_bases,
+                        self._cached_inputs,
+                        top_k=self._parameters.top_k,
+                        score_threshold=self._parameters.score_threshold,
+                        rerank_model=self._rerank_model,
+                        rerank_candidate_k=(
+                            self._parameters.rerank_candidate_k
+                        ),
+                        rerank_prompt=self._parameters.rerank_prompt,
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception(
+                        "Knowledge-base search failed; proceeding without "
+                        "matched context.",
+                    )
+                    results = []
+
+                blocks = _format_results(results)
+                if blocks:
+                    hint = HintBlock(
+                        hint=_wrap_hint(
+                            self._parameters.hint_template,
+                            blocks,
+                        ),
+                        source=_HINT_SOURCE,
+                    )
+                    agent.state.append_context(agent.name, [hint])
+                    if self._parameters.emit_hint_event:
+                        yield HintBlockEvent(
+                            reply_id=agent.state.reply_id,
+                            block_id=hint.id,
+                            source=hint.source,
+                            hint=hint.hint,
+                        )
+
             async for evt in next_handler(**input_kwargs):
                 yield evt
         finally:

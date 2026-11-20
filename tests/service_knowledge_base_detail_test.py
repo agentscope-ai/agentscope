@@ -18,6 +18,7 @@ issue #2360:
 """
 import io
 import tempfile
+from email.message import EmailMessage
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -358,6 +359,53 @@ class DocumentContentTest(_KnowledgeBaseDetailTestBase):
                     "attachment;",
                 ),
             )
+
+    def test_download_filename_encoding(self) -> None:
+        """Download filenames round-trip through RFC 5987 encoding."""
+
+        async def _set_filename(filename: str) -> None:
+            storage = self._app.state.storage
+            record = await storage.get_knowledge_document(
+                "user-1",
+                self._kb_id,
+                "doc-1",
+            )
+            record.data.filename = filename
+            await storage.upsert_knowledge_document("user-1", record)
+
+        cases = (
+            ("reports/quarterly.pdf", "reports%2Fquarterly.pdf"),
+            ("uploads/报告 1.pdf", "uploads%2F%E6%8A%A5%E5%91%8A%201.pdf"),
+            ("notes.pdf", "notes.pdf"),
+        )
+        with TestClient(self._app) as client:
+            for filename, encoded in cases:
+                with self.subTest(filename=filename):
+                    client.portal.call(_set_filename, filename)
+                    response = client.get(
+                        f"/knowledge_bases/{self._kb_id}/documents/doc-1",
+                        params={"download": "true"},
+                        headers={"X-User-ID": "user-1"},
+                    )
+                    header = response.headers["content-disposition"]
+                    message = EmailMessage()
+                    message["Content-Disposition"] = header
+                    self.assertEqual(
+                        {
+                            "status": response.status_code,
+                            "content": response.content,
+                            "disposition": header,
+                            "filename": message.get_filename(),
+                        },
+                        {
+                            "status": 200,
+                            "content": self._file_bytes,
+                            "disposition": (
+                                f"attachment; filename*=UTF-8''{encoded}"
+                            ),
+                            "filename": filename,
+                        },
+                    )
 
     def test_scriptable_media_type_is_never_inline(self) -> None:
         """Scriptable media types are forced to attachment."""

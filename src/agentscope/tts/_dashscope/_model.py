@@ -14,6 +14,7 @@ from typing import (
 
 from pydantic import BaseModel, Field
 
+from ._endpoints import _qwen_http_url
 from .._tts_base import TTSModelBase
 from .._tts_response import TTSResponse, TTSUsage
 from ..._utils._audio import _build_streaming_wav_header
@@ -84,6 +85,8 @@ class DashScopeTTSModel(TTSModelBase):
         Args:
             credential (`DashScopeCredential`):
                 The DashScope credential used to authenticate the API call.
+                An explicit ``base_url`` selects the HTTP endpoint; otherwise
+                the SDK global HTTP setting is used, as in voice enrollment.
             model (`str`, defaults to ``"qwen3-tts-flash"``):
                 The TTS model name. Supported models include
                 ``qwen3-tts-flash``, ``qwen-tts``, etc.
@@ -116,6 +119,7 @@ class DashScopeTTSModel(TTSModelBase):
                 The text to be synthesized.
             **kwargs (`Any`):
                 Additional keyword arguments to pass to the TTS API call.
+                ``base_address`` explicitly overrides the credential endpoint.
 
         Returns:
             `TTSResponse | AsyncGenerator[TTSResponse, None]`:
@@ -131,6 +135,10 @@ class DashScopeTTSModel(TTSModelBase):
             "model": self.model,
             "text": text,
             "voice": self.parameters.voice,
+            "base_address": _qwen_http_url(
+                self.credential,
+                "/api/v1",
+            ),
         }
         request_kwargs.update(kwargs)
         request_kwargs["api_key"] = self.credential.api_key.get_secret_value()

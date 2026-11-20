@@ -35,7 +35,15 @@ def _get_excel_column_name(col_index: int) -> str:
     Returns:
         `str`:
             The corresponding Excel column letter(s).
+
+    Raises:
+        `ValueError`:
+            If ``col_index`` is negative.
     """
+    if col_index < 0:
+        raise ValueError(
+            f"Column index must be non-negative, got {col_index}.",
+        )
     result = ""
     col_index += 1
     while col_index > 0:
@@ -69,7 +77,7 @@ def _extract_table_data(df: Any) -> list[list[str]]:
             if pd.isna(val):
                 cells.append("")
             else:
-                text = str(val).strip()
+                text = str(val)
                 text = text.replace("\r\n", "\n").replace("\r", "\n")
                 cells.append(text)
         rows.append(cells)
@@ -303,7 +311,7 @@ class ExcelParser(ParserBase):
             `FileNotFoundError`: If ``file`` is a ``str`` pointing to
                 a path that does not exist.
             `ImportError`: If :mod:`pandas` is not installed.
-            `ValueError`: If the bytes cannot be parsed.
+            `ValueError`: If the workbook or any worksheet cannot be parsed.
         """
         try:
             import pandas as pd
@@ -385,8 +393,9 @@ class ExcelParser(ParserBase):
                 keep_default_na=False,
             )
         except Exception as e:
-            logger.warning("Failed to parse sheet '%s': %s", sheet_name, e)
-            return sheet_sections
+            raise ValueError(
+                f"Failed to parse sheet {sheet_name!r} in {filename!r}: {e}",
+            ) from e
 
         # Keep the first row as cell data: pandas column labels would rename
         # duplicate headers and replace blank headers with "Unnamed: ...".
@@ -506,7 +515,7 @@ class ExcelParser(ParserBase):
         num_cols = len(table_data[0])
 
         def _fmt(cell: str, row_idx: int, col_idx: int) -> str:
-            escaped = _format_markdown_table_cell(cell)
+            escaped = _format_markdown_table_cell(cell.strip())
             if self.include_cell_coordinates:
                 coord = f"{_get_excel_column_name(col_idx)}{row_idx + 1}"
                 return f"[{coord}] {escaped}"

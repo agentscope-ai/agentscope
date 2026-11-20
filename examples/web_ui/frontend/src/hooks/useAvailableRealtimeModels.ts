@@ -24,9 +24,14 @@ async function fetchGroups(): Promise<Record<string, CredentialWithRealtimeModel
 			try {
 				const { models } = await realtimeModelApi.list(provider);
 				if (models.length === 0) return;
-				const sortedModels = [...models].sort((a, b) =>
-					b.name.localeCompare(a.name, undefined, { numeric: true }),
-				);
+				const sortedModels = [...models].sort((a, b) => {
+					const byReleaseDate = (b.release_date ?? '').localeCompare(
+						a.release_date ?? '',
+					);
+					return (
+						byReleaseDate || b.name.localeCompare(a.name, undefined, { numeric: true })
+					);
+				});
 				result[provider] = providerCredentials.map((credential) => ({
 					credential,
 					models: sortedModels,

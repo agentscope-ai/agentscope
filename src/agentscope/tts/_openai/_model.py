@@ -52,10 +52,10 @@ class OpenAITTSModel(TTSModelBase):
     class Parameters(BaseModel):
         """Frontend-exposed parameters for OpenAI TTS models."""
 
-        voice: str = Field(
+        voice: str | dict[str, str] = Field(
             default="alloy",
             title="Voice",
-            description="The voice to use for synthesis.",
+            description="A preset voice name or a custom voice id object.",
         )
 
         response_format: Literal[

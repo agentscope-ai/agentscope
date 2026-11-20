@@ -67,7 +67,7 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
                 "workspace_id": "fixed-id",
                 "host_workdir": os.path.join(self.basedir, "fixed-id"),
                 "base_image": "python:3.11-slim",
-                "node_version": "20",
+                "node_version": "22.23.4",
                 "extra_pip": [],
                 "gateway_port": 5600,
                 "env": {},
@@ -77,6 +77,59 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
         )
         self.assertTrue(os.path.isdir(os.path.join(self.basedir, "fixed-id")))
 
+    async def test_missing_id_is_assigned_and_cached(self) -> None:
+        """Missing and empty ids resolve before cache lookup and build."""
+        for workspace_id in (None, ""):
+            with self.subTest(workspace_id=workspace_id):
+                manager = DockerWorkspaceManager(self.basedir)
+                created_before = len(_FakeWorkspace.created)
+                with patch.object(
+                    manager,
+                    "assign_workspace_id",
+                    AsyncMock(return_value="assigned-id"),
+                ) as assign:
+                    ws = await manager.get_workspace(
+                        "u1",
+                        "a1",
+                        "s1",
+                        workspace_id,
+                    )
+                    cached = await manager.get_workspace(
+                        "u1",
+                        "a1",
+                        "s1",
+                        "assigned-id",
+                    )
+
+                assign.assert_awaited_once_with(
+                    user_id="u1",
+                    agent_id="a1",
+                    session_id="",
+                )
+                self.assertIs(cached, ws)
+                self.assertEqual(
+                    len(_FakeWorkspace.created) - created_before,
+                    1,
+                )
+                self.assertEqual(list(manager._cache), ["assigned-id"])
+                self.assertDictEqual(
+                    ws.kwargs,
+                    {
+                        "workspace_id": "assigned-id",
+                        "host_workdir": os.path.join(
+                            self.basedir,
+                            "assigned-id",
+                        ),
+                        "base_image": "python:3.11-slim",
+                        "node_version": "22.23.4",
+                        "extra_pip": [],
+                        "gateway_port": 5600,
+                        "env": {},
+                        "default_mcps": [],
+                        "skill_paths": [],
+                    },
+                )
+
     async def test_workspace_id_cannot_escape_the_basedir(self) -> None:
         """A caller-supplied id may not point the bind-mount outside."""
         manager = DockerWorkspaceManager(self.basedir)
@@ -84,6 +137,25 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
         for workspace_id in ("../../etc", "/etc", "a/../../../etc"):
             with self.assertRaises(ValueError):
                 manager._workdir_for(workspace_id)
+
+    async def test_filesystem_root_basedir_still_contains_workdirs(
+        self,
+    ) -> None:
+        """A basedir at a filesystem root contains every ordinary id.
+
+        Appending a separator to a root yields ``"//"`` on POSIX and
+        ``"C:\\\\"`` on Windows, so the old prefix test matched nothing
+        and rejected every id with a message claiming it escaped the
+        base directory.
+        """
+        root = os.path.realpath(os.sep)
+        manager = DockerWorkspaceManager(root)
+
+        for workspace_id in ("ws-normal", "abc123"):
+            self.assertEqual(
+                manager._workdir_for(workspace_id),
+                os.path.join(root, workspace_id),
+            )
 
     async def test_legacy_workdir_is_kept_mounted(self) -> None:
         """A pre-existing <basedir>/<user>/<agent> keeps being used."""
@@ -99,7 +171,7 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
                 "workspace_id": "fixed-id",
                 "host_workdir": legacy,
                 "base_image": "python:3.11-slim",
-                "node_version": "20",
+                "node_version": "22.23.4",
                 "extra_pip": [],
                 "gateway_port": 5600,
                 "env": {},

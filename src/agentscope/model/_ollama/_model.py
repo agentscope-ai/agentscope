@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Ollama chat model implementation."""
+import inspect
 import json
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
@@ -35,11 +36,13 @@ class OllamaChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description="Whether to enable thinking"
-            " (for models like qwen3, deepseek-r1).",
+            " (for models like qwen3, deepseek-r1)."
+            " When None, the ``think`` option is not sent and the"
+            " model's default behavior applies.",
         )
 
         temperature: float | None = Field(
@@ -173,7 +176,8 @@ class OllamaChatModel(ChatModelBase):
         if options:
             kwargs["options"] = options
 
-        kwargs["think"] = self.parameters.thinking_enable
+        if self.parameters.thinking_enable is not None:
+            kwargs["think"] = self.parameters.thinking_enable
 
         kwargs.update(generate_kwargs)
 
@@ -189,6 +193,10 @@ class OllamaChatModel(ChatModelBase):
             return self._parse_stream_response(start_datetime, response)
 
         return await self._parse_completion_response(start_datetime, response)
+
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Ollama uses a top-level ``think`` option."""
+        return {"think": False}
 
     def _format_tools(
         self,
@@ -249,49 +257,60 @@ class OllamaChatModel(ChatModelBase):
         text_id: str = _generate_id()
         thinking_id: str = _generate_id()
 
-        async for chunk in response:
-            delta_res = ChatResponse(
-                content=[],
-                is_last=False,
-                id=response_id,
-            )
-
-            msg = chunk.message
-
-            # Thinking
-            if getattr(msg, "thinking", None):
-                delta_res.append_thinking(
-                    block_id=thinking_id,
-                    thinking=msg.thinking,
+        try:
+            async for chunk in response:
+                delta_res = ChatResponse(
+                    content=[],
+                    is_last=False,
+                    id=response_id,
                 )
 
-            # Text
-            if msg.content:
-                delta_res.append_text(
-                    block_id=text_id,
-                    text=msg.content,
+                msg = chunk.message
+
+                # Thinking
+                if getattr(msg, "thinking", None):
+                    delta_res.append_thinking(
+                        block_id=thinking_id,
+                        thinking=msg.thinking,
+                    )
+
+                # Text
+                if msg.content:
+                    delta_res.append_text(
+                        block_id=text_id,
+                        text=msg.content,
+                    )
+
+                # The client drops the server's call id; positions repeat
+                # in the next round, so allocate a fresh id per call.
+                for tool_call in msg.tool_calls or []:
+                    delta_res.append_tool_call(
+                        block_id=_generate_id(),
+                        name=tool_call.function.name,
+                        input=json.dumps(
+                            tool_call.function.arguments,
+                            ensure_ascii=False,
+                        ),
+                    )
+
+                current_time = (
+                    datetime.now() - start_datetime
+                ).total_seconds()
+                delta_res.usage = ChatUsage(
+                    input_tokens=getattr(chunk, "prompt_eval_count", 0) or 0,
+                    output_tokens=getattr(chunk, "eval_count", 0) or 0,
+                    time=current_time,
                 )
 
-            # Tool call. The ollama client drops the server's call id, and
-            # one built from the position repeats in the next round
-            for tool_call in msg.tool_calls or []:
-                delta_res.append_tool_call(
-                    block_id=_generate_id(),
-                    name=tool_call.function.name,
-                    input=json.dumps(
-                        tool_call.function.arguments,
-                        ensure_ascii=False,
-                    ),
-                )
-
-            current_time = (datetime.now() - start_datetime).total_seconds()
-            delta_res.usage = ChatUsage(
-                input_tokens=getattr(chunk, "prompt_eval_count", 0) or 0,
-                output_tokens=getattr(chunk, "eval_count", 0) or 0,
-                time=current_time,
-            )
-
-            yield delta_res
+                yield delta_res
+        finally:
+            # Closing the parser does not implicitly close its delegated
+            # SDK generator. Await its response cleanup before returning.
+            aclose = getattr(response, "aclose", None)
+            if aclose is not None:
+                result = aclose()
+                if inspect.isawaitable(result):
+                    await result
 
     async def _parse_completion_response(
         self,
