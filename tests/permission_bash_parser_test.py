@@ -1669,6 +1669,103 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
                 self.assertIsNotNone(result)
                 self.assertIn("chmod", result)
 
+    async def test_equivalent_chmod_modes(self) -> None:
+        """Detect chmod spellings that set the same mode as 777."""
+        test_cases = [
+            "chmod 0777 file.txt",
+            "chmod 000777 file.txt",
+            "chmod 07777 /var/www",
+            "chmod -R 0777 /var/www",
+            "chmod a+rwx file.txt",
+            "chmod ugo+rwx file.txt",
+            "chmod u+rwx,g+rwx,o+rwx file.txt",
+            "chmod o+r,o+w,o+x file.txt",
+            "chmod o+rw,o+x file.txt",
+            "sudo -u root chmod 0777 file.txt",
+            "env MODE=1 chmod 0777 file.txt",
+            "command chmod 0777 file.txt",
+            "echo ready && chmod 0777 file.txt",
+            "/bin/chmod 0777 file.txt",
+            "/usr/bin/sudo chmod 0777 file.txt",
+            "timeout 5 chmod 0777 file.txt",
+            "timeout -s KILL 5 chmod 0777 file.txt",
+            "nice -n 10 chmod 0777 file.txt",
+            "setsid chmod 0777 file.txt",
+            "find . -print0 | xargs -0 chmod 0777",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_dangerous_command(cmd),
+                    "chmod 777",
+                )
+
+    async def test_equivalent_chown_recursive(self) -> None:
+        """Detect the long and combined spellings of recursive chown."""
+        test_cases = [
+            "chown --recursive root /var/www",
+            "chown -Rv root /var/www",
+            "sudo chown --recursive root /var/www",
+            "/bin/chown --recursive root /var/www",
+            "timeout 5 chown --recursive root /var/www",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_dangerous_command(cmd),
+                    "chown -R",
+                )
+
+    async def test_equivalent_kill_signals(self) -> None:
+        """Detect every signal spelling that resolves to SIGKILL."""
+        test_cases = [
+            "kill -SIGKILL 123",
+            "kill -KILL 123",
+            "kill -s KILL 123",
+            "kill -s SIGKILL 123",
+            "kill -s 9 123",
+            "kill -n 9 123",
+            "kill --signal=KILL 123",
+            "/bin/kill -s SIGKILL 123",
+            "timeout 5 kill -s SIGKILL 123",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_dangerous_command(cmd),
+                    "kill -9",
+                )
+
+    async def test_equivalent_spellings_not_flagged(self) -> None:
+        """Spellings that do not perform the same operation stay safe."""
+        safe_commands = [
+            "chmod 0755 file.txt",
+            "chmod o+w file.txt",
+            "chmod +rwx file.txt",
+            "chmod u+rwx file.txt",
+            "chmod a=rwx,o-w file.txt",
+            "chmod o=rwx,o-w file.txt",
+            "chmod o+x,o-r,o-w file.txt",
+            "chmod --reference=other.txt file.txt",
+            "/bin/chmod 0755 file.txt",
+            "timeout 5 chmod 0644 file.txt",
+            "nice -n 10 chmod 0644 file.txt",
+            "xargs -n 1 chmod 0644",
+            "chown root file.txt",
+            "chown --from=root root file.txt",
+            "kill -TERM 123",
+            "kill -l 9",
+            "kill 123",
+            "grep -r chmod 0777 .",
+            "command -v chmod 0777",
+        ]
+        for cmd in safe_commands:
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(
+                    self.parser.check_dangerous_command(cmd),
+                    f"Expected '{cmd}' to be safe",
+                )
+
     async def test_safe_commands(self) -> None:
         """Test that safe commands are not flagged."""
         safe_commands = [

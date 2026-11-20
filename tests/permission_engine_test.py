@@ -904,6 +904,42 @@ class PermissionEngineSafetyCheckAllowRuleImmuneTest(
             or "dangerous pattern" in decision.message,
         )
 
+    async def test_equivalent_dangerous_commands_not_bypassed_by_allow_rule(
+        self,
+    ) -> None:
+        """Allow rules cannot approve shell-equivalent dangerous spellings."""
+        cases = [
+            ("chmod:*", "chmod 0777 /tmp/x", "chmod 777"),
+            ("chmod:*", "chmod a+rwx /tmp/x", "chmod 777"),
+            ("chown:*", "chown --recursive root /tmp/x", "chown -R"),
+            ("kill:*", "kill -s 9 1", "kill -9"),
+        ]
+        for rule_content, command, pattern in cases:
+            with self.subTest(command=command):
+                engine = PermissionEngine(
+                    PermissionContext(mode=PermissionMode.DEFAULT),
+                )
+                engine.add_rule(
+                    PermissionRule(
+                        tool_name="Bash",
+                        rule_content=rule_content,
+                        behavior=PermissionBehavior.ALLOW,
+                        source="test",
+                    ),
+                )
+
+                decision = await engine.check_permission(
+                    Bash(),
+                    {"command": command},
+                )
+
+                self.assertEqual(
+                    decision.behavior,
+                    PermissionBehavior.ASK,
+                )
+                self.assertTrue(decision.bypass_immune)
+                self.assertIn(pattern, decision.message)
+
 
 # ---------------------------------------------------------------------------
 # bypass_immune field mechanism
