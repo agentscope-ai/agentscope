@@ -12,16 +12,18 @@ that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
 import asyncio
+import base64
 import inspect
 import json
 from dataclasses import dataclass
-from typing import Literal, TYPE_CHECKING
+from typing import Any, Coroutine, Literal, Sequence, TYPE_CHECKING
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from .._bus_ops import (
     abandon_inbox_consumer,
+    bind_chat_submission,
     deliver_to_inbox,
     enqueue_run_trigger,
     finish_active_chat_reply,
@@ -31,6 +33,8 @@ from .._bus_ops import (
     register_inbox_consumer,
 )
 from ..message_bus import MessageBus, MessageBusKeys
+from .._chat_input_store import INPUT_EXECUTION, get_submission
+from ._session import SessionService, SessionStatus
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
 from ..channel._approval import (
@@ -40,6 +44,8 @@ from ..channel._approval import (
 )
 from ..storage import (
     StorageBase,
+    TTSModelConfig,
+    ChatModelSnapshot,
     AgentRecord,
     SessionNaming,
     SessionRecord,
@@ -47,7 +53,11 @@ from ..storage import (
     SOPOrigin,
 )
 from ..storage._utils import _resolve_team_leader
-from .._manager import BackgroundTaskManager, SchedulerManager
+from .._manager import (
+    BackgroundTaskManager,
+    ChatRunRegistry,
+    SchedulerManager,
+)
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     InboxMiddleware,
@@ -57,8 +67,13 @@ from ..middleware import (
     ToolOffloadMiddleware,
     TeamMemberLoopMiddleware,
 )
-from ...middleware import TTSMiddleware, RAGMiddleware
+from ...middleware import RAGMiddleware
+from ..middleware._chat_tts_middleware import (
+    ChatTTSMiddleware,
+    REPLY_TTS_CONFIG,
+)
 from ...rag import KnowledgeBase
+from ...tts import TTSModelBase
 from ...sop import SOPPhase
 from .._types import (
     AgentMiddlewareFactory,
@@ -71,8 +86,12 @@ from .._client_external_tool import (
     ClientExternalToolDefinition,
 )
 from ._access import ResourceAccessService
-from ._model import get_model
-from ._tts_model import get_tts_model
+from ._model import get_model, REPLY_CHAT_CONFIG
+from ._tts_model import (
+    build_reply_tts_model,
+    resolve_tts_voice_profile,
+    validate_tts_model_config,
+)
 from ._toolkit import get_toolkit
 from ._session_projection import SessionProjection
 from ._sop import SOPService
@@ -80,10 +99,13 @@ from ._projectors import SubagentHitlProjector
 
 from ..._logging import logger
 from ...agent import Agent, ModelConfig
+from ...state import AgentState
 from ...model import ChatModelBase
 from ...event import (
     AgentEvent,
     CustomEvent,
+    DataBlockDeltaEvent,
+    DataBlockEndEvent,
     ReplyStartEvent,
     ReplyEndEvent,
     ReplyFinishedReason,
@@ -93,16 +115,78 @@ from ...event import (
 )
 from ._errors import _classify_error, _classify_setup_error
 from ..._utils._common import _generate_id
-from ...message import AssistantMsg, HintBlock, Msg, UserMsg
+from ...message import AssistantMsg, Base64Source, HintBlock, Msg, UserMsg
 from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
     from ..channel import ChannelClients
 
 
+class _ReplyAudioBuffer:
+    """Accumulate audio for the persisted reply while SSE forwards deltas."""
+
+    def __init__(self) -> None:
+        self.blocks: dict[str, tuple[Base64Source, bytearray]] = {}
+
+    def append_event(self, reply: Msg, event: AgentEvent) -> None:
+        """Apply events in order; materialize an audio block when it ends."""
+        if (
+            isinstance(event, DataBlockDeltaEvent)
+            and event.reply_id == reply.id
+        ):
+            if event.data and event.media_type.startswith("audio/"):
+                entry = self.blocks.get(event.block_id)
+                if entry is None:
+                    block = next(
+                        (
+                            b
+                            for b in reply.get_content_blocks("data")
+                            if b.id == event.block_id
+                        ),
+                        None,
+                    )
+                    if block and isinstance(block.source, Base64Source):
+                        entry = (
+                            block.source,
+                            bytearray(base64.b64decode(block.source.data)),
+                        )
+                        self.blocks[event.block_id] = entry
+                if entry is not None:
+                    entry[1].extend(base64.b64decode(event.data))
+                    return
+            self.finish(event.block_id)
+        elif (
+            isinstance(event, DataBlockEndEvent) and event.reply_id == reply.id
+        ):
+            self.finish(event.block_id)
+        reply.append_event(event)
+
+    def finish(self, block_id: str) -> None:
+        """Publish the bytes accumulated for one block on its message."""
+        entry = self.blocks.pop(block_id, None)
+        if entry is not None:
+            source, data = entry
+            source.data = base64.b64encode(data).decode("ascii")
+
+    def flush(self) -> None:
+        """Preserve partial audio on interruption, failure or a parked turn."""
+        for block_id in list(self.blocks):
+            self.finish(block_id)
+
+
 _CHECKPOINT_LOCK_TTL_SECS = (
     MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
 )
+
+
+async def _finish_under_lock(work: Coroutine[Any, Any, None]) -> None:
+    """Finish the write before cancellation releases the session lock."""
+    task = asyncio.create_task(work)
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
 
 
 @dataclass(frozen=True)
@@ -164,6 +248,8 @@ class ChatService:
     Pub/Sub channel.
     """
 
+    _run_registry: ChatRunRegistry | None = None
+
     def __init__(
         self,
         storage: StorageBase,
@@ -180,6 +266,7 @@ class ChatService:
         extra_projectors: list[EventProjector] | None = None,
         channel_clients: "ChannelClients | None" = None,
         tool_offload_timeout_secs: float | None = 10.0,
+        chat_run_registry: ChatRunRegistry | None = None,
     ) -> None:
         """Initialize chat service.
 
@@ -246,8 +333,11 @@ class ChatService:
                 a channel-originated session's agent that channel's
                 platform tools and chat context. Neither needs the long
                 connection, so the run gets them wherever it lands.
+            chat_run_registry (`ChatRunRegistry | None`, optional):
+                Local task registry for reply-scoped interruption.
         """
         self._storage = storage
+        self._run_registry = chat_run_registry
         self._workspace_manager = workspace_manager
         self._scheduler_manager = scheduler_manager
         self._background_task_manager = background_task_manager
@@ -315,6 +405,9 @@ class ChatService:
         client_builtin_tools: list[ClientBuiltinToolName] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
+        pipeline_tts_config: TTSModelConfig | None = None,
+        pipeline_chat_config: ChatModelSnapshot | None = None,
+        submission_id: str | None = None,
     ) -> None:
         """Drive a chat run to completion.
 
@@ -363,6 +456,12 @@ class ChatService:
                 this turn, which gives it a submit tool.
             queue_item_id (`str | None`, optional):
                 Queue identity for terminal failure reporting.
+            submission_id (`str | None`, optional):
+                Submission whose first reply must be durably bound.
+            pipeline_tts_config (`TTSModelConfig | None`, optional):
+                Speech snapshot reserved for the initial pipeline input.
+            pipeline_chat_config (`ChatModelSnapshot | None`, optional):
+                Language models reserved for the initial pipeline input.
             input_persisted (`bool`, optional):
                 Internal queue caller already saved this initial input.
         """
@@ -376,6 +475,9 @@ class ChatService:
                 client_builtin_tools=client_builtin_tools,
                 sop_dispatch=sop_dispatch,
                 input_persisted=input_persisted,
+                pipeline_tts_config=pipeline_tts_config,
+                pipeline_chat_config=pipeline_chat_config,
+                submission_id=submission_id,
             )
         except Exception as e:
             logger.exception(
@@ -807,11 +909,161 @@ class ChatService:
             _classify_setup_error(error).message,
         )
 
+    async def pipeline_snapshot(
+        self,
+        session: SessionRecord,
+    ) -> tuple[ChatModelSnapshot, TTSModelConfig]:
+        """Resolve voice models from the owned session before queuing."""
+        user_id = session.user_id
+        config = session.config.pipeline_voice_config
+        if (
+            config is None
+            or config.asr_model_config is None
+            or config.tts_model_config is None
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Configure pipeline voice ASR and TTS before starting.",
+            )
+        tts, profile = await resolve_tts_voice_profile(
+            user_id,
+            config.tts_model_config,
+            self._storage,
+        )
+        if tts.parameters.get("response_format") == "pcm":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Pipeline voice requires a container format "
+                    "such as WAV or MP3."
+                ),
+            )
+        await validate_tts_model_config(
+            user_id,
+            tts,
+            self._access,
+            self._storage,
+            resolved_profile=profile,
+        )
+        primary = config.chat_model_config or session.config.chat_model_config
+        if primary is None:
+            raise HTTPException(status_code=422, detail="Select a chat model.")
+        fallback = (
+            session.config.fallback_chat_model_config
+            if config.chat_model_config is None
+            else None
+        )
+        for model_config in (primary, fallback):
+            if model_config is not None:
+                await self._access.resolve_credential(
+                    user_id,
+                    model_config.credential_id,
+                )
+        return (
+            ChatModelSnapshot(primary=primary, fallback=fallback).model_copy(
+                deep=True,
+            ),
+            tts.model_copy(deep=True),
+        )
+
+    async def input_result(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        message_id: str,
+        submission_id: str | None = None,
+    ) -> dict:
+        """Resolve an input independently of the trimmed event replay log.
+
+        Read under the persistence checkpoint lock so a terminal reply
+        cannot be observed before its session state has been saved.
+        Missing message receipts are unknown. Collected submission leases
+        are terminal and cannot admit a delayed POST.
+        """
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.session_event_checkpoint_lock(session_id),
+            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+        ):
+            session = await self._storage.get_session(
+                user_id,
+                agent_id,
+                session_id,
+            )
+            if session is None:
+                raise LookupError(f"Session {session_id!r} not found.")
+            unknown = {"state": "unknown", "reply_id": None}
+            identity = {}
+            if submission_id is not None:
+                receipt = await get_submission(
+                    self._message_bus,
+                    session_id,
+                    submission_id,
+                    user_id,
+                    agent_id,
+                )
+                # Only terminal submissions may be collected. Missing leases
+                # cannot admit a delayed POST or identify a different reply.
+                if receipt is None:
+                    return {"state": "finished", "reply_id": None}
+                if message_id not in receipt.get("message_ids", []):
+                    return unknown
+                if queue_id := receipt.get("queue_item_id"):
+                    identity["queue_item_id"] = queue_id
+                if receipt["state"] in ("cancelled", "finished"):
+                    return {
+                        **identity,
+                        "state": "finished",
+                        "reply_id": receipt.get("reply_id"),
+                    }
+            else:
+                msg = await self._storage.get_message(
+                    user_id,
+                    session_id,
+                    message_id,
+                )
+                receipt = msg.metadata.get(INPUT_EXECUTION) if msg else None
+            if not isinstance(receipt, dict):
+                return unknown
+            reply_id = receipt.get("reply_id")
+            if not reply_id:
+                return {
+                    **identity,
+                    "state": "finished"
+                    if receipt.get("finished")
+                    else "unknown",
+                    "reply_id": None,
+                }
+            reply = await self._storage.get_message(
+                user_id,
+                session_id,
+                reply_id,
+            )
+            finished = reply is not None and reply.finished_reason is not None
+            if not finished and not await self._message_bus.is_locked(
+                MessageBusKeys.session_lock(session_id),
+            ):
+                # A bound input has already entered execution. Without a
+                # worker, only this exact parked reply can still resume.
+                finished = (
+                    session.state.reply_id != reply_id
+                    or SessionService.derive_parked_status(
+                        session.state.context,
+                    )
+                    is SessionStatus.IDLE
+                )
+            return {
+                **identity,
+                "state": "finished" if finished else "reply",
+                "reply_id": reply_id,
+            }
+
     async def interrupt(
         self,
         user_id: str,
         session_id: str,
         agent_id: str,
+        reply_id: str | None = None,
     ) -> None:
         """Interrupt an in-progress reply for a session.
 
@@ -835,6 +1087,8 @@ class ChatService:
                 Target session id.
             agent_id (`str`):
                 Agent that owns the session.
+            reply_id (`str | None`, optional):
+                Target this reply instead of whichever reply is current.
 
         Raises:
             LookupError:
@@ -853,7 +1107,10 @@ class ChatService:
         ):
             await self._message_bus.publish(
                 MessageBusKeys.session_interrupt_channel(),
-                {"session_id": session_id},
+                {
+                    "session_id": session_id,
+                    **({"reply_id": reply_id} if reply_id is not None else {}),
+                },
             )
             return
 
@@ -863,7 +1120,13 @@ class ChatService:
             session_id=session_id,
             agent_id=agent_id,
             kind=MessageBusKeys.WAKEUP_KIND_RESUME,
-            inputs=UserInterruptEvent(reply_id=session.state.reply_id),
+            inputs=UserInterruptEvent(
+                reply_id=(
+                    reply_id
+                    if reply_id is not None
+                    else session.state.reply_id
+                ),
+            ),
         )
 
     @staticmethod
@@ -931,6 +1194,9 @@ class ChatService:
         sop_dispatch: str | None = None,
         client_builtin_tools: list[ClientBuiltinToolName] | None = None,
         input_persisted: bool = False,
+        pipeline_tts_config: TTSModelConfig | None = None,
+        pipeline_chat_config: ChatModelSnapshot | None = None,
+        submission_id: str | None = None,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
@@ -992,6 +1258,15 @@ class ChatService:
                             f"agent {agent_id!r}."
                         ),
                     )
+                if isinstance(input_msg, UserInterruptEvent) and (
+                    input_msg.reply_id != session_record.state.reply_id
+                    or not session_record.state.has_awaiting_tool_calls(
+                        agent_record.data.name,
+                    )
+                ):
+                    # The queued interrupt may outlive its parked reply.
+                    # Check under the session lock before touching state.
+                    return
                 worker_name = agent_record.data.name
                 if (
                     isinstance(session_record.origin, SOPOrigin)
@@ -1052,6 +1327,31 @@ class ChatService:
                             leader_agent_id=leader.agent.id,
                             leader_name=leader.name,
                         )
+
+                if isinstance(input_msg, UserInterruptEvent):
+                    await register_inbox_consumer(
+                        self._message_bus,
+                        session_id,
+                    )
+                    try:
+                        await _finish_under_lock(
+                            self._interrupt_parked_reply(
+                                user_id,
+                                session_record,
+                                agent_record,
+                                team_ctx,
+                            ),
+                        )
+                    finally:
+                        # A fresh run drains pending inbox content with the
+                        # current model after the parked reply is closed.
+                        await abandon_inbox_consumer(
+                            self._message_bus,
+                            user_id=user_id,
+                            session_id=session_id,
+                            agent_id=agent_id,
+                        )
+                    return
 
                 workspace = await self._workspace_manager.get_workspace(
                     user_id,
@@ -1156,30 +1456,58 @@ class ChatService:
                     )
 
                 # -------------------------------------------------------------
-                # 2b. TTS middleware — inject when the session has a TTS
-                # config.
+                # 2b. Bind speech to this reply, including parked resumes.
                 # -------------------------------------------------------------
-                tts_cfg = session_record.config.tts_model_config
-                if tts_cfg is not None:
-                    tts_model = await get_tts_model(
+                default_tts = session_record.config.tts_model_config
+                initial_tts = pipeline_tts_config or default_tts
+                initial_is_snapshot = pipeline_tts_config is not None
+                reply_models = pipeline_chat_config
+                if isinstance(
+                    input_msg,
+                    (
+                        UserConfirmResultEvent,
+                        ExternalExecutionResultEvent,
+                    ),
+                ):
+                    previous = await self._storage.get_message(
                         user_id,
-                        tts_cfg,
+                        session_id,
+                        session_record.state.reply_id,
+                    )
+                    if previous and REPLY_CHAT_CONFIG in previous.metadata:
+                        reply_models = ChatModelSnapshot.model_validate(
+                            previous.metadata[REPLY_CHAT_CONFIG],
+                        )
+                    if previous and REPLY_TTS_CONFIG in previous.metadata:
+                        initial_is_snapshot = True
+                        saved = previous.metadata[REPLY_TTS_CONFIG]
+                        initial_tts = (
+                            TTSModelConfig.model_validate(saved)
+                            if saved is not None
+                            else None
+                        )
+
+                async def create_tts(
+                    config: TTSModelConfig,
+                    use_snapshot: bool,
+                ) -> tuple[TTSModelConfig, TTSModelBase | None]:
+                    """Resolve the snapshot with current authorization."""
+                    return await build_reply_tts_model(
+                        user_id,
+                        config,
                         self._access,
                         self._storage,
+                        use_snapshot=use_snapshot,
                     )
-                    if tts_model is not None:
-                        middlewares.append(
-                            TTSMiddleware(tts_model, continue_on_error=True),
-                        )
-                    else:
-                        await publish_session_event(
-                            self._message_bus,
-                            session_id,
-                            CustomEvent(
-                                name="tts_error",
-                                value={"stage": "configuration"},
-                            ).model_dump(mode="json"),
-                        )
+
+                middlewares.append(
+                    ChatTTSMiddleware(
+                        initial_tts,
+                        default_tts,
+                        create_tts,
+                        initial_is_snapshot=initial_is_snapshot,
+                    ),
+                )
 
                 # -------------------------------------------------------------
                 # 2c. Knowledge-base middleware — inject when the session has
@@ -1265,7 +1593,23 @@ class ChatService:
                 # -------------------------------------------------------------
                 # 4. Model + fallback (resolved from session's config).
                 # -------------------------------------------------------------
-                model_cfg = session_record.config.chat_model_config
+                default_primary = session_record.config.chat_model_config
+                default_fallback = (
+                    session_record.config.fallback_chat_model_config
+                )
+                default_models = (
+                    ChatModelSnapshot(
+                        primary=default_primary,
+                        fallback=default_fallback,
+                    )
+                    if default_primary is not None
+                    else None
+                )
+                model_cfg = (
+                    reply_models.primary
+                    if reply_models is not None
+                    else default_primary
+                )
                 if not model_cfg:
                     raise HTTPException(
                         status_code=404,
@@ -1276,11 +1620,19 @@ class ChatService:
                     )
                 model = await get_model(user_id, model_cfg, self._access)
 
-                fallback_cfg = session_record.config.fallback_chat_model_config
+                fallback_cfg = (
+                    reply_models.fallback
+                    if reply_models is not None
+                    else default_fallback
+                )
                 fallback_model = (
                     await get_model(user_id, fallback_cfg, self._access)
                     if fallback_cfg is not None
                     else None
+                )
+                reply_models = ChatModelSnapshot(
+                    primary=model_cfg,
+                    fallback=fallback_cfg,
                 )
 
                 # -------------------------------------------------------------
@@ -1380,16 +1732,7 @@ class ChatService:
             # rather than handing the run to whichever one holds the
             # channel's connection. Covers scheduled / background wakes,
             # not just inbound channel messages.
-            if (
-                isinstance(session_record.origin, ChannelOrigin)
-                and self._channel_clients is not None
-            ):
-                await self._channel_clients.deliver(
-                    session_id=session_id,
-                    channel_id=session_record.origin.channel_id,
-                    chat_id=session_record.origin.chat_id,
-                    agent_id=agent_id,
-                )
+            await self._start_channel_delivery(session_record)
             reply_msg: Msg | None = None
             active_reply_id: str | None = None
             reply_msgs: list[Msg] = []
@@ -1407,11 +1750,35 @@ class ChatService:
             trigger_text = "\n".join(
                 msg.get_text_content() for msg in trigger_msgs
             ).strip()
+            bound_inputs: list[Msg] = []
+            restore_chat_models = False
             await register_inbox_consumer(self._message_bus, session_id)
             try:
                 while True:
                     reply_msg = None
+                    audio = _ReplyAudioBuffer()
                     try:
+                        if restore_chat_models:
+                            # An inbox continuation stays on the active model
+                            # when the session has no ordinary chat model.
+                            defaults = default_models or reply_models
+                            if reply_models != defaults:
+                                agent.model = await get_model(
+                                    user_id,
+                                    defaults.primary,
+                                    self._access,
+                                )
+                                agent.model_config.fallback_model = (
+                                    await get_model(
+                                        user_id,
+                                        defaults.fallback,
+                                        self._access,
+                                    )
+                                    if defaults.fallback is not None
+                                    else None
+                                )
+                            reply_models = defaults
+                            restore_chat_models = False
                         if input_msg is None or isinstance(
                             input_msg,
                             (Msg, list),
@@ -1442,15 +1809,69 @@ class ChatService:
                                 # interrupted), so an interrupt in the
                                 # awaits below can't lose this event.
                                 if isinstance(event, ReplyStartEvent):
+                                    if self._run_registry is not None:
+                                        self._run_registry.set_reply(
+                                            session_id,
+                                            event.reply_id,
+                                        )
+                                    audio.flush()
                                     reply_msg = AssistantMsg(
                                         id=event.reply_id,
                                         name=event.name,
                                         content=[],
+                                        metadata={
+                                            REPLY_CHAT_CONFIG: (
+                                                reply_models.model_dump(
+                                                    mode="json",
+                                                )
+                                            ),
+                                            REPLY_TTS_CONFIG: (
+                                                event.metadata.get(
+                                                    REPLY_TTS_CONFIG,
+                                                )
+                                            ),
+                                        },
                                     )
+                                    if isinstance(input_msg, (Msg, list)):
+                                        inputs = (
+                                            input_msg
+                                            if isinstance(input_msg, list)
+                                            else [input_msg]
+                                        )
+                                        for msg in inputs:
+                                            msg.metadata[INPUT_EXECUTION] = {
+                                                "reply_id": event.reply_id,
+                                                "finished": False,
+                                            }
+                                            bound_inputs.append(msg)
                                 elif reply_msg is not None:
-                                    reply_msg.append_event(event)
+                                    audio.append_event(reply_msg, event)
+                                if (
+                                    isinstance(event, ReplyEndEvent)
+                                    and self._run_registry is not None
+                                ):
+                                    self._run_registry.set_reply(
+                                        session_id,
+                                        None,
+                                    )
                                 try:
                                     if isinstance(event, ReplyStartEvent):
+                                        if submission_id is not None:
+                                            await bind_chat_submission(
+                                                self._message_bus,
+                                                user_id,
+                                                session_id,
+                                                agent_id,
+                                                submission_id,
+                                                event.reply_id,
+                                            )
+                                            submission_id = None
+                                        for msg in bound_inputs:
+                                            await self._storage.upsert_message(
+                                                user_id,
+                                                session_id,
+                                                msg,
+                                            )
                                         if (
                                             active_reply_id is not None
                                             and active_reply_id
@@ -1514,6 +1935,11 @@ class ChatService:
                             elif input_msg:
                                 reply_msg.append_event(input_msg)
 
+                            if self._run_registry is not None:
+                                self._run_registry.set_reply(
+                                    session_id,
+                                    continuation_reply_id,
+                                )
                             try:
                                 if (
                                     active_reply_id is not None
@@ -1585,7 +2011,15 @@ class ChatService:
                                 # (synchronous), then publish/project —
                                 # see Case A above.
                                 if reply_msg is not None:
-                                    reply_msg.append_event(event)
+                                    audio.append_event(reply_msg, event)
+                                if (
+                                    isinstance(event, ReplyEndEvent)
+                                    and self._run_registry is not None
+                                ):
+                                    self._run_registry.set_reply(
+                                        session_id,
+                                        None,
+                                    )
                                 try:
                                     checkpoint_cursor = (
                                         await publish_session_event(
@@ -1638,6 +2072,8 @@ class ChatService:
                         if reply_msg is not None:
                             reply_msgs.append(reply_msg)
                         break
+                    finally:
+                        audio.flush()
 
                     if reply_msg is not None:
                         reply_msgs.append(reply_msg)
@@ -1659,6 +2095,7 @@ class ChatService:
                     if agent.state.has_awaiting_tool_calls(agent.name):
                         break
                     input_msg = None
+                    restore_chat_models = True
 
             finally:
                 # An interrupt unwinds past the loop's own exit check, so
@@ -1666,6 +2103,8 @@ class ChatService:
                 # Hand the registration back and wake the session when
                 # payloads are still queued, otherwise they would wait
                 # for an unrelated trigger.
+                if self._run_registry is not None:
+                    self._run_registry.set_reply(session_id, None)
                 if not released:
                     await abandon_inbox_consumer(
                         self._message_bus,
@@ -1694,69 +2133,16 @@ class ChatService:
                 # before this write lands.
                 async def _persist() -> None:
                     try:
-                        async with self._message_bus.acquire_lock(
-                            MessageBusKeys.session_event_checkpoint_lock(
-                                session_id,
-                            ),
-                            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
-                        ):
-                            for msg in reply_msgs:
-                                await self._storage.upsert_message(
-                                    user_id,
-                                    session_id,
-                                    msg,
-                                )
-                            await self._storage.update_session_state(
-                                user_id=user_id,
-                                agent_id=agent_id,
-                                session_id=session_id,
-                                state=agent.state,
-                            )
-                            if isinstance(
-                                session_record.origin,
-                                ChannelOrigin,
-                            ):
-                                if agent.state.has_awaiting_tool_calls(
-                                    agent_record.data.name,
-                                ):
-                                    await remember_reply_requester(
-                                        self._message_bus,
-                                        session_id=session_id,
-                                        reply_id=agent.state.reply_id,
-                                        requester_id=requester_id,
-                                    )
-                                try:
-                                    await prune_session_approvals(
-                                        self._message_bus,
-                                        session_id,
-                                        agent.state,
-                                        agent_record.data.name,
-                                        completed_reply_ids=(
-                                            msg.id
-                                            for msg in reply_msgs
-                                            if msg.finished_reason is not None
-                                        ),
-                                    )
-                                except (
-                                    Exception
-                                ):  # pylint: disable=broad-except
-                                    logger.exception(
-                                        "Failed to clean up channel approvals "
-                                        "for session '%s'",
-                                        session_id,
-                                    )
-                            if checkpoint_cursor is not None:
-                                await self._message_bus.registry_set(
-                                    MessageBusKeys.session_event_checkpoint(
-                                        session_id,
-                                    ),
-                                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
-                                    checkpoint_cursor,
-                                )
-                                await self._message_bus.log_trim(
-                                    MessageBusKeys.session_events(session_id),
-                                    before_id=checkpoint_cursor,
-                                )
+                        await self._save_checkpoint(
+                            user_id,
+                            session_record,
+                            reply_msgs,
+                            agent.state,
+                            checkpoint_cursor,
+                            agent_name=agent_record.data.name,
+                            requester_id=requester_id,
+                            bound_inputs=bound_inputs,
+                        )
                     finally:
                         try:
                             if active_reply_id is not None:
@@ -1791,15 +2177,7 @@ class ChatService:
                                         "finished.",
                                     )
 
-                persist_task = asyncio.create_task(_persist())
-                try:
-                    await asyncio.shield(persist_task)
-                except asyncio.CancelledError:
-                    # Await the shielded task so the lock is only
-                    # released after storage is consistent, then
-                    # propagate to honour asyncio semantics.
-                    await persist_task
-                    raise
+                await _finish_under_lock(_persist())
 
                 # Still under the session lock, so this config write
                 # cannot race the next turn's snapshot of it. Skipped on
@@ -1821,6 +2199,137 @@ class ChatService:
             and self.sop_service is not None
         ):
             self.sop_service.advance_later(user_id, resumed_sop_run_id)
+
+    async def _start_channel_delivery(self, session: SessionRecord) -> None:
+        """Start delivery for a channel-bound reply or continuation."""
+        if (
+            isinstance(session.origin, ChannelOrigin)
+            and self._channel_clients is not None
+        ):
+            await self._channel_clients.deliver(
+                session_id=session.id,
+                channel_id=session.origin.channel_id,
+                chat_id=session.origin.chat_id,
+                agent_id=session.agent_id,
+            )
+
+    async def _interrupt_parked_reply(
+        self,
+        user_id: str,
+        session: SessionRecord,
+        agent: AgentRecord,
+        team_ctx: _TeamContext | None,
+    ) -> None:
+        """Close a verified parked reply using only its persisted state."""
+        state = session.state
+        state.session_id = session.id
+        reply = await self._storage.get_message(
+            user_id,
+            session.id,
+            state.reply_id,
+        )
+        await self._start_channel_delivery(session)
+        start_cursor = await publish_session_event(
+            self._message_bus,
+            session.id,
+            ReplyStartEvent(
+                session_id=session.id,
+                reply_id=state.reply_id,
+                name=agent.data.name,
+            ).model_dump(mode="json"),
+            require_live_delivery=False,
+        )
+        cursor = start_cursor
+        for event in Agent.interrupt_reply(state, agent.data.name):
+            if reply is not None:
+                reply.append_event(event)
+            cursor = await publish_session_event(
+                self._message_bus,
+                session.id,
+                event.model_dump(mode="json"),
+                require_live_delivery=False,
+            )
+            await self._project_event(user_id, session, agent, event)
+        await self._save_checkpoint(
+            user_id,
+            session,
+            [reply] if reply is not None else [],
+            state,
+            cursor,
+            agent_name=agent.data.name,
+            replay_from=start_cursor,
+        )
+        await self._notify_leader_of_failure(
+            user_id,
+            team_ctx,
+            agent.data.name,
+            ReplyFinishedReason.INTERRUPTED,
+            "The turn stopped before it finished.",
+        )
+
+    async def _save_checkpoint(
+        self,
+        user_id: str,
+        session: SessionRecord,
+        reply_msgs: list[Msg],
+        state: AgentState,
+        cursor: str | None,
+        *,
+        agent_name: str,
+        requester_id: str = "",
+        bound_inputs: Sequence[Msg] = (),
+        replay_from: str | None = None,
+    ) -> None:
+        """Commit reply messages and state before advancing the SSE cursor."""
+        async with self._message_bus.acquire_lock(
+            MessageBusKeys.session_event_checkpoint_lock(session.id),
+            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+        ):
+            for msg in (*reply_msgs, *bound_inputs):
+                await self._storage.upsert_message(user_id, session.id, msg)
+            await self._storage.update_session_state(
+                user_id=user_id,
+                agent_id=session.agent_id,
+                session_id=session.id,
+                state=state,
+            )
+            if isinstance(session.origin, ChannelOrigin):
+                if state.has_awaiting_tool_calls(agent_name):
+                    await remember_reply_requester(
+                        self._message_bus,
+                        session_id=session.id,
+                        reply_id=state.reply_id,
+                        requester_id=requester_id,
+                    )
+                try:
+                    await prune_session_approvals(
+                        self._message_bus,
+                        session.id,
+                        state,
+                        agent_name,
+                        completed_reply_ids=(
+                            msg.id
+                            for msg in reply_msgs
+                            if msg.finished_reason is not None
+                        ),
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception(
+                        "Failed to clean up channel approvals "
+                        "for session '%s'",
+                        session.id,
+                    )
+            if cursor is not None:
+                await self._message_bus.registry_set(
+                    MessageBusKeys.session_event_checkpoint(session.id),
+                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                    cursor,
+                )
+                # A reconnecting subscriber can replay missed live events.
+                await self._message_bus.log_trim(
+                    MessageBusKeys.session_events(session.id),
+                    before_id=replay_from or cursor,
+                )
 
     async def _parked_dispatch(
         self,

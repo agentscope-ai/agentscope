@@ -23,6 +23,9 @@
  * cut short by the end event arriving mid-playback.
  */
 
+import { ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
+import type { Msg } from '@agentscope-ai/agentscope/message';
+
 /** Status of a streaming audio block. */
 export type StreamingAudioStatus = 'streaming' | 'ready' | 'error';
 
@@ -30,11 +33,11 @@ export type StreamingAudioStatus = 'streaming' | 'ready' | 'error';
 export interface StreamingAudioState {
 	status: StreamingAudioStatus;
 	mediaType: string;
-	/** Object URL for ``<audio>`` once playback-ready. */
+	/** Playback URL for ``<audio>`` once playback-ready. */
 	url: string | null;
 	/** Cause for ``status === 'error'``. */
 	error?: string;
-	/** Incremented each time a newer reply interrupts this block. */
+	/** Incremented to pause the block's replay control. */
 	interruptCount: number;
 }
 
@@ -42,14 +45,14 @@ type Listener = () => void;
 
 type Bytes = Uint8Array<ArrayBufferLike>;
 
-function base64ToBytes(b64: string): Bytes {
+export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
 	const binary = atob(b64);
 	const bytes = new Uint8Array(binary.length);
 	for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 	return bytes;
 }
 
-function concatBytes(a: Bytes, b: Bytes): Bytes {
+function concatBytes(a: Bytes, b: Bytes): Uint8Array<ArrayBuffer> {
 	const out = new Uint8Array(a.length + b.length);
 	out.set(a, 0);
 	out.set(b, a.length);
@@ -68,7 +71,7 @@ interface WavHeader {
  * Parse a minimal RIFF/WAVE header. Returns ``null`` if the buffer doesn't
  * yet contain enough bytes to locate the ``fmt `` and ``data`` chunks.
  */
-function parseWavHeader(bytes: Bytes): WavHeader | null {
+export function parseWavHeader(bytes: Bytes): WavHeader | null {
 	if (bytes.length < 44) return null;
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	// "RIFF"...."WAVE"
@@ -96,7 +99,8 @@ function parseWavHeader(bytes: Bytes): WavHeader | null {
 			dataOffset = chunkBody;
 			break;
 		}
-		offset = chunkBody + chunkSize;
+		// RIFF pads odd-sized chunks to the next even byte boundary.
+		offset = chunkBody + chunkSize + (chunkSize % 2);
 	}
 
 	if (!sampleRate || !channels || !bitsPerSample || dataOffset < 0) return null;
@@ -107,7 +111,11 @@ function parseWavHeader(bytes: Bytes): WavHeader | null {
  * Convert raw little-endian PCM into a Float32 AudioBuffer.
  * Supports 16-bit and 8-bit; falls back to silence for other depths.
  */
-function pcmToAudioBuffer(ctx: AudioContext, pcm: Bytes, header: WavHeader): AudioBuffer | null {
+export function pcmToAudioBuffer(
+	ctx: AudioContext,
+	pcm: Bytes,
+	header: WavHeader,
+): AudioBuffer | null {
 	const { channels, bitsPerSample, sampleRate } = header;
 	const bytesPerSample = bitsPerSample / 8;
 	const frameSize = bytesPerSample * channels;
@@ -135,6 +143,7 @@ function pcmToAudioBuffer(ctx: AudioContext, pcm: Bytes, header: WavHeader): Aud
 
 /** Live PCM playback for an in-progress WAV stream. */
 class WavStreamPlayer {
+	started = false;
 	private ctx: AudioContext | null = null;
 	private header: WavHeader | null = null;
 	private pending: Bytes = new Uint8Array(0);
@@ -180,6 +189,7 @@ class WavStreamPlayer {
 		source.connect(this.ctx.destination);
 		const startAt = Math.max(this.nextStartTime, this.ctx.currentTime);
 		source.start(startAt);
+		this.started = true;
 		this.nextStartTime = startAt + audioBuffer.duration;
 	}
 
@@ -221,12 +231,17 @@ class WavStreamPlayer {
 }
 
 interface Session {
+	replyId?: string;
+	sourceUrl?: string;
 	mediaType: string;
+	autoplay: boolean | Promise<boolean>;
 	chunks: Bytes[];
 	totalBytes: number;
 	livePlayer: WavStreamPlayer | null;
-	/** True if a live player was created at start — survives dispose. */
+	/** True if a live player was created — survives dispose. */
 	hadLivePlayer: boolean;
+	playedUrl: boolean;
+	autoplayElement: HTMLAudioElement | null;
 	state: StreamingAudioState;
 }
 
@@ -260,25 +275,87 @@ export class StreamingAudioManager {
 		return this.sessions.get(blockId)?.state ?? null;
 	}
 
-	/** Called on DATA_BLOCK_START for an audio block. */
-	start(blockId: string, mediaType: string): void {
+	/** Keep completed checkpoint audio playing and rebuild other blocks from replay. */
+	restoreCheckpoint(messages: Msg[], playedBlocks: Set<string>): void {
+		if (!this.sessions.size && !playedBlocks.size) return;
+		const replayed = new Set(this.sessions.keys());
+		for (const msg of messages) {
+			for (const block of msg.content) {
+				if (block.type !== 'data' || !block.finished_at) continue;
+				playedBlocks.delete(block.id);
+				if (!replayed.delete(block.id)) continue;
+				const session = this.sessions.get(block.id);
+				if (
+					session?.state.status !== 'ready' ||
+					session.replyId !== msg.id ||
+					session.mediaType !== block.source.media_type ||
+					session.sourceUrl !==
+						(block.source.type === 'url' ? block.source.url : undefined) ||
+					(msg.finished_reason && msg.finished_reason !== ReplyFinishedReason.COMPLETED)
+				) {
+					this.dispose(block.id);
+				}
+			}
+		}
+		for (const id of replayed) {
+			const session = this.sessions.get(id)!;
+			if (session.autoplay !== true || session.playedUrl || session.livePlayer?.started) {
+				playedBlocks.add(id);
+			}
+			this.dispose(id);
+		}
+	}
+
+	/** Track an audio block; disable autoplay when another player owns output. */
+	start(
+		blockId: string,
+		mediaType: string,
+		autoplay: boolean | Promise<boolean> = true,
+		replyId?: string,
+	): void {
+		if (typeof autoplay !== 'boolean') autoplay = autoplay.catch(() => false);
 		if (this.sessions.has(blockId)) return;
-		const livePlayer = mediaType === 'audio/wav' ? new WavStreamPlayer() : null;
+		const livePlayer =
+			autoplay === true && mediaType === 'audio/wav' ? new WavStreamPlayer() : null;
 		this.sessions.set(blockId, {
+			replyId,
 			mediaType,
+			autoplay,
 			chunks: [],
 			totalBytes: 0,
 			livePlayer,
 			hadLivePlayer: livePlayer !== null,
+			playedUrl: false,
+			autoplayElement: null,
 			state: { status: 'streaming', mediaType, url: null, interruptCount: 0 },
 		});
+		if (typeof autoplay !== 'boolean') {
+			void autoplay.then((allowed) => {
+				const session = this.sessions.get(blockId);
+				if (!session || session.autoplay !== autoplay) return;
+				session.autoplay = allowed;
+				if (!allowed) return;
+				if (session.state.url) {
+					this.playUrl(session, session.state.url);
+				} else if (mediaType === 'audio/wav' && session.state.status === 'streaming') {
+					session.livePlayer = new WavStreamPlayer();
+					session.hadLivePlayer = true;
+					for (const chunk of session.chunks) session.livePlayer.append(chunk);
+				}
+			});
+		}
 		this.emit(blockId);
 	}
 
-	/** Called on DATA_BLOCK_DELTA. ``data`` is the base64 chunk payload. */
-	append(blockId: string, data: string): void {
+	/** A delta carries either base64 audio bytes or a playable URL. */
+	append(blockId: string, data: string | null, url?: string): void {
 		const session = this.sessions.get(blockId);
-		if (!session || !data) return;
+		if (!session || session.state.status !== 'streaming') return;
+		if (url) {
+			session.sourceUrl = url;
+			return;
+		}
+		if (!data) return;
 		let bytes: Uint8Array;
 		try {
 			bytes = base64ToBytes(data);
@@ -299,9 +376,17 @@ export class StreamingAudioManager {
 	 * after the whole model stream (text included) finishes — make the
 	 * user perceive audio as starting only after text streaming completes.
 	 */
-	end(blockId: string): void {
+	async end(blockId: string, playbackDone?: Promise<void>): Promise<void> {
 		const session = this.sessions.get(blockId);
-		if (!session) return;
+		if (playbackDone) {
+			try {
+				await playbackDone;
+			} catch {
+				if (session) session.autoplay = false;
+			}
+			if (this.sessions.get(blockId) !== session) return;
+		}
+		if (!session || session.state.status !== 'streaming') return;
 
 		const hadLivePlayback = session.hadLivePlayer;
 		if (session.livePlayer) {
@@ -312,27 +397,62 @@ export class StreamingAudioManager {
 			session.livePlayer.finalize();
 		}
 
-		const blob = new Blob(session.chunks as BlobPart[], { type: session.mediaType });
-		const url = URL.createObjectURL(blob);
+		let url = session.sourceUrl ?? null;
+		if (!url && session.totalBytes) {
+			const blob = new Blob(session.chunks as BlobPart[], { type: session.mediaType });
+			url = URL.createObjectURL(blob);
+		}
 
 		// Free the per-chunk buffers; the Blob owns the bytes from here on.
 		session.chunks = [];
 
 		session.state = {
-			status: 'ready',
+			status: url ? 'ready' : 'error',
 			mediaType: session.mediaType,
 			url,
 			interruptCount: session.state.interruptCount,
 		};
 		this.emit(blockId);
 
-		if (!hadLivePlayback) {
-			// Non-wav: no live playback path, so kick off autoplay now. Some
-			// browsers gate this behind a user gesture; if blocked, the user
-			// can still hit play on the <audio controls> element.
-			const el = new Audio(url);
-			void el.play().catch(() => undefined);
+		if (url && session.autoplay === true && (!hadLivePlayback || session.sourceUrl)) {
+			this.playUrl(session, url);
 		}
+	}
+
+	private playUrl(session: Session, url: string): void {
+		const el = new Audio(url);
+		session.autoplayElement = el;
+		void el.play().then(
+			() => {
+				session.playedUrl = true;
+			},
+			() => undefined,
+		);
+	}
+
+	/** Stop this reply's playback and finalize any unfinished blocks for replay. */
+	interruptReply(replyId: string): void {
+		for (const [blockId, session] of this.sessions) {
+			if (session.replyId !== replyId) continue;
+			session.autoplay = false;
+			this.stopBlockPlayback(session);
+			if (session.state.status === 'streaming') {
+				if (session.totalBytes || session.sourceUrl) {
+					void this.end(blockId);
+					continue;
+				}
+				session.state = { ...session.state, status: 'error' };
+			}
+			this.emit(blockId);
+		}
+	}
+
+	private stopBlockPlayback(session: Session): void {
+		session.autoplayElement?.pause();
+		session.autoplayElement = null;
+		session.livePlayer?.dispose();
+		session.livePlayer = null;
+		session.state = { ...session.state, interruptCount: session.state.interruptCount + 1 };
 	}
 
 	/**
@@ -344,7 +464,9 @@ export class StreamingAudioManager {
 	 */
 	stopLivePlayback(): void {
 		for (const session of this.sessions.values()) {
+			if (typeof session.autoplay !== 'boolean') session.autoplay = false;
 			if (session.livePlayer) {
+				session.autoplay = false;
 				session.livePlayer.dispose();
 				session.livePlayer = null;
 			}
@@ -358,14 +480,8 @@ export class StreamingAudioManager {
 	 */
 	stopAllPlayback(): void {
 		for (const [blockId, session] of this.sessions) {
-			if (session.livePlayer) {
-				session.livePlayer.dispose();
-				session.livePlayer = null;
-			}
-			session.state = {
-				...session.state,
-				interruptCount: session.state.interruptCount + 1,
-			};
+			session.autoplay = false;
+			this.stopBlockPlayback(session);
 			this.emit(blockId);
 		}
 	}
@@ -374,8 +490,9 @@ export class StreamingAudioManager {
 	dispose(blockId: string): void {
 		const session = this.sessions.get(blockId);
 		if (!session) return;
+		session.autoplayElement?.pause();
 		session.livePlayer?.dispose();
-		if (session.state.url) URL.revokeObjectURL(session.state.url);
+		if (session.state.url && !session.sourceUrl) URL.revokeObjectURL(session.state.url);
 		this.sessions.delete(blockId);
 		this.listeners.delete(blockId);
 	}

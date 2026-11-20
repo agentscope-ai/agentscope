@@ -2,6 +2,9 @@ packages:
     - frontend
     - backend
 
+patchedDependencies:
+    '@ricky0123/vad-web@0.0.31': patches/@ricky0123__vad-web@0.0.31.patch
+
 allowBuilds:
     msw: false
     sharp: false

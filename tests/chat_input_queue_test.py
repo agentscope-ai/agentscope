@@ -15,8 +15,9 @@ from service_message_bus_test import _make_bus
 from service_wakeup_dispatcher_test import _FakeChatService, _FakeStorage
 
 from agentscope.app import _bus_ops
+from agentscope.app._chat_input_store import INPUT_EXECUTION
 from agentscope.app._bus_ops import (
-    _count_user_chat_inputs,
+    ChatQueueFullError,
     delete_chat_input,
     enqueue_chat_input,
     list_chat_inputs,
@@ -406,6 +407,33 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                 self.assertLess(len(local_claim), 1_000)
                 await queue._finish_chat_input_claim("s")
                 await delete_chat_input(bus, "u", "s", "a", second["id"])
+                self.assertEqual(await list_chat_inputs(bus, "s"), [])
+                self.assertFalse(
+                    await bus.registry_exists(
+                        MessageBusKeys.chat_input_inflight_registry(),
+                        "s",
+                    ),
+                )
+                self.assertEqual(
+                    await bus.registry_getall(
+                        MessageBusKeys.chat_input_user_sessions("u"),
+                    ),
+                    {"s": "a"},
+                )
+                receipt = json.loads(
+                    await bus.registry_get(
+                        MessageBusKeys.chat_input_cancellations("s"),
+                        second["id"],
+                    ),
+                )
+                with patch(
+                    "agentscope.app._chat_receipts.time",
+                    return_value=receipt["retire_at"] + 1,
+                ):
+                    self.assertEqual(
+                        await queue._recover_pending_chat_inputs_locked(),
+                        0,
+                    )
                 for key in (
                     MessageBusKeys.chat_input_payloads("s"),
                     MessageBusKeys.chat_input_claim("s"),
@@ -429,9 +457,13 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
             read = bus.queue_read
 
             async def guarded_getall(key: str) -> dict[str, str]:
-                self.assertEqual(
+                self.assertIn(
                     key,
-                    MessageBusKeys.chat_input_user_sessions("u"),
+                    {
+                        MessageBusKeys.chat_input_user_sessions("u"),
+                        MessageBusKeys.chat_submissions("s"),
+                        MessageBusKeys.chat_input_cancellations("s"),
+                    },
                 )
                 return await getall(key)
 
@@ -505,7 +537,7 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                 self.addAsyncCleanup(queue.close)
                 self.assertTrue(await queue.drain_chat_inputs("u", "s", "a"))
                 self.assertTrue(await queue.drain_chat_inputs("u", "s", "a"))
-            self.assertEqual(storage.upsert_message.call_count, 4)
+            self.assertEqual(storage.upsert_message.call_count, 5)
             self.assertEqual(
                 [call["input_msg"].id for call in chat.calls],
                 ["successor"],
@@ -586,6 +618,28 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(deleted, [second])
                 self.assertEqual(await list_chat_inputs(bus, "s"), deleted)
+
+    async def test_remove_publishes_ids_for_other_subscribers(self) -> None:
+        """An idempotent removal identifies every unstarted message."""
+        async with InMemoryMessageBus() as bus:
+            messages = [UserMsg("u", "first"), UserMsg("u", "second")]
+            item = await enqueue_chat_input(bus, "u", "s", "a", messages)
+            key = MessageBusKeys.session_events("s")
+            with patch.object(bus, "publish", wraps=bus.publish) as publish:
+                for _ in range(2):
+                    await delete_chat_input(bus, "u", "s", "a", item["id"])
+            [(entry_id, event)] = await bus.log_read(key)
+            self.assertEqual(
+                (event["name"], event["value"]),
+                (
+                    "chat_input_removed",
+                    {
+                        "queue_item_id": item["id"],
+                        "message_ids": [message.id for message in messages],
+                    },
+                ),
+            )
+            publish.assert_any_await(key, {**event, "_entry_id": entry_id})
 
     async def test_snapshot_does_not_acquire_mutation_lock(self) -> None:
         """Polling succeeds even while a mutation lock is held."""
@@ -951,7 +1005,25 @@ class TestQueueFailureScope(IsolatedAsyncioTestCase):
                     )
                     self.assertEqual(
                         storage.persisted_messages,
-                        [] if state else [("viewer", "s", message)],
+                        []
+                        if state
+                        else [
+                            (
+                                "viewer",
+                                "s",
+                                message.model_copy(
+                                    update={
+                                        "metadata": {
+                                            INPUT_EXECUTION: {
+                                                "reply_id": None,
+                                                "finished": finished,
+                                            },
+                                        },
+                                    },
+                                ),
+                            )
+                            for finished in (False, True)
+                        ],
                     )
                     if state:
                         service.run.assert_not_awaited()
@@ -1263,7 +1335,13 @@ class TestTerminalChatClaims(IsolatedAsyncioTestCase):
                         await asyncio.wait_for(task, 1)
                     recovery.assert_awaited_once()
         expected_claim["payload"]["attempts"] = 2
-        self.assertEqual(resumed_claims, [expected_claim])
+        self.assertEqual(
+            resumed_claims,
+            [
+                expected_claim,
+                {**expected_claim, "state": "input_persisted"},
+            ],
+        )
         self.assertEqual(
             [call["input_msg"].id for call in self.chat.calls],
             ["message"],
@@ -1559,10 +1637,18 @@ class TestCorruptQueueMetadata(IsolatedAsyncioTestCase):
                         "s",
                         raw,
                     )
-                    self.assertEqual(
-                        await _count_user_chat_inputs(bus, "u"),
+                    with patch.object(
+                        MessageBusKeys,
+                        "CHAT_INPUT_USER_MAX_LEN",
                         2,
-                    )
+                    ), self.assertRaises(ChatQueueFullError):
+                        await enqueue_chat_input(
+                            bus,
+                            "u",
+                            "s",
+                            "a",
+                            UserMsg("u", "over quota"),
+                        )
             await enqueue_chat_input(
                 bus,
                 "u",

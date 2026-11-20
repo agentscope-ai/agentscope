@@ -8,6 +8,75 @@ from .message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
     from .message_bus import MessageBus
+    from .storage import StorageBase
+
+
+INPUT_EXECUTION = "_agentscope_input_execution"
+
+
+async def get_submission(
+    bus: "MessageBus",
+    session_id: str,
+    submission_id: str,
+    user_id: str,
+    agent_id: str,
+) -> dict | None:
+    """Read an owned submission under the session mutation lock."""
+    raw = await bus.registry_get(
+        MessageBusKeys.chat_submissions(session_id),
+        submission_id,
+    )
+    if raw is None:
+        return None
+    record = json.loads(raw)
+    if (record["user_id"], record["agent_id"]) != (user_id, agent_id):
+        raise LookupError("Submission does not belong to this caller.")
+    return record
+
+
+async def is_input_cancelled(
+    bus: "MessageBus",
+    session_id: str,
+    item_id: str,
+    user_id: str,
+    agent_id: str,
+) -> bool:
+    """Match an exact queue cancellation, never just a reused message ID."""
+    raw = await bus.registry_get(
+        MessageBusKeys.chat_input_cancellations(session_id),
+        item_id,
+    )
+    if raw is None:
+        return False
+    record = json.loads(raw)
+    return (record.get("user_id"), record.get("agent_id")) == (
+        user_id,
+        agent_id,
+    )
+
+
+async def finish_unbound_inputs(
+    storage: "StorageBase",
+    user_id: str,
+    session_id: str,
+    message_ids: list[str],
+) -> None:
+    """Record terminal inputs that never acquired a reply identity.
+
+    Bound replies use their persisted end state instead: returning from
+    a run may mean that a reply is parked for user confirmation.
+    """
+    for message_id in message_ids:
+        msg = await storage.get_message(user_id, session_id, message_id)
+        if msg is None:
+            continue
+        result = msg.metadata.get(INPUT_EXECUTION)
+        if isinstance(result, dict) and not result.get("reply_id"):
+            msg.metadata[INPUT_EXECUTION] = {
+                "reply_id": None,
+                "finished": True,
+            }
+            await storage.upsert_message(user_id, session_id, msg)
 
 
 def queue_entry(payload: dict) -> dict:
@@ -57,7 +126,7 @@ async def discard_input(bus: "MessageBus", payload: dict) -> None:
 
 
 async def cleanup_session(bus: "MessageBus", session_id: str) -> None:
-    """Remove empty queue indexes and payloads under the mutation lock."""
+    """Clean empty queues; retain indexes until their receipts are gone."""
     if await bus.queue_read(
         MessageBusKeys.chat_inputs(session_id),
         max_count=1,
@@ -68,6 +137,20 @@ async def cleanup_session(bus: "MessageBus", session_id: str) -> None:
         session_id,
     ):
         return
+    await bus.registry_drop(MessageBusKeys.chat_input_payloads(session_id))
+    await bus.registry_drop(MessageBusKeys.chat_input_claim(session_id))
+    # Empty queues still need recovery while their receipts are retained.
+    if await bus.registry_getall(
+        MessageBusKeys.chat_submissions(session_id),
+    ) or await bus.registry_getall(
+        MessageBusKeys.chat_input_cancellations(session_id),
+    ):
+        return
+    await untrack_empty_session(bus, session_id)
+
+
+async def untrack_empty_session(bus: "MessageBus", session_id: str) -> None:
+    """Remove recovery indexes once both queue and receipts are empty."""
     raw = await bus.registry_get(
         MessageBusKeys.chat_input_pending_registry(),
         session_id,
@@ -84,8 +167,6 @@ async def cleanup_session(bus: "MessageBus", session_id: str) -> None:
                 MessageBusKeys.chat_input_user_sessions(user_id),
                 session_id,
             )
-    await bus.registry_drop(MessageBusKeys.chat_input_payloads(session_id))
-    await bus.registry_drop(MessageBusKeys.chat_input_claim(session_id))
     await bus.registry_del(
         MessageBusKeys.chat_input_pending_registry(),
         session_id,

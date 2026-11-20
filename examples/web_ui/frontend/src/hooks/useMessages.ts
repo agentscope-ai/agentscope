@@ -1,4 +1,4 @@
-import { EventType } from '@agentscope-ai/agentscope/event';
+import { EventType, ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
 import type {
 	AgentEvent,
 	CustomEvent,
@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 
 import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
+import { ApiError, type ApiScope } from '@/api/client';
 import { useAudioManager } from '@/context/AudioContext';
 import {
 	getQueueMessages,
@@ -28,8 +29,9 @@ import {
 import { useTranslation } from '@/i18n/useI18n';
 import { ASK_USER_TOOL_NAME, formatAskUserOutput, parseAskUserResult } from '@/lib/ask-user';
 import type { ClientExternalToolResult } from '@/lib/client-external-tools';
-import { appendMessageEvent } from '@/lib/message-events';
+import { appendMessageEvent, audioDeltaUrl } from '@/lib/message-events';
 import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
+import type { VoicePlayback } from '@/lib/pipelineVoiceSession';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -106,6 +108,9 @@ export function useMessages(
 	agentId: string | null,
 	sessionId: string | null,
 	options?: {
+		/** Route playback, including deferred ownership or a pending block end. */
+		onVoiceEvent?: (event: AgentEvent) => VoicePlayback;
+		onStreamClosed?: () => void;
 		/**
 		 * Called when a ``CUSTOM`` event with ``name="team_updated"``
 		 * arrives — the team membership has changed (TeamCreate /
@@ -171,32 +176,18 @@ export function useMessages(
 	// state over a session that does have messages.
 	const [loadedKey, setLoadedKey] = useState<string | null>(null);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
+	const [streamConnected, setStreamConnected] = useState(false);
+	const [startingInputId, setStartingInputId] = useState<string | null>(null);
 	// Only a running reply accepts steering. Parked replies retain their
 	// streaming phase and currentReplyRef for confirmation and Stop.
 	const [activeReplyId, setActiveReplyId] = useState<string | null>(null);
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
 	const [subagentHitl, setSubagentHitl] = useState<SubagentHitlEntry[]>([]);
-	const {
-		items: queuedItems,
-		visibleCount: queuedCount,
-		pendingCount: pendingQueueCount,
-		reorderDisabled: queueReorderDisabled,
-		addOptimistic,
-		acceptOptimistic,
-		rollbackOptimistic,
-		applyQueueSnapshot,
-		startItem,
-		finishItem,
-		updateQueued,
-		deleteQueued,
-		steerQueued,
-		moveQueued,
-		reorderQueued,
-	} = useChatQueue(agentId, sessionId, setError);
-
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
+	const startingQueueRef = useRef<string | null>(null);
+	const replyQueueRef = useRef<string | null>(null);
 	const ttsConfigurationWarningsRef = useRef(new Set<string>());
 	const abortRef = useRef<AbortController | null>(null);
 	const rafRef = useRef<number | null>(null);
@@ -225,9 +216,45 @@ export function useMessages(
 		});
 	}, []);
 
+	const removeProvisional = useCallback(
+		(messages: Set<Msg>) => {
+			if (!messages.size) return;
+			msgsRef.current = msgsRef.current.filter((msg) => !messages.has(msg));
+			scheduleUpdate();
+		},
+		[scheduleUpdate],
+	);
+	const {
+		items: queuedItems,
+		visibleCount: queuedCount,
+		pendingCount: pendingQueueCount,
+		hasPendingInput: hasQueuedInput,
+		reorderDisabled: queueReorderDisabled,
+		addOptimistic,
+		acceptOptimistic,
+		rollbackOptimistic,
+		applyQueueSnapshot,
+		restoreConversation,
+		startItem,
+		retireItem,
+		updateQueued,
+		deleteQueued,
+		steerQueued,
+		moveQueued,
+		reorderQueued,
+	} = useChatQueue(agentId, sessionId, setError, removeProvisional);
+
+	const removeUnstartedInput = useCallback(
+		(value: ChatInputTerminalValue) => {
+			removeProvisional(retireItem(value, 'removed'));
+		},
+		[retireItem, removeProvisional],
+	);
+
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
-		(event: AgentEvent) => {
+		(event: AgentEvent, suppressAutoplay = false) => {
+			const voicePlayback = optionsRef.current?.onVoiceEvent?.(event) ?? false;
 			// Custom events are service-layer notifications, not agent
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
@@ -278,8 +305,12 @@ export function useMessages(
 					const v = custom.value as { worker_session_id: string; reply_id: string };
 					setSubagentHitl((prev) => prev.filter((x) => hitlKey(x) !== hitlKey(v)));
 				} else if (custom.name === 'chat_input_started') {
-					const startedItem = startItem(custom.value as ChatInputStartedValue);
+					const value = custom.value as ChatInputStartedValue;
+					startingQueueRef.current = value.queue_item_id ?? null;
+					setStartingInputId(startingQueueRef.current);
+					const { item: startedItem, provisional } = startItem(value);
 					if (startedItem) {
+						msgsRef.current = msgsRef.current.filter((msg) => !provisional.has(msg));
 						const existingIds = new Set(msgsRef.current.map((msg) => msg.id));
 						msgsRef.current = [
 							...msgsRef.current,
@@ -292,28 +323,39 @@ export function useMessages(
 				} else if (custom.name === 'chat_queue_changed') {
 					const value = custom.value as { items?: ChatQueueItem[] };
 					applyQueueSnapshot(value.items ?? []);
-				} else if (custom.name === 'chat_input_failed') {
+				} else if (custom.name === 'chat_input_removed') {
 					const value = custom.value as ChatInputTerminalValue;
-					finishItem(value);
-					const failure = new Error(value.message ?? t('chatQueue.processFailed'));
-					clearInterruptTimer();
-					currentReplyRef.current = null;
-					setPhase('idle');
-					setActiveReplyId(null);
-					setError(failure);
-					toast.error(failure.message);
-				} else if (custom.name === 'chat_input_cancelled') {
+					if (value.queue_item_id) removeUnstartedInput(value);
+				} else if (
+					custom.name === 'chat_input_failed' ||
+					custom.name === 'chat_input_cancelled'
+				) {
 					const value = custom.value as ChatInputTerminalValue;
-					finishItem(value);
-					const message = value.message ?? t('chatQueue.processingCancelled');
-					clearInterruptTimer();
-					currentReplyRef.current = null;
-					setPhase('idle');
-					setActiveReplyId(null);
-					toast.info(message);
+					setStartingInputId((id) => (id === value.queue_item_id ? null : id));
+					retireItem(value, 'finished');
+					const queueId = value.queue_item_id;
+					const wasStarting = !!queueId && queueId === startingQueueRef.current;
+					if (wasStarting) startingQueueRef.current = null;
+					if (
+						(queueId && queueId === replyQueueRef.current) ||
+						(wasStarting && !currentReplyRef.current && !replyQueueRef.current)
+					) {
+						replyQueueRef.current = null;
+						clearInterruptTimer();
+						currentReplyRef.current = null;
+						setPhase('idle');
+						setActiveReplyId(null);
+					}
+					if (custom.name === 'chat_input_failed') {
+						const failure = new Error(value.message ?? t('chatQueue.processFailed'));
+						setError(failure);
+						toast.error(failure.message);
+					} else {
+						toast.info(value.message ?? t('chatQueue.processingCancelled'));
+					}
 				} else if (custom.name === 'chat_input_injected') {
 					const value = custom.value as ChatInputTerminalValue;
-					finishItem(value);
+					retireItem(value, 'finished');
 					toast.success(t('chatQueue.injected'));
 				} else if (custom.name === 'chat_input_steer_failed') {
 					const value = custom.value as ChatInputTerminalValue;
@@ -340,6 +382,13 @@ export function useMessages(
 			}
 			if (event.type === EventType.REPLY_START) {
 				const e = event as ReplyStartEvent;
+				if (e.role === 'assistant') {
+					if (startingQueueRef.current || currentReplyRef.current?.id !== e.reply_id) {
+						replyQueueRef.current = startingQueueRef.current;
+					}
+					startingQueueRef.current = null;
+					setStartingInputId(null);
+				}
 				// A continuation (the run resuming after a confirmation or an
 				// external execution result) re-emits REPLY_START with the
 				// *same* reply_id. Re-point at the existing reply instead of
@@ -406,29 +455,50 @@ export function useMessages(
 					setPhase('idle');
 					setActiveReplyId(null);
 					currentReplyRef.current = null;
+					replyQueueRef.current = null;
 				}
 			}
 
 			// Route streaming audio DataBlocks to the audio manager. They still
 			// flow through `appendEvent` above (which builds up `source.data`
 			// in the Msg), but MessageBubble reads playback state from the
-			// manager so it can show progress and autoplay on completion.
+			// manager so it can show progress and offer replay on completion.
+			// Voice sessions own playback, but still need this stream state.
 			if (audioManager) {
 				if (event.type === EventType.DATA_BLOCK_START) {
 					const e = event as DataBlockStartEvent;
 					if (e.media_type.startsWith('audio/')) {
-						audioManager.start(e.block_id, e.media_type);
+						const autoplay =
+							typeof voicePlayback === 'object' && 'autoplay' in voicePlayback
+								? voicePlayback.autoplay
+								: !voicePlayback;
+						audioManager.start(
+							e.block_id,
+							e.media_type,
+							suppressAutoplay ? false : autoplay,
+							e.reply_id,
+						);
 					}
 				} else if (event.type === EventType.DATA_BLOCK_DELTA) {
 					const e = event as DataBlockDeltaEvent;
 					if (e.media_type.startsWith('audio/')) {
-						audioManager.append(e.block_id, e.data);
+						audioManager.append(e.block_id, e.data, audioDeltaUrl(e));
 					}
 				} else if (event.type === EventType.DATA_BLOCK_END) {
 					const e = event as DataBlockEndEvent;
 					// `end` is a no-op when the block isn't being tracked, so
 					// we can call it unconditionally.
-					audioManager.end(e.block_id);
+					void audioManager.end(
+						e.block_id,
+						typeof voicePlayback === 'object' && 'then' in voicePlayback
+							? voicePlayback
+							: undefined,
+					);
+				} else if (
+					event.type === EventType.REPLY_END &&
+					event.finished_reason !== ReplyFinishedReason.COMPLETED
+				) {
+					audioManager.interruptReply(event.reply_id);
 				}
 			}
 
@@ -440,7 +510,8 @@ export function useMessages(
 			clearInterruptTimer,
 			startItem,
 			applyQueueSnapshot,
-			finishItem,
+			retireItem,
+			removeUnstartedInput,
 			t,
 			agentId,
 			sessionId,
@@ -450,8 +521,12 @@ export function useMessages(
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
 	useEffect(() => {
 		setLoadedKey(null);
+		setStreamConnected(false);
+		setStartingInputId(null);
 		msgsRef.current = [];
 		currentReplyRef.current = null;
+		startingQueueRef.current = null;
+		replyQueueRef.current = null;
 		setMsgs([]);
 		setError(null);
 		clearInterruptTimer();
@@ -464,91 +539,182 @@ export function useMessages(
 
 		const controller = new AbortController();
 		abortRef.current = controller;
-		let cancelled = false;
+		let retryTimer: ReturnType<typeof setTimeout> | undefined;
+		let retryDelay = 1000;
+		const playedBlocks = new Set<string>();
+		let oldestVisible: string | null | undefined;
+		let savedHistory: Msg[] = [];
+		let savedCursor: string | null = null;
 
-		(async () => {
-			let eventCursor: string | null = null;
-			// 1. Fetch persisted history — unless this tab just created the
-			// session, in which case there is provably none.
-			if (takeFreshlyCreated(sessionId)) {
-				if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
-			} else {
-				try {
-					const { messages, is_running, event_cursor } = await sessionApi.messages(
+		const connect = async (reconnecting: boolean) => {
+			if (controller.signal.aborted) return;
+			let connected = false;
+			try {
+				let eventCursor: string | null = null;
+				const requests = new Map(reconnecting ? externalSubmissionsRef.current : []);
+				if (reconnecting || !takeFreshlyCreated(sessionId)) {
+					const options = {
+						signal: controller.signal,
+						silent: reconnecting,
+						timeoutMs: 15_000,
+					};
+					const latest = await sessionApi.messages(
 						sessionId,
 						agentId,
+						undefined,
+						options,
 					);
-					if (cancelled) return;
-					eventCursor = event_cursor;
-					msgsRef.current = messages;
-					// If a reply is in flight (running on a worker) OR any
-					// persisted msg is parked on a pending tool_call (awaiting
-					// user confirmation / external execution), initialise the
-					// phase to ``streaming`` so the interrupt button is
-					// available immediately — otherwise a fresh page load
-					// while parked leaves the UI stuck on ``idle`` with no
-					// way to abort.
-					const tail = messages[messages.length - 1];
-					const pendingHitl = getPendingHitlCalls(messages)[0];
-					if (is_running || pendingHitl) {
-						setPhase('streaming');
-						if (is_running && !pendingHitl && tail?.role === 'assistant') {
-							setActiveReplyId(tail.id);
+					if (controller.signal.aborted) return;
+					eventCursor = latest.event_cursor;
+					const { is_running } = latest;
+					const pages = [latest.messages];
+					let page = latest;
+					while (
+						oldestVisible !== undefined &&
+						page.has_more &&
+						page.messages.length &&
+						!page.messages.some((msg) => msg.id === oldestVisible)
+					) {
+						// A shared checkpoint and unchanged message identities let us
+						// reuse the persisted prefix without retaining live deltas.
+						if (eventCursor !== null && eventCursor === savedCursor) {
+							const overlap = savedHistory.findIndex(
+								(msg) => msg.id === page.messages[0].id,
+							);
+							if (overlap >= 0) {
+								const prefix = savedHistory.slice(0, overlap);
+								const visible = new Set(msgsRef.current);
+								if (prefix.every((msg) => visible.has(msg))) {
+									pages.push(prefix);
+									break;
+								}
+							}
 						}
-						if (pendingHitl) {
-							// Prime the ref so continuation events (which
-							// arrive without a fresh REPLY_START) apply to
-							// the right msg.
-							currentReplyRef.current =
-								messages.find((message) => message.id === pendingHitl.replyId) ??
-								null;
+						page = await sessionApi.messages(
+							sessionId,
+							agentId,
+							{
+								before: page.messages[0].id,
+								limit: 200,
+							},
+							options,
+						);
+						if (controller.signal.aborted) return;
+						const floor = page.messages.findIndex((msg) => msg.id === oldestVisible);
+						pages.push(floor < 0 ? page.messages : page.messages.slice(floor));
+					}
+					const messages = pages.reverse().flat();
+					savedHistory = messages;
+					savedCursor = eventCursor;
+					const tail = messages.at(-1);
+					if (reconnecting) {
+						if (tail && !msgsRef.current.some((msg) => msg.id === tail.id)) {
+							audioManager?.stopAllPlayback();
+						}
+						audioManager?.restoreCheckpoint(messages, playedBlocks);
+						setSubagentHitl([]);
+					}
+					const restored = reconnecting
+						? restoreConversation(messages, controller.signal)
+						: messages;
+					if (controller.signal.aborted) return;
+					oldestVisible = messages[0]?.id ?? null;
+					for (const [id, request] of requests) {
+						if (externalSubmissionsRef.current.get(id) !== request) continue;
+						const reply = messages.find((msg) => msg.id === request.replyId);
+						for (const block of reply?.content ?? []) {
+							if (block.type === 'tool_result' && block.state !== 'running') {
+								request.toolCallIds.delete(block.id);
+							}
+						}
+						if (!request.toolCallIds.size) {
+							externalSubmissionsRef.current.delete(id);
+							requests.delete(id);
+							request.resolve();
 						}
 					}
-					// Published synchronously, not through `scheduleUpdate`:
-					// its requestAnimationFrame batching exists for
-					// high-frequency streaming deltas, and deferring here
-					// would let `loadedKey` below clear `loading` a frame
-					// before the messages land — painting the empty-session
-					// greeting over a conversation that does have history.
-					// Both setters now land in the same React batch.
+					msgsRef.current = restored;
+					startingQueueRef.current = null;
+					replyQueueRef.current = null;
+					setStartingInputId(null);
+					clearInterruptTimer();
+					const parked = getPendingHitlCalls(messages)[0];
+					const active =
+						is_running && !parked && tail?.role === 'assistant' && !tail.finished_reason
+							? tail
+							: null;
+					currentReplyRef.current = parked
+						? (messages.find((message) => message.id === parked.replyId) ?? null)
+						: active;
+					setActiveReplyId(active?.id ?? null);
+					setPhase(is_running || parked ? 'streaming' : 'idle');
 					setMsgs([...msgsRef.current]);
-				} catch (e) {
-					if (!cancelled) setError(e as Error);
-					return;
-				} finally {
-					// Marks the load done whether it succeeded or threw —
-					// an error surfaces through `error`, and leaving
-					// `loading` stuck on would hide it behind a spinner
-					// forever.
-					if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
-				}
-			}
-
-			// 2. Open SSE long connection for live events
-			try {
+				} else oldestVisible = null;
+				setLoadedKey(`${agentId}:${sessionId}`);
+				const finishReplay = () => {
+					if (controller.signal.aborted) return;
+					for (const [id, request] of requests) {
+						if (externalSubmissionsRef.current.get(id) !== request) continue;
+						externalSubmissionsRef.current.delete(id);
+						request.reject(new Error(t('chat.externalExecution.unconfirmed')));
+					}
+					requests.clear();
+				};
 				for await (const event of sessionApi.streamEvents(
 					sessionId,
 					agentId,
 					controller.signal,
 					eventCursor,
+					() => {
+						if (controller.signal.aborted) return;
+						connected = true;
+						setStreamConnected(true);
+						if (reconnecting) setError(null);
+					},
+					{
+						silent: reconnecting,
+						onReplayComplete: requests.size ? finishReplay : undefined,
+					},
 				)) {
-					if (cancelled) break;
-					processEvent(event);
+					if (controller.signal.aborted) return;
+					retryDelay = 1000;
+					const replayed =
+						event.type === EventType.DATA_BLOCK_START &&
+						playedBlocks.delete(event.block_id);
+					processEvent(event, replayed);
 				}
 			} catch (e) {
-				if ((e as Error).name !== 'AbortError' && !cancelled) {
-					setError(e as Error);
+				if (controller.signal.aborted) return;
+				setLoadedKey(`${agentId}:${sessionId}`);
+				setError(e as Error);
+				if (e instanceof ApiError && [401, 403, 404].includes(e.status)) return;
+			} finally {
+				if (!controller.signal.aborted && connected) {
+					setStreamConnected(false);
+					optionsRef.current?.onStreamClosed?.();
 				}
 			}
-		})();
+			if (controller.signal.aborted) return;
+			retryTimer = setTimeout(() => void connect(true), retryDelay);
+			retryDelay = Math.min(retryDelay * 2, 15_000);
+		};
+		void connect(false);
 
 		return () => {
-			cancelled = true;
+			clearTimeout(retryTimer);
 			controller.abort();
 			abortRef.current = null;
 			clearInterruptTimer();
 		};
-	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
+	}, [
+		agentId,
+		sessionId,
+		processEvent,
+		restoreConversation,
+		audioManager,
+		clearInterruptTimer,
+		t,
+	]);
 
 	/**
 	 * Send a user message. The first idle input appears in the conversation
@@ -558,10 +724,48 @@ export function useMessages(
 	 * @param content - The message content blocks.
 	 */
 	const send = useCallback(
-		async (content: ContentBlock[]) => {
+		async (
+			content: ContentBlock[],
+			observer?: {
+				scope: ApiScope;
+				submissionId?: string;
+				signal?: AbortSignal;
+				isCurrent?: () => boolean;
+				keepPendingOnPostError?: () => boolean;
+				submitted: (
+					id: string,
+					clearPending: (beforeClaim: boolean) => void,
+					acceptedQueue: (id: string) => void,
+				) => void;
+				accepted: (id: string | null) => void;
+			},
+			mode: 'chat' | 'pipeline_voice' = 'chat',
+		) => {
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
 			const userMsg = UserMsg({ name: 'user', content });
+			const confirmQueue = (id: string) => {
+				if (activeSessionRef.current !== session) return;
+				const outcome = acceptOptimistic(userMsg.id, id);
+				if (outcome === 'removed') {
+					removeUnstartedInput({ queue_item_id: id, message_ids: [userMsg.id] });
+				} else if (typeof outcome === 'object') {
+					msgsRef.current = msgsRef.current.map((msg) =>
+						msg === userMsg ? outcome : msg,
+					);
+					scheduleUpdate();
+				}
+			};
+			observer?.submitted(
+				userMsg.id,
+				(beforeClaim) => {
+					if (activeSessionRef.current !== session) return;
+					const value = { message_ids: [userMsg.id] };
+					if (beforeClaim) removeUnstartedInput(value);
+					else retireItem(value, 'finished');
+				},
+				confirmQueue,
+			);
 			const showInConversationImmediately = phase === 'idle' && pendingQueueCount === 0;
 			if (showInConversationImmediately) {
 				msgsRef.current = [...msgsRef.current, userMsg];
@@ -569,15 +773,33 @@ export function useMessages(
 			}
 			const optimisticId = addOptimistic(userMsg, showInConversationImmediately);
 			try {
-				const response = await chatApi.trigger({
-					agent_id: agentId,
-					session_id: sessionId,
-					input: userMsg,
-				});
-				if (activeSessionRef.current !== session) return;
-				acceptOptimistic(optimisticId, response.queue_item_id);
+				const response = await chatApi.trigger(
+					{
+						agent_id: agentId,
+						session_id: sessionId,
+						input: userMsg,
+						mode,
+						submission_id: observer?.submissionId,
+					},
+					{ ...observer?.scope, signal: observer?.signal, silent: !!observer },
+				);
+				if (observer?.signal?.aborted || (observer?.isCurrent && !observer.isCurrent()))
+					return;
+				const queueId = response.queue_item_id;
+				if (queueId) confirmQueue(queueId);
+				observer?.accepted(queueId);
 			} catch (e) {
-				if (activeSessionRef.current !== session) return;
+				// SSE may already have committed this input and its reply.
+				if (
+					observer?.keepPendingOnPostError?.() ||
+					(observer?.isCurrent && !observer.isCurrent())
+				)
+					throw e;
+				if (activeSessionRef.current !== session) {
+					// Voice cancellation outlives the viewport and still needs the outcome.
+					if (observer) throw e;
+					return;
+				}
 				// The server never accepted this input. Remove the
 				// optimistic queue row and restore the caller's draft.
 				rollbackOptimistic(optimisticId, userMsg.id);
@@ -594,6 +816,8 @@ export function useMessages(
 			sessionId,
 			phase,
 			pendingQueueCount,
+			retireItem,
+			removeUnstartedInput,
 			session,
 			scheduleUpdate,
 			addOptimistic,
@@ -665,6 +889,7 @@ export function useMessages(
 					optionsRef.current?.isRealtimeAudioActive?.() &&
 					optionsRef.current.sendRealtimeExternalExecutionResult
 				) {
+					if (!streamConnected) throw new Error(t('chat.externalExecution.reconnecting'));
 					// Sending a DataChannel frame does not acknowledge its result.
 					// Register first so even an immediate SSE response is matched.
 					const receipt = new Promise<void>((resolve, reject) => {
@@ -695,7 +920,7 @@ export function useMessages(
 				externalSubmissionsRef.current.delete(event.id);
 			}
 		},
-		[agentId, sessionId, session],
+		[agentId, sessionId, session, streamConnected, t],
 	);
 
 	/** Return a client-executed tool result and resume the parked reply. */
@@ -748,6 +973,7 @@ export function useMessages(
 	/** Abort the current SSE connection. */
 	const abort = useCallback(() => {
 		abortRef.current?.abort();
+		setStreamConnected(false);
 	}, []);
 
 	/**
@@ -861,8 +1087,10 @@ export function useMessages(
 	return {
 		msgs: ownsConversation ? msgs : [],
 		loading,
+		streamConnected: ownsConversation && streamConnected,
 		queuedItems: ownsConversation ? queuedItems : [],
 		queuedCount: ownsConversation ? queuedCount : 0,
+		hasPendingInput: hasQueuedInput || startingInputId !== null,
 		queueReorderDisabled: !ownsConversation || queueReorderDisabled,
 		updateQueued,
 		deleteQueued,

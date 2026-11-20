@@ -97,6 +97,7 @@ interface TextInputProps {
 	onVoiceToggle?: () => void;
 	/** Prevents voice start when no realtime model is configured. */
 	voiceDisabled?: boolean;
+	voiceDisabledReason?: string;
 	/** Audio formats accepted by the selected ASR model. */
 	asrInputTypes?: string[];
 	/** Upload one completed recording and return its transcription. */
@@ -171,6 +172,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			voiceState = 'idle',
 			onVoiceToggle,
 			voiceDisabled = false,
+			voiceDisabledReason,
 			asrInputTypes = [],
 			onTranscribe,
 			asrRealtime = false,
@@ -482,7 +484,9 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			}
 			return {
 				icon: AudioLines,
-				tooltip: voiceDisabled ? t('realtime.selectFirst') : t('realtime.start'),
+				tooltip: voiceDisabled
+					? (voiceDisabledReason ?? t('realtime.selectFirst'))
+					: t('realtime.start'),
 				disabled: voiceDisabled || speechInputBusy,
 				variant: 'ghost',
 				onClick: onVoiceToggle,

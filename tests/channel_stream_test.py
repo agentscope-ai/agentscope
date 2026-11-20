@@ -173,6 +173,10 @@ class EventStreamTest(IsolatedAsyncioTestCase):
 
         async def _run() -> None:
             await asyncio.sleep(0.01)
+            await bus.publish(
+                MessageBusKeys.session_events("s-1"),
+                {MessageBusKeys.SESSION_BARRIER_FIELD: "other"},
+            )
             await _publish(bus, "s-1", _start())
             await _publish(bus, "s-1", _end())
 

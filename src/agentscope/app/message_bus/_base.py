@@ -43,13 +43,28 @@ responsibility.
 import asyncio
 import json
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Self
 
 from typing_extensions import deprecated
 
 from ._keys import MessageBusKeys
+
+
+# Register a coroutine that waits for previously received broadcasts to be
+# yielded to this subscriber. Each subscription has one sequential caller.
+RegisterSubscriptionBarrier = Callable[[Callable[[], Awaitable[None]]], None]
+
+
+def _stream_cursor_precedes(left: str, right: str) -> bool | None:
+    """Compare native Redis-style stream IDs, if both use that format."""
+    try:
+        return tuple(map(int, left.split("-"))) < tuple(
+            map(int, right.split("-")),
+        )
+    except ValueError:
+        return None
 
 
 class MessageBus(ABC):  # pylint: disable=too-many-public-methods
@@ -284,6 +299,14 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 subsequent :meth:`log_read` calls.
         """
 
+    @staticmethod
+    def log_cursor_precedes(left: str, right: str) -> bool | None:
+        """Order cursors when both log records may already be trimmed.
+
+        Return None for distinct cursors when only log_read exposes order.
+        """
+        return False if left == right else None
+
     @abstractmethod
     async def log_read(
         self,
@@ -360,6 +383,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         key: str,
         *,
         on_ready: Callable[[], None] | None = None,
+        on_barrier: RegisterSubscriptionBarrier | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Yield broadcast payloads for ``key`` until the consumer
         closes the generator.
@@ -380,6 +404,11 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``SessionTriggerListenerManager.start``) until the
                 subscription is live, so a publish-immediately-after
                 race is impossible.
+            on_barrier (optional):
+                Register a flush coroutine once the subscription is ready.
+                It must wait until this iterator has yielded all preceding
+                notifications. The caller may cancel a pending flush when
+                closing the subscription.
 
         Yields:
             `dict`:
@@ -789,7 +818,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
 
     @deprecated(
         "Use subscribe(MessageBusKeys.session_events(sid), ...) directly, "
-        "stripping _entry_id from each payload.",
+        "skipping SESSION_BARRIER_FIELD markers and stripping _entry_id.",
     )
     async def session_subscribe_events(
         self,
@@ -800,7 +829,8 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """Live-subscribe to session events, stripping _entry_id."""
         key = self._SESSION_EVENTS_KEY.format(sid=session_id)
         async for payload in self.subscribe(key, on_ready=on_ready):
-            yield {k: v for k, v in payload.items() if k != "_entry_id"}
+            if MessageBusKeys.SESSION_BARRIER_FIELD not in payload:
+                yield {k: v for k, v in payload.items() if k != "_entry_id"}
 
     # Cross-process cancel ---------------------------------------------
 

@@ -200,6 +200,8 @@ class ClientExternalToolDefinitionTest(TestCase):
         self.assertEqual(
             request.model_dump(mode="json"),
             {
+                "mode": "chat",
+                "submission_id": None,
                 "agent_id": "agent-1",
                 "session_id": "session-1",
                 "input": None,

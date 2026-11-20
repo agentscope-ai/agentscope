@@ -20,6 +20,15 @@ export interface ChatInputTerminalValue {
 	message?: string;
 }
 
+type LocalInputOutcome = 'finished' | 'removed';
+
+interface LocalChatInput {
+	message: Msg;
+	optimisticId: string;
+	queueId: string | null;
+	outcomes: Map<string, LocalInputOutcome | Msg>;
+}
+
 /** Return every message carried by queue items in FIFO order. */
 export const getQueueMessages = (items: ChatQueueItem[]): Msg[] =>
 	items.flatMap((item) => (Array.isArray(item.input) ? item.input : [item.input]));
@@ -34,11 +43,15 @@ export function useChatQueue(
 	agentId: string | null,
 	sessionId: string | null,
 	onError: (error: Error) => void,
+	removeProvisional: (messages: Set<Msg>) => void,
 ) {
 	const [items, setItems] = useState<ChatQueueItem[]>([]);
 	const [conversationMessageIds, setConversationMessageIds] = useState<Set<string>>(new Set());
 	const itemsRef = useRef<ChatQueueItem[]>([]);
 	const conversationMessageIdsRef = useRef<Set<string>>(new Set());
+	// Keep receipt identity even when a queue snapshot omits the local row.
+	const localInputs = useRef(new Map<string, LocalChatInput>());
+	const awaitingRefresh = useRef(new WeakSet<LocalChatInput>());
 	const snapshotVersionRef = useRef(0);
 	const refreshSequenceRef = useRef(0);
 	// Object identity distinguishes A -> B -> A from the original A visit.
@@ -66,6 +79,7 @@ export function useChatQueue(
 	}, []);
 
 	const reset = useCallback(() => {
+		localInputs.current.clear();
 		updateItems([]);
 		updateConversationMessageIds((ids) => ids.clear());
 	}, [updateConversationMessageIds, updateItems]);
@@ -88,24 +102,78 @@ export function useChatQueue(
 		[updateItems],
 	);
 
-	const refreshQueue = useCallback(async () => {
-		if (!agentId || !sessionId || activeSessionRef.current !== session) return;
-		const requestId = ++refreshSequenceRef.current;
-		const snapshotVersion = snapshotVersionRef.current;
-		try {
-			const response = await chatApi.queue(agentId, sessionId, true);
-			if (
-				activeSessionRef.current !== session ||
-				requestId !== refreshSequenceRef.current ||
-				snapshotVersion !== snapshotVersionRef.current
-			) {
-				return;
+	const refreshQueue = useCallback(
+		async (signal?: AbortSignal) => {
+			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
+			const requestId = ++refreshSequenceRef.current;
+			const snapshotVersion = snapshotVersionRef.current;
+			try {
+				const response = await chatApi.queue(agentId, sessionId, true, {
+					signal,
+					timeoutMs: 15_000,
+				});
+				if (
+					signal?.aborted ||
+					activeSessionRef.current !== session ||
+					requestId !== refreshSequenceRef.current ||
+					snapshotVersion !== snapshotVersionRef.current
+				) {
+					return;
+				}
+				applyQueueSnapshot(response.items);
+				const removed = new Set<Msg>();
+				for (const [id, local] of localInputs.current) {
+					if (!local.queueId || !awaitingRefresh.current.delete(local)) continue;
+					const row = response.items.find((item) => item.id === local.queueId);
+					if (row && getQueueMessages([row]).some((msg) => msg.id === id)) continue;
+					localInputs.current.delete(id);
+					removed.add(local.message);
+				}
+				if (removed.size) {
+					updateConversationMessageIds((ids) => {
+						for (const msg of removed) ids.delete(msg.id);
+					});
+					removeProvisional(removed);
+				}
+			} catch {
+				// Focus, reconnect, or the next interval retries transient failures.
 			}
-			applyQueueSnapshot(response.items);
-		} catch {
-			// Focus, reconnect, or the next interval retries transient failures.
-		}
-	}, [agentId, sessionId, session, applyQueueSnapshot]);
+		},
+		[
+			agentId,
+			sessionId,
+			session,
+			applyQueueSnapshot,
+			updateConversationMessageIds,
+			removeProvisional,
+		],
+	);
+
+	/** Keep provisional bubbles for inputs still in flight or in the restored queue. */
+	const restoreConversation = useCallback(
+		(history: Msg[], signal: AbortSignal) => {
+			const saved = new Set(history.map((msg) => msg.id));
+			const pending: Msg[] = [];
+			const retired = new Set<string>();
+			for (const [id, local] of localInputs.current) {
+				if (saved.has(id)) {
+					localInputs.current.delete(id);
+					retired.add(local.optimisticId);
+				} else {
+					awaitingRefresh.current.add(local);
+					if (conversationMessageIdsRef.current.has(id)) pending.push(local.message);
+				}
+			}
+			if (retired.size) updateItems(itemsRef.current.filter((item) => !retired.has(item.id)));
+			updateConversationMessageIds((ids) => {
+				ids.clear();
+				for (const msg of pending) ids.add(msg.id);
+			});
+			void refreshQueue(signal);
+			return [...history, ...pending];
+		},
+		[refreshQueue, updateConversationMessageIds, updateItems],
+	);
 
 	const applyMutationSnapshot = useCallback(
 		(serverItems: ChatQueueItem[], snapshotVersion: number) => {
@@ -143,6 +211,12 @@ export function useChatQueue(
 	const addOptimistic = useCallback(
 		(message: Msg, shownInConversation: boolean): string => {
 			const optimisticId = `${OPTIMISTIC_ITEM_PREFIX}${crypto.randomUUID()}`;
+			localInputs.current.set(message.id, {
+				message,
+				optimisticId,
+				queueId: null,
+				outcomes: new Map(),
+			});
 			if (shownInConversation) {
 				updateConversationMessageIds((ids) => ids.add(message.id));
 			}
@@ -161,69 +235,81 @@ export function useChatQueue(
 		[updateConversationMessageIds, updateItems],
 	);
 
-	const acceptOptimistic = useCallback(
-		(optimisticId: string, queueItemId: string | null) => {
-			if (!queueItemId) return;
-			updateItems(
-				itemsRef.current.map((item) =>
-					item.id === optimisticId ? { ...item, id: queueItemId } : item,
-				),
-			);
-		},
-		[updateItems],
-	);
-
 	const rollbackOptimistic = useCallback(
 		(optimisticId: string, messageId: string) => {
+			localInputs.current.delete(messageId);
 			updateItems(itemsRef.current.filter((item) => item.id !== optimisticId));
 			updateConversationMessageIds((ids) => ids.delete(messageId));
 		},
 		[updateConversationMessageIds, updateItems],
 	);
 
-	/** Remove a started item and return the message payload for conversation UI. */
-	const startItem = useCallback(
-		(value: ChatInputStartedValue): ChatQueueItem | undefined => {
-			const startedIds = new Set(value.message_ids ?? []);
-			updateConversationMessageIds((ids) => {
-				for (const messageId of startedIds) ids.delete(messageId);
-			});
-			const localItem = itemsRef.current.find(
-				(item) =>
-					item.id === value.queue_item_id ||
-					(item.id.startsWith(OPTIMISTIC_ITEM_PREFIX) &&
-						getQueueMessages([item]).some((message) => startedIds.has(message.id))),
-			);
-			updateItems(
-				itemsRef.current.filter(
-					(item) =>
-						item.id !== value.queue_item_id &&
-						!(
-							item.id.startsWith(OPTIMISTIC_ITEM_PREFIX) &&
-							getQueueMessages([item]).some((message) => startedIds.has(message.id))
-						),
-				),
-			);
-			return value.queue_item ?? localItem;
+	/** Retire only the local turn whose receipt matches the server queue item. */
+	const retireItem = useCallback(
+		(
+			{ queue_item_id: queueId, message_ids = [] }: ChatInputTerminalValue,
+			outcome: LocalInputOutcome,
+			startedMessages: Msg[] = [],
+		) => {
+			const rows = new Set(queueId ? [queueId] : []);
+			const provisional = new Set<Msg>();
+			for (const [id, local] of localInputs.current) {
+				if (queueId && !local.queueId) {
+					// An edit can replace every message ID before our POST returns.
+					const replaced = message_ids.length > 0 && !message_ids.includes(id);
+					const started = startedMessages.find((msg) => msg.id === id);
+					if (started || !local.outcomes.has(queueId) || outcome === 'removed') {
+						local.outcomes.set(queueId, started ?? (replaced ? 'removed' : outcome));
+					}
+					continue;
+				}
+				if (queueId ? queueId !== local.queueId : !message_ids.includes(id)) continue;
+				localInputs.current.delete(id);
+				rows.add(local.optimisticId);
+				if (local.queueId) rows.add(local.queueId);
+				if (conversationMessageIdsRef.current.has(id)) provisional.add(local.message);
+			}
+			updateItems(itemsRef.current.filter((item) => !rows.has(item.id)));
+			if (provisional.size) {
+				updateConversationMessageIds((ids) => {
+					for (const msg of provisional) ids.delete(msg.id);
+				});
+			}
+			return provisional;
 		},
 		[updateConversationMessageIds, updateItems],
 	);
 
-	const finishItem = useCallback(
-		(value: ChatInputTerminalValue) => {
-			const terminalIds = new Set(value.message_ids ?? []);
+	const startItem = useCallback(
+		(value: ChatInputStartedValue) => {
+			const item =
+				value.queue_item ?? itemsRef.current.find((row) => row.id === value.queue_item_id);
+			const provisional = retireItem(value, 'finished', item ? getQueueMessages([item]) : []);
+			return { item, provisional };
+		},
+		[retireItem],
+	);
+
+	const acceptOptimistic = useCallback(
+		(messageId: string, queueItemId: string) => {
+			const local = localInputs.current.get(messageId);
+			if (!local || local.queueId === queueItemId) return;
+			local.queueId = queueItemId;
+			const outcome = local.outcomes.get(queueItemId);
+			local.outcomes.clear();
+			if (outcome === 'removed') return outcome;
+			if (outcome) {
+				retireItem({ queue_item_id: queueItemId, message_ids: [messageId] }, 'finished');
+				return outcome;
+			}
+			const { optimisticId } = local;
 			updateItems(
-				itemsRef.current.filter(
-					(item) =>
-						item.id !== value.queue_item_id &&
-						!getQueueMessages([item]).some((message) => terminalIds.has(message.id)),
+				itemsRef.current.map((item) =>
+					item.id === optimisticId ? { ...item, id: queueItemId } : item,
 				),
 			);
-			updateConversationMessageIds((ids) => {
-				for (const messageId of terminalIds) ids.delete(messageId);
-			});
 		},
-		[updateConversationMessageIds, updateItems],
+		[retireItem, updateItems],
 	);
 
 	const updateQueued = useCallback(
@@ -403,13 +489,16 @@ export function useChatQueue(
 		items: visibleItems,
 		visibleCount: visibleItems.filter((item) => item.state !== 'steering').length,
 		pendingCount: items.length,
+		// A queue refresh can omit a claimed input before its start event.
+		hasPendingInput: items.length > 0 || conversationMessageIds.size > 0,
 		reorderDisabled,
 		addOptimistic,
 		acceptOptimistic,
 		rollbackOptimistic,
 		applyQueueSnapshot,
+		restoreConversation,
 		startItem,
-		finishItem,
+		retireItem,
 		updateQueued,
 		deleteQueued,
 		steerQueued,

@@ -117,6 +117,7 @@ interface ChatContentProps {
 	voiceState?: RealtimeConnectionState;
 	onVoiceToggle?: () => void;
 	voiceDisabled?: boolean;
+	voiceDisabledReason?: string;
 	/** Audio media types accepted by the selected ASR model. */
 	asrInputTypes?: string[];
 	/** Transcribes one completed browser recording. */
@@ -179,6 +180,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	voiceState,
 	onVoiceToggle,
 	voiceDisabled,
+	voiceDisabledReason,
 	asrInputTypes,
 	onTranscribe,
 	asrRealtime,
@@ -475,6 +477,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						voiceState={voiceState}
 						onVoiceToggle={onVoiceToggle}
 						voiceDisabled={voiceDisabled}
+						voiceDisabledReason={voiceDisabledReason}
 						asrInputTypes={asrInputTypes}
 						onTranscribe={onTranscribe}
 						asrRealtime={asrRealtime}

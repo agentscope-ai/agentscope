@@ -16,6 +16,7 @@ from ..event import (
     TextBlockEndEvent,
 )
 from ..tts import TTSModelBase, TTSResponse
+from ..message import Msg
 
 if TYPE_CHECKING:
     from ..agent import Agent
@@ -42,8 +43,9 @@ class TTSMiddleware(MiddlewareBase):
 
     Provider failures propagate by default. With ``continue_on_error=True``,
     they disable speech for this reply and emit ``CustomEvent("tts_error")``
-    with a reply ID and failure stage, while text continues. Upstream errors,
-    injected consumer errors and task cancellation always propagate.
+    with a failure stage and input message IDs before reply start, or the
+    reply ID afterwards, while text continues. Upstream errors, injected
+    consumer errors and task cancellation always propagate.
     """
 
     def __init__(
@@ -90,7 +92,20 @@ class TTSMiddleware(MiddlewareBase):
 
         try:
             if not enabled:
-                yield self._failure_event(agent, "initialization")
+                inputs = input_kwargs.get("inputs")
+                messages = inputs if isinstance(inputs, list) else [inputs]
+                yield CustomEvent(
+                    name="tts_error",
+                    value={
+                        "stage": "initialization",
+                        "message_ids": [
+                            msg.id for msg in messages if isinstance(msg, Msg)
+                        ],
+                        # Continuations already carry the target reply;
+                        # new inputs must never inherit the previous one.
+                        "reply_id": getattr(inputs, "reply_id", None),
+                    },
+                )
             async for evt in next_handler(**input_kwargs):
                 yield evt
                 if not enabled:

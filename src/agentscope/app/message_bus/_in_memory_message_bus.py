@@ -25,7 +25,11 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from typing import Callable, Self
 
-from ._base import MessageBus
+from ._base import (
+    MessageBus,
+    RegisterSubscriptionBarrier,
+    _stream_cursor_precedes,
+)
 
 
 class InMemoryMessageBus(
@@ -323,6 +327,8 @@ class InMemoryMessageBus(
             del log[: len(log) - max_len]
         return entry_id
 
+    log_cursor_precedes = staticmethod(_stream_cursor_precedes)
+
     async def log_read(
         self,
         key: str,
@@ -415,6 +421,7 @@ class InMemoryMessageBus(
         key: str,
         *,
         on_ready: Callable[[], None] | None = None,
+        on_barrier: RegisterSubscriptionBarrier | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Yield broadcast payloads for ``key`` until the consumer
         closes the generator.
@@ -425,6 +432,8 @@ class InMemoryMessageBus(
             on_ready (`Callable[[], None] | None`, optional):
                 Called once after the subscription is established and
                 before any payload is yielded.
+            on_barrier (optional):
+                Register an ordered flush operation for this subscription.
 
         Yields:
             `dict`:
@@ -432,7 +441,17 @@ class InMemoryMessageBus(
         """
         q: asyncio.Queue[dict | None] = asyncio.Queue()
         self._subscribers[key].add(q)
+        marker: dict = {}
+        flushed = asyncio.Event()
+
+        async def flush() -> None:
+            flushed.clear()
+            q.put_nowait(marker)
+            await flushed.wait()
+
         try:
+            if on_barrier is not None:
+                on_barrier(flush)
             if on_ready is not None:
                 on_ready()
             while True:
@@ -440,6 +459,9 @@ class InMemoryMessageBus(
                 if item is None:
                     # Sentinel from aclose() — shut down gracefully.
                     break
+                if item is marker:
+                    flushed.set()
+                    continue
                 yield item
         finally:
             self._subscribers[key].discard(q)
