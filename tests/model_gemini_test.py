@@ -1915,21 +1915,69 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         """A fixed-length tuple's `prefixItems` becomes an `items` schema."""
 
         class Args(BaseModel):
-            """Tool parameters containing a fixed-length tuple."""
+            """A fixed-length pair."""
 
             pair: tuple[int, str]
 
         result = _sanitize_schema_for_gemini(
             _flatten_json_schema(Args.model_json_schema()),
         )
-        pair = result["properties"]["pair"]
-        self.assertNotIn("prefixItems", pair)
         self.assertEqual(
-            pair["items"],
-            {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+            result,
+            {
+                "type": "object",
+                "title": "Args",
+                "description": "A fixed-length pair.",
+                "properties": {
+                    "pair": {
+                        "type": "array",
+                        "title": "Pair",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                            "anyOf": [{"type": "integer"}, {"type": "string"}],
+                        },
+                    },
+                },
+                "required": ["pair"],
+            },
         )
-        self.assertEqual((pair["minItems"], pair["maxItems"]), (2, 2))
         FunctionDeclaration(name="pair", parameters=result)
+
+    def test_sanitize_prefix_items_tail(self) -> None:
+        """Preserve the tail and length constraints of tuple schemas."""
+        integer = {"type": "integer"}
+        string = {"type": "string"}
+        union = {"anyOf": [integer, string]}
+        cases = [
+            ({"items": False}, {"maxItems": 1, "items": integer}),
+            (
+                {"items": False, "maxItems": 0},
+                {"maxItems": 0, "items": integer},
+            ),
+            (
+                {"items": False, "maxItems": 2},
+                {"maxItems": 1, "items": integer},
+            ),
+            ({"items": True}, {"items": {}}),
+            ({"items": {}}, {"items": {}}),
+            ({}, {"items": {}}),
+            ({"maxItems": 2}, {"maxItems": 2, "items": {}}),
+            ({"items": string}, {"items": union}),
+        ]
+        for tail, expected in cases:
+            with self.subTest(tail=tail):
+                result = _sanitize_schema_for_gemini(
+                    {"type": "array", "prefixItems": [integer], **tail},
+                )
+                self.assertEqual(result, {"type": "array", **expected})
+                FunctionDeclaration(
+                    name="series",
+                    parameters={
+                        "type": "object",
+                        "properties": {"values": result},
+                    },
+                )
 
     def test_sanitize_converts_const_to_enum(self) -> None:
         """`const` is converted into a single-value `enum` for Gemini."""

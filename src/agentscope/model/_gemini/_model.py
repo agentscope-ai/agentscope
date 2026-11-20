@@ -118,9 +118,8 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     - ``oneOf``: converted to ``anyOf`` for discriminated unions.
       An existing ``anyOf`` raises ``ValueError`` rather than dropping
       conjunctive constraints.
-    - ``prefixItems``: converted to an ``items`` schema that accepts any of
-      the positional element schemas, keeping the tuple's ``minItems`` and
-      ``maxItems`` bounds. Gemini has no ``prefixItems``.
+    - ``prefixItems``: converted to a single ``items`` schema that admits
+      both positional elements and any permitted trailing elements.
     - ``type`` arrays containing ``"null"``: simplified to the single
       non-null type or converted to ``anyOf`` for multiple non-null
       types, matching nullable JSON Schema emitted by Pydantic and
@@ -207,25 +206,28 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
             )
         schema["anyOf"] = schema.pop("oneOf")
 
-    # Gemini has no `prefixItems`; Pydantic emits it for fixed-length
-    # tuples together with `minItems`/`maxItems`. Keep the length bounds and
-    # accept any of the positional element schemas in `items`; Pydantic still
-    # validates the exact positions of the tool arguments.
+    # Gemini uses one item schema for every position in the array.
     prefix_items = schema.pop("prefixItems", None)
     if isinstance(prefix_items, list) and prefix_items:
-        element_schemas = [
-            _sanitize_schema_for_gemini(item) for item in prefix_items
-        ]
-        existing_items = schema.pop("items", None)
-        if existing_items is not None:
-            element_schemas.append(
-                _sanitize_schema_for_gemini(existing_items),
+        prefix_length = len(prefix_items)
+        tail = schema.get("items", True)
+        max_items = schema.get("maxItems", float("inf"))
+        if tail is False:
+            max_items = min(max_items, prefix_length)
+            schema["maxItems"] = max_items
+
+        has_tail = max_items > prefix_length
+        if has_tail and (tail is True or tail == {}):
+            # A positional restriction cannot constrain an unrestricted tail.
+            schema["items"] = {}
+        else:
+            candidates = prefix_items + [tail] if has_tail else prefix_items
+            elements = [
+                _sanitize_schema_for_gemini(item) for item in candidates
+            ]
+            schema["items"] = (
+                elements[0] if len(elements) == 1 else {"anyOf": elements}
             )
-        schema["items"] = (
-            element_schemas[0]
-            if len(element_schemas) == 1
-            else {"anyOf": element_schemas}
-        )
 
     # Simplify anyOf that only differs by a null type, e.g. Optional[X]
     if "anyOf" in schema and isinstance(schema["anyOf"], list):
