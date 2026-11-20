@@ -35,7 +35,11 @@ from agentscope.message import (
 from agentscope.message._base import Usage
 from agentscope.model import GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
-from agentscope._utils._common import _flatten_json_schema
+from agentscope._utils._common import (
+    _flatten_json_schema,
+    _has_definition_block,
+    _points_into_definition_block,
+)
 from agentscope.credential import GeminiCredential
 from agentscope.tool import FunctionTool, ToolChoice
 
@@ -2470,3 +2474,227 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         identity)."""
         schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
         self.assertIs(_flatten_json_schema(schema), schema)
+
+
+class TestGeminiSchemaUtilsNestedDefs(unittest.TestCase):
+    """Local pointers that reach into a nested ``$defs`` block."""
+
+    def test_flatten_resolves_pointer_into_a_nested_defs_block(self) -> None:
+        """A `$ref` below a property is inlined instead of left dangling.
+
+        The walk drops every `$defs` block it meets, so a pointer such as
+        `#/properties/conf/$defs/Entry` used to survive with its target gone.
+        """
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Root": {"type": "string"}},
+                    "properties": {
+                        "conf": {
+                            "$defs": {
+                                "Entry": {
+                                    "type": "object",
+                                    "properties": {"k": {"type": "string"}},
+                                },
+                            },
+                            "type": "object",
+                        },
+                        "e": {"$ref": "#/properties/conf/$defs/Entry"},
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "conf": {"type": "object"},
+                    "e": {
+                        "type": "object",
+                        "properties": {"k": {"type": "string"}},
+                    },
+                },
+            },
+        )
+
+    def test_flatten_nested_defs_without_a_root_block(self) -> None:
+        """A schema whose only definitions are nested is flattened too."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "properties": {
+                        "conf": {
+                            "$defs": {"Entry": {"type": "integer"}},
+                            "type": "object",
+                        },
+                        "e": {"$ref": "#/properties/conf/$defs/Entry"},
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "conf": {"type": "object"},
+                    "e": {"type": "integer"},
+                },
+            },
+        )
+
+    def test_flatten_resolves_pointer_escapes_and_array_indexes(self) -> None:
+        """`~1` / `~0` escapes and numeric tokens resolve like any pointer."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"a/b": {"type": "string"}},
+                    "anyOf": [{"type": "null"}, {"$ref": "#/$defs/a~1b"}],
+                    "properties": {"x": {"$ref": "#/$defs/a~1b"}},
+                },
+            ),
+            {
+                "anyOf": [{"type": "null"}, {"type": "string"}],
+                "properties": {"x": {"type": "string"}},
+            },
+        )
+
+    def test_flatten_leaves_an_unresolvable_pointer_alone(self) -> None:
+        """A pointer that does not resolve keeps the node as written."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Real": {"type": "string"}},
+                    "properties": {"x": {"$ref": "#/$defs/Missing"}},
+                },
+            ),
+            {"properties": {"x": {"$ref": "#/$defs/Missing"}}},
+        )
+
+    def test_flatten_removes_a_discriminator_nested_in_a_property(
+        self,
+    ) -> None:
+        """A mapping into a nested definition block goes with that block."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "properties": {
+                        "conf": {
+                            "$defs": {"Entry": {"type": "object"}},
+                            "type": "object",
+                        },
+                        "e": {"$ref": "#/properties/conf/$defs/Entry"},
+                    },
+                    "discriminator": {
+                        "propertyName": "kind",
+                        "mapping": {"a": "#/properties/conf/$defs/Entry"},
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "conf": {"type": "object"},
+                    "e": {"type": "object"},
+                },
+            },
+        )
+
+    def test_flatten_keeps_a_mapping_into_a_property_named_definitions(
+        self,
+    ) -> None:
+        """A property called `definitions` is a name, not a removed block.
+
+        The root block makes the walk run; the property itself survives it, so
+        its mapping still resolves and the discriminator has to stay. Reading
+        the pointer token as a keyword used to delete it.
+        """
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Ring": {"type": "object"}},
+                    "properties": {
+                        "definitions": {
+                            "type": "object",
+                            "properties": {"a": {"type": "string"}},
+                        },
+                        "r": {"$ref": "#/$defs/Ring"},
+                    },
+                    "discriminator": {
+                        "propertyName": "kind",
+                        "mapping": {
+                            "a": "#/properties/definitions/properties/a",
+                        },
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "definitions": {
+                        "type": "object",
+                        "properties": {"a": {"type": "string"}},
+                    },
+                    "r": {"type": "object"},
+                },
+                "discriminator": {
+                    "propertyName": "kind",
+                    "mapping": {"a": "#/properties/definitions/properties/a"},
+                },
+            },
+        )
+
+    def test_flatten_keeps_a_mapping_into_a_surviving_node(self) -> None:
+        """The kept arm: a target the walk leaves alone keeps its mapping.
+
+        The root block makes the walk run; `#/properties/x` is outside any
+        block and survives, so the guard has to look at *where* the pointer
+        points, not just whether it resolves.
+        """
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Ring": {"type": "object"}},
+                    "properties": {
+                        "x": {"type": "string"},
+                        "r": {"$ref": "#/$defs/Ring"},
+                    },
+                    "discriminator": {
+                        "propertyName": "kind",
+                        "mapping": {"a": "#/properties/x"},
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "x": {"type": "string"},
+                    "r": {"type": "object"},
+                },
+                "discriminator": {
+                    "propertyName": "kind",
+                    "mapping": {"a": "#/properties/x"},
+                },
+            },
+        )
+
+    def test_definition_block_matchers_ignore_schema_map_names(self) -> None:
+        """Both matchers read `definitions` under a schema map as a name."""
+        self.assertFalse(
+            _has_definition_block(
+                {"properties": {"definitions": {"type": "object"}}},
+            ),
+        )
+        self.assertFalse(
+            _points_into_definition_block(
+                "#/properties/definitions/properties/a",
+            ),
+        )
+        self.assertFalse(
+            _points_into_definition_block("#/properties/$defs/properties/a"),
+        )
+        # A block nested inside that property is still a block.
+        self.assertTrue(
+            _has_definition_block(
+                {
+                    "properties": {
+                        "conf": {"$defs": {"Entry": {"type": "object"}}},
+                    },
+                },
+            ),
+        )
+        self.assertTrue(
+            _points_into_definition_block("#/properties/conf/$defs/Entry"),
+        )
+        self.assertTrue(_points_into_definition_block("#/$defs/Ring"))
+        self.assertTrue(_points_into_definition_block("#/definitions/Ghost"))
