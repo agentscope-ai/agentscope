@@ -52,6 +52,7 @@ def _mock_completion(
     text: Any = None,
     tool_calls: Any = None,
     reasoning: Any = None,
+    audio: dict | None = None,
     response_id: str = "req-1",
 ) -> MagicMock:
     """Build a mock non-streaming ChatCompletion response."""
@@ -59,6 +60,7 @@ def _mock_completion(
     msg.content = text
     msg.reasoning_content = reasoning
     msg.tool_calls = None
+    msg.audio = audio
 
     if tool_calls:
         tc_mocks = []
@@ -222,6 +224,47 @@ class TestDashScopeNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
+
+    async def test_audio_response(self) -> None:
+        """A non-stream omni reply keeps its transcript and its audio.
+
+        An omni model with ``voice`` set returns the spoken text in
+        ``message.audio.transcript`` and the PCM in ``message.audio.data``
+        while ``message.content`` stays ``None``; both used to be dropped,
+        leaving the agent with an empty reply.
+        """
+        pcm = b"" * 8
+        mock_create = AsyncMock(
+            return_value=_mock_completion(
+                text=None,
+                audio={
+                    "data": base64.b64encode(pcm).decode(),
+                    "transcript": "Hello there.",
+                },
+            ),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        result = await self.model([])
+
+        self.assertTrue(result.is_last)
+        blocks = result.content
+        self.assertEqual(len(blocks), 2)
+        self.assertIsInstance(blocks[0], TextBlock)
+        self.assertEqual(blocks[0].text, "Hello there.")
+
+        audio_block = blocks[1]
+        self.assertIsInstance(audio_block, DataBlock)
+        self.assertEqual(audio_block.source.media_type, "audio/wav")
+        wav_bytes = base64.b64decode(audio_block.source.data)
+        self.assertEqual(wav_bytes[:4], b"RIFF")
+        self.assertEqual(wav_bytes[8:12], b"WAVE")
+        # A complete buffer declares real chunk sizes, so the ``wave``
+        # module can read it end-to-end.
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wav:
+            self.assertEqual(wav.getframerate(), 24000)
+            self.assertEqual(wav.getnframes(), len(pcm) // 2)
+            self.assertEqual(wav.readframes(wav.getnframes()), pcm)
 
     async def test_thinking_response(
         self,

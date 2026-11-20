@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator, List, Literal, Type, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from ..._utils._audio import _build_streaming_wav_header
+from ..._utils._audio import _build_streaming_wav_header, _build_wav_header
 from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._content_block import (
@@ -21,6 +21,8 @@ from ...credential import DashScopeCredential
 from ...exception import ContentBlockedPhase
 from ...formatter import FormatterBase, DashScopeChatFormatter
 from ...message import (
+    Base64Source,
+    DataBlock,
     Msg,
     TextBlock,
     ThinkingBlock,
@@ -486,7 +488,9 @@ class DashScopeChatModel(ChatModelBase):
             `ChatResponse`:
                 A single ``ChatResponse`` with ``is_last=True``.
         """
-        content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+        content_blocks: List[
+            TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
+        ] = []
 
         if response.choices:
             choice = response.choices[0]
@@ -504,6 +508,37 @@ class DashScopeChatModel(ChatModelBase):
 
             if choice.message.content:
                 content_blocks.append(TextBlock(text=choice.message.content))
+
+            # An omni model with ``voice`` set answers through
+            # ``message.audio``: the spoken text is in ``transcript`` and
+            # ``content`` is usually ``None``, so without this the whole
+            # reply is dropped. The request forces ``format: pcm16`` (see
+            # the ``audio`` request block), i.e. headerless raw PCM; wrap
+            # it as a complete WAV, like the streaming path and the
+            # OpenAI Chat model do.
+            audio_obj = getattr(choice.message, "audio", None)
+            if audio_obj is not None:
+                if isinstance(audio_obj, dict):
+                    audio_data = audio_obj.get("data", "") or ""
+                    audio_transcript = audio_obj.get("transcript", "") or ""
+                else:
+                    audio_data = getattr(audio_obj, "data", "") or ""
+                    audio_transcript = (
+                        getattr(audio_obj, "transcript", "") or ""
+                    )
+                if not choice.message.content and audio_transcript:
+                    content_blocks.append(TextBlock(text=audio_transcript))
+                if audio_data:
+                    payload = base64.b64decode(audio_data)
+                    payload = _build_wav_header(len(payload)) + payload
+                    content_blocks.append(
+                        DataBlock(
+                            source=Base64Source(
+                                data=base64.b64encode(payload).decode("ascii"),
+                                media_type="audio/wav",
+                            ),
+                        ),
+                    )
 
             for tool_call in choice.message.tool_calls or []:
                 content_blocks.append(
