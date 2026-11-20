@@ -4,6 +4,7 @@
 import os
 import tempfile
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.embedding import FileEmbeddingCache
 
@@ -202,6 +203,33 @@ class FileEmbeddingCacheEvictionTest(IsolatedAsyncioTestCase):
             await cache.store(_vectors(10), "after")
 
             self.assertEqual(await cache.retrieve("after"), _vectors(10))
+
+    async def test_size_eviction_scans_cache_directory_once(self) -> None:
+        """Removing several old entries does not rescan the directory."""
+        with tempfile.TemporaryDirectory() as cache_dir:
+            cache = FileEmbeddingCache(cache_dir=cache_dir, max_cache_size=1)
+            for index in range(6):
+                identifier = f"old-{index}"
+                await cache.store(_vectors(10), identifier)
+                path = os.path.join(
+                    cache_dir,
+                    FileEmbeddingCache._get_filename(identifier),
+                )
+                os.utime(path, (1000 + index, 1000 + index))
+
+            with (
+                patch("os.scandir", wraps=os.scandir) as scan,
+                patch("os.listdir", wraps=os.listdir) as listdir,
+            ):
+                await cache.store(_vectors(60), "new")
+
+            scan.assert_called_once_with(cache_dir)
+            listdir.assert_not_called()
+            self.assertIsNone(await cache.retrieve("old-0"))
+            self.assertIsNone(await cache.retrieve("old-1"))
+            self.assertIsNotNone(await cache.retrieve("old-5"))
+            self.assertEqual(await cache.retrieve("new"), _vectors(60))
+            self.assertLessEqual(cache._get_cache_size(), 1)
 
     async def test_size_limit_still_evicts_the_oldest_entries(self) -> None:
         """Fitting a new entry keeps evicting oldest-first, newest intact."""
