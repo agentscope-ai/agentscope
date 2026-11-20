@@ -112,27 +112,8 @@ async def list_mcp_cards(
     return await hub.list_mcps(user_id, q=q, cursor=cursor, limit=limit)
 
 
-@hub_router.get("/mcp/{hub_id}/cards/{card_id}")
-async def get_mcp_card(
-    hub_id: str,
-    card_id: str,
-    *,
-    user_id: str = Depends(get_current_user_id),
-    hubs: dict[str, MCPHubBase] = Depends(get_mcp_hubs),
-) -> MCPCard:
-    """Return one MCP card, including the inputs the user must fill."""
-    hub = _pick_hub(hubs, hub_id)
-    try:
-        return await hub.get_mcp(user_id, card_id)
-    except KeyError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Hub {hub_id!r} has no MCP {card_id!r}.",
-        ) from e
-
-
 @hub_router.post(
-    "/mcp/{hub_id}/cards/{card_id}/install",
+    "/mcp/{hub_id}/cards/{card_id:path}/install",
     status_code=status.HTTP_201_CREATED,
 )
 async def install_mcp(
@@ -201,6 +182,27 @@ async def install_mcp(
         ) from e
 
     return MCPView.from_record(record)
+
+
+# Keep this catch-all path route after the more specific ``/install``
+# route, so adding more card actions cannot shadow it.
+@hub_router.get("/mcp/{hub_id}/cards/{card_id:path}")
+async def get_mcp_card(
+    hub_id: str,
+    card_id: str,
+    *,
+    user_id: str = Depends(get_current_user_id),
+    hubs: dict[str, MCPHubBase] = Depends(get_mcp_hubs),
+) -> MCPCard:
+    """Return one MCP card, including the inputs the user must fill."""
+    hub = _pick_hub(hubs, hub_id)
+    try:
+        return await hub.get_mcp(user_id, card_id)
+    except KeyError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Hub {hub_id!r} has no MCP {card_id!r}.",
+        ) from e
 
 
 # ---------------------------------------------------------------------------
