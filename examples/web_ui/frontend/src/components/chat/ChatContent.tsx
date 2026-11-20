@@ -198,7 +198,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	const { t, i18n } = useTranslation();
 	const { deferredItems, steeringMessages } = useMemo(() => {
 		const deferred: ChatQueueItem[] = [];
-		const steering: Array<{ id: string; content: ContentBlock[] }> = [];
+		const steering: Pick<Msg, 'id' | 'content' | 'created_at'>[] = [];
 		for (const item of queuedItems) {
 			if (item.state !== 'steering') {
 				deferred.push(item);
@@ -209,6 +209,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				steering.push({
 					id: `${item.id}:${message.id}`,
 					content: message.content,
+					created_at: message.created_at,
 				});
 			}
 		}
@@ -325,6 +326,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 									>
 										<SteeringMessageBubble
 											blocks={message.content}
+											createdAt={message.created_at}
 											status="steering"
 										/>
 									</MessageScrollerItem>
