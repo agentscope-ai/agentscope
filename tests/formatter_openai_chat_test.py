@@ -758,7 +758,6 @@ class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
             },
         )
 
-    @patch("agentscope.formatter._formatter_base.requests.get")
     async def test_chat_formatter_unsupported_audio_skipped(
         self,
     ) -> None:
