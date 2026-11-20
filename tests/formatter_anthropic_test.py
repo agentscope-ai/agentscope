@@ -1563,3 +1563,140 @@ class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
             ],
             res,
         )
+
+    async def test_unsupported_audio_only_message_is_kept(self) -> None:
+        """An audio-only user message must not vanish (#3105).
+
+        AnthropicChatFormatter cannot send audio; instead of dropping the
+        whole turn it should emit the same text placeholder that the
+        tool_result branch already uses.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            media_type="audio/wav",
+                            data="aGVsbG8=",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "[audio file returned, type: audio/wav]",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_unsupported_audio_in_mixed_message(self) -> None:
+        """Unsupported media in a mixed message leaves a placeholder."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Listen to this:"),
+                    DataBlock(
+                        source=Base64Source(
+                            media_type="audio/wav",
+                            data="aGVsbG8=",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Listen to this:"},
+                        {
+                            "type": "text",
+                            "text": "[audio file returned, type: audio/wav]",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_unsupported_audio_in_hint(self) -> None:
+        """Unsupported media inside a HintBlock keeps the hint visible."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    HintBlock(
+                        hint=[
+                            DataBlock(
+                                source=Base64Source(
+                                    media_type="audio/wav",
+                                    data="aGVsbG8=",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "[audio file returned, type: audio/wav]",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_unsupported_audio_url_placeholder(self) -> None:
+        """A URL-sourced unsupported block uses the URL wording."""
+        fmt = AnthropicChatFormatter()
+        audio_url = URLSource(
+            url="https://example.com/clip.wav",
+            media_type="audio/wav",
+        )
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[DataBlock(source=audio_url)],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "[audio file returned, "
+                            f"URL: {audio_url.url}]",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
