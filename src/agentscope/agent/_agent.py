@@ -378,7 +378,7 @@ class Agent:
         self,
         context_config: ContextConfig | None = None,
         instructions: HintBlock | None = None,
-    ) -> None:
+    ) -> ChatUsage | None:
         """Compress the agent's context if the token count exceeds the
         threshold.
 
@@ -390,9 +390,14 @@ class Agent:
             instructions (`HintBlock | None`, optional):
                 Optional hints or instructions injected into the compression
                 context to guide the summarization behavior.
+
+        Returns:
+            `ChatUsage | None`:
+                The usage observed by the compression model call, or ``None``
+                when no model call happened or a middleware dropped the value.
         """
         if not self._compress_context_middlewares:
-            await self._compress_context_impl(
+            return await self._compress_context_impl(
                 context_config=context_config,
                 instructions=instructions,
             )
@@ -402,10 +407,10 @@ class Agent:
                 index: int = 0,
                 context_config: ContextConfig | None = context_config,
                 instructions: HintBlock | None = instructions,
-            ) -> None:
+            ) -> ChatUsage | None:
                 """Execute the compress_context middleware chain."""
                 if index >= len(self._compress_context_middlewares):
-                    await self._compress_context_impl(
+                    return await self._compress_context_impl(
                         context_config=context_config,
                         instructions=instructions,
                     )
@@ -416,19 +421,19 @@ class Agent:
                         "instructions": instructions,
                     }
 
-                    async def next_handler(**kwargs: Any) -> None:
-                        await execute_chain(
+                    async def next_handler(**kwargs: Any) -> ChatUsage | None:
+                        return await execute_chain(
                             index + 1,
                             **{**input_kwargs, **kwargs},
                         )
 
-                    await mw.on_compress_context(
+                    return await mw.on_compress_context(
                         agent=self,
                         input_kwargs=input_kwargs,
                         next_handler=next_handler,
                     )
 
-            await execute_chain()
+            return await execute_chain()
 
     async def _compress_context_tool(self) -> ToolChunk:
         """Compress the older context into a continuation summary, while
@@ -486,7 +491,7 @@ class Agent:
         self,
         context_config: ContextConfig | None = None,
         instructions: HintBlock | None = None,
-    ) -> None:
+    ) -> ChatUsage | None:
         """Compress the agent's context if the token count exceeds the
         threshold.
 
@@ -498,6 +503,12 @@ class Agent:
             instructions (`HintBlock | None`, optional):
                 Optional hints or instructions injected into the compression
                 context to guide the summarization behavior.
+
+        Returns:
+            `ChatUsage | None`:
+                The usage of the compression model call, or ``None`` when no
+                model call happened (context below the threshold, or the
+                summary failed and truncation was used instead).
         """
         cfg: ContextConfig = context_config or self.context_config
 
@@ -512,7 +523,7 @@ class Agent:
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
         if estimated_tokens < threshold:
-            return
+            return None
 
         logger.info(
             "[AGENT %s]: Current token count %d exceeds the threshold %d, "
@@ -763,9 +774,8 @@ class Agent:
                 assert reply is not None
                 reply.usage = current_reply_usage
 
-            # The compression call is not covered by the model call events,
-            # so record its cost in the context to keep it in the token
-            # accounting
+            # Record the compression usage in the context as well, so the
+            # token accounting stays consistent with the emitted event.
             if res is not None and res.usage is not None:
                 if not self.state.context:
                     # The whole context is compressed, so carry the cost by an
@@ -798,6 +808,8 @@ class Agent:
         except asyncio.CancelledError:
             await apply_task
             raise
+
+        return res.usage if res is not None else None
 
     async def _limit_context_images(self, cfg: ContextConfig) -> None:
         """Limit the number of images in the context according to
@@ -1208,8 +1220,22 @@ class Agent:
                         if hint:
                             self.state.append_context(self.name, [hint])
 
-                        # Compressed the memory if needed before reasoning
-                        await self.compress_context()
+                        # Compress the memory if needed before reasoning and
+                        # surface the compression model call as an event.
+                        comp_usage = await self.compress_context()
+                        if comp_usage is not None:
+                            yield ModelCallEndEvent(
+                                reply_id=self.state.reply_id,
+                                input_tokens=comp_usage.input_tokens or 0,
+                                output_tokens=comp_usage.output_tokens or 0,
+                                cache_input_tokens=(
+                                    comp_usage.cache_input_tokens or 0
+                                ),
+                                cache_creation_input_tokens=(
+                                    comp_usage.cache_creation_input_tokens or 0
+                                ),
+                                finished_reason=FinishedReason.COMPLETED,
+                            )
 
                         # Inject runtime state if needed before reasoning
                         async for evt in self._inject_runtime_state():
