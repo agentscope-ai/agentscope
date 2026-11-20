@@ -158,7 +158,7 @@ export class PipelineVoiceSession {
 			}
 			this.stream = stream;
 			stream.getAudioTracks().forEach((track) => {
-				track.onended = () => this.fail(new Error('Microphone disconnected.'));
+				track.onended = () => this.fail(new Error('Microphone disconnected.'), false);
 			});
 			const { MicVAD } = await import('@ricky0123/vad-web');
 			if (this.stopped) return;

@@ -100,24 +100,58 @@ export function useChatQueue(
 		[updateItems],
 	);
 
-	const refreshQueue = useCallback(async () => {
-		if (!agentId || !sessionId || activeSessionRef.current !== session) return;
-		const requestId = ++refreshSequenceRef.current;
-		const snapshotVersion = snapshotVersionRef.current;
-		try {
-			const response = await chatApi.queue(agentId, sessionId, true);
-			if (
-				activeSessionRef.current !== session ||
-				requestId !== refreshSequenceRef.current ||
-				snapshotVersion !== snapshotVersionRef.current
-			) {
-				return;
+	const refreshQueue = useCallback(
+		async (signal?: AbortSignal) => {
+			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
+			const requestId = ++refreshSequenceRef.current;
+			const snapshotVersion = snapshotVersionRef.current;
+			try {
+				const response = await chatApi.queue(agentId, sessionId, true, {
+					signal,
+					timeoutMs: 15_000,
+				});
+				if (
+					signal?.aborted ||
+					activeSessionRef.current !== session ||
+					requestId !== refreshSequenceRef.current ||
+					snapshotVersion !== snapshotVersionRef.current
+				) {
+					return;
+				}
+				applyQueueSnapshot(response.items);
+			} catch (error) {
+				if (signal && !signal.aborted) throw error;
+				// Focus, reconnect, or the next interval retries transient failures.
 			}
-			applyQueueSnapshot(response.items);
-		} catch {
-			// Focus, reconnect, or the next interval retries transient failures.
-		}
-	}, [agentId, sessionId, session, applyQueueSnapshot]);
+		},
+		[agentId, sessionId, session, applyQueueSnapshot],
+	);
+
+	/** Keep provisional bubbles for inputs still in flight or in the restored queue. */
+	const restoreConversation = useCallback(
+		async (history: Msg[], signal: AbortSignal) => {
+			await refreshQueue(signal);
+			if (signal.aborted) return history;
+			const saved = new Set(history.map((msg) => msg.id));
+			const pending: Msg[] = [];
+			const retired = new Set<string>();
+			for (const [id, local] of localInputs.current) {
+				const row = itemsRef.current.find((item) => item.id === local.queueId);
+				const stillQueued = row && getQueueMessages([row]).some((msg) => msg.id === id);
+				if (saved.has(id) || (local.queueId && !stillQueued)) {
+					localInputs.current.delete(id);
+					retired.add(local.optimisticId);
+				} else if (conversationMessageIdsRef.current.has(id)) pending.push(local.message);
+			}
+			if (retired.size) updateItems(itemsRef.current.filter((item) => !retired.has(item.id)));
+			updateConversationMessageIds((ids) => {
+				ids.clear();
+				for (const msg of pending) ids.add(msg.id);
+			});
+			return [...history, ...pending];
+		},
+		[refreshQueue, updateConversationMessageIds, updateItems],
+	);
 
 	const applyMutationSnapshot = useCallback(
 		(serverItems: ChatQueueItem[], snapshotVersion: number) => {
@@ -196,13 +230,14 @@ export function useChatQueue(
 		) => {
 			const rows = new Set(queueId ? [queueId] : []);
 			const provisional = new Set<Msg>();
-			for (const id of message_ids) {
-				const local = localInputs.current.get(id);
-				if (!local) continue;
-				if (queueId && queueId !== local.queueId) {
-					if (!local.queueId) local.outcomes.set(queueId, outcome);
+			for (const [id, local] of localInputs.current) {
+				if (queueId && !local.queueId) {
+					// An edit can replace every message ID before our POST returns.
+					const replaced = message_ids.length > 0 && !message_ids.includes(id);
+					local.outcomes.set(queueId, replaced ? 'removed' : outcome);
 					continue;
 				}
+				if (queueId ? queueId !== local.queueId : !message_ids.includes(id)) continue;
 				localInputs.current.delete(id);
 				rows.add(local.optimisticId);
 				if (local.queueId) rows.add(local.queueId);
@@ -223,8 +258,8 @@ export function useChatQueue(
 		(value: ChatInputStartedValue) => {
 			const item =
 				value.queue_item ?? itemsRef.current.find((row) => row.id === value.queue_item_id);
-			retireItem(value, 'finished');
-			return item;
+			const provisional = retireItem(value, 'finished');
+			return { item, provisional };
 		},
 		[retireItem],
 	);
@@ -436,6 +471,7 @@ export function useChatQueue(
 		acceptOptimistic,
 		rollbackOptimistic,
 		applyQueueSnapshot,
+		restoreConversation,
 		startItem,
 		retireItem,
 		updateQueued,

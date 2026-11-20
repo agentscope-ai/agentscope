@@ -1,4 +1,4 @@
-import { client, type ApiRequestOptions, type ApiScope } from './client';
+import { client, type ApiRequestOptions } from './client';
 import type {
 	AgentEvent,
 	CreateSessionRequest,
@@ -111,12 +111,21 @@ export const sessionApi = {
 			options,
 		),
 
-	messages: (sessionId: string, agentId: string, params?: { before?: string; limit?: number }) =>
-		client.get<MessagesResponse>(`/sessions/${sessionId}/messages`, {
-			agent_id: agentId,
-			...(params?.before != null && { before: params.before }),
-			...(params?.limit != null && { limit: String(params.limit) }),
-		}),
+	messages: (
+		sessionId: string,
+		agentId: string,
+		params?: { before?: string; limit?: number },
+		options?: ApiRequestOptions,
+	) =>
+		client.get<MessagesResponse>(
+			`/sessions/${sessionId}/messages`,
+			{
+				agent_id: agentId,
+				...(params?.before != null && { before: params.before }),
+				...(params?.limit != null && { limit: String(params.limit) }),
+			},
+			options,
+		),
 
 	/**
 	 * Subscribe to a session's live event stream via SSE.
@@ -141,7 +150,7 @@ export const sessionApi = {
 		signal?: AbortSignal,
 		after?: string | null,
 		onConnected?: () => void,
-		scope?: ApiScope,
+		options?: Pick<ApiRequestOptions, 'baseUrl' | 'userId' | 'silent'>,
 	): AsyncGenerator<AgentEvent> {
 		const res = await client.stream(`/sessions/${sessionId}/stream`, {
 			method: 'GET',
@@ -150,7 +159,7 @@ export const sessionApi = {
 				...(after != null && { after }),
 			},
 			signal,
-			...scope,
+			...options,
 		});
 
 		const reader = res.body!.getReader();

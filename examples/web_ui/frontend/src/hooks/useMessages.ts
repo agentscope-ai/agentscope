@@ -18,7 +18,7 @@ import { toast } from 'sonner';
 
 import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
-import type { ApiScope } from '@/api/client';
+import { ApiError, type ApiScope } from '@/api/client';
 import { useAudioManager } from '@/context/AudioContext';
 import {
 	getQueueMessages,
@@ -196,6 +196,7 @@ export function useMessages(
 		acceptOptimistic,
 		rollbackOptimistic,
 		applyQueueSnapshot,
+		restoreConversation,
 		startItem,
 		retireItem,
 		updateQueued,
@@ -250,7 +251,7 @@ export function useMessages(
 
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
-		(event: AgentEvent) => {
+		(event: AgentEvent, suppressAutoplay = false) => {
 			const voicePlayback = optionsRef.current?.onVoiceEvent?.(event) ?? false;
 			// Custom events are service-layer notifications, not agent
 			// reply content — route them to callbacks and skip appendEvent.
@@ -305,8 +306,9 @@ export function useMessages(
 					const value = custom.value as ChatInputStartedValue;
 					startingQueueRef.current = value.queue_item_id ?? null;
 					setStartingInputId(startingQueueRef.current);
-					const startedItem = startItem(value);
+					const { item: startedItem, provisional } = startItem(value);
 					if (startedItem) {
+						msgsRef.current = msgsRef.current.filter((msg) => !provisional.has(msg));
 						const existingIds = new Set(msgsRef.current.map((msg) => msg.id));
 						msgsRef.current = [
 							...msgsRef.current,
@@ -468,7 +470,12 @@ export function useMessages(
 							typeof voicePlayback === 'object' && 'autoplay' in voicePlayback
 								? voicePlayback.autoplay
 								: !voicePlayback;
-						audioManager.start(e.block_id, e.media_type, autoplay, e.reply_id);
+						audioManager.start(
+							e.block_id,
+							e.media_type,
+							suppressAutoplay ? false : autoplay,
+							e.reply_id,
+						);
 					}
 				} else if (event.type === EventType.DATA_BLOCK_DELTA) {
 					const e = event as DataBlockDeltaEvent;
@@ -530,106 +537,101 @@ export function useMessages(
 
 		const controller = new AbortController();
 		abortRef.current = controller;
-		let cancelled = false;
+		let retryTimer: ReturnType<typeof setTimeout> | undefined;
+		let retryDelay = 1000;
+		const playedBlocks = new Set<string>();
 
-		(async () => {
-			let eventCursor: string | null = null;
-			// 1. Fetch persisted history — unless this tab just created the
-			// session, in which case there is provably none.
-			if (takeFreshlyCreated(sessionId)) {
-				if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
-			} else {
-				try {
+		const connect = async (reconnecting: boolean) => {
+			if (controller.signal.aborted) return;
+			let connected = false;
+			try {
+				let eventCursor: string | null = null;
+				if (reconnecting || !takeFreshlyCreated(sessionId)) {
 					const { messages, is_running, event_cursor } = await sessionApi.messages(
 						sessionId,
 						agentId,
+						undefined,
+						{ signal: controller.signal, silent: reconnecting, timeoutMs: 15_000 },
 					);
-					if (cancelled) return;
+					if (controller.signal.aborted) return;
 					eventCursor = event_cursor;
-					msgsRef.current = messages;
-					// If a reply is in flight (running on a worker) OR any
-					// persisted msg is parked on a pending tool_call (awaiting
-					// user confirmation / external execution), initialise the
-					// phase to ``streaming`` so the interrupt button is
-					// available immediately — otherwise a fresh page load
-					// while parked leaves the UI stuck on ``idle`` with no
-					// way to abort.
-					const tail = messages[messages.length - 1];
-					const pendingHitl = getPendingHitlCalls(messages)[0];
-					if (is_running || pendingHitl) {
-						setPhase('streaming');
-						if (
-							is_running &&
-							!pendingHitl &&
-							tail?.role === 'assistant' &&
-							!tail.finished_reason
-						) {
-							currentReplyRef.current = tail;
-							setActiveReplyId(tail.id);
+					if (reconnecting) {
+						// The checkpoint can precede audio we played before disconnecting.
+						for (const msg of msgsRef.current) {
+							for (const block of msg.content) {
+								if (audioManager?.getState(block.id)) playedBlocks.add(block.id);
+							}
 						}
-						if (pendingHitl) {
-							// Prime the ref so continuation events (which
-							// arrive without a fresh REPLY_START) apply to
-							// the right msg.
-							currentReplyRef.current =
-								messages.find((message) => message.id === pendingHitl.replyId) ??
-								null;
-						}
+						audioManager?.disposeAll();
+						setSubagentHitl([]);
 					}
-					// Published synchronously, not through `scheduleUpdate`:
-					// its requestAnimationFrame batching exists for
-					// high-frequency streaming deltas, and deferring here
-					// would let `loadedKey` below clear `loading` a frame
-					// before the messages land — painting the empty-session
-					// greeting over a conversation that does have history.
-					// Both setters now land in the same React batch.
+					const restored = reconnecting
+						? await restoreConversation(messages, controller.signal)
+						: messages;
+					if (controller.signal.aborted) return;
+					msgsRef.current = restored;
+					startingQueueRef.current = null;
+					replyQueueRef.current = null;
+					setStartingInputId(null);
+					clearInterruptTimer();
+					const tail = messages[messages.length - 1];
+					const parked = getPendingHitlCalls(messages)[0];
+					const active =
+						is_running && !parked && tail?.role === 'assistant' && !tail.finished_reason
+							? tail
+							: null;
+					currentReplyRef.current = parked
+						? (messages.find((message) => message.id === parked.replyId) ?? null)
+						: active;
+					setActiveReplyId(active?.id ?? null);
+					setPhase(is_running || parked ? 'streaming' : 'idle');
 					setMsgs([...msgsRef.current]);
-				} catch (e) {
-					if (!cancelled) setError(e as Error);
-					return;
-				} finally {
-					// Marks the load done whether it succeeded or threw —
-					// an error surfaces through `error`, and leaving
-					// `loading` stuck on would hide it behind a spinner
-					// forever.
-					if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
 				}
-			}
-
-			// 2. Open SSE long connection for live events
-			try {
+				setLoadedKey(`${agentId}:${sessionId}`);
 				for await (const event of sessionApi.streamEvents(
 					sessionId,
 					agentId,
 					controller.signal,
 					eventCursor,
 					() => {
-						if (!cancelled) setStreamConnected(true);
+						if (controller.signal.aborted) return;
+						connected = true;
+						setStreamConnected(true);
+						if (reconnecting) setError(null);
 					},
+					{ silent: reconnecting },
 				)) {
-					if (cancelled) break;
-					processEvent(event);
-				}
-				if (!cancelled) {
-					setStreamConnected(false);
-					optionsRef.current?.onStreamClosed?.();
+					if (controller.signal.aborted) return;
+					retryDelay = 1000;
+					const replayed =
+						event.type === EventType.DATA_BLOCK_START &&
+						playedBlocks.delete(event.block_id);
+					processEvent(event, replayed);
 				}
 			} catch (e) {
-				if ((e as Error).name !== 'AbortError' && !cancelled) {
+				if (controller.signal.aborted) return;
+				setLoadedKey(`${agentId}:${sessionId}`);
+				setError(e as Error);
+				if (e instanceof ApiError && [401, 403, 404].includes(e.status)) return;
+			} finally {
+				if (!controller.signal.aborted && connected) {
 					setStreamConnected(false);
 					optionsRef.current?.onStreamClosed?.();
-					setError(e as Error);
 				}
 			}
-		})();
+			if (controller.signal.aborted) return;
+			retryTimer = setTimeout(() => void connect(true), retryDelay);
+			retryDelay = Math.min(retryDelay * 2, 15_000);
+		};
+		void connect(false);
 
 		return () => {
-			cancelled = true;
+			clearTimeout(retryTimer);
 			controller.abort();
 			abortRef.current = null;
 			clearInterruptTimer();
 		};
-	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
+	}, [agentId, sessionId, processEvent, restoreConversation, audioManager, clearInterruptTimer]);
 
 	/**
 	 * Send a user message. The first idle input appears in the conversation
@@ -880,6 +882,7 @@ export function useMessages(
 	/** Abort the current SSE connection. */
 	const abort = useCallback(() => {
 		abortRef.current?.abort();
+		setStreamConnected(false);
 	}, []);
 
 	/**
