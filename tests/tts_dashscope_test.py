@@ -1042,6 +1042,17 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
                 )
                 self.mock_client.commit.assert_called_once()
 
+    async def test_synthesize_with_zero_retries_attempts_once(self) -> None:
+        """Disabling retries still sends the first synthesis request."""
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(max_retries=0, stream=False) as model:
+                self._mock_synthesize_callback(model)
+                await model.synthesize(text="Hello")
+
+                self.mock_client.append_text.assert_called_once_with("Hello")
+                self.mock_client.commit.assert_called_once()
+                self.mock_client.finish.assert_called_once()
+
     async def test_synthesize_no_audio_raises_after_retries(self) -> None:
         """RuntimeError after max_retries with no audio received."""
         with patch.dict("sys.modules", self.mock_modules):
@@ -1754,6 +1765,18 @@ class TestDashScopeCosyVoiceRealtimeMode(
                 self.assertIsNone(chunks[0].content)
                 self.assertTrue(chunks[0].is_last)
                 self.mock_synthesizer.streaming_complete.assert_not_called()
+
+    async def test_synthesize_with_zero_retries_attempts_once(self) -> None:
+        """Disabling retries still sends the first synthesis request."""
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(max_retries=0, stream=False) as model:
+                self._mock_synthesize_callback(model)
+                await model.synthesize(text="Hello")
+
+                self.mock_synthesizer.streaming_call.assert_called_once_with(
+                    "Hello",
+                )
+                self.mock_synthesizer.streaming_complete.assert_called_once()
 
     async def test_synthesize_no_audio_raises_after_retries(self) -> None:
         """RuntimeError after max_retries with no audio received."""
