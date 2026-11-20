@@ -624,6 +624,10 @@ class LazyAnnotationsTest(TestCase):
             },
         )
 
+
+class CallableDocstringTest(TestCase):
+    """Test docstring precedence for callable-instance tools."""
+
     def test_callable_object_uses_call_docstring(self) -> None:
         """A callable instance describes its call via `__call__`'s
         docstring, matching what a plain function would provide."""
@@ -637,6 +641,7 @@ class LazyAnnotationsTest(TestCase):
     def test_explicit_instance_docstring_takes_precedence(self) -> None:
         """A docstring set on the instance itself wins over `__call__`'s."""
         tool_fn = DocumentedCallableTool()
+        # pylint: disable-next=attribute-defined-outside-init
         tool_fn.__doc__ = "Explicit tool doc."
         tool = FunctionTool(tool_fn)
 
@@ -658,7 +663,8 @@ class LazyAnnotationsTest(TestCase):
     def test_slotted_docstring_takes_precedence_when_assigned(self) -> None:
         """A doc slot overrides the call docs only after assignment."""
 
-        class SlottedTool:
+        # A class docstring would conflict with the __doc__ slot.
+        class SlottedTool:  # pylint: disable=missing-class-docstring
             __slots__ = ("__doc__",)
             __call__ = DocumentedCallableTool.__call__
 
@@ -670,6 +676,7 @@ class LazyAnnotationsTest(TestCase):
         )
         for doc in ("Tenant-specific search.", None):
             with self.subTest(doc=doc):
+                # pylint: disable-next=attribute-defined-outside-init
                 func.__doc__ = doc
                 tool = FunctionTool(func)
                 self.assertEqual(
