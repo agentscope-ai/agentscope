@@ -89,6 +89,38 @@ This is the subdir2 skill content.
         finally:
             shutil.rmtree(empty_dir)
 
+    async def test_subdir_skill_md_case_insensitive(self) -> None:
+        """A ``skill.md`` in any casing is found in subdirectories.
+
+        The subdirectory scan compared filenames case-sensitively, so a
+        manifest written as ``skill.md`` -- common on case-insensitive
+        filesystems such as Windows and macOS -- was silently skipped
+        while the same casing at the scan root was loaded.
+        """
+        with tempfile.TemporaryDirectory() as test_dir:
+            sub = os.path.join(test_dir, "lowercase_skill")
+            os.makedirs(sub)
+            with open(
+                os.path.join(sub, "skill.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    "---\n"
+                    "name: lowercase_skill\n"
+                    "description: A skill with a lowercase manifest\n"
+                    "---\nbody",
+                )
+
+            skills = await LocalSkillLoader(
+                test_dir,
+                scan_subdir=True,
+            ).list_skills()
+            self.assertEqual(
+                {skill.name for skill in skills},
+                {"lowercase_skill"},
+            )
+
     async def test_skill_md_with_utf8_bom(self) -> None:
         """A byte order mark does not hide the front matter.
 
