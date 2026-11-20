@@ -355,6 +355,35 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     f"Expected '{cmd}' to be non-read-only",
                 )
 
+    async def test_command_substitution_is_not_read_only(self) -> None:
+        """Commands with $() / backtick substitution must not be auto-approved.
+
+        The outer command's read-only prefix (cat, echo, ...) used to make the
+        whole command pass the read-only check while the substituted command
+        ran unchecked.
+        """
+        SUB = "$(" + "rm -rf /" + ")"
+        substitution_commands = [
+            f"cat {SUB}",
+            f"echo {SUB}",
+            f"head {SUB}",
+            f"grep foo {SUB}",
+            "echo `whoami`",
+            "cat <(ls)",
+            f"echo $(echo $(rm -rf /))",
+        ]
+        for cmd in substitution_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_variable_expansion_stays_read_only(self) -> None:
+        """Variable expansion $VAR is not command execution and stays read-only."""
+        self.assertTrue(self.parser.is_read_only_command("cat ${HOME}"))
+        self.assertTrue(self.parser.is_read_only_command("echo $PATH"))
+
     async def test_tee_writes_through_are_not_read_only(self) -> None:
         """Test commands writing through ``tee`` are not read-only."""
         writing_commands = [
