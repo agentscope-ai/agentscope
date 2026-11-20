@@ -98,7 +98,7 @@ function MessageTime({ createdAt }: { createdAt: string }) {
 	const date = new Date(createdAt);
 	if (Number.isNaN(date.getTime())) return null;
 	return (
-		<time dateTime={createdAt} className="invisible ml-auto whitespace-nowrap tabular-nums">
+		<time dateTime={createdAt} className="invisible whitespace-nowrap tabular-nums">
 			{format(date, isToday(date) ? 'HH:mm' : 'yyyy-MM-dd HH:mm')}
 		</time>
 	);
