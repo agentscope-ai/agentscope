@@ -1979,6 +1979,23 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                     },
                 )
 
+    def test_sanitize_removes_deprecated_and_pattern_properties(self) -> None:
+        """Keywords Gemini's Schema lacks are removed from tool parameters."""
+
+        class Args(BaseModel):
+            """Tool parameters using a deprecated field and a patterned map."""
+
+            old: int = Field(default=0, deprecated=True)
+            headers: dict[Annotated[str, Field(pattern=r"^x-")], str]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Args.model_json_schema()),
+        )
+        self.assertNotIn("deprecated", result["properties"]["old"])
+        self.assertNotIn("patternProperties", result["properties"]["headers"])
+        self.assertEqual(result["properties"]["headers"]["type"], "object")
+        FunctionDeclaration(name="args", parameters=result)
+
     def test_sanitize_converts_const_to_enum(self) -> None:
         """`const` is converted into a single-value `enum` for Gemini."""
         self.assertEqual(
