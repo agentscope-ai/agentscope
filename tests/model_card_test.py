@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, ValidationError
 from agentscope.app._router._schema._tts_model import ListTTSModelsResponse
 from agentscope.asr import ASRModelCard
 from agentscope.credential import OpenAICredential
+from agentscope.embedding import EmbeddingModelCard
 from agentscope.model import (
     AnthropicChatModel,
     ModelCard,
@@ -522,3 +523,91 @@ class ASRModelCardTest(TestCase):
             card = ASRModelCard.from_yaml(str(path), _Parameters)
 
         self.assertEqual(card.parameters_overrides, {})
+
+
+class EmptyParameterOverridesTest(TestCase):
+    """Verify a bare ``parameter_overrides`` key loads as no overrides.
+
+    YAML parses the bare key to ``None``, which ``config.get(key, {})``
+    does not cover, so every loader that indexes it has to normalize it.
+    """
+
+    _CHAT_YAML = (
+        "name: custom-chat\n"
+        "label: Custom chat\n"
+        "context_size: 8192\n"
+        "output_size: 1024\n"
+    )
+
+    def test_chat_card_loads_with_no_overrides(self) -> None:
+        """The chat card loads and keeps its schema untouched."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-chat.yaml"
+            path.write_text(
+                self._CHAT_YAML + "parameter_overrides:\n",
+                encoding="utf-8",
+            )
+            card = ModelCard.from_yaml(str(path), _Params)
+
+        self.assertEqual(card.parameters_overrides, {})
+        self.assertEqual(
+            list(card.parameter_schema["properties"]),
+            ["max_tokens", "temperature"],
+        )
+
+    def test_chat_card_is_listed_with_no_overrides(self) -> None:
+        """``list_models`` keeps the card instead of skipping it.
+
+        Failures are logged and skipped there, so the card used to vanish
+        from the catalogue without any error reaching the caller.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "custom-chat.yaml").write_text(
+                self._CHAT_YAML + "parameter_overrides:\n",
+                encoding="utf-8",
+            )
+            cards = OpenAIChatModel.list_models(directory)
+
+        self.assertEqual([card.name for card in cards], ["custom-chat"])
+
+    def test_embedding_card_loads_with_no_overrides(self) -> None:
+        """The embedding card loads and keeps its schema untouched."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-embedding.yaml"
+            path.write_text(
+                "name: custom-embedding\n"
+                "label: Custom embedding\n"
+                "dimensions: 1024\n"
+                "parameter_overrides:\n",
+                encoding="utf-8",
+            )
+            card = EmbeddingModelCard.from_yaml(str(path), _Params)
+
+        self.assertEqual(card.parameter_overrides, {})
+        self.assertEqual(
+            list(card.parameter_schema["properties"]),
+            ["max_tokens", "temperature"],
+        )
+
+    def test_explicit_empty_mapping_still_loads(self) -> None:
+        """``parameter_overrides: {}`` keeps working."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-chat.yaml"
+            path.write_text(
+                self._CHAT_YAML + "parameter_overrides: {}\n",
+                encoding="utf-8",
+            )
+            card = ModelCard.from_yaml(str(path), _Params)
+
+        self.assertEqual(card.parameters_overrides, {})
+
+    def test_non_mapping_still_fails_loudly(self) -> None:
+        """A boolean is a broken card, not an empty one."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-chat.yaml"
+            path.write_text(
+                self._CHAT_YAML + "parameter_overrides: false\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AttributeError):
+                ModelCard.from_yaml(str(path), _Params)
