@@ -2,6 +2,7 @@
 """Realtime voice model discovery and WebRTC negotiation endpoints."""
 
 import asyncio
+import contextlib
 from typing import Any
 from weakref import WeakValueDictionary
 
@@ -309,6 +310,21 @@ async def _create_realtime_offer(
     except HTTPException:
         await transport.close()
         await peer_connection.close()
+        raise
+    except asyncio.CancelledError:
+        # The request was cancelled mid-negotiation (client went away,
+        # proxy timeout). The runner may already own — or be waiting
+        # for — the session lock; leaving it behind would keep the
+        # session "running" forever, so every later turn and offer
+        # would be rejected with 409. Tear down everything created
+        # above, best effort, and let the cancellation propagate.
+        if runner is not None:
+            with contextlib.suppress(Exception):
+                await runner.close()
+        with contextlib.suppress(Exception):
+            await transport.close()
+        with contextlib.suppress(Exception):
+            await peer_connection.close()
         raise
     except Exception as exc:
         await transport.close()
