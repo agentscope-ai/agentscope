@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { chatApi, sessionApi } from '@/api';
 import type { ASRModelConfig } from '@/api';
 import { getBaseUrl, getUserId } from '@/api/client';
-import { useAudioManager } from '@/context/AudioContext';
+import { useAudioManager, useReplayController } from '@/context/AudioContext';
 import { useTranslation } from '@/i18n/useI18n';
 import { getPendingPipelineVoice, retainPipelineVoice } from '@/lib/pipelineVoiceCancellation';
 import {
@@ -27,6 +27,7 @@ interface Options {
 export function usePipelineVoice(options: Options) {
 	const { t } = useTranslation();
 	const audioManager = useAudioManager();
+	const replay = useReplayController();
 	const [state, setState] = useState<PipelineVoiceState>('idle');
 	const [transcript, setTranscript] = useState('');
 	const sessionRef = useRef<PipelineVoiceSession | null>(null);
@@ -107,6 +108,7 @@ export function usePipelineVoice(options: Options) {
 		}
 		const current = optionsRef.current;
 		if (!current.canStart || !current.asr || !current.agentId || !current.sessionId) return;
+		replay?.stop();
 		audioManager?.stopAllPlayback();
 		try {
 			const { agentId, sessionId } = current;
@@ -158,7 +160,7 @@ export function usePipelineVoice(options: Options) {
 				description: error instanceof Error ? error.message : String(error),
 			});
 		}
-	}, [audioManager, busy, stop, t, observe, requestScope]);
+	}, [audioManager, replay, busy, stop, t, observe, requestScope]);
 
 	return { state, transcript, busy, toggle, stop, onEvent };
 }

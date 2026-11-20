@@ -146,6 +146,11 @@ async def cleanup_session(bus: "MessageBus", session_id: str) -> None:
         MessageBusKeys.chat_input_cancellations(session_id),
     ):
         return
+    await untrack_empty_session(bus, session_id)
+
+
+async def untrack_empty_session(bus: "MessageBus", session_id: str) -> None:
+    """Remove recovery indexes once both queue and receipts are empty."""
     raw = await bus.registry_get(
         MessageBusKeys.chat_input_pending_registry(),
         session_id,

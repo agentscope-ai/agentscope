@@ -1,19 +1,26 @@
-import {
-	base64ToBytes,
-	concatBytes,
-	parseWavHeader,
-	pcmToAudioBuffer,
-} from '@/utils/streamingAudio';
+import { base64ToBytes, parseWavHeader, pcmToAudioBuffer } from '@/utils/streamingAudio';
 
 interface AudioBlock {
 	id: string;
 	mediaType: string;
-	bytes: Uint8Array<ArrayBuffer>;
 	chunks: Uint8Array<ArrayBuffer>[];
 	header: ReturnType<typeof parseWavHeader>;
 	playbackDone?: Promise<void>;
 	finishPlayback?: () => void;
 	decoding: boolean;
+}
+
+/** Consume queued chunks in order, reusing a single chunk for live playback. */
+function takeBytes(block: AudioBlock): Uint8Array<ArrayBuffer> {
+	if (block.chunks.length === 1) return block.chunks.pop()!;
+	const bytes = new Uint8Array(block.chunks.reduce((size, chunk) => size + chunk.length, 0));
+	let offset = 0;
+	for (const chunk of block.chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.length;
+	}
+	block.chunks.length = 0;
+	return bytes;
 }
 
 /** Serial speech playback with completion tied to the actual audio sources. */
@@ -53,7 +60,6 @@ export class PipelineAudioPlayer {
 		this.blocks.push({
 			id,
 			mediaType,
-			bytes: new Uint8Array(),
 			chunks: [],
 			header: null,
 			decoding: false,
@@ -67,12 +73,8 @@ export class PipelineAudioPlayer {
 		try {
 			const chunk = base64ToBytes(data);
 			if (!chunk.length) return;
-			if (block.mediaType === 'audio/wav') {
-				block.bytes = block.bytes.length ? concatBytes(block.bytes, chunk) : chunk;
-			} else {
-				block.chunks.push(chunk);
-			}
-			this.pump();
+			block.chunks.push(chunk);
+			if (block === this.blocks[0]) this.pump();
 		} catch (error) {
 			this.onError(error);
 		}
@@ -85,7 +87,7 @@ export class PipelineAudioPlayer {
 		block.playbackDone ??= new Promise<void>((resolve) => {
 			block.finishPlayback = resolve;
 		});
-		this.pump();
+		if (block === this.blocks[0]) this.pump();
 		return block.playbackDone;
 	}
 
@@ -124,39 +126,33 @@ export class PipelineAudioPlayer {
 		if (!block || block.decoding) return;
 		try {
 			if (block.mediaType === 'audio/wav') {
+				let bytes = takeBytes(block);
 				if (!block.header) {
-					block.header = parseWavHeader(block.bytes);
+					block.header = parseWavHeader(bytes);
 					if (!block.header) {
 						if (block.playbackDone) throw new Error('Invalid WAV audio.');
+						if (bytes.length) block.chunks.push(bytes);
 						return;
 					}
 					if (![8, 16].includes(block.header.bitsPerSample))
 						throw new Error('Unsupported PCM depth.');
-					block.bytes = block.bytes.slice(block.header.dataOffset);
+					bytes = bytes.subarray(block.header.dataOffset);
 				}
 				const frameSize = (block.header.channels * block.header.bitsPerSample) / 8;
-				const count = Math.floor(block.bytes.length / frameSize) * frameSize;
+				const count = bytes.length - (bytes.length % frameSize);
+				if (count < bytes.length) block.chunks.push(bytes.slice(count));
 				if (count) {
 					const buffer = pcmToAudioBuffer(
 						this.context,
-						block.bytes.subarray(0, count),
+						bytes.subarray(0, count),
 						block.header,
 					);
-					block.bytes = block.bytes.slice(count);
 					if (buffer) this.play(buffer);
 				}
 			} else if (block.playbackDone && block.chunks.length) {
 				block.decoding = true;
 				const generation = this.generation;
-				const bytes = new Uint8Array(
-					block.chunks.reduce((size, chunk) => size + chunk.length, 0),
-				);
-				let offset = 0;
-				for (const chunk of block.chunks) {
-					bytes.set(chunk, offset);
-					offset += chunk.length;
-				}
-				block.chunks = [];
+				const bytes = takeBytes(block);
 				void this.context
 					.decodeAudioData(bytes.buffer)
 					.then((buffer) => {

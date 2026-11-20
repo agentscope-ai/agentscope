@@ -36,6 +36,7 @@ from .._chat_input_store import (
     is_input_cancelled,
     INPUT_EXECUTION,
     cleanup_session,
+    untrack_empty_session,
     discard_input,
     finish_unbound_inputs,
     hydrate_input,
@@ -288,10 +289,7 @@ class ChatInputQueue:
                     raise TypeError(
                         "Pending-chat routing ids must be strings.",
                     )
-                pending = await self._bus.queue_read(
-                    MessageBusKeys.chat_inputs(session_id),
-                    max_count=1,
-                )
+                pending = None
                 claimed = session_id in inflight_sessions
                 try:
                     async with (
@@ -302,25 +300,43 @@ class ChatInputQueue:
                             timeout_secs=recovery_timeout,
                         ),
                     ):
-                        await reap_receipts(
+                        pending = await self._bus.queue_read(
+                            MessageBusKeys.chat_inputs(session_id),
+                        )
+                        claimed = await self._bus.registry_exists(
+                            MessageBusKeys.chat_input_inflight_registry(),
+                            session_id,
+                        )
+                        active = {item["id"] for _, item in pending}
+                        raw = await self._bus.registry_get(
+                            MessageBusKeys.chat_input_claim(session_id),
+                            "claim",
+                        )
+                        if raw is not None:
+                            # Recovery may see the durable claim before its
+                            # inflight index has been written.
+                            claimed = True
+                            active.add(json.loads(raw)["payload"]["id"])
+                        retained = await reap_receipts(
                             self._bus,
                             user_id,
                             session_id,
                             agent_id,
                             self._receipt_input_result,
                             self._receipt_cursors,
-                        )
-                        # Recheck before removing an empty queue's index.
-                        pending = await self._bus.queue_read(
-                            MessageBusKeys.chat_inputs(session_id),
-                            max_count=1,
-                        )
-                        claimed = await self._bus.registry_exists(
-                            MessageBusKeys.chat_input_inflight_registry(),
-                            session_id,
+                            active,
                         )
                         if not pending and not claimed:
-                            await cleanup_session(self._bus, session_id)
+                            # A crashed enqueue may have written its payload
+                            # without ever publishing a FIFO entry.
+                            await self._bus.registry_drop(
+                                MessageBusKeys.chat_input_payloads(session_id),
+                            )
+                            if not retained:
+                                await untrack_empty_session(
+                                    self._bus,
+                                    session_id,
+                                )
                 except ChatQueueBusyError:
                     # Collection must not delay a busy queue's wakeup.
                     pass
@@ -333,6 +349,11 @@ class ChatInputQueue:
                     logger.exception(
                         "Could not collect chat receipts for %s.",
                         session_id,
+                    )
+                if pending is None and not claimed:
+                    pending = await self._bus.queue_read(
+                        MessageBusKeys.chat_inputs(session_id),
+                        max_count=1,
                     )
                 if not pending and not claimed:
                     continue

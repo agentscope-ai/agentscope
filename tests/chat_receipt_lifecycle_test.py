@@ -86,6 +86,36 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                 ],
             )
 
+    async def test_receipt_only_sweep_reuses_locked_queue_state(self) -> None:
+        """Read the FIFO once per sweep and keep leases after cleanup."""
+        for bus in self.backends:
+            with self.subTest(backend=type(bus).__name__):
+                async with bus:
+                    queue = self.collector(bus)
+                    await create_chat_submission(bus, "u", "s", "a")
+                    payloads = MessageBusKeys.chat_input_payloads("s")
+                    await bus.registry_set(payloads, "orphan", "data")
+                    with patch.object(
+                        bus,
+                        "queue_read",
+                        wraps=bus.queue_read,
+                    ) as read:
+                        recover = queue._recover_pending_chat_inputs_locked
+                        for _ in range(2):
+                            self.assertEqual(await recover(), 0)
+                    key = MessageBusKeys.chat_inputs("s")
+                    self.assertEqual(
+                        [c.args[0] for c in read.await_args_list],
+                        [key, key],
+                    )
+                    self.assertEqual(await bus.registry_getall(payloads), {})
+                    self.assertEqual(
+                        await bus.registry_getall(
+                            MessageBusKeys.chat_input_user_sessions("u"),
+                        ),
+                        {"s": "a"},
+                    )
+
     async def test_legacy_full_session_is_adopted_for_collection(self) -> None:
         """Old unindexed receipts cannot permanently consume the quota."""
         for bus in self.backends:

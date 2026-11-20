@@ -43,6 +43,7 @@ export function useChatQueue(
 	agentId: string | null,
 	sessionId: string | null,
 	onError: (error: Error) => void,
+	removeProvisional: (messages: Set<Msg>) => void,
 ) {
 	const [items, setItems] = useState<ChatQueueItem[]>([]);
 	const [conversationMessageIds, setConversationMessageIds] = useState<Set<string>>(new Set());
@@ -50,6 +51,7 @@ export function useChatQueue(
 	const conversationMessageIdsRef = useRef<Set<string>>(new Set());
 	// Keep receipt identity even when a queue snapshot omits the local row.
 	const localInputs = useRef(new Map<string, LocalChatInput>());
+	const awaitingRefresh = useRef(new WeakSet<LocalChatInput>());
 	const snapshotVersionRef = useRef(0);
 	const refreshSequenceRef = useRef(0);
 	// Object identity distinguishes A -> B -> A from the original A visit.
@@ -119,35 +121,55 @@ export function useChatQueue(
 					return;
 				}
 				applyQueueSnapshot(response.items);
-			} catch (error) {
-				if (signal && !signal.aborted) throw error;
+				const removed = new Set<Msg>();
+				for (const [id, local] of localInputs.current) {
+					if (!local.queueId || !awaitingRefresh.current.delete(local)) continue;
+					const row = response.items.find((item) => item.id === local.queueId);
+					if (row && getQueueMessages([row]).some((msg) => msg.id === id)) continue;
+					localInputs.current.delete(id);
+					removed.add(local.message);
+				}
+				if (removed.size) {
+					updateConversationMessageIds((ids) => {
+						for (const msg of removed) ids.delete(msg.id);
+					});
+					removeProvisional(removed);
+				}
+			} catch {
 				// Focus, reconnect, or the next interval retries transient failures.
 			}
 		},
-		[agentId, sessionId, session, applyQueueSnapshot],
+		[
+			agentId,
+			sessionId,
+			session,
+			applyQueueSnapshot,
+			updateConversationMessageIds,
+			removeProvisional,
+		],
 	);
 
 	/** Keep provisional bubbles for inputs still in flight or in the restored queue. */
 	const restoreConversation = useCallback(
-		async (history: Msg[], signal: AbortSignal) => {
-			await refreshQueue(signal);
-			if (signal.aborted) return history;
+		(history: Msg[], signal: AbortSignal) => {
 			const saved = new Set(history.map((msg) => msg.id));
 			const pending: Msg[] = [];
 			const retired = new Set<string>();
 			for (const [id, local] of localInputs.current) {
-				const row = itemsRef.current.find((item) => item.id === local.queueId);
-				const stillQueued = row && getQueueMessages([row]).some((msg) => msg.id === id);
-				if (saved.has(id) || (local.queueId && !stillQueued)) {
+				if (saved.has(id)) {
 					localInputs.current.delete(id);
 					retired.add(local.optimisticId);
-				} else if (conversationMessageIdsRef.current.has(id)) pending.push(local.message);
+				} else {
+					awaitingRefresh.current.add(local);
+					if (conversationMessageIdsRef.current.has(id)) pending.push(local.message);
+				}
 			}
 			if (retired.size) updateItems(itemsRef.current.filter((item) => !retired.has(item.id)));
 			updateConversationMessageIds((ids) => {
 				ids.clear();
 				for (const msg of pending) ids.add(msg.id);
 			});
+			void refreshQueue(signal);
 			return [...history, ...pending];
 		},
 		[refreshQueue, updateConversationMessageIds, updateItems],

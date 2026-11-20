@@ -184,26 +184,6 @@ export function useMessages(
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
 	const [subagentHitl, setSubagentHitl] = useState<SubagentHitlEntry[]>([]);
-	const {
-		items: queuedItems,
-		visibleCount: queuedCount,
-		pendingCount: pendingQueueCount,
-		hasPendingInput: hasQueuedInput,
-		reorderDisabled: queueReorderDisabled,
-		addOptimistic,
-		acceptOptimistic,
-		rollbackOptimistic,
-		applyQueueSnapshot,
-		restoreConversation,
-		startItem,
-		retireItem,
-		updateQueued,
-		deleteQueued,
-		steerQueued,
-		moveQueued,
-		reorderQueued,
-	} = useChatQueue(agentId, sessionId, setError);
-
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
 	const startingQueueRef = useRef<string | null>(null);
@@ -236,15 +216,39 @@ export function useMessages(
 		});
 	}, []);
 
+	const removeProvisional = useCallback(
+		(messages: Set<Msg>) => {
+			if (!messages.size) return;
+			msgsRef.current = msgsRef.current.filter((msg) => !messages.has(msg));
+			scheduleUpdate();
+		},
+		[scheduleUpdate],
+	);
+	const {
+		items: queuedItems,
+		visibleCount: queuedCount,
+		pendingCount: pendingQueueCount,
+		hasPendingInput: hasQueuedInput,
+		reorderDisabled: queueReorderDisabled,
+		addOptimistic,
+		acceptOptimistic,
+		rollbackOptimistic,
+		applyQueueSnapshot,
+		restoreConversation,
+		startItem,
+		retireItem,
+		updateQueued,
+		deleteQueued,
+		steerQueued,
+		moveQueued,
+		reorderQueued,
+	} = useChatQueue(agentId, sessionId, setError, removeProvisional);
+
 	const removeUnstartedInput = useCallback(
 		(value: ChatInputTerminalValue) => {
-			const provisional = retireItem(value, 'removed');
-			if (provisional.size) {
-				msgsRef.current = msgsRef.current.filter((msg) => !provisional.has(msg));
-				scheduleUpdate();
-			}
+			removeProvisional(retireItem(value, 'removed'));
 		},
-		[retireItem, scheduleUpdate],
+		[retireItem, removeProvisional],
 	);
 
 	/** Apply a single AgentEvent to the in-progress reply. */
@@ -539,6 +543,8 @@ export function useMessages(
 		let retryDelay = 1000;
 		const playedBlocks = new Set<string>();
 		let oldestVisible: string | null | undefined;
+		let savedHistory: Msg[] = [];
+		let savedCursor: string | null = null;
 
 		const connect = async (reconnecting: boolean) => {
 			if (controller.signal.aborted) return;
@@ -571,6 +577,21 @@ export function useMessages(
 						page.messages.length &&
 						!page.messages.some((msg) => msg.id === oldestVisible)
 					) {
+						// A shared checkpoint and unchanged message identities let us
+						// reuse the persisted prefix without retaining live deltas.
+						if (eventCursor !== null && eventCursor === savedCursor) {
+							const overlap = savedHistory.findIndex(
+								(msg) => msg.id === page.messages[0].id,
+							);
+							if (overlap >= 0) {
+								const prefix = savedHistory.slice(0, overlap);
+								const visible = new Set(msgsRef.current);
+								if (prefix.every((msg) => visible.has(msg))) {
+									pages.push(prefix);
+									break;
+								}
+							}
+						}
 						page = await sessionApi.messages(
 							sessionId,
 							agentId,
@@ -585,6 +606,8 @@ export function useMessages(
 						pages.push(floor < 0 ? page.messages : page.messages.slice(floor));
 					}
 					const messages = pages.reverse().flat();
+					savedHistory = messages;
+					savedCursor = eventCursor;
 					if (reconnecting) {
 						// The checkpoint can precede audio we played before disconnecting.
 						for (const msg of msgsRef.current) {
@@ -597,7 +620,7 @@ export function useMessages(
 						setSubagentHitl([]);
 					}
 					const restored = reconnecting
-						? await restoreConversation(messages, controller.signal)
+						? restoreConversation(messages, controller.signal)
 						: messages;
 					if (controller.signal.aborted) return;
 					oldestVisible = messages[0]?.id ?? null;

@@ -36,6 +36,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 				currentRef.current = el;
 			},
 			stop() {
+				currentRef.current?.pause();
 				currentRef.current = null;
 			},
 		}),

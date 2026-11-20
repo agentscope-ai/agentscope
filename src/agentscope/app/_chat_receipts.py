@@ -79,28 +79,23 @@ async def reap_receipts(
     agent_id: str,
     input_result: Callable[..., Awaitable[dict]],
     cursors: dict[str, str],
-) -> None:
-    """Collect only proven terminal receipts under the mutation lock.
+    active: set[str],
+) -> bool:
+    """Collect terminal receipts and report whether any receipts remain.
 
     Never expire a cancellation fence while its queue entry/claim exists.
     A claimed turn can remain parked indefinitely; durable input results,
     rather than age or missing SSE, decide when its retention can begin.
     """
     now = time()
-    pending = await bus.queue_read(MessageBusKeys.chat_inputs(session_id))
-    active = {p["id"] for _, p in pending}
-    raw = await bus.registry_get(
-        MessageBusKeys.chat_input_claim(session_id),
-        "claim",
-    )
-    if raw:
-        active.add(json.loads(raw)["payload"]["id"])
+    retained = 0
     deferred = []
     for namespace in (
         MessageBusKeys.chat_submissions(session_id),
         MessageBusKeys.chat_input_cancellations(session_id),
     ):
         for key, value in (await bus.registry_getall(namespace)).items():
+            retained += 1
             record = json.loads(value)
             if record.get("queue_item_id", key) in active:
                 continue
@@ -108,6 +103,7 @@ async def reap_receipts(
             if state == "reserved":
                 if record["expires_at"] <= now:
                     await bus.registry_del(namespace, key)
+                    retained -= 1
                 continue
             if state == "queued":
                 # A failed enqueue can leave its reservation but no input.
@@ -123,10 +119,11 @@ async def reap_receipts(
                 await bus.registry_set(namespace, key, json.dumps(record))
             elif record["retire_at"] <= now:
                 await bus.registry_del(namespace, key)
+                retained -= 1
     # Delete cheap expired records in both registries before querying storage.
     if not deferred:
         cursors.pop(session_id, None)
-        return
+        return bool(retained)
     cursor = cursors.get(session_id, "")
     deferred.sort(key=lambda item: (item[0] <= cursor, item[0]))
     for key, record in deferred:
@@ -165,3 +162,4 @@ async def reap_receipts(
                 key,
                 json.dumps(record),
             )
+    return True

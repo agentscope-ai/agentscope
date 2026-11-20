@@ -2,6 +2,7 @@
 # pylint: disable=protected-access
 """Independent voice policy survives queuing and parked reply resumes."""
 import asyncio
+import base64
 from typing import Any, AsyncGenerator
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
@@ -53,6 +54,9 @@ from agentscope.app.storage import (
     VoiceProfileRecord,
 )
 from agentscope.event import (
+    DataBlockDeltaEvent,
+    DataBlockEndEvent,
+    DataBlockStartEvent,
     ReplyEndEvent,
     ReplyStartEvent,
     UserConfirmResultEvent,
@@ -133,6 +137,7 @@ class _ReplyAgent:
             yield event
 
 
+# pylint: disable-next=too-many-public-methods
 class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
     """Cover ordinary chat isolation and persisted per-reply policy."""
 
@@ -235,6 +240,56 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             "agent-1",
             inputs,
             **kwargs,
+        )
+
+    async def test_persist_partial_and_completed_audio(self) -> None:
+        """Checkpoint interleaved blocks even without the final block end."""
+
+        async def reply_stream(
+            agent: _ReplyAgent,
+            inputs: Msg,
+        ) -> AsyncGenerator:
+            reply_id = agent.state.reply_id = f"{inputs.id}-audio"
+            yield ReplyStartEvent(
+                session_id="session-1",
+                reply_id=reply_id,
+                name="agent",
+            )
+            for block in ("closed", "partial"):
+                yield DataBlockStartEvent(
+                    reply_id=reply_id,
+                    block_id=block,
+                    media_type="audio/mpeg",
+                )
+            for chunk in (b"a", b"bc", b"def"):
+                for block in ("closed", "partial"):
+                    yield DataBlockDeltaEvent(
+                        reply_id=reply_id,
+                        block_id=block,
+                        media_type="audio/mpeg",
+                        data=base64.b64encode(chunk).decode("ascii"),
+                    )
+            yield DataBlockEndEvent(reply_id=reply_id, block_id="closed")
+            yield ReplyEndEvent(
+                session_id="session-1",
+                reply_id=reply_id,
+                finished_reason="interrupted",
+            )
+
+        with patch.object(_ReplyAgent, "reply_stream", reply_stream):
+            await self._run(UserMsg("user", "speak", id="input"))
+        reply = await self.storage.get_message(
+            "user-1",
+            "session-1",
+            "input-audio",
+        )
+        self.assertEqual(reply.finished_reason, "interrupted")
+        self.assertEqual(
+            [
+                (b.id, b.source.data, bool(b.finished_at))
+                for b in reply.get_content_blocks("data")
+            ],
+            [("closed", "YWJjZGVm", True), ("partial", "YWJjZGVm", False)],
         )
 
     async def test_submission_binding_survives_message_reuse(self) -> None:

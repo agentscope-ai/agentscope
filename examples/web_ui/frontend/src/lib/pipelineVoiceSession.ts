@@ -73,6 +73,9 @@ interface VoiceObserver {
 	onError: (error: unknown) => void;
 }
 
+const ASR_SAMPLE_RATE = 16_000;
+const PRE_SPEECH_PAD_MS = 300;
+
 /** One browser-owned, half-duplex conversation; Chat owns persistence and tools. */
 export class PipelineVoiceSession {
 	private readonly options: PipelineVoiceOptions;
@@ -84,6 +87,8 @@ export class PipelineVoiceSession {
 	private vadStart: Promise<void> | null = null;
 	private stream: MediaStream | null = null;
 	private asr: BrowserRealtimeASRTransport | null = null;
+	private asrConnecting: Promise<void> | null = null;
+	private asrFrames: Float32Array[] = [];
 	private state: PipelineVoiceState = 'connecting';
 	private transcript = '';
 	private stopped = false;
@@ -176,7 +181,7 @@ export class PipelineVoiceSession {
 				},
 				redemptionMs: 900,
 				minSpeechMs: 300,
-				preSpeechPadMs: 300,
+				preSpeechPadMs: PRE_SPEECH_PAD_MS,
 				submitUserSpeechOnPause: false,
 				getStream: async () => stream,
 				pauseStream: async () => {
@@ -198,20 +203,28 @@ export class PipelineVoiceSession {
 						60_000,
 					);
 				},
-				onVADMisfire: () => this.clearSpeechTimer(),
+				onSpeechRealStart: () => {
+					if (this.options.realtimeASR && this.state === 'listening') this.connectASR();
+				},
+				onVADMisfire: () => {
+					this.clearSpeechTimer();
+					this.asrFrames = [];
+				},
 				onFrameProcessed: (_, frame) => {
-					if (this.state !== 'listening' || !this.asr) return;
-					const bytes = new ArrayBuffer(frame.length * 2);
-					const view = new DataView(bytes);
-					frame.forEach((sample, index) => {
-						const clamped = Math.max(-1, Math.min(1, sample));
-						view.setInt16(
-							index * 2,
-							clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff,
-							true,
+					if (this.state !== 'listening' || !this.options.realtimeASR) return;
+					if (this.asr && !this.asrConnecting) {
+						this.sendASRFrame(this.asr, frame);
+						return;
+					}
+					this.asrFrames.push(frame);
+					if (this.speechTimer === null) {
+						// FrameProcessed precedes SpeechStart. Keep the triggering
+						// frame plus the same pre-roll used by the VAD.
+						const padFrames = Math.floor(
+							(PRE_SPEECH_PAD_MS * ASR_SAMPLE_RATE) / (1000 * frame.length),
 						);
-					});
-					this.asr.sendAudio(bytes);
+						if (this.asrFrames.length > padFrames + 1) this.asrFrames.shift();
+					}
 				},
 				onSpeechEnd: (audio) => {
 					void this.submitSpeech(audio);
@@ -334,6 +347,23 @@ export class PipelineVoiceSession {
 		if (!queueId) return this.applyEvent(event);
 		if (this.queueId) return queueId === this.queueId && this.applyEvent(event);
 		if (this.inputFinished) return false;
+		// Chat already applies content deltas. Only replay events that can
+		// affect the voice turn or the ownership of an audio block.
+		switch (event.type) {
+			case EventType.DATA_BLOCK_START:
+			case EventType.DATA_BLOCK_DELTA:
+				if (!event.media_type.startsWith('audio/')) return false;
+				break;
+			case EventType.DATA_BLOCK_END:
+			case EventType.REPLY_START:
+			case EventType.REPLY_END:
+			case EventType.REQUIRE_USER_CONFIRM:
+			case EventType.REQUIRE_EXTERNAL_EXECUTION:
+			case EventType.CUSTOM:
+				break;
+			default:
+				return false;
+		}
 
 		// Replay voice side effects in SSE order when the POST or durable receipt
 		// identifies the input. Chat can render the same stream immediately.
@@ -477,6 +507,8 @@ export class PipelineVoiceSession {
 			}
 			this.asr?.close();
 			this.asr = null;
+			this.asrConnecting = null;
+			this.asrFrames = [];
 			this.player.stop();
 			this.stream?.getTracks().forEach((track) => {
 				track.onended = null;
@@ -687,28 +719,47 @@ export class PipelineVoiceSession {
 		this.resumeScheduled = false;
 		this.transcript = '';
 		this.setState('connecting');
-		if (this.options.realtimeASR) {
-			const config = this.options.asr;
-			this.asr = new BrowserRealtimeASRTransport({
-				scope: this.options.scope,
-				config: {
-					credentialId: config.credential_id,
-					model: config.model,
-					parameters: config.parameters,
-				},
-				onTranscript: (text) => {
-					this.transcript = text;
-					if (!this.stopped) this.setState(this.state);
-				},
-				onError: (error) => this.fail(error),
-			});
-			await this.asr.connect(16000);
-		}
-		if (this.stopped) return;
 		this.vadStart = this.vad?.start() ?? null;
 		await this.vadStart;
 		if (this.stopped) return;
 		this.setState('listening');
+	}
+
+	private connectASR(): void {
+		const config = this.options.asr;
+		const asr = new BrowserRealtimeASRTransport({
+			scope: this.options.scope,
+			config: {
+				credentialId: config.credential_id,
+				model: config.model,
+				parameters: config.parameters,
+			},
+			onTranscript: (text) => {
+				this.transcript = text;
+				if (!this.stopped) this.setState(this.state);
+			},
+			onError: (error) => this.fail(error),
+		});
+		this.asr = asr;
+		this.asrConnecting = asr
+			.connect(ASR_SAMPLE_RATE)
+			.then(() => {
+				if (this.asr !== asr) return;
+				for (const frame of this.asrFrames) this.sendASRFrame(asr, frame);
+				this.asrFrames = [];
+				this.asrConnecting = null;
+			})
+			.catch((error) => this.fail(error));
+	}
+
+	private sendASRFrame(asr: BrowserRealtimeASRTransport, frame: Float32Array): void {
+		const bytes = new ArrayBuffer(frame.length * 2);
+		const view = new DataView(bytes);
+		frame.forEach((sample, index) => {
+			const clamped = Math.max(-1, Math.min(1, sample));
+			view.setInt16(index * 2, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+		});
+		asr.sendAudio(bytes);
 	}
 
 	private async submitSpeech(audio: Float32Array): Promise<void> {
@@ -721,8 +772,16 @@ export class PipelineVoiceSession {
 		try {
 			await this.vad?.pause();
 			if (this.stopped) return;
-			if (this.asr) {
+			if (this.options.realtimeASR) {
+				// A short utterance can finish during the WebSocket handshake.
+				if (!this.asr) {
+					this.asrFrames = [audio];
+					this.connectASR();
+				}
+				await this.asrConnecting;
+				if (this.stopped || !this.asr) return;
 				await this.asr.stop();
+				if (this.stopped) return;
 				this.asr.close();
 				this.asr = null;
 			} else {

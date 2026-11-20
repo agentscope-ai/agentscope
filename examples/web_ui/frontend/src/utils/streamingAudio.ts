@@ -49,7 +49,7 @@ export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
 	return bytes;
 }
 
-export function concatBytes(a: Bytes, b: Bytes): Uint8Array<ArrayBuffer> {
+function concatBytes(a: Bytes, b: Bytes): Uint8Array<ArrayBuffer> {
 	const out = new Uint8Array(a.length + b.length);
 	out.set(a, 0);
 	out.set(b, a.length);
@@ -96,7 +96,8 @@ export function parseWavHeader(bytes: Bytes): WavHeader | null {
 			dataOffset = chunkBody;
 			break;
 		}
-		offset = chunkBody + chunkSize;
+		// RIFF pads odd-sized chunks to the next even byte boundary.
+		offset = chunkBody + chunkSize + (chunkSize % 2);
 	}
 
 	if (!sampleRate || !channels || !bitsPerSample || dataOffset < 0) return null;

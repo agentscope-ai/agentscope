@@ -12,6 +12,7 @@ that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
 import asyncio
+import base64
 import inspect
 import json
 from dataclasses import dataclass
@@ -103,6 +104,8 @@ from ...model import ChatModelBase
 from ...event import (
     AgentEvent,
     CustomEvent,
+    DataBlockDeltaEvent,
+    DataBlockEndEvent,
     ReplyStartEvent,
     ReplyEndEvent,
     ReplyFinishedReason,
@@ -112,11 +115,63 @@ from ...event import (
 )
 from ._errors import _classify_error, _classify_setup_error
 from ..._utils._common import _generate_id
-from ...message import AssistantMsg, HintBlock, Msg, UserMsg
+from ...message import AssistantMsg, Base64Source, HintBlock, Msg, UserMsg
 from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
     from ..channel import ChannelClients
+
+
+class _ReplyAudioBuffer:
+    """Accumulate audio for the persisted reply while SSE forwards deltas."""
+
+    def __init__(self) -> None:
+        self.blocks: dict[str, tuple[Base64Source, bytearray]] = {}
+
+    def append_event(self, reply: Msg, event: AgentEvent) -> None:
+        """Apply events in order; materialize an audio block when it ends."""
+        if (
+            isinstance(event, DataBlockDeltaEvent)
+            and event.reply_id == reply.id
+        ):
+            if event.data and event.media_type.startswith("audio/"):
+                entry = self.blocks.get(event.block_id)
+                if entry is None:
+                    block = next(
+                        (
+                            b
+                            for b in reply.get_content_blocks("data")
+                            if b.id == event.block_id
+                        ),
+                        None,
+                    )
+                    if block and isinstance(block.source, Base64Source):
+                        entry = (
+                            block.source,
+                            bytearray(base64.b64decode(block.source.data)),
+                        )
+                        self.blocks[event.block_id] = entry
+                if entry is not None:
+                    entry[1].extend(base64.b64decode(event.data))
+                    return
+            self.finish(event.block_id)
+        elif (
+            isinstance(event, DataBlockEndEvent) and event.reply_id == reply.id
+        ):
+            self.finish(event.block_id)
+        reply.append_event(event)
+
+    def finish(self, block_id: str) -> None:
+        """Publish the bytes accumulated for one block on its message."""
+        entry = self.blocks.pop(block_id, None)
+        if entry is not None:
+            source, data = entry
+            source.data = base64.b64encode(data).decode("ascii")
+
+    def flush(self) -> None:
+        """Preserve partial audio on interruption, failure or a parked turn."""
+        for block_id in list(self.blocks):
+            self.finish(block_id)
 
 
 _CHECKPOINT_LOCK_TTL_SECS = (
@@ -1701,6 +1756,7 @@ class ChatService:
             try:
                 while True:
                     reply_msg = None
+                    audio = _ReplyAudioBuffer()
                     try:
                         if restore_chat_models:
                             # An inbox continuation stays on the active model
@@ -1758,6 +1814,7 @@ class ChatService:
                                             session_id,
                                             event.reply_id,
                                         )
+                                    audio.flush()
                                     reply_msg = AssistantMsg(
                                         id=event.reply_id,
                                         name=event.name,
@@ -1788,7 +1845,7 @@ class ChatService:
                                             }
                                             bound_inputs.append(msg)
                                 elif reply_msg is not None:
-                                    reply_msg.append_event(event)
+                                    audio.append_event(reply_msg, event)
                                 if (
                                     isinstance(event, ReplyEndEvent)
                                     and self._run_registry is not None
@@ -1954,7 +2011,7 @@ class ChatService:
                                 # (synchronous), then publish/project —
                                 # see Case A above.
                                 if reply_msg is not None:
-                                    reply_msg.append_event(event)
+                                    audio.append_event(reply_msg, event)
                                 if (
                                     isinstance(event, ReplyEndEvent)
                                     and self._run_registry is not None
@@ -2015,6 +2072,8 @@ class ChatService:
                         if reply_msg is not None:
                             reply_msgs.append(reply_msg)
                         break
+                    finally:
+                        audio.flush()
 
                     if reply_msg is not None:
                         reply_msgs.append(reply_msg)
