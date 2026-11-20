@@ -877,6 +877,23 @@ class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
+    async def test_multiagent_formatter_drops_empty_system_message(
+        self,
+    ) -> None:
+        """An empty system prompt must not become an empty text block.
+
+        Anthropic rejects ``{"type": "text", "text": ""}`` with a 400, and
+        the chat formatter already drops such a system message.
+        """
+        fmt = AnthropicMultiAgentFormatter()
+        conversation = [UserMsg(name="user", content="hi")]
+
+        res = await fmt.format(
+            [SystemMsg(name="system", content=""), *conversation],
+        )
+
+        self.assertListEqual(await fmt.format(conversation), res)
+
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
         tool calls, and tool results."""
