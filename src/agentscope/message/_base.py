@@ -542,6 +542,7 @@ class Msg(BaseModel):
                 for result in event.execution_results:
                     if result.id in existing_ids:
                         continue
+                    existing_ids.add(result.id)
                     if result.finished_at is None:
                         result.finished_at = event.created_at
                     self.content.append(result)

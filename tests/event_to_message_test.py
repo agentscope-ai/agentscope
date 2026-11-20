@@ -1085,6 +1085,34 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         """No teardown needed."""
 
 
+class ExternalExecutionResultTest(TestCase):
+    """External results are appended once per tool-call id."""
+
+    def test_repeated_results_in_one_event_are_deduplicated(self) -> None:
+        """The result id set must include results appended in this event."""
+        msg = AssistantMsg(name="assistant", content=[])
+        result = ToolResultBlock(
+            id="call-1",
+            name="run_code",
+            output="done",
+            state=ToolResultState.SUCCESS,
+        )
+        event = ExternalExecutionResultEvent(
+            reply_id=msg.id,
+            execution_results=[result, result],
+        )
+
+        msg.append_event(event)
+
+        tool_results = [
+            block
+            for block in msg.content
+            if isinstance(block, ToolResultBlock)
+        ]
+        self.assertEqual(len(tool_results), 1)
+        self.assertEqual(tool_results[0].id, "call-1")
+
+
 class ToolResultDataDeltaMergeTest(TestCase):
     """Msg.append_event groups same-id Base64 deltas into one DataBlock."""
 
