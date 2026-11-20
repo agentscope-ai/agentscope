@@ -697,3 +697,56 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
         """Clean up test fixtures."""
         self.bash_tool = None
         self.context = None
+
+
+class BashOutputLimitTest(IsolatedAsyncioTestCase):
+    """Test how the bash tool limits long output."""
+
+    @staticmethod
+    def _backend(exit_code: int, stdout: bytes) -> AsyncMock:
+        backend = AsyncMock()
+        backend.os_name = "posix"
+        backend.exec_shell.return_value = ExecResult(exit_code, stdout, b"")
+        return backend
+
+    async def _text(self, tool: Bash) -> tuple[str, str]:
+        chunks = [chunk async for chunk in await tool(command="long")]
+        return chunks[0].content[0].text, chunks[0].state
+
+    async def test_cut_output_reports_original_length(self) -> None:
+        """A cut output starts by saying how long it was."""
+        tool = Bash(backend=self._backend(0, b"x" * 100), max_output_chars=10)
+
+        text, state = await self._text(tool)
+
+        notice, output = text.split("\n", 1)
+        self.assertEqual(state, "running")
+        self.assertIn("the first 10 of 100 characters", notice)
+        self.assertEqual(output, "x" * 10)
+
+    async def test_failed_command_output_is_cut_the_same_way(self) -> None:
+        """A failed command's output gets the same limit and notice."""
+        tool = Bash(backend=self._backend(1, b"x" * 30001))
+
+        text, state = await self._text(tool)
+
+        notice, output = text.split("\n", 1)
+        self.assertEqual(state, "error")
+        self.assertTrue(notice.startswith("[Output truncated"))
+        self.assertEqual(len(output), 30000)
+
+    async def test_no_limit_returns_whole_output(self) -> None:
+        """``max_output_chars=None`` leaves the limit to the agent."""
+        tool = Bash(
+            backend=self._backend(0, b"x" * 100000),
+            max_output_chars=None,
+        )
+
+        text, _ = await self._text(tool)
+
+        self.assertEqual(text, "x" * 100000)
+
+    def test_rejects_non_positive_limit(self) -> None:
+        """A limit of zero or less is a configuration error."""
+        with self.assertRaises(ValueError):
+            Bash(max_output_chars=0)
