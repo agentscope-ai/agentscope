@@ -1083,3 +1083,62 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+
+class TestAssistantMediaPromotion(IsolatedAsyncioTestCase):
+    """Assistant-role media is promoted into its own user item."""
+
+    def setUp(self) -> None:
+        self.image_b64 = "ZmFrZQ=="
+        self.image = DataBlock(
+            source=Base64Source(
+                data=self.image_b64,
+                media_type="image/png",
+            ),
+        )
+
+    async def test_assistant_media_promoted_to_user_item(self) -> None:
+        """Assistant output items only support output_text; input_image is
+        an input-side part and must travel in a user item."""
+        fmt = OpenAIResponseFormatter()
+        msg = AssistantMsg(
+            name="assistant",
+            content=[TextBlock(text="look"), self.image],
+        )
+        res = await fmt.format([msg])
+
+        self.assertListEqual(
+            res,
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": (
+                                f"data:image/png;base64,{self.image_b64}"
+                            ),
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "look"},
+                    ],
+                },
+            ],
+        )
+
+    async def test_user_media_kept_in_place(self) -> None:
+        """User-role media stays inside the user item, unsplit."""
+        fmt = OpenAIResponseFormatter()
+        msg = UserMsg(
+            name="user",
+            content=[TextBlock(text="look"), self.image],
+        )
+        res = await fmt.format([msg])
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["role"], "user")
+        self.assertIn(self.image_b64, repr(res[0]["content"]))
