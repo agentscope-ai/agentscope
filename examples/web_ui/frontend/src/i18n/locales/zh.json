@@ -242,7 +242,11 @@
 		},
 		"copy": "复制",
 		"downloadFile": "下载文件",
-		"wrapLines": "自动换行"
+		"wrapLines": "自动换行",
+		"enableWrap": "开启自动换行",
+		"disableWrap": "关闭自动换行",
+		"downloadMarkdown": "下载 Markdown 文件",
+		"copyMarkdown": "复制 Markdown 原文"
 	},
 	"chat": {
 		"ttsFailed": "语音生成失败，文字回复继续。",

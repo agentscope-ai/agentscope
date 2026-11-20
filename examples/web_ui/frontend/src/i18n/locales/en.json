@@ -242,7 +242,11 @@
 		},
 		"copy": "Copy",
 		"downloadFile": "Download file",
-		"wrapLines": "Wrap lines"
+		"wrapLines": "Wrap lines",
+		"enableWrap": "Enable line wrapping",
+		"disableWrap": "Disable line wrapping",
+		"downloadMarkdown": "Download Markdown file",
+		"copyMarkdown": "Copy Markdown source"
 	},
 	"chat": {
 		"ttsFailed": "Speech generation failed. Text replies will continue.",
