@@ -504,6 +504,32 @@ class StorageBase(ABC):
             `SessionRecord | None`: The record, or ``None`` if not found.
         """
 
+    async def find_session_by_workspace_id(
+        self,
+        user_id: str,
+        workspace_id: str,
+    ) -> SessionRecord | None:
+        """Find one of a user's sessions bound to ``workspace_id``.
+
+        Used to check that an explicitly requested workspace binding is
+        one the caller already owns. The default implementation scans the
+        user's agents' sessions; a backend with a workspace index should
+        override it.
+
+        Args:
+            user_id (`str`): The owner user id.
+            workspace_id (`str`): The workspace binding to look for.
+
+        Returns:
+            `SessionRecord | None`: A matching session, or ``None`` when
+            the user owns no session bound to that workspace.
+        """
+        for agent in await self.list_agents(user_id):
+            for session in await self.list_sessions(user_id, agent.id):
+                if session.config.workspace_id == workspace_id:
+                    return session
+        return None
+
     @abstractmethod
     async def list_sessions_by_schedule(
         self,
