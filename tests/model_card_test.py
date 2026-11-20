@@ -11,8 +11,9 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 from agentscope.app._router._schema._tts_model import ListTTSModelsResponse
-from agentscope.asr import ASRModelCard
+from agentscope.asr import ASRModelCard, DashScopeASRModel
 from agentscope.credential import OpenAICredential
+from agentscope.embedding import EmbeddingModelCard
 from agentscope.model import (
     AnthropicChatModel,
     ModelCard,
@@ -522,3 +523,116 @@ class ASRModelCardTest(TestCase):
             card = ASRModelCard.from_yaml(str(path), _Parameters)
 
         self.assertEqual(card.parameters_overrides, {})
+
+
+class _ASRParams(BaseModel):
+    """Minimal ASR parameter class for model card tests."""
+
+    keep_dialect: bool = False
+    sample_rate: int | None = None
+
+
+class _EmbeddingParams(BaseModel):
+    """Minimal embedding parameter class for model card tests."""
+
+    internal: str | None = None
+    batch_size: int | None = None
+
+
+class ASRModelCardOverrideTest(TestCase):
+    """Verify ASR cards drop the null overrides their loader documents."""
+
+    def test_null_override_removes_parameter(self) -> None:
+        """A null override removes the parameter without dropping the
+        card."""
+        path = _write_yaml(
+            "name: test-asr\n"
+            "label: Test ASR\n"
+            "input_types:\n"
+            "  - audio/wav\n"
+            "parameter_overrides:\n"
+            "  keep_dialect: null\n",
+        )
+        try:
+            card = ASRModelCard.from_yaml(path, _ASRParams)
+        finally:
+            os.unlink(path)
+
+        self.assertNotIn("keep_dialect", card.parameter_schema["properties"])
+        self.assertEqual(
+            card.parameters_overrides,
+            {},
+        )
+
+    def test_null_override_mixed_with_dict_overrides(self) -> None:
+        """Null overrides are dropped from the stored overrides while dict
+        overrides are kept."""
+        path = _write_yaml(
+            "name: test-asr\n"
+            "label: Test ASR\n"
+            "parameter_overrides:\n"
+            "  keep_dialect: null\n"
+            "  sample_rate:\n"
+            "    default: 16000\n",
+        )
+        try:
+            card = ASRModelCard.from_yaml(path, _ASRParams)
+        finally:
+            os.unlink(path)
+
+        self.assertNotIn("keep_dialect", card.parameter_schema["properties"])
+        self.assertEqual(
+            card.parameter_schema["properties"]["sample_rate"]["default"],
+            16000,
+        )
+        self.assertEqual(
+            card.parameters_overrides,
+            {"sample_rate": {"default": 16000}},
+        )
+
+    def test_null_override_keeps_the_card_listed(self) -> None:
+        """A card using a null override is still discovered, instead of
+        failing validation and being skipped by ``list_models``."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "custom.yaml")
+            path.write_text(
+                "name: test-asr\n"
+                "label: Test ASR\n"
+                "parameter_overrides:\n"
+                "  keep_dialect: null\n",
+                encoding="utf-8",
+            )
+            cards = DashScopeASRModel.list_models(directory)
+
+        self.assertEqual([card.name for card in cards], ["test-asr"])
+
+
+class EmbeddingModelCardOverrideTest(TestCase):
+    """Verify embedding cards drop the null overrides they document."""
+
+    def test_null_override_removes_parameter(self) -> None:
+        """A null override removes the parameter without dropping the
+        card."""
+        path = _write_yaml(
+            "name: test-embedding\n"
+            "label: Test Embedding\n"
+            "dimensions: 8\n"
+            "parameter_overrides:\n"
+            "  internal: null\n"
+            "  batch_size:\n"
+            "    default: 16\n",
+        )
+        try:
+            card = EmbeddingModelCard.from_yaml(path, _EmbeddingParams)
+        finally:
+            os.unlink(path)
+
+        self.assertNotIn("internal", card.parameter_schema["properties"])
+        self.assertEqual(
+            card.parameter_schema["properties"]["batch_size"]["default"],
+            16,
+        )
+        self.assertEqual(
+            card.parameter_overrides,
+            {"batch_size": {"default": 16}},
+        )
