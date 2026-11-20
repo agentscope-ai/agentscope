@@ -34,6 +34,13 @@ from ..message import (
 _INVALID_MESSAGE_NAME_CHARS = re.compile(r"[\s<|\\/>]+")
 
 
+_OPENAI_AUDIO_FORMATS = {
+    "audio/wav": "wav",
+    "audio/mp3": "mp3",
+    "audio/mpeg": "mp3",
+}
+
+
 def _format_message_name(name: str | None) -> dict[str, str]:
     """Build the ``name`` field of an OpenAI chat message.
 
@@ -175,11 +182,11 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
     async def _format_audio_source(
         source: URLSource | Base64Source,
         extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """Convert an audio source to OpenAI input_audio format.
 
         Local ``file://`` URLs are read from disk. Remote URLs are downloaded.
-        Only ``wav`` and ``mp3`` formats are supported by the OpenAI API.
+        Only WAV and MP3 can be encoded. Other audio subtypes are skipped.
         Extra fields are merged into the nested ``input_audio`` object.
 
         Args:
@@ -190,21 +197,19 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                 ``input_audio`` object.
 
         Returns:
-            `dict[str, Any]`:
-                A dictionary with ``"type": "input_audio"`` in OpenAI format.
+            `dict[str, Any] | None`:
+                A dictionary with ``"type": "input_audio"`` in OpenAI format,
+                or ``None`` if the media type cannot be encoded.
         """
-        media_type_to_format = {
-            "audio/wav": "wav",
-            "audio/mp3": "mp3",
-            "audio/mpeg": "mp3",
-        }
         media_type = source.media_type
-        if media_type not in media_type_to_format:
-            raise TypeError(
-                f"Unsupported audio media type: {media_type}, "
-                "only WAV and MP3 audio are supported.",
+        audio_format = _OPENAI_AUDIO_FORMATS.get(media_type)
+        if audio_format is None:
+            logger.warning(
+                "Unsupported audio media type %s for OpenAI API, only WAV "
+                "and MP3 audio are supported. This block will be skipped.",
+                media_type,
             )
-        audio_format = media_type_to_format[media_type]
+            return None
 
         if isinstance(source, Base64Source):
             input_audio_payload = {
@@ -298,12 +303,13 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
         default_factory=lambda: [
             "text/plain",
             "image/*",
-            "audio/*",
+            *_OPENAI_AUDIO_FORMATS,
             "application/pdf",
         ],
         description=(
             "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "audio/*", "application/pdf"]``.'
+            '``["text/plain", "image/*", "audio/wav", "audio/mp3", '
+            '"audio/mpeg", "application/pdf"]``.'
         ),
     )
 
@@ -508,12 +514,13 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
         default_factory=lambda: [
             "text/plain",
             "image/*",
-            "audio/*",
+            *_OPENAI_AUDIO_FORMATS,
             "application/pdf",
         ],
         description=(
             "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "audio/*", "application/pdf"]``.'
+            '``["text/plain", "image/*", "audio/wav", "audio/mp3", '
+            '"audio/mpeg", "application/pdf"]``.'
         ),
     )
 

@@ -73,12 +73,14 @@ def _normalise_breaks(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n").replace("\v", "\n")
 
 
-def _extract_table_rows(table: Any) -> list[list[str]]:
+def _extract_table_rows(table: Any, *, strip_cells: bool) -> list[list[str]]:
     """Read a python-pptx table into a 2-D ``list[list[str]]``.
 
     Args:
         table (`Any`):
             The python-pptx ``Table`` object.
+        strip_cells (`bool`):
+            Whether to trim cell text for Markdown rendering.
 
     Returns:
         `list[list[str]]`:
@@ -89,7 +91,8 @@ def _extract_table_rows(table: Any) -> list[list[str]]:
     for row in table.rows:
         cells: list[str] = []
         for cell in row.cells:
-            cells.append(_normalise_breaks(cell.text.strip()))
+            text = cell.text.strip() if strip_cells else cell.text
+            cells.append(_normalise_breaks(text))
         rows.append(cells)
     return rows
 
@@ -333,7 +336,10 @@ class PPTParser(ParserBase):
             # 2. Tables — render to text; optionally flush around them.
             if getattr(shape, "has_table", False):
                 try:
-                    rows = _extract_table_rows(shape.table)
+                    rows = _extract_table_rows(
+                        shape.table,
+                        strip_cells=self.table_format == "markdown",
+                    )
                 except Exception as e:  # pylint: disable=broad-except
                     logger.warning(
                         "Failed to extract table from slide %d: %s",
