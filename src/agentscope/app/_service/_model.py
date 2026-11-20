@@ -22,6 +22,9 @@ async def get_model(
     raw record (not the masked view) — required for making real
     provider calls.
 
+    Matching model-card defaults fill omitted parameters. Explicitly
+    configured values, including ``None``, take precedence.
+
     Args:
         user_id (`str`):
             The viewer's user id. May differ from the credential owner
@@ -60,9 +63,35 @@ async def get_model(
     else:
         model_cls = credential.get_chat_model_class()
 
+    card = None
+    try:
+        card = next(
+            (
+                candidate
+                for candidate in model_cls.list_models()
+                if candidate.name == config.model
+            ),
+            None,
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.debug(
+            "Failed to look up model card for %s, using defaults.",
+            config.model,
+        )
+
+    card_defaults = (
+        {
+            name: override["default"]
+            for name, override in card.parameters_overrides.items()
+            if isinstance(override, dict) and "default" in override
+        }
+        if card is not None
+        else {}
+    )
+    merged_parameters = {**card_defaults, **config.parameters}
     parameters = (
-        model_cls.Parameters(**config.parameters)
-        if config.parameters
+        model_cls.Parameters(**merged_parameters)
+        if merged_parameters
         else None
     )
     model = model_cls(
@@ -72,19 +101,17 @@ async def get_model(
     )
 
     # Override the context size and the formatter's input types with the
-    # built-in model card's when one matches; custom models have no card,
-    # so keep the defaults.
-    try:
-        for card in model_cls.list_models():
-            if card.name == config.model:
-                model.context_size = card.context_size
-                model.formatter.input_types = card.input_types
-                break
-    except Exception:  # pylint: disable=broad-except
-        logger.debug(
-            "Failed to look up model card for %s, using defaults.",
-            config.model,
-        )
+    # built-in model card's when one matches. Keep metadata application
+    # best-effort for custom models that do not expose a formatter.
+    if card is not None:
+        try:
+            model.context_size = card.context_size
+            model.formatter.input_types = card.input_types
+        except Exception:  # pylint: disable=broad-except
+            logger.debug(
+                "Failed to apply model card metadata for %s.",
+                config.model,
+            )
 
     return model
 
