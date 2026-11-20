@@ -219,15 +219,22 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
     break_tags = {qn("w:br"), qn("w:cr")}
     move_source_tag = qn("w:moveFrom")
     table_data: list[list[str]] = []
-    for tr in table._element.findall(qn("w:tr")):
+    # Content controls (``w:sdt``) can wrap whole rows and cells; read
+    # through them as ``_body_elements`` does for the document body.
+    for tr in _body_elements(table._element):
+        if tr.tag != qn("w:tr"):
+            continue
         row_data: list[str] = []
         grid_before = tr.find(f"{qn('w:trPr')}/{qn('w:gridBefore')}")
         if grid_before is not None:
             row_data.extend([""] * int(grid_before.get(qn("w:val"), "0")))
-        for tc in tr.findall(qn("w:tc")):
+        for tc in _body_elements(tr):
+            if tc.tag != qn("w:tc"):
+                continue
             paragraphs: list[str] = []
-            # Include paragraphs of tables nested in this cell.
-            for p_elem in tc.xpath("./w:p | ./w:tbl//w:tc/w:p"):
+            # Include paragraphs of tables nested in this cell and those
+            # wrapped in content controls, but not text-box paragraphs.
+            for p_elem in tc.xpath(".//w:p[not(ancestor::w:p)]"):
                 text_parts: list[str] = []
                 for element in p_elem.iter():
                     if any(

@@ -73,6 +73,7 @@ class GatewayMCPTool(ToolBase):
         gateway: "GatewayClient",
         agent_id: str = "",
         session_id: str = "",
+        trust_annotations: bool = True,
     ) -> None:
         """Build a gateway-backed MCP tool.
 
@@ -87,7 +88,7 @@ class GatewayMCPTool(ToolBase):
                 Raw upstream tool descriptor as returned by the gateway.
                 ``input_schema`` is forwarded verbatim;
                 ``annotations.read_only_hint`` drives the permission
-                policy.
+                policy when ``trust_annotations`` is `True`.
             gateway (`GatewayClient`):
                 Facade dispatching every call through
                 :meth:`GatewayClient.exec_request`.
@@ -95,6 +96,11 @@ class GatewayMCPTool(ToolBase):
                 The agent whose gateway-side session to run against.
             session_id (`str`, defaults to ``""``):
                 The session whose gateway-side session to run against.
+            trust_annotations (`bool`, defaults to `True`):
+                Whether to trust the tool annotations reported by the
+                upstream MCP server. If `False`, the ``readOnlyHint``
+                annotation is ignored and the tool is never treated as
+                read-only.
         """
         self.mcp_name = mcp_name
         self._agent_id = agent_id
@@ -111,9 +117,19 @@ class GatewayMCPTool(ToolBase):
         self.is_concurrency_safe = False
         self.is_external_tool = False
 
+        # Only honor the self-reported read-only hint for trusted servers,
+        # mirroring :class:`agentscope.tool.MCPTool`.
         self.is_read_only = False
-        if tool.annotations:
-            self.is_read_only = tool.annotations.read_only_hint or False
+        if tool.annotations and tool.annotations.read_only_hint:
+            if trust_annotations:
+                self.is_read_only = True
+            else:
+                logger.debug(
+                    "Ignored the read-only hint of MCP tool '%s' as the "
+                    "annotations of MCP '%s' are not trusted.",
+                    tool.name,
+                    mcp_name,
+                )
 
         self._tool = tool
         self._gateway = gateway
@@ -345,6 +361,11 @@ class GatewayMCPClient(MCPClient):
         the live client exists in the workspace. :meth:`connect` sends them
         with the registration, so they survive a reconnect.
 
+        Every successful update invalidates the proxy's tool catalog,
+        including equivalent updates. A newly listed proxy cannot know
+        which runtime overrides are already active on the gateway.
+        Previously returned tools keep their existing schemas.
+
         Args:
             headers (`dict[str, str]`):
                 The complete runtime header map. An empty dict clears it.
@@ -360,6 +381,11 @@ class GatewayMCPClient(MCPClient):
                 f"MCP {self.name!r} is not connected. Call connect() first.",
             )
         assert self._gateway is not None
+        # Preserve the acknowledged map if the caller mutates its dict
+        # while the request is in flight. Leave validation to the gateway.
+        request_headers = (
+            dict(headers) if isinstance(headers, dict) else headers
+        )
         status, body = await self._gateway.exec_request(
             "PUT",
             f"/mcps/{self.name}/runtime-headers",
@@ -367,7 +393,7 @@ class GatewayMCPClient(MCPClient):
                 "agent_id": self._agent_id,
                 "session_id": self._session_id,
             },
-            body={"headers": headers},
+            body={"headers": request_headers},
         )
         if status == 404:
             raise RuntimeError(
@@ -385,7 +411,9 @@ class GatewayMCPClient(MCPClient):
                 f"gateway failed to update runtime headers for "
                 f"MCP {self.name!r}: {_safe_detail(status, body)}",
             )
-        self._runtime_headers = dict(headers)
+        self._runtime_headers = dict(request_headers)
+        self._runtime_headers_generation += 1
+        self._cached_tools = None
 
     # ── tool discovery ────────────────────────────────────────────
 
@@ -400,26 +428,38 @@ class GatewayMCPClient(MCPClient):
 
         Raises:
             `RuntimeError`:
-                Gateway returned non-2xx.
+                Gateway returned non-2xx, or successful header updates
+                invalidated both discovery attempts.
         """
         assert self._gateway is not None
-        status, body = await self._gateway.exec_request(
-            "GET",
-            f"/mcps/{self.name}/tools",
-            params={
-                "agent_id": self._agent_id,
-                "session_id": self._session_id,
-            },
-        )
-        if status >= 400:
-            raise RuntimeError(
-                f"gateway failed to list tools for MCP {self.name!r}: "
-                f"{_safe_detail(status, body)}",
+        for _ in range(2):
+            generation = self._runtime_headers_generation
+            status, body = await self._gateway.exec_request(
+                "GET",
+                f"/mcps/{self.name}/tools",
+                params={
+                    "agent_id": self._agent_id,
+                    "session_id": self._session_id,
+                },
             )
-        data = json.loads(body)
-
-        raw_tools = [mcp.types.Tool.model_validate(d) for d in data]
-        self._cached_tools = raw_tools
+            if status >= 400:
+                raise RuntimeError(
+                    f"gateway failed to list tools for MCP {self.name!r}: "
+                    f"{_safe_detail(status, body)}",
+                )
+            # The gateway may have produced this response before a PUT
+            # completed, even though its delivery finished afterwards.
+            if generation != self._runtime_headers_generation:
+                continue
+            data = json.loads(body)
+            raw_tools = [mcp.types.Tool.model_validate(d) for d in data]
+            self._cached_tools = raw_tools
+            break
+        else:
+            raise RuntimeError(
+                f"MCP {self.name!r} runtime headers changed during gateway "
+                "tool discovery; retry the lookup.",
+            )
 
         # Gateway returns the unfiltered upstream view; honour the same
         # enable/disable filtering ``MCPClient`` applies locally.
@@ -468,6 +508,7 @@ class GatewayMCPClient(MCPClient):
             gateway=self._gateway,
             agent_id=self._agent_id,
             session_id=self._session_id,
+            trust_annotations=self.trust_annotations,
         )
 
 

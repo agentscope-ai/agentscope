@@ -9,7 +9,11 @@ import requests
 from pydantic import Field
 
 from ._formatter_base import file_url_to_path
-from ._openai_formatter import _OpenAIFormatterBase, _format_message_name
+from ._openai_formatter import (
+    _OPENAI_AUDIO_FORMATS,
+    _OpenAIFormatterBase,
+    _format_message_name,
+)
 from .._logging import logger
 from ..message import (
     Msg,
@@ -91,12 +95,13 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
         default_factory=lambda: [
             "text/plain",
             "image/*",
-            "audio/*",
+            *_OPENAI_AUDIO_FORMATS,
             "video/*",
         ],
         description=(
             "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "audio/*", "video/*"]``.'
+            '``["text/plain", "image/*", "audio/wav", "audio/mp3", '
+            '"audio/mpeg", "video/*"]``.'
         ),
     )
 
@@ -357,12 +362,13 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
         default_factory=lambda: [
             "text/plain",
             "image/*",
-            "audio/*",
+            *_OPENAI_AUDIO_FORMATS,
             "video/*",
         ],
         description=(
             "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "audio/*", "video/*"]``.'
+            '``["text/plain", "image/*", "audio/wav", "audio/mp3", '
+            '"audio/mpeg", "video/*"]``.'
         ),
     )
 

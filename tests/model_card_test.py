@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Tests for chat and TTS model card metadata and serialization."""
+"""Tests for chat, TTS, and realtime model cards."""
+import os
 import tempfile
 from datetime import date
 from pathlib import Path
@@ -10,6 +11,7 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 from agentscope.app._router._schema._tts_model import ListTTSModelsResponse
+from agentscope.asr import ASRModelCard
 from agentscope.credential import OpenAICredential
 from agentscope.model import (
     AnthropicChatModel,
@@ -18,6 +20,7 @@ from agentscope.model import (
     OpenAIResponseModel,
     XAIChatModel,
 )
+from agentscope.realtime import RealtimeModelCard
 from agentscope.tts import TTSModelCard
 
 
@@ -25,8 +28,99 @@ class _Parameters(BaseModel):
     """Minimal parameters for testing model metadata independently."""
 
 
+class _Params(BaseModel):
+    """Minimal parameter class for model card tests."""
+
+    max_tokens: int | None = None
+    temperature: float | None = None
+
+
+class _TTSParams(BaseModel):
+    """Minimal TTS parameter class for model card tests."""
+
+    voice: str | None = None
+    speed: float | None = None
+
+
+def _write_yaml(content: str) -> str:
+    """Write YAML to a temp file and return its path."""
+    with tempfile.NamedTemporaryFile(
+        "w",
+        suffix=".yaml",
+        delete=False,
+        encoding="utf-8",
+    ) as f:
+        f.write(content)
+        return f.name
+
+
 class ModelCardTest(TestCase):
     """Verify model card loading, serialization, and parameter filtering."""
+
+    def test_speech_cards_reject_boolean_overrides(self) -> None:
+        """A false boolean is an invalid override mapping."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "speech.yaml"
+            path.write_text(
+                "name: test\nlabel: Test\nparameter_overrides: false\n",
+                encoding="utf-8",
+            )
+            for card in (ASRModelCard, TTSModelCard):
+                with self.subTest(card=card):
+                    with self.assertRaises(AttributeError):
+                        card.from_yaml(str(path), _Parameters)
+
+    def test_null_override_removes_parameter(self) -> None:
+        """A null parameter override removes the parameter without
+        breaking the card."""
+        path = _write_yaml(
+            "name: test-model\n"
+            "label: Test Model\n"
+            "status: active\n"
+            "context_size: 128000\n"
+            "output_size: 4096\n"
+            "parameter_overrides:\n"
+            "  max_tokens: null\n",
+        )
+        try:
+            card = ModelCard.from_yaml(path, _Params)
+        finally:
+            os.unlink(path)
+
+        self.assertNotIn("max_tokens", card.parameter_schema["properties"])
+        self.assertEqual(
+            card.parameters_overrides,
+            {},
+        )
+
+    def test_null_override_mixed_with_dict_overrides(self) -> None:
+        """Null overrides are dropped from the stored overrides while
+        dict overrides are kept."""
+        path = _write_yaml(
+            "name: test-model\n"
+            "label: Test Model\n"
+            "status: active\n"
+            "context_size: 128000\n"
+            "output_size: 4096\n"
+            "parameter_overrides:\n"
+            "  max_tokens: null\n"
+            "  temperature:\n"
+            "    default: 0.7\n",
+        )
+        try:
+            card = ModelCard.from_yaml(path, _Params)
+        finally:
+            os.unlink(path)
+
+        self.assertNotIn("max_tokens", card.parameter_schema["properties"])
+        self.assertEqual(
+            card.parameter_schema["properties"]["temperature"]["default"],
+            0.7,
+        )
+        self.assertEqual(
+            card.parameters_overrides,
+            {"temperature": {"default": 0.7}},
+        )
 
     def test_hidden_parameters_update_required(self) -> None:
         """Filter required fields without mutating the source schema."""
@@ -241,8 +335,74 @@ class ModelCardTest(TestCase):
                 )
 
 
+class RealtimeModelCardTest(TestCase):
+    """Verify realtime parameter filtering."""
+
+    def test_null_override_removes_parameter_without_validation_error(
+        self,
+    ) -> None:
+        """Load cards with null parameter overrides."""
+
+        class Parameters(BaseModel):
+            """Parameters for card filtering."""
+
+            hidden: str
+            visible: int = 1
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "realtime-card.yaml")
+            path.write_text(
+                "name: test-model\n"
+                "label: Test Model\n"
+                "parameter_overrides:\n"
+                "  hidden: null\n",
+                encoding="utf-8",
+            )
+
+            card = RealtimeModelCard.from_yaml(path, Parameters)
+
+            self.assertEqual(
+                card.parameter_schema,
+                {
+                    "type": "object",
+                    "properties": {
+                        "visible": {
+                            "type": "integer",
+                            "title": "Visible",
+                            "default": 1,
+                        },
+                    },
+                },
+            )
+            self.assertEqual(card.parameter_overrides, {})
+            self.assertEqual(
+                RealtimeModelCard.list_from_directory(tmp, Parameters),
+                [card],
+            )
+
+
 class TTSModelCardTest(TestCase):
     """Verify optional dates without changing existing model metadata."""
+
+    def test_null_override_removes_parameter(self) -> None:
+        """A null parameter override removes the parameter without
+        breaking the card."""
+        path = _write_yaml(
+            "name: test-tts\n"
+            "label: Test TTS\n"
+            "parameter_overrides:\n"
+            "  voice: null\n",
+        )
+        try:
+            card = TTSModelCard.from_yaml(path, _TTSParams)
+        finally:
+            os.unlink(path)
+
+        self.assertNotIn("voice", card.parameter_schema["properties"])
+        self.assertEqual(
+            card.parameters_overrides,
+            {},
+        )
 
     def test_release_date_loading_and_serialization(self) -> None:
         """Load YAML dates and expose ISO dates or null in API responses."""
@@ -314,3 +474,51 @@ class TTSModelCardTest(TestCase):
             [error["loc"] for error in raised.exception.errors()],
             [("release_date",)],
         )
+
+    def test_null_parameter_overrides_key_loads_as_empty(self) -> None:
+        """An empty ``parameter_overrides:`` key must not break the card.
+
+        YAML parses the bare key to ``None``, which a plain
+        ``.get(key, {})`` default does not cover.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom.yaml"
+            path.write_text(
+                "name: custom-tts\n"
+                "label: Custom TTS\n"
+                "parameter_overrides:\n",
+                encoding="utf-8",
+            )
+            card = TTSModelCard.from_yaml(str(path), _Parameters)
+
+        self.assertEqual(card.parameters_overrides, {})
+        self.assertEqual(
+            card.parameter_schema,
+            {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        )
+
+
+class ASRModelCardTest(TestCase):
+    """Verify ASR model cards tolerate an empty overrides key."""
+
+    def test_null_parameter_overrides_key_loads_as_empty(self) -> None:
+        """An empty ``parameter_overrides:`` key must not break the card.
+
+        YAML parses the bare key to ``None``, which a plain
+        ``.get(key, {})`` default does not cover.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-asr.yaml"
+            path.write_text(
+                "name: custom-asr\n"
+                "label: Custom ASR\n"
+                "parameter_overrides:\n",
+                encoding="utf-8",
+            )
+            card = ASRModelCard.from_yaml(str(path), _Parameters)
+
+        self.assertEqual(card.parameters_overrides, {})
