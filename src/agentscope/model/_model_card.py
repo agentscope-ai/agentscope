@@ -131,8 +131,11 @@ class ModelCard(BaseModel):
         if "max_tokens" in properties and "output_size" in config:
             properties["max_tokens"]["maximum"] = config["output_size"]
 
-        # Apply parameter_overrides with simple dict merge
-        overrides = config.get("parameter_overrides", {})
+        # Apply parameter_overrides with simple dict merge. A bare key parses
+        # to None, which the ``.get`` default does not cover.
+        overrides = config.get("parameter_overrides")
+        if overrides is None:
+            overrides = {}
         for param_name, override in overrides.items():
             if override is None:
                 # null means remove
@@ -179,8 +182,6 @@ class ModelCard(BaseModel):
             output_size=config["output_size"],
             parameter_schema=final_schema,
             parameters_overrides={
-                k: v
-                for k, v in config.get("parameter_overrides", {}).items()
-                if v is not None
+                k: v for k, v in overrides.items() if v is not None
             },
         )
