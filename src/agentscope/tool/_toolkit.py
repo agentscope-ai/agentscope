@@ -18,6 +18,7 @@ from pydantic import (
     create_model,
 )
 
+from ._adapters import disambiguate_sanitized_mcp_names
 from ._builtin import ResetTools, SkillViewer
 from ._base import ToolBase
 from ._response import ToolResponse, ToolChunk
@@ -140,6 +141,13 @@ class Toolkit:
             raise ValueError(
                 "Tool groups must not contain duplicate tool groups.",
             )
+
+        # Distinct MCP tools can share a model-facing name after illegal
+        # characters are replaced. Separate them before anything reads
+        # the tools that were passed in.
+        disambiguate_sanitized_mcp_names(
+            [tool for group in self.tool_groups for tool in group.tools],
+        )
 
         # The stateful MCP clients should be initialized already
         for group in self.tool_groups:
@@ -513,25 +521,21 @@ class Toolkit:
 
         # The tools in the activated groups and the "basic" group are included
         groups_filter = ["basic"] + (groups or [])
+        # group name, that group's Python tools, and each MCP client's
+        # listing. Listings stay separate so they can be sorted by the
+        # model-facing name after sanitization collisions are resolved.
+        grouped_tools: list[
+            tuple[str, list[ToolBase], list[list[ToolBase]]]
+        ] = []
+        listed_mcp_tools: list[ToolBase] = []
         for group in self.tool_groups:
             if group.name not in groups_filter:
                 continue
 
-            cache_tools = []
-            # Python tools
-            for tool in group.tools:
-                cache_tools.append(tool)
-
-            # MCP tools
+            client_listings: list[list[ToolBase]] = []
             for client in group.mcps:
                 try:
-                    # Stabilize tool order for provider-side prompt caching.
-                    cache_tools.extend(
-                        sorted(
-                            await client.list_tools(),
-                            key=lambda tool: tool.name,
-                        ),
-                    )
+                    listed = await client.list_tools()
                 except Exception as e:
                     # One unreachable MCP must not take the reply down
                     # with it: an expired token or a server that is
@@ -544,20 +548,45 @@ class Toolkit:
                         group.name,
                         _describe_exception(e),
                     )
+                    continue
+                client_listings.append(listed)
+                listed_mcp_tools.extend(listed)
 
-            # Append cached tools into the available tools and solve the name
-            # conflict
+            grouped_tools.append(
+                (group.name, list(group.tools), client_listings),
+            )
+
+        # Include inactive groups' already-built tools so a later
+        # activation cannot rename a tool the model already sees.
+        # Fresh MCP listings are included too: each list_tools() call
+        # builds new adapters that still carry the unsuffixed spelling.
+        disambiguate_sanitized_mcp_names(
+            [tool for group in self.tool_groups for tool in group.tools]
+            + listed_mcp_tools,
+        )
+
+        # Append cached tools into the available tools and solve the name
+        # conflict
+        for group_name, python_tools, client_listings in grouped_tools:
+            cache_tools = list(python_tools)
+            for listed in client_listings:
+                # Stabilize tool order for provider-side prompt caching.
+                # Sort after disambiguation so a collision suffix is part
+                # of the name the schema is ordered by.
+                cache_tools.extend(
+                    sorted(listed, key=lambda tool: tool.name),
+                )
             for tool in cache_tools:
                 if tool.name in available_tools:
                     logger.warning(
                         "Duplicate tool name '%s' found in group '%s', "
                         "overwriting it.",
                         tool.name,
-                        group.name,
+                        group_name,
                     )
                 available_tools[tool.name] = RegisteredTool(
                     tool=tool,
-                    group=group.name,
+                    group=group_name,
                 )
 
         return available_tools
@@ -664,6 +693,16 @@ class Toolkit:
 
         for group in self.tool_groups:
             if group.name == group_name:
+                # Resolve against every group, not only the target one:
+                # model-facing names are a single flat namespace.
+                disambiguate_sanitized_mcp_names(
+                    [
+                        existing
+                        for item in self.tool_groups
+                        for existing in item.tools
+                    ]
+                    + new_tools,
+                )
                 existing_tools = {_.name for _ in group.tools}
                 for new_tool in new_tools:
                     if new_tool.name in existing_tools:
