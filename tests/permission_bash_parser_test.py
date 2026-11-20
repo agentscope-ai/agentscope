@@ -1685,6 +1685,13 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
             "env MODE=1 chmod 0777 file.txt",
             "command chmod 0777 file.txt",
             "echo ready && chmod 0777 file.txt",
+            "/bin/chmod 0777 file.txt",
+            "/usr/bin/sudo chmod 0777 file.txt",
+            "timeout 5 chmod 0777 file.txt",
+            "timeout -s KILL 5 chmod 0777 file.txt",
+            "nice -n 10 chmod 0777 file.txt",
+            "setsid chmod 0777 file.txt",
+            "find . -print0 | xargs -0 chmod 0777",
         ]
         for cmd in test_cases:
             with self.subTest(cmd=cmd):
@@ -1699,6 +1706,8 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
             "chown --recursive root /var/www",
             "chown -Rv root /var/www",
             "sudo chown --recursive root /var/www",
+            "/bin/chown --recursive root /var/www",
+            "timeout 5 chown --recursive root /var/www",
         ]
         for cmd in test_cases:
             with self.subTest(cmd=cmd):
@@ -1717,6 +1726,8 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
             "kill -s 9 123",
             "kill -n 9 123",
             "kill --signal=KILL 123",
+            "/bin/kill -s SIGKILL 123",
+            "timeout 5 kill -s SIGKILL 123",
         ]
         for cmd in test_cases:
             with self.subTest(cmd=cmd):
@@ -1736,6 +1747,10 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
             "chmod o=rwx,o-w file.txt",
             "chmod o+x,o-r,o-w file.txt",
             "chmod --reference=other.txt file.txt",
+            "/bin/chmod 0755 file.txt",
+            "timeout 5 chmod 0644 file.txt",
+            "nice -n 10 chmod 0644 file.txt",
+            "xargs -n 1 chmod 0644",
             "chown root file.txt",
             "chown --from=root root file.txt",
             "kill -TERM 123",

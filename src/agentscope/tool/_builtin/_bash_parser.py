@@ -70,6 +70,10 @@ _COMMAND_WRAPPERS = {
     "command",
     "nohup",
     "exec",
+    "timeout",
+    "nice",
+    "setsid",
+    "xargs",
 }
 
 # Wrapper options that consume the following token as their value.
@@ -98,6 +102,32 @@ _WRAPPER_OPTIONS_WITH_VALUE = {
     },
     "env": {"-u", "--unset", "-C", "--chdir"},
     "exec": {"-a"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "nice": {"-n", "--adjustment"},
+    "xargs": {
+        "-a",
+        "--arg-file",
+        "-d",
+        "--delimiter",
+        "-E",
+        "--eof",
+        "-I",
+        "--replace",
+        "-L",
+        "--max-lines",
+        "-n",
+        "--max-args",
+        "-P",
+        "--max-procs",
+        "-s",
+        "--max-chars",
+    },
+}
+
+# Wrappers that take operands of their own before the command they run.
+_WRAPPER_LEADING_OPERANDS = {
+    # timeout <duration> <command> [args...]
+    "timeout": 1,
 }
 
 # Read-only git commands
@@ -842,6 +872,8 @@ class BashCommandParser:
         Leading variable assignments and wrappers such as ``sudo`` or ``env``
         are skipped together with their options, so ``sudo chmod 0777`` is
         inspected as ``chmod 0777`` while ``grep -r chmod 0777`` is not.
+        Absolute paths are reduced to their last component, so
+        ``/bin/chmod 0777`` is inspected like ``chmod 0777``.
         """
         index = 0
         while index < len(tokens):
@@ -850,10 +882,11 @@ class BashCommandParser:
                 index += 1
                 continue
 
-            if token not in _COMMAND_WRAPPERS:
-                return token, tokens[index + 1 :]
+            name = token.rsplit("/", 1)[-1]
+            if name not in _COMMAND_WRAPPERS:
+                return name, tokens[index + 1 :]
 
-            wrapper = token
+            wrapper = name
             index += 1
             while (
                 index < len(tokens)
@@ -870,6 +903,8 @@ class BashCommandParser:
                     set(),
                 ):
                     index += 1
+
+            index += _WRAPPER_LEADING_OPERANDS.get(wrapper, 0)
 
         return None
 
