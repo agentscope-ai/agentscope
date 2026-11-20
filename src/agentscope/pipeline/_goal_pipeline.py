@@ -238,7 +238,8 @@ class GoalPipeline:
                                 "<system-reminder>You have failed to generate "
                                 "valid execution report. You should call the "
                                 "'GenerateStructuredOutput' tool with a valid "
-                                "structured output that matches the schema. "
+                                "structured output that matches the schema."
+                                "</system-reminder>"
                             ),
                         )
 
