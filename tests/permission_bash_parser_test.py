@@ -1687,3 +1687,46 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         self.parser = None
+
+
+class BashParserReadOnlyOptionTest(unittest.TestCase):
+    """Read-only classification of ``rg`` / ``tree`` options (#3249).
+
+    These exercise only the pure command classifier (no shell is executed),
+    so they also run on Windows, where the Bash tool itself is unavailable.
+    """
+
+    def setUp(self) -> None:
+        self.parser = BashCommandParser()
+
+    def test_rg_pre_is_not_read_only(self) -> None:
+        """``rg --pre <program>`` runs a program on every searched file."""
+        expected = {
+            "rg --pre ./hook.sh foo .": False,
+            "rg --pre=./hook.sh foo .": False,
+            "rg --pre ./hook.sh -n foo .": False,
+            "rg foo .": True,
+            "rg -n foo .": True,
+        }
+        for cmd, read_only in expected.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.is_read_only_command(cmd),
+                    read_only,
+                )
+
+    def test_tree_o_is_not_read_only(self) -> None:
+        """``tree -o <file>`` writes the listing to a file."""
+        expected = {
+            "tree -o out.txt": False,
+            "tree -oout.txt": False,
+            "tree -a -o out.txt": False,
+            "tree -L 2": True,
+            "tree": True,
+        }
+        for cmd, read_only in expected.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.is_read_only_command(cmd),
+                    read_only,
+                )

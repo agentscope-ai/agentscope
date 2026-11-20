@@ -218,6 +218,25 @@ class BashCommandParser:
             ):
                 return False
 
+        # ``rg --pre <program>`` executes <program> on every file it
+        # searches; ``tree -o <file>`` writes the listing to a file. Both
+        # make an otherwise read-only command mutate state.
+        if cmd.startswith(("rg ", "tree ")):
+            try:
+                tokens = shlex.split(cmd)
+            except ValueError:
+                return False
+            args = tokens[1:]
+            if tokens[0] == "rg" and any(
+                tok == "--pre" or tok.startswith("--pre=") for tok in args
+            ):
+                return False
+            if tokens[0] == "tree" and any(
+                tok.startswith("-") and not tok.startswith("--") and "o" in tok
+                for tok in args
+            ):
+                return False
+
         # Check if it starts with a read-only prefix
         for readonly_cmd in READ_ONLY_COMMANDS:
             if cmd == readonly_cmd or cmd.startswith(readonly_cmd + " "):
