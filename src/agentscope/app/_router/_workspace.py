@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from ..deps import (
+    get_allowed_stdio_commands,
     get_current_user_id,
     get_skill_hubs,
     get_storage,
@@ -42,6 +43,46 @@ from ._schema import (
 from ..._utils._common import _describe_exception
 
 workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
+
+
+# ---------------------------------------------------------------------------
+# Stdio MCP command allowlist
+# ---------------------------------------------------------------------------
+
+
+def check_stdio_command_allowed(
+    mcp_config: object,
+    allowed: frozenset[str] | None,
+) -> str | None:
+    """Return a rejection reason for a disallowed stdio command, else ``None``.
+
+    A stdio MCP config makes the server spawn ``command`` as a local process.
+    The allowlist lives on ``app.state.allowed_stdio_commands`` (introduced by
+    the ``/workspace/mcp`` gate). Both routes that can *start* a caller-specified
+    stdio server MUST consult it — checking only ``POST /workspace/mcp`` leaves
+    ``POST /workspace/mcp/from-library`` able to replay a previously stored
+    disallowed command.
+
+    Args:
+        mcp_config (`object`): An ``MCPClient.mcp_config``; inspected
+            structurally so this helper stays importable without the MCP
+            package's full dependency set.
+        allowed (`frozenset[str] | None`): Permitted commands. ``None`` means
+            unrestricted (the allowlist was not configured).
+
+    Returns:
+        `str | None`: A human-readable reason when the command is not allowed,
+        or ``None`` when the config may proceed.
+    """
+    if allowed is None:
+        return None
+    config_type = getattr(mcp_config, "type", None)
+    if config_type != "stdio_mcp":
+        return None
+    command = getattr(mcp_config, "command", None)
+    if command in allowed:
+        return None
+    return f"Stdio MCP command {command!r} is not in this service's allowed stdio commands."
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +144,7 @@ async def add_mcp(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_service: WorkspaceService = Depends(get_workspace_service),
+    allowed: frozenset[str] | None = Depends(get_allowed_stdio_commands),
 ) -> None:
     """Add an MCP client to the session's workspace.
 
@@ -111,7 +153,28 @@ async def add_mcp(
     existing record of the same name is left alone: the library is where
     that MCP is defined, and adding it to a second workspace must not
     silently redefine it.
+
+    A stdio MCP makes the server spawn ``command`` as a local process. When
+    the app was created with ``allowed_stdio_commands``, any other command
+    is refused before anything is started or stored.
+
+    Raises:
+        `HTTPException`: 403 if a stdio ``command`` is not in the
+            configured allowlist, or 409 if the name is already taken.
     """
+    if (
+        allowed is not None
+        and mcp.mcp_config.type == "stdio_mcp"
+        and mcp.mcp_config.command not in allowed
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Stdio MCP command {mcp.mcp_config.command!r} is not in "
+                "this service's allowed stdio commands."
+            ),
+        )
+
     workspace = await workspace_service.resolve(
         user_id,
         agent_id,
@@ -145,6 +208,7 @@ async def add_mcps_from_library(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_service: WorkspaceService = Depends(get_workspace_service),
+    allowed: frozenset[str] | None = Depends(get_allowed_stdio_commands),
 ) -> AddFromLibraryResponse:
     """Put MCPs the user has already installed into this workspace.
 
@@ -152,7 +216,10 @@ async def add_mcps_from_library(
     rather than configs — it has no way to reconstruct one.
 
     Adding is per-MCP: one that fails to connect does not cancel the
-    rest, and the response says which ones landed.
+    rest, and the response says which ones landed. A library entry whose
+    stdio command is no longer permitted is reported in ``failed`` and
+    never started — the allowlist must hold for every route that spawns a
+    process, not only ``POST /workspace/mcp``.
     """
     workspace = await workspace_service.resolve(
         user_id,
@@ -176,6 +243,16 @@ async def add_mcps_from_library(
             continue
         if record.client.name in present:
             # Already there: not an error, just nothing to do.
+            continue
+        # A stdio command can be stored in the library while unrestricted
+        # (or before the allowlist was configured). Re-check it on the way
+        # out — this route starts a process just like POST /workspace/mcp.
+        rejection = check_stdio_command_allowed(
+            record.client.mcp_config,
+            allowed,
+        )
+        if rejection is not None:
+            failed[record.client.name] = rejection
             continue
         try:
             await workspace.add_mcp(
