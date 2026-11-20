@@ -863,7 +863,9 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
           ``_LOCK_RETRY_DELAY_SECS`` until acquired.
         - A heartbeat task renews the TTL every ``ttl_secs / 2``
           seconds while the body runs, so a long-running holder
-          does not lose the lease.
+          does not lose the lease. A transient renewal error is
+          logged and the heartbeat keeps running. Leaving the lock
+          stops that task even when a renewal is still in flight.
         - Renewal and release compare the ownership token atomically.
         - Acquisition cancellation resolves an outstanding SET and releases
           its token within the configured cleanup deadline. If Redis remains
@@ -894,17 +896,48 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 break
             await asyncio.sleep(self._LOCK_RETRY_DELAY_SECS)
 
-        # Heartbeat: renew TTL every ttl/2 seconds.
+        # Heartbeat: renew TTL every ttl/2 seconds. One Redis error
+        # must not end the task; the body would keep running after
+        # the lease expired (#3751).
+        #
+        # Stop with an Event, not only Task.cancel(). On Python 3.11 a
+        # cancel that lands while renew is finishing is consumed and is
+        # not raised at the next await, so the loop would sleep until
+        # the lease interval (and lock exit would wait with it).
+        stop_heartbeat = asyncio.Event()
+
         async def _heartbeat() -> None:
-            while True:
-                await asyncio.sleep(max(1.0, ttl_secs / 2))
-                await self._client.eval(
-                    _LOCK_RENEW_LUA,
-                    1,
-                    key,
-                    token,
-                    ttl_secs,
-                )
+            interval = max(1.0, ttl_secs / 2)
+            while not stop_heartbeat.is_set():
+                try:
+                    await asyncio.wait_for(stop_heartbeat.wait(), interval)
+                except TimeoutError:
+                    pass
+                if stop_heartbeat.is_set():
+                    break
+                try:
+                    await self._client.eval(
+                        _LOCK_RENEW_LUA,
+                        1,
+                        key,
+                        token,
+                        ttl_secs,
+                    )
+                except Exception as exc:  # pylint: disable=broad-except
+                    # A cancel that the client surfaces as a connection
+                    # error must still end the task. A plain Redis error
+                    # must not.
+                    current = asyncio.current_task()
+                    if stop_heartbeat.is_set() or (
+                        current is not None and current.cancelling()
+                    ):
+                        break
+                    logger.warning(
+                        "Lock heartbeat renewal failed for %s: %s; "
+                        "retrying.",
+                        key,
+                        exc,
+                    )
 
         hb_task = asyncio.create_task(
             _heartbeat(),
@@ -914,6 +947,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         try:
             yield
         finally:
+            stop_heartbeat.set()
             hb_task.cancel()
             try:
                 await hb_task
