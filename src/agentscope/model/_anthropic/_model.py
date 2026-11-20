@@ -42,6 +42,22 @@ def _total_input_tokens(usage: Any) -> int:
     )
 
 
+def _build_chat_usage(usage: Any, start_datetime: datetime) -> ChatUsage:
+    """Convert Anthropic token counts and elapsed time to chat usage."""
+    return ChatUsage(
+        input_tokens=_total_input_tokens(usage),
+        output_tokens=getattr(usage, "output_tokens", 0) or 0,
+        time=(datetime.now() - start_datetime).total_seconds(),
+        cache_creation_input_tokens=getattr(
+            usage,
+            "cache_creation_input_tokens",
+            0,
+        )
+        or 0,
+        cache_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+    )
+
+
 class AnthropicChatModel(ChatModelBase):
     """The Anthropic chat model."""
 
@@ -450,24 +466,7 @@ class AnthropicChatModel(ChatModelBase):
 
         usage = None
         if response.usage:
-            u = response.usage
-            usage = ChatUsage(
-                input_tokens=_total_input_tokens(u),
-                output_tokens=u.output_tokens or 0,
-                time=(datetime.now() - start_datetime).total_seconds(),
-                cache_creation_input_tokens=getattr(
-                    u,
-                    "cache_creation_input_tokens",
-                    0,
-                )
-                or 0,
-                cache_input_tokens=getattr(
-                    u,
-                    "cache_read_input_tokens",
-                    0,
-                )
-                or 0,
-            )
+            usage = _build_chat_usage(response.usage, start_datetime)
 
         resp_kwargs: dict[str, Any] = {
             "content": content_blocks,
@@ -530,25 +529,7 @@ class AnthropicChatModel(ChatModelBase):
                     if message.usage:
                         u = message.usage
                         uncached_input_tokens = u.input_tokens or 0
-                        usage = ChatUsage(
-                            input_tokens=_total_input_tokens(u),
-                            output_tokens=getattr(u, "output_tokens", 0) or 0,
-                            time=(
-                                datetime.now() - start_datetime
-                            ).total_seconds(),
-                            cache_creation_input_tokens=getattr(
-                                u,
-                                "cache_creation_input_tokens",
-                                0,
-                            )
-                            or 0,
-                            cache_input_tokens=getattr(
-                                u,
-                                "cache_read_input_tokens",
-                                0,
-                            )
-                            or 0,
-                        )
+                        usage = _build_chat_usage(u, start_datetime)
 
                 elif event.type == "content_block_start":
                     if event.content_block.type in ("text", "thinking"):
@@ -660,7 +641,17 @@ class AnthropicChatModel(ChatModelBase):
                             request_id=response_id,
                             partial_output=has_output,
                         )
-                    if event.usage and usage:
+                    if event.usage and usage is None:
+                        u = event.usage
+                        uncached_input_tokens = (
+                            getattr(u, "input_tokens", 0) or 0
+                        )
+                        usage = _build_chat_usage(u, start_datetime)
+                        # Forward late usage through an empty chunk.
+                        delta_res.usage = usage
+                        yield delta_res
+
+                    elif event.usage:
                         usage.output_tokens = event.usage.output_tokens or 0
                         # Update cumulative counts before adding cache tokens.
                         value = getattr(event.usage, "input_tokens", None)

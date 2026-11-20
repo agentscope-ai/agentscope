@@ -131,6 +131,18 @@ class MCPClient(BaseModel):
         ),
     )
 
+    trust_annotations: bool = Field(
+        default=True,
+        title="Trust Tool Annotations",
+        description=(
+            "Whether to trust the tool annotations reported by this MCP "
+            "server. If true, a tool annotated with 'readOnlyHint' is "
+            "treated as read-only and auto-allowed by the permission engine "
+            "in every mode. Annotations are self-reported by the server, so "
+            "disable this for servers you do not fully trust."
+        ),
+    )
+
     # Private attributes
     _client: SDKClient | None = PrivateAttr(default=None)
     _lifecycle_task: asyncio.Task[None] | None = PrivateAttr(default=None)
@@ -509,6 +521,8 @@ class MCPClient(BaseModel):
             self._lifecycle_task = None
             self._close_requested = None
             self._is_connected = False
+            # Rediscover tools after reconnecting.
+            self._cached_tools = None
             logger.info("MCP closed: %s", self.name)
 
     def _get_client_gen(self) -> AbstractAsyncContextManager[Any]:
@@ -658,6 +672,7 @@ class MCPClient(BaseModel):
                 client_gen=self._get_client_gen,
                 timeout=self.execution_timeout,
                 stream_progress=self.stream_progress,
+                trust_annotations=self.trust_annotations,
             )
         else:
             # Stateful: pass session
@@ -668,6 +683,7 @@ class MCPClient(BaseModel):
                 session=self._client,
                 timeout=self.execution_timeout,
                 stream_progress=self.stream_progress,
+                trust_annotations=self.trust_annotations,
             )
 
     def _validate_connection(self) -> None:

@@ -86,10 +86,9 @@ class ASRModelCard(BaseModel):
 
         schema = copy.deepcopy(parameter_class.model_json_schema())
         properties = schema.get("properties", {})
-        # ``parameter_overrides:`` with no value parses to ``None``, which
-        # a bare ``.get(key, {})`` default would not cover.  Treat it as
-        # an empty mapping, as the realtime loader already does.
-        overrides = config.get("parameter_overrides", {}) or {}
+        overrides = config.get("parameter_overrides")
+        if overrides is None:
+            overrides = {}
         for parameter_name, override in overrides.items():
             if override is None or override.get("hidden"):
                 properties.pop(parameter_name, None)
