@@ -241,7 +241,8 @@
 			"unknown": "The reply failed with an unknown error."
 		},
 		"copy": "Copy",
-		"downloadFile": "Download file"
+		"downloadFile": "Download file",
+		"wrapLines": "Wrap lines"
 	},
 	"chat": {
 		"ttsFailed": "Speech generation failed. Text replies will continue.",

@@ -98,7 +98,7 @@ function MessageTime({ createdAt }: { createdAt: string }) {
 	const date = new Date(createdAt);
 	if (Number.isNaN(date.getTime())) return null;
 	return (
-		<time dateTime={createdAt} className="whitespace-nowrap tabular-nums">
+		<time dateTime={createdAt} className="invisible ml-auto whitespace-nowrap tabular-nums">
 			{format(date, isToday(date) ? 'HH:mm' : 'yyyy-MM-dd HH:mm')}
 		</time>
 	);
@@ -108,7 +108,7 @@ function MessageTime({ createdAt }: { createdAt: string }) {
 export function SteeringMessageBubble({ blocks, createdAt, status }: SteeringMessageBubbleProps) {
 	const { t } = useTranslation();
 	return (
-		<div className="flex w-full flex-col items-end gap-1">
+		<div className="flex w-full flex-col items-end gap-1" data-slot="steering-message">
 			<Bubble align="end" variant="muted">
 				<BubbleContent className="flex flex-col gap-2">
 					{blocks.map((block) => (
@@ -121,7 +121,6 @@ export function SteeringMessageBubble({ blocks, createdAt, status }: SteeringMes
 				role="status"
 				aria-live="polite"
 			>
-				<MessageTime createdAt={createdAt} />
 				{status === 'steering' ? (
 					<Loader2 className="size-3 animate-spin" aria-hidden="true" />
 				) : (
@@ -132,6 +131,7 @@ export function SteeringMessageBubble({ blocks, createdAt, status }: SteeringMes
 						? t('chatQueue.stateSteering')
 						: t('chatQueue.stateSteered')}
 				</span>
+				<MessageTime createdAt={createdAt} />
 			</div>
 		</div>
 	);
@@ -575,7 +575,6 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 					</AttachmentGroup>
 				)}
 				<MessageFooter className="flex-wrap gap-1 font-mono">
-					<MessageTime createdAt={message.created_at} />
 					{!isUser && (
 						<Badge
 							variant="secondary"
@@ -605,6 +604,7 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 						</Badge>
 					)}
 					{plainText && <CopyButton text={plainText} />}
+					<MessageTime createdAt={message.created_at} />
 				</MessageFooter>
 			</MessageContent>
 		</Message>
@@ -692,6 +692,7 @@ export function ASBlock({ block, showCodeActions = false, messageFinished = fals
 					animated
 					isAnimating={!messageFinished && !block.finished_at}
 					controls={showCodeActions && codeActions}
+					wrapControl={showCodeActions}
 					icons={codeIcons}
 					translations={{
 						copyCode: t('messageBubble.copy'),

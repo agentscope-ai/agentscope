@@ -241,7 +241,8 @@
 			"unknown": "回复因未知错误失败。"
 		},
 		"copy": "复制",
-		"downloadFile": "下载文件"
+		"downloadFile": "下载文件",
+		"wrapLines": "自动换行"
 	},
 	"chat": {
 		"ttsFailed": "语音生成失败，文字回复继续。",
