@@ -274,6 +274,7 @@ export class StreamingAudioManager {
 		autoplay: boolean | Promise<boolean> = true,
 		replyId?: string,
 	): void {
+		if (typeof autoplay !== 'boolean') autoplay = autoplay.catch(() => false);
 		if (this.sessions.has(blockId)) return;
 		const livePlayer =
 			autoplay === true && mediaType === 'audio/wav' ? new WavStreamPlayer() : null;
@@ -332,12 +333,15 @@ export class StreamingAudioManager {
 	 */
 	async end(blockId: string, playbackDone?: Promise<void>): Promise<void> {
 		const session = this.sessions.get(blockId);
-		if (!session) return;
 		if (playbackDone) {
-			await playbackDone;
+			try {
+				await playbackDone;
+			} catch {
+				if (session) session.autoplay = false;
+			}
 			if (this.sessions.get(blockId) !== session) return;
 		}
-		if (session.state.status !== 'streaming') return;
+		if (!session || session.state.status !== 'streaming') return;
 
 		const hadLivePlayback = session.hadLivePlayer;
 		if (session.livePlayer) {

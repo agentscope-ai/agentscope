@@ -348,12 +348,18 @@ export class PipelineVoiceSession {
 					reject(error);
 				}
 			});
+		}).catch((error) => {
+			const playbackEvent =
+				event.type === EventType.DATA_BLOCK_START ||
+				event.type === EventType.DATA_BLOCK_DELTA ||
+				event.type === EventType.DATA_BLOCK_END;
+			this.fail(error, !playbackEvent);
+			return true;
 		});
 		if (this.pendingQueueEvents.length === 1 && !this.stopped) void this.lookupQueueItem();
 		if (event.type === EventType.DATA_BLOCK_START)
 			return { autoplay: decision.then((owns) => !owns) };
 		if (event.type === EventType.DATA_BLOCK_END) return decision.then(() => undefined);
-		void decision.catch((error) => this.fail(error));
 		return true;
 	}
 

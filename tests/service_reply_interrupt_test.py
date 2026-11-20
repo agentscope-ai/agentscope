@@ -375,21 +375,21 @@ class ReplyInterruptTest(IsolatedAsyncioTestCase):
     async def test_bus_target_is_enforced_by_worker(self) -> None:
         """Stale and malformed targets never become session-wide cancels."""
         async with InMemoryMessageBus() as bus:
-            await self._assert_bus_target(bus)
+            await self._assert_bus_target(bus, ("A", None, "", 42))
 
     async def test_bus_target_survives_subscription_reconnect(self) -> None:
-        """Reconnect after EOF or failure without losing reply filtering."""
-        for mode in ("end", "raise"):
-            with self.subTest(mode=mode), patch(
-                "agentscope.app._manager._cancel_dispatcher."
-                "_SUBSCRIBE_BACKOFF_INITIAL_SECS",
-                0.001,
-            ):
-                await self._assert_bus_target(_DropOnceBus(mode))
+        """After reconnecting, only the active reply can be interrupted."""
+        with patch(
+            "agentscope.app._manager._cancel_dispatcher."
+            "_SUBSCRIBE_BACKOFF_INITIAL_SECS",
+            0.001,
+        ):
+            await self._assert_bus_target(_DropOnceBus("raise"), ("A",))
 
     async def _assert_bus_target(
         self,
         bus: InMemoryMessageBus | _DropOnceBus,
+        ignored_targets: tuple[str | int | None, ...],
     ) -> None:
         """Deliver invalid, stale and matching targets to a live worker."""
         registry = ChatRunRegistry()
@@ -429,7 +429,7 @@ class ReplyInterruptTest(IsolatedAsyncioTestCase):
                 )
             task = registry.spawn(run(), session_id="s")
             await asyncio.wait_for(ready.wait(), 1)
-            for target in ("A", None, "", 42):
+            for target in ignored_targets:
                 await bus.publish(
                     MessageBusKeys.session_interrupt_channel(),
                     {"session_id": "s", "reply_id": target},

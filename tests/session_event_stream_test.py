@@ -4,15 +4,16 @@
 import asyncio
 from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
+from functools import partial
 import json
-import os
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 from uuid import uuid4
 
-from redis.asyncio import ConnectionPool
+from fakeredis.aioredis import FakeRedis
 
 from agentscope.app._bus_ops import publish_session_event
+from agentscope.app._router import _session
 from agentscope.app._router._session import stream_session_events
 from agentscope.app.message_bus import (
     InMemoryMessageBus,
@@ -160,9 +161,51 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
         self.assertEqual(markers[0], markers[1])
         self.assertEqual(await bus.log_read(key), [(entry_id, history)])
 
+    async def test_legacy_barrier_timeout_preserves_resume(self) -> None:
+        """Reconnect after lost markers and replay the unconfirmed row."""
+        async with _LegacyBus() as bus, asyncio.timeout(3):
+            key = MessageBusKeys.session_events("s")
+            first = {"frame": "first"}
+            missed = {"frame": "missed"}
+            cursor = await publish_session_event(bus, "s", first)
+
+            connect = partial(
+                stream_session_events,
+                session_id="s",
+                agent_id="a",
+                user_id="u",
+                storage=_Storage(),  # type: ignore[arg-type]
+                message_bus=bus,
+            )
+            with patch.object(_session, "_HEARTBEAT_INTERVAL_SECS", 0.02):
+                response = await connect(after=None)
+                async with aclosing(response.body_iterator) as stream:
+                    async for frame in stream:
+                        if frame != ":\n\n":
+                            self.assertEqual(_decode(frame), first)
+                            break
+                    else:
+                        self.fail("Stream closed before the first frame")
+                    await bus.log_append(key, missed)
+                    with patch.object(bus, "publish") as drop:
+                        remaining = [
+                            frame async for frame in stream if frame != ":\n\n"
+                        ]
+                    self.assertEqual(remaining, [])
+                    self.assertEqual(drop.await_count, 3)
+            response = await connect(after=cursor)
+            async with aclosing(response.body_iterator) as stream:
+                self.assertEqual(_decode(await anext(stream)), missed)
+
     async def test_replay_and_resume_with_opaque_cursors(self) -> None:
         """Replay in append order and skip late duplicate notifications."""
         key = MessageBusKeys.session_events("s")
+        first_heartbeat = asyncio.Event()
+        publish = _LegacyBus.publish
+
+        async def delay_marker(bus: _LegacyBus, key: str, value: dict) -> None:
+            await first_heartbeat.wait()
+            await publish(bus, key, value)
 
         async def read(
             key: str,
@@ -193,15 +236,19 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
                         message_bus=bus,
                         after=after,
                     )
-                    async with aclosing(response.body_iterator) as stream:
+                    async with (
+                        asyncio.timeout(3),
+                        aclosing(response.body_iterator) as stream,
+                    ):
                         with patch(
                             "agentscope.app._router._session."
                             "_HEARTBEAT_INTERVAL_SECS",
                             0.02,
-                        ):
+                        ), patch.object(_LegacyBus, "publish", delay_marker):
                             frames = []
                             while (frame := await anext(stream)) != ":\n\n":
                                 frames.append(_decode(frame))
+                            first_heartbeat.set()
                         for entry_id, event in entries:
                             await bus.publish(
                                 key,
@@ -218,33 +265,33 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
                             key,
                             {"sequence": 12, "_entry_id": "evt-12"},
                         )
-                        for _ in range(2):
-                            frame = await asyncio.wait_for(anext(stream), 1)
-                            frames.append(_decode(frame))
+                        await bus.publish(key, {"done": True})
+                        async for frame in stream:
+                            if frame == ":\n\n":
+                                continue
+                            event = _decode(frame)
+                            if event == {"done": True}:
+                                break
+                            frames.append(event)
+                        else:
+                            self.fail("Stream closed before the live marker")
                 self.assertEqual(
                     frames,
                     [{"sequence": n} for n in range(first, 13)],
                 )
 
-    async def test_real_redis_protocols(self) -> None:
-        """Exercise decoded PING replies on real RESP2 and RESP3 sockets."""
-        url = os.getenv("AGENTSCOPE_TEST_REDIS_URL")
-        if not url:
-            self.skipTest(
-                "Set AGENTSCOPE_TEST_REDIS_URL to run against Redis.",
-            )
+    async def test_redis_replay_with_resp2_and_resp3(self) -> None:
+        """Both PING response formats release replay and allow live events."""
         for protocol in (2, 3):
             with self.subTest(protocol=protocol):
-                pool = ConnectionPool.from_url(
-                    url,
+                async with FakeRedis(
                     protocol=protocol,
                     decode_responses=True,
-                )
-                try:
-                    async with RedisMessageBus(connection_pool=pool) as bus:
+                ) as redis:
+                    async with RedisMessageBus(
+                        connection_pool=redis.connection_pool,
+                    ) as bus:
                         await self._assert_replay_then_live(bus)
-                finally:
-                    await pool.aclose()
 
     async def test_event_at_replay_live_seam_is_delivered_once(self) -> None:
         """A seam event is deduplicated without hiding the next event."""
@@ -274,38 +321,8 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
 
     async def test_checkpoint_during_replay_keeps_live_delta(self) -> None:
         """A trimmed live delta precedes the retained end exactly once."""
-        bus = InMemoryMessageBus()
-        start = {"type": "REPLY_START", "reply_id": "r"}
-        delta = {
-            "type": "TEXT_BLOCK_DELTA",
-            "reply_id": "r",
-            "block_id": "b",
-            "delta": "hello",
-        }
-        end = {"type": "REPLY_END", "reply_id": "r"}
-        await publish_session_event(bus, "s", start)
-        response = await stream_session_events(
-            session_id="s",
-            agent_id="a",
-            user_id="u",
-            storage=_Storage(),  # type: ignore[arg-type]
-            message_bus=bus,
-            after=None,
-        )
-        async with aclosing(response.body_iterator) as stream:
-            frames = [_decode(await anext(stream))]
-            await publish_session_event(bus, "s", delta)
-            cursor = await publish_session_event(bus, "s", end)
-            await bus.log_trim(
-                MessageBusKeys.session_events("s"),
-                before_id=cursor,
-            )
-            sentinel = {"sequence": "next"}
-            await publish_session_event(bus, "s", sentinel)
-            while frames[-1] != sentinel:
-                frame = await asyncio.wait_for(anext(stream), 1)
-                frames.append(_decode(frame))
-        self.assertEqual(frames, [start, delta, end, sentinel])
+        async with InMemoryMessageBus() as bus:
+            await self._assert_replay_then_live(bus)
 
     async def test_live_frames_received_during_snapshot_read(self) -> None:
         """Merge a queued frame that was trimmed before the read returned."""
@@ -465,8 +482,11 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
                     message_bus=bus,
                     after=None,
                 )
-                async with aclosing(response.body_iterator) as stream:
-                    # A heartbeat proves replay is over and the client is live.
+                async with (
+                    asyncio.timeout(2),
+                    aclosing(response.body_iterator) as stream,
+                ):
+                    # Establish the subscription before dropping a broadcast.
                     self.assertEqual(await anext(stream), ":\n\n")
                     end = {"type": "REPLY_END", "reply_id": "first"}
                     with patch.object(bus, "publish", side_effect=OSError):
@@ -481,9 +501,10 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
                         start = {"type": "REPLY_START", "reply_id": "next"}
                         await publish_session_event(bus, "s", start)
                         expected.append(start)
-                    frames = [
-                        _decode(await asyncio.wait_for(anext(stream), 1))
-                        for _ in expected
-                    ]
+                    frames = []
+                    while len(frames) < len(expected):
+                        frame = await anext(stream)
+                        if frame != ":\n\n":
+                            frames.append(_decode(frame))
                     self.assertEqual(frames, expected)
                     self.assertEqual(await anext(stream), ":\n\n")

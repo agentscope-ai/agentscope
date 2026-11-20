@@ -714,12 +714,28 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             "session-1",
             "agent-1",
         )
-        await self._run(
-            UserMsg("user", "voice"),
-            pipeline_chat_config=models,
-            pipeline_tts_config=speech,
+        with patch(
+            "agentscope.app._service._chat.has_pending_inbox_or_release",
+            side_effect=[True, False],
+        ):
+            await self._run(
+                UserMsg("user", "voice"),
+                pipeline_chat_config=models,
+                pipeline_tts_config=speech,
+            )
+        self.assertEqual(self.agents[0].models_used, [(voice, None)] * 2)
+        followup = await self.storage.get_message(
+            "user-1",
+            "session-1",
+            "inbox-reply",
         )
-        self.assertEqual(self.agents[0].models_used, [(voice, None)])
+        self.assertEqual(
+            followup.metadata,
+            {
+                REPLY_CHAT_CONFIG: models.model_dump(mode="json"),
+                REPLY_TTS_CONFIG: None,
+            },
+        )
         self.session.config.pipeline_voice_config.chat_model_config = None
         with self.assertRaises(HTTPException) as error:
             await self.service.pipeline_snapshot(

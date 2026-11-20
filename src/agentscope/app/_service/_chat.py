@@ -1711,9 +1711,9 @@ class ChatService:
                     reply_msg = None
                     try:
                         if restore_chat_models:
-                            if default_models is None:
-                                raise ValueError("Select a chat model.")
-                            defaults = default_models
+                            # An inbox continuation stays on the active model
+                            # when the session has no ordinary chat model.
+                            defaults = default_models or reply_models
                             if reply_models != defaults:
                                 agent.model = await get_model(
                                     user_id,

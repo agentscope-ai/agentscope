@@ -889,6 +889,10 @@ def _subscribe_session_events(
     return subscribe(key, on_ready=on_ready, on_barrier=on_barrier)
 
 
+class _SessionBarrierTimeout(TimeoutError):
+    """The subscription could not confirm delivery before replay."""
+
+
 class _LegacySessionBarrier:
     """Confirm FIFO delivery on a readiness-only session subscription."""
 
@@ -903,17 +907,17 @@ class _LegacySessionBarrier:
         self.token = uuid4().hex
         self.received.clear()
         marker = {MessageBusKeys.SESSION_BARRIER_FIELD: self.token}
-        while not self.received.is_set():
-            await self.bus.publish(self.key, marker)
+        for _ in range(3):
             try:
-                await asyncio.wait_for(
-                    self.received.wait(),
-                    timeout=_HEARTBEAT_INTERVAL_SECS,
-                )
+                async with asyncio.timeout(_HEARTBEAT_INTERVAL_SECS):
+                    await self.bus.publish(self.key, marker)
+                    await self.received.wait()
+                return
             except asyncio.TimeoutError:
                 # A best-effort broadcast may drop a marker. Retry this
                 # flush with the same token so either copy can confirm it.
                 continue
+        raise _SessionBarrierTimeout
 
     def consume(self, event: dict) -> bool:
         """Hide all markers and acknowledge only the current local flush."""
@@ -1274,6 +1278,9 @@ async def stream_session_events(
                     break
                 async for frame in deliver(item):
                     yield frame
+        except _SessionBarrierTimeout:
+            # Close without advancing past unconfirmed live events.
+            return
         finally:
             feeder_task.cancel()
             try:
