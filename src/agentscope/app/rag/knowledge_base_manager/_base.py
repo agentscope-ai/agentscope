@@ -303,7 +303,10 @@ class KnowledgeBaseManagerBase(ABC):
         """Resolve reads against each document's published vector slot."""
         raw = await self.get_write_knowledge(user_id, knowledge_base_id)
         return PublishedKnowledge(
-            raw, self._storage, user_id, knowledge_base_id
+            raw,
+            self._storage,
+            user_id,
+            knowledge_base_id,
         )
 
     @abstractmethod

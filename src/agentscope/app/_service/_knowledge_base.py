@@ -425,7 +425,10 @@ class KnowledgeBaseService:
             ) from exc
 
         normalized = params.model_dump(
-            mode="json", by_alias=True, exclude_unset=True, round_trip=True,
+            mode="json",
+            by_alias=True,
+            exclude_unset=True,
+            round_trip=True,
         )
         # A custom schema can have different input and serialization aliases.
         if normalized.keys() != chunker_config.parameters.keys():
@@ -942,7 +945,8 @@ class KnowledgeBaseService:
                 raise HTTPException(404, detail="Document not found.")
             if doc.status != "error":
                 raise HTTPException(
-                    409, detail="Only failed documents can be retried."
+                    409,
+                    detail="Only failed documents can be retried.",
                 )
             kb = await self._manager.get_knowledge_base(
                 owner,

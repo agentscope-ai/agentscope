@@ -67,7 +67,7 @@ class PublishedKnowledge(KnowledgeBase):
             if not hidden:
                 return [
                     hit.model_copy(
-                        update={"document_id": active[hit.document_id]}
+                        update={"document_id": active[hit.document_id]},
                     )
                     for hit in hits
                 ]
@@ -93,13 +93,17 @@ class PublishedKnowledge(KnowledgeBase):
         """Read the published page, retrying a concurrent slot switch."""
         published = await self._published_id(document_id)
         chunks = await super().list_chunks(
-            published, offset=offset, limit=limit,
+            published,
+            offset=offset,
+            limit=limit,
         )
         if not chunks:
             current = await self._published_id(document_id)
             if current != published:
                 return await super().list_chunks(
-                    current, offset=offset, limit=limit,
+                    current,
+                    offset=offset,
+                    limit=limit,
                 )
         return chunks
 
@@ -112,7 +116,9 @@ class PublishedKnowledge(KnowledgeBase):
         """Write through the active slot for direct SDK callers."""
         if document_id is None:
             return await super().insert_document(
-                chunks, None, document_metadata
+                chunks,
+                None,
+                document_metadata,
             )
         published = await self._published_id(document_id)
         await super().insert_document(chunks, published, document_metadata)
@@ -126,7 +132,8 @@ class PublishedKnowledge(KnowledgeBase):
         """Expose one summary per published logical document."""
         docs = await super().list_documents()
         records = await self._storage.list_knowledge_documents(
-            self._owner, self._kb_id,
+            self._owner,
+            self._kb_id,
         )
         active = {r.id: r.data.vector_id(r.id) for r in records}
         published = []

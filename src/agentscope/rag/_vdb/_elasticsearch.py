@@ -220,12 +220,14 @@ class ElasticsearchStore(VectorStoreBase):
                         "must_not": [
                             {
                                 "terms": {
-                                    "document_id": sorted(exclude_document_ids)
-                                }
-                            }
-                        ]
-                    }
-                }
+                                    "document_id": sorted(
+                                        exclude_document_ids,
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                },
             )
         if filters:
             knn["filter"] = filters

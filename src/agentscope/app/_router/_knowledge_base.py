@@ -667,7 +667,9 @@ async def retry_knowledge_document(
 ) -> KnowledgeDocumentView:
     """Retry one failed document with its knowledge base's current chunker."""
     record = await service.retry_document(
-        user_id, knowledge_base_id, document_id
+        user_id,
+        knowledge_base_id,
+        document_id,
     )
     return KnowledgeDocumentView.from_record(record)
 

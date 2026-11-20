@@ -1255,12 +1255,17 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             ("worker-A", ("ready", True)),
         ):
             await self.storage.update_knowledge_document_status(
-                "user-1", kb.id, doc.id, "ready",
+                "user-1",
+                kb.id,
+                doc.id,
+                "ready",
                 expected_lease_token=token,
                 alternate_index=True,
             )
             row = await self.storage.get_knowledge_document(
-                "user-1", kb.id, doc.id,
+                "user-1",
+                kb.id,
+                doc.id,
             )
             self.assertEqual((row.status, row.data.alternate_index), expected)
 

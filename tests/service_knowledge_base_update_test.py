@@ -198,7 +198,8 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
             [16, 16],
         )
         self.assertEqual(
-            await self._storage.get_knowledge_document(owner, kb, "b"), b
+            await self._storage.get_knowledge_document(owner, kb, "b"),
+            b,
         )
 
     async def test_cancelled_embedding_recovers_after_lease_expiry(
@@ -207,7 +208,12 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
         """Allow edits during embedding and recover on worker restart."""
         owner, kb = "user-1", self._knowledge_base_id
         doc = await self._service.register_document(
-            owner, kb, "note.txt", BytesIO(b"note"), 4, "text/plain",
+            owner,
+            kb,
+            "note.txt",
+            BytesIO(b"note"),
+            4,
+            "text/plain",
         )
         await self._assert_dispatched([doc.id])
         raw = await self._manager.get_write_knowledge(owner, kb)
@@ -228,10 +234,14 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
         )
         with (
             patch.object(
-                self._manager, "get_write_knowledge", return_value=raw,
+                self._manager,
+                "get_write_knowledge",
+                return_value=raw,
             ),
             patch.object(
-                raw, "prepare_document", side_effect=blocked_embedding,
+                raw,
+                "prepare_document",
+                side_effect=blocked_embedding,
             ),
         ):
             task = asyncio.create_task(worker.process(owner, kb, doc.id))

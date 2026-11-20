@@ -612,7 +612,9 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
         )
         with (
             patch.object(
-                self.store, "_ensure_index_ready", new_callable=AsyncMock
+                self.store,
+                "_ensure_index_ready",
+                new_callable=AsyncMock,
             ),
             patch.object(self.store, "_col", return_value=collection),
         ):
@@ -630,7 +632,7 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                 "$and": [
                     {"chunk.metadata.tenant": {"$eq": "a"}},
                     {"document_id": {"$nin": ["~doc"]}},
-                ]
+                ],
             },
         )
 

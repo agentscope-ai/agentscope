@@ -280,7 +280,10 @@ class VectorStoreBase(ABC):
         limit = top_k
         while True:
             hits = await self.search(
-                collection, query_vector, limit, metadata_filter
+                collection,
+                query_vector,
+                limit,
+                metadata_filter,
             )
             visible = [
                 h for h in hits if h.document_id not in exclude_document_ids

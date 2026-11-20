@@ -389,7 +389,8 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
                 f"/knowledge_bases/{self._kb_id}/documents/{document_id}/retry"
             )
             self.assertEqual(
-                client.post(retry, headers=headers).status_code, 409
+                client.post(retry, headers=headers).status_code,
+                409,
             )
             client.portal.call(
                 self._app.state.storage.update_knowledge_document_status,

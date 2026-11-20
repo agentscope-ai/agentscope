@@ -398,7 +398,8 @@ class KnowledgeBase:
         ]
 
     async def write_document_records(
-        self, records: list[VectorRecord]
+        self,
+        records: list[VectorRecord],
     ) -> None:
         """Write previously prepared chunks without invoking the model."""
         if records:
