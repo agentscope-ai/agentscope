@@ -4,6 +4,7 @@ import datetime
 import enum
 import inspect
 import json
+import math
 from dataclasses import is_dataclass
 from typing import Any
 
@@ -27,7 +28,11 @@ def _to_serializable(
     """
 
     # Handle primitive types first
-    if isinstance(obj, (str, int, bool, float, type(None))):
+    if isinstance(obj, float) and not math.isfinite(obj):
+        # NaN / Infinity are not valid JSON numbers (RFC 8259).
+        # Render them as strings so spans stay parseable JSON.
+        res = str(obj)
+    elif isinstance(obj, (str, int, bool, float, type(None))):
         res = obj
 
     elif isinstance(obj, (list, tuple, set, frozenset)):
@@ -78,10 +83,11 @@ def _serialize_to_str(value: Any) -> str:
             JSON serialized string of the input value
     """
     try:
-        return json.dumps(value, ensure_ascii=False)
+        return json.dumps(value, ensure_ascii=False, allow_nan=False)
 
-    except TypeError:
+    except (TypeError, ValueError):
         return json.dumps(
             _to_serializable(value),
             ensure_ascii=False,
+            allow_nan=False,
         )
