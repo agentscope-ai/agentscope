@@ -2,10 +2,13 @@
 """The formatter module."""
 import base64
 import mimetypes
+import os
 import tempfile
 from abc import abstractmethod
-from fnmatch import fnmatch
+from fnmatch import fnmatchcase
 from typing import Any, AsyncGenerator, Awaitable, Callable, List
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +19,45 @@ from ..message import (
     TextBlock,
     URLSource,
 )
+
+
+def _normalize_media_type(media_type: str) -> str:
+    """Lowercase the MIME type and subtype, preserving parameter values."""
+    mime, separator, parameters = media_type.partition(";")
+    return mime.lower() + separator + parameters
+
+
+def file_url_to_path(url: str) -> str:
+    """Resolve a ``file://`` URL to a local filesystem path.
+
+    Local URLs and ``localhost`` authorities resolve on every platform.
+    Other authorities resolve to UNC paths on Windows and are rejected on
+    other platforms to avoid reading an unrelated local file.
+
+    Args:
+        url (`str`):
+            A ``file://`` URL, e.g. ``file:///tmp/x.png`` or
+            ``file://server/share/x.png``.
+
+    Returns:
+        `str`:
+            The platform filesystem path for the URL, suitable for
+            ``open()``.
+
+    Raises:
+        ValueError:
+            If a remote authority is used on a non-Windows platform.
+    """
+    parsed = urlsplit(url)
+    path = parsed.path
+    if parsed.netloc and parsed.netloc.lower() != "localhost":
+        if os.name != "nt":
+            raise ValueError(
+                "Remote file URLs are not supported on this platform. "
+                "Mount the share and use a local file URL instead.",
+            )
+        path = "//" + parsed.netloc + path
+    return url2pathname(path)
 
 
 class FormatterBase(BaseModel):
@@ -38,9 +80,10 @@ class FormatterBase(BaseModel):
     def supported_input_media_types(self) -> list[str]:
         """Derive the accepted media-type patterns from :attr:`input_types` by
         excluding ``text/plain`` and ``application/x-thinking``."""
+        media_types = map(_normalize_media_type, self.input_types)
         return [
             t
-            for t in self.input_types
+            for t in media_types
             if t not in ("text/plain", "application/x-thinking")
         ]
 
@@ -65,6 +108,22 @@ class FormatterBase(BaseModel):
                 raise TypeError(
                     f"Expected Msg object, got {type(msg)} instead.",
                 )
+
+    def _get_supported_tool_result_block(
+        self,
+        block: DataBlock,
+    ) -> DataBlock | None:
+        """Return a supported block with a normalized MIME type for output."""
+        media_type = _normalize_media_type(block.source.media_type)
+        if not any(
+            fnmatchcase(media_type, pattern)
+            for pattern in self.supported_input_media_types
+        ):
+            return None
+        if media_type == block.source.media_type:
+            return block
+        source = block.source.model_copy(update={"media_type": media_type})
+        return block.model_copy(update={"source": source})
 
     @staticmethod
     def _convert_unsupported_data_block_to_string(block: DataBlock) -> str:
@@ -137,19 +196,15 @@ class FormatterBase(BaseModel):
                 textual_output.append(block.text)
 
             elif isinstance(block, DataBlock):
-                main_type = block.source.media_type.split("/")[0]
-
-                if any(
-                    fnmatch(block.source.media_type, _)
-                    for _ in self.supported_input_media_types
-                ):
-                    # If supported, promote the block
+                supported = self._get_supported_tool_result_block(block)
+                if supported is not None:
+                    main_type = supported.source.media_type.split("/", 1)[0]
 
                     # Reuse the block's own stable id as the identifier so
                     # repeated formatting of the same unchanged Msg history
                     # (e.g. on every LLM call) produces the same text, rather
                     # than a fresh random id each time.
-                    identifier = block.id
+                    identifier = supported.id
 
                     textual_output.append(
                         f"<system-reminder>A(n) {main_type} file is returned "
@@ -161,7 +216,7 @@ class FormatterBase(BaseModel):
                             TextBlock(
                                 text=f"- {identifier} ({main_type} file): ",
                             ),
-                            block,
+                            supported,
                         ],
                     )
 

@@ -30,6 +30,7 @@ from typing import Any, TYPE_CHECKING
 from pydantic import ValidationError
 
 from ..._logging import logger
+from ...message import DataBlock
 from ...rag import ApproxTokenChunker
 from ..message_bus import MessageBusKeys
 
@@ -43,6 +44,20 @@ if TYPE_CHECKING:
 # Read blob bytes in chunks bounded so the worker never holds the whole
 # file in memory at once even when the parser is byte-oriented.
 _READ_CHUNK = 1 << 20  # 1 MiB
+
+# What a multipart client sends when it has no opinion about the type.
+_GENERIC_MEDIA_TYPE = "application/octet-stream"
+
+# Windows associates ``.csv`` with the legacy Excel type, both in
+# browsers' multipart uploads and in ``mimetypes.guess_type``.
+_LEGACY_EXCEL_MEDIA_TYPE = "application/vnd.ms-excel"
+_CSV_MEDIA_TYPE = "text/csv"
+
+
+def _filename_extension(filename: str) -> str:
+    """Return the lower-cased extension of ``filename``, ``""`` if none."""
+    _, dot, suffix = filename.rpartition(".")
+    return f".{suffix}".lower() if dot and suffix else ""
 
 
 def _build_parser_registry(
@@ -386,6 +401,15 @@ class IndexWorker:
             )
             return
 
+        if record.status == "ready":
+            # The lease prevents concurrent work, not late duplicates.
+            # Re-indexing requires resetting the status to pending.
+            logger.debug(
+                "Skipping %s — already indexed; ignoring duplicate task.",
+                document_id,
+            )
+            return
+
         kb_record = await self._manager.get_knowledge_base(
             user_id,
             knowledge_base_id,
@@ -400,16 +424,49 @@ class IndexWorker:
         chunker = self._resolve_chunker_from_record(kb_record)
 
         data = record.data
-        media_type = (
-            data.content_type or mimetypes.guess_type(data.filename)[0]
-        )
+        media_type = data.content_type or None
         if media_type:
-            media_type = media_type.split(";", 1)[0].strip().lower()
+            media_type = media_type.split(";", 1)[0].strip().lower() or None
+        media_type = self._csv_media_type(media_type, data.filename)
+        parser = (
+            self._parsers_by_media_type.get(media_type) if media_type else None
+        )
+        if parser is None and media_type in (None, _GENERIC_MEDIA_TYPE):
+            guessed_type = self._csv_media_type(
+                mimetypes.guess_type(data.filename)[0],
+                data.filename,
+            )
+            parser = (
+                self._parsers_by_media_type.get(guessed_type)
+                if guessed_type
+                else None
+            )
+            if parser is not None:
+                media_type = guessed_type
+            else:
+                # Platform MIME tables may lack Office formats. Only
+                # infer a type from declarations when it is unambiguous.
+                extension = _filename_extension(data.filename)
+                matches = []
+                for known, candidate in self._parsers_by_media_type.items():
+                    extensions = getattr(
+                        candidate,
+                        "supported_extensions",
+                        None,
+                    )
+                    if (
+                        extension
+                        and extensions
+                        and extension in extensions()
+                        and candidate.supported_media_types == [known]
+                    ):
+                        matches.append((known, candidate))
+                if len(matches) == 1:
+                    media_type, parser = matches[0]
         if not media_type:
             raise ValueError(
                 f"Cannot determine media type for {data.filename!r}.",
             )
-        parser = self._parsers_by_media_type.get(media_type)
         if parser is None:
             raise ValueError(
                 f"No parser registered for media type {media_type!r}.",
@@ -421,6 +478,8 @@ class IndexWorker:
             knowledge_base_id,
             document_id,
             "parsing",
+            # Clear stale errors; None leaves the stored value unchanged.
+            error="" if getattr(data, "error", None) else None,
             expected_lease_token=lease_token,
         )
         file_bytes = await self._read_blob(data.blob_uri)
@@ -435,6 +494,11 @@ class IndexWorker:
             expected_lease_token=lease_token,
         )
         chunks = await chunker.chunk(sections)
+        if not chunks and media_type == "application/pdf":
+            raise ValueError(
+                "This PDF has no indexable text. If it is a scan, "
+                "apply OCR before uploading it.",
+            )
 
         # ---- indexing ----
         await self._storage.update_knowledge_document_status(
@@ -444,6 +508,33 @@ class IndexWorker:
             "indexing",
             expected_lease_token=lease_token,
         )
+        knowledge = await self._manager.get_knowledge(
+            user_id,
+            knowledge_base_id,
+        )
+        if (
+            any(isinstance(chunk.content, DataBlock) for chunk in chunks)
+            and not knowledge.embedding_model.supports_multimodal
+        ):
+            text_chunks = [
+                chunk
+                for chunk in chunks
+                if not isinstance(chunk.content, DataBlock)
+            ]
+            if not text_chunks:
+                raise ValueError(
+                    "This document requires a multimodal embedding model "
+                    "because it has no indexable text.",
+                )
+            chunks = [
+                chunk.model_copy(
+                    update={
+                        "chunk_index": index,
+                        "total_chunks": len(text_chunks),
+                    },
+                )
+                for index, chunk in enumerate(text_chunks)
+            ]
         async with self._bus.acquire_lock(
             MessageBusKeys.knowledge_base_mutation_lock(
                 user_id,
@@ -481,10 +572,6 @@ class IndexWorker:
                 lease_ttl=self._lease_ttl,
             ):
                 return
-            knowledge = await self._manager.get_knowledge(
-                user_id,
-                knowledge_base_id,
-            )
             # Replace all previous chunks so shorter reindexes do not
             # leave an old tail. Hold the lock through both writes and
             # the ready transition so deletion sees a complete result.
@@ -506,6 +593,25 @@ class IndexWorker:
                 chunk_count=len(chunks),
                 expected_lease_token=lease_token,
             )
+
+    def _csv_media_type(
+        self,
+        media_type: str | None,
+        filename: str,
+    ) -> str | None:
+        """Route a ``.csv`` file labelled as legacy Excel to ``text/csv``.
+
+        A plain-text CSV sent or guessed as ``application/vnd.ms-excel``
+        would otherwise reach the binary workbook parser and fail.  Real
+        ``.xls`` workbooks and other media types are returned unchanged.
+        """
+        if (
+            media_type == _LEGACY_EXCEL_MEDIA_TYPE
+            and _filename_extension(filename) == ".csv"
+            and _CSV_MEDIA_TYPE in self._parsers_by_media_type
+        ):
+            return _CSV_MEDIA_TYPE
+        return media_type
 
     async def _parse(
         self,

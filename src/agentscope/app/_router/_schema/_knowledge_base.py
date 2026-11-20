@@ -144,7 +144,7 @@ class KnowledgeDocumentView(BaseModel):
             size=record.data.size,
             content_type=record.data.content_type,
             status=record.status,
-            error=record.data.error,
+            error=record.data.error if record.status == "error" else None,
             chunk_count=record.data.chunk_count,
             created_at=record.created_at,
             updated_at=record.updated_at,

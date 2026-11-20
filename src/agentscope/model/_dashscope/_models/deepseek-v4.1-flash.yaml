@@ -1,6 +1,8 @@
 name: deepseek-v4.1-flash
 label: DeepSeek V4.1 Flash
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2026-09-13
 
 input_types:
   - text/plain

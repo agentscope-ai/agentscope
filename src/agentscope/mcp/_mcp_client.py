@@ -43,7 +43,8 @@ class MCPClient(BaseModel):
     - _lifecycle_task: Owns the stateful client context from enter to exit
     - _close_requested: Signals the lifecycle task to exit the client context
     - _is_connected: Connection state flag
-    - _cached_tools: Cached list of tools
+    - _cached_tools: Cached list of tools, invalidated when runtime headers
+      change or the server announces a tools/list_changed notification
     - _http_client: The live HTTP client, while one is open
     - _static_headers: Its headers before any runtime override
     - _runtime_headers: See :meth:`set_runtime_headers`
@@ -130,12 +131,30 @@ class MCPClient(BaseModel):
         ),
     )
 
+    trust_annotations: bool = Field(
+        default=True,
+        title="Trust Tool Annotations",
+        description=(
+            "Whether to trust the tool annotations reported by this MCP "
+            "server. If true, a tool annotated with 'readOnlyHint' is "
+            "treated as read-only and auto-allowed by the permission engine "
+            "in every mode. Annotations are self-reported by the server, so "
+            "disable this for servers you do not fully trust."
+        ),
+    )
+
     # Private attributes
     _client: SDKClient | None = PrivateAttr(default=None)
     _lifecycle_task: asyncio.Task[None] | None = PrivateAttr(default=None)
     _close_requested: asyncio.Event | None = PrivateAttr(default=None)
     _is_connected: bool = PrivateAttr(default=False)
     _cached_tools: list[mcp.types.Tool] | None = PrivateAttr(default=None)
+    _tool_list_generation: int = PrivateAttr(default=0)
+    _runtime_headers_generation: int = PrivateAttr(default=0)
+    _discovery_task: asyncio.Task[list[mcp.types.Tool]] | None = PrivateAttr(
+        default=None,
+    )
+    _discovery_waiters: int = PrivateAttr(default=0)
     _http_client: httpx2.AsyncClient | None = PrivateAttr(default=None)
     _static_headers: httpx2.Headers | None = PrivateAttr(default=None)
     _runtime_headers: dict[str, str] = PrivateAttr(default_factory=dict)
@@ -221,7 +240,25 @@ class MCPClient(BaseModel):
         return SDKClient(
             transport,
             mode="auto",
+            message_handler=self._handle_server_message,
         )
+
+    async def _handle_server_message(self, message: Any) -> None:
+        """Watch server notifications for tool-list changes.
+
+        An MCP server may add, remove, or update tools while the
+        connection is alive, announcing each change with a
+        ``notifications/tools/list_changed`` notification. The MCP
+        SDK's response cache evicts the matching entry on its own, but
+        the tool descriptors cached in ``_cached_tools`` are a second
+        copy that only this class can invalidate. Dropping it here
+        makes the next :meth:`get_tool` / :meth:`list_tools` call
+        re-resolve against the live server instead of serving schemas
+        from a connection that no longer matches them.
+        """
+        if isinstance(message, mcp.types.ToolListChangedNotification):
+            self._tool_list_generation += 1
+            self._cached_tools = None
 
     def _create_http_client(
         self,
@@ -288,6 +325,12 @@ class MCPClient(BaseModel):
         apply again. Runtime headers are live instance state, excluded
         from ``model_dump`` and workspace persistence.
 
+        Changing the effective headers invalidates the tool catalog. The
+        next lookup discovers fresh descriptors; already returned tools
+        keep their original schemas. Discovery retries once if headers
+        change while it is running, then raises ``RuntimeError`` if the
+        retry is also invalidated.
+
         The update reaches the next outbound request without reconnecting.
         Two things it cannot reach: a call already under way, which keeps
         the snapshot it started with, and the long-lived GET stream of a
@@ -328,11 +371,28 @@ class MCPClient(BaseModel):
                     f"Runtime header {name!r} is owned by the HTTP layer.",
                 )
 
+        static_headers = (
+            self._static_headers
+            if self._static_headers is not None
+            else self.mcp_config.headers
+        )
+        previous = httpx2.Headers(static_headers)
+        previous.update(self._runtime_headers)
+        merged = httpx2.Headers(static_headers)
+        merged.update(headers)
+        # Names are normalized by Headers. Sort only by name so duplicate
+        # values keep their wire order (Headers.__eq__ sorts those too).
+        changed = sorted(
+            previous.multi_items(),
+            key=lambda item: item[0],
+        ) != sorted(merged.multi_items(), key=lambda item: item[0])
+
         self._runtime_headers = dict(headers)
         if self._http_client is not None:
-            merged = httpx2.Headers(self._static_headers)
-            merged.update(self._runtime_headers)
             self._http_client.headers = merged
+        if changed:
+            self._runtime_headers_generation += 1
+            self._cached_tools = None
 
     async def connect(self) -> None:
         """Connect to the MCP server (for stateful connections only).
@@ -340,7 +400,7 @@ class MCPClient(BaseModel):
         For stateless connections, this method does nothing.
 
         Raises:
-            RuntimeError: If already connected.
+            RuntimeError: If already connected or a connection is in progress.
         """
         if not self.is_stateful:
             logger.debug(
@@ -353,6 +413,10 @@ class MCPClient(BaseModel):
             raise RuntimeError(
                 f"MCP '{self.name}' is already connected. "
                 "Call close() before reconnecting.",
+            )
+        if self._lifecycle_task is not None:
+            raise RuntimeError(
+                f"MCP '{self.name}' connection is already in progress.",
             )
 
         client = self._create_sdk_client()
@@ -457,6 +521,8 @@ class MCPClient(BaseModel):
             self._lifecycle_task = None
             self._close_requested = None
             self._is_connected = False
+            # Rediscover tools after reconnecting.
+            self._cached_tools = None
             logger.info("MCP closed: %s", self.name)
 
     def _get_client_gen(self) -> AbstractAsyncContextManager[Any]:
@@ -476,20 +542,11 @@ class MCPClient(BaseModel):
                 Raw MCP tool descriptors after filtering.
 
         Raises:
-            RuntimeError: If not connected (for stateful connections).
+            RuntimeError: If not connected (for stateful connections), or
+                if notifications or runtime-header changes invalidate both
+                discovery attempts.
         """
-        if not self.is_stateful:
-            # Stateless: create a temporary auto-negotiating client.
-            async with self._get_client_gen() as client:
-                res = await client.list_tools(cache_mode="refresh")
-                self._cached_tools = res.tools
-        else:
-            # Stateful: use the existing high-level client.
-            self._validate_connection()
-            res = await self._client.list_tools(cache_mode="refresh")
-            self._cached_tools = res.tools
-
-        available_tools: list = self._cached_tools
+        available_tools = await self._discover_tools()
         if self.enable_tools is not None:
             available_tools = [
                 tool
@@ -501,6 +558,57 @@ class MCPClient(BaseModel):
                 _ for _ in available_tools if _.name not in self.disable_tools
             ]
         return available_tools
+
+    async def _discover_tools(self) -> list[mcp.types.Tool]:
+        """Share stateless discovery without sharing caller cancellation."""
+        if self.is_stateful:
+            return await self._fetch_tools()
+
+        task = self._discovery_task
+        if task is None or task.done():
+            task = asyncio.create_task(self._fetch_tools())
+            self._discovery_task = task
+            self._discovery_waiters = 0
+        self._discovery_waiters += 1
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if self._discovery_task is task:
+                self._discovery_waiters -= 1
+                if self._discovery_waiters == 0:
+                    self._discovery_task = None
+                    if not task.done():
+                        # No callers remain to use the temporary connection.
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                    elif not task.cancelled():
+                        task.exception()
+
+    async def _fetch_tools(self) -> list[mcp.types.Tool]:
+        """Fetch and cache a catalog that survives the invalidation fence."""
+        # Retry once if headers or a notification invalidate discovery.
+        for _ in range(2):
+            # Cover connection entry too: another stateless operation may
+            # own the live HTTP client while this transport is initializing.
+            headers_generation = self._runtime_headers_generation
+            if not self.is_stateful:
+                async with self._get_client_gen() as client:
+                    generation = self._tool_list_generation
+                    res = await client.list_tools(cache_mode="refresh")
+            else:
+                self._validate_connection()
+                generation = self._tool_list_generation
+                res = await self._client.list_tools(cache_mode="refresh")
+            if (
+                generation == self._tool_list_generation
+                and headers_generation == self._runtime_headers_generation
+            ):
+                self._cached_tools = res.tools
+                return res.tools
+        raise RuntimeError(
+            f"MCP {self.name!r} tool list changed during discovery; "
+            "retry the lookup.",
+        )
 
     async def list_tools(self) -> list[ToolBase]:
         """List available tools from the MCP server as wrapped
@@ -543,10 +651,11 @@ class MCPClient(BaseModel):
         # Avoid circular import by importing here
         from ..tool import MCPTool
 
-        if self._cached_tools is None:
-            await self.list_raw_tools()
+        tools = self._cached_tools
+        if tools is None:
+            tools = await self._discover_tools()
         target_tool = next(
-            (tool for tool in self._cached_tools or [] if tool.name == name),
+            (tool for tool in tools if tool.name == name),
             None,
         )
         if target_tool is None:
@@ -563,6 +672,7 @@ class MCPClient(BaseModel):
                 client_gen=self._get_client_gen,
                 timeout=self.execution_timeout,
                 stream_progress=self.stream_progress,
+                trust_annotations=self.trust_annotations,
             )
         else:
             # Stateful: pass session
@@ -573,6 +683,7 @@ class MCPClient(BaseModel):
                 session=self._client,
                 timeout=self.execution_timeout,
                 stream_progress=self.stream_progress,
+                trust_annotations=self.trust_annotations,
             )
 
     def _validate_connection(self) -> None:

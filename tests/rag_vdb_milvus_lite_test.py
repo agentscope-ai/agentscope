@@ -7,13 +7,15 @@ from importlib.util import find_spec
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 from utils import AnyString
 
+from agentscope.embedding import EmbeddingModelBase, EmbeddingResponse
 from agentscope.message import TextBlock
 from agentscope.rag import (
     Chunk,
+    KnowledgeBase,
     MilvusLiteStore,
     VectorRecord,
     VectorSearchResult,
@@ -401,31 +403,66 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual([s.document_id for s in summaries], ["doc-2"])
 
     async def test_persists_records_after_reopen(self) -> None:
-        """Records remain available after closing and reopening the DB."""
+        """KnowledgeBase reads load existing collections after reopening."""
         db_path = self._tmpdir / "persistent.db"
+        record = _make_record(
+            "Persisted",
+            [1.0, 0.0, 0.0],
+            document_id="doc-1",
+        )
+        embedding = AsyncMock(spec=EmbeddingModelBase)
+        embedding.dimensions = 3
+        embedding.supports_multimodal = False
+        embedding.return_value = EmbeddingResponse(
+            embeddings=[record.vector],
+        )
 
         async with MilvusLiteStore(uri=str(db_path)) as first_store:
             await first_store.create_collection("kb_persistent", dimensions=3)
-            await first_store.insert(
-                "kb_persistent",
+            await first_store.insert("kb_persistent", [record])
+
+        cases = [
+            (
+                "search",
+                (["Persisted"],),
                 [
-                    _make_record(
-                        "Persisted",
-                        [1.0, 0.0, 0.0],
-                        document_id="doc-1",
-                    ),
+                    {
+                        "score": 1.0,
+                        "document_id": "doc-1",
+                        "chunk": record.chunk.model_dump(),
+                    },
                 ],
-            )
-
-        async with MilvusLiteStore(uri=str(db_path)) as second_store:
-            await second_store.create_collection("kb_persistent", dimensions=3)
-            results = await second_store.search(
-                "kb_persistent",
-                query_vector=[1.0, 0.0, 0.0],
-                top_k=1,
-            )
-
-        self.assertEqual([r.document_id for r in results], ["doc-1"])
+            ),
+            (
+                "list_documents",
+                (),
+                [
+                    {
+                        "document_id": "doc-1",
+                        "source": "doc-1.txt",
+                        "chunk_count": 1,
+                        "metadata": {},
+                    },
+                ],
+            ),
+            ("list_chunks", ("doc-1",), [record.chunk.model_dump()]),
+        ]
+        for method, args, expected in cases:
+            with self.subTest(method=method):
+                # Reopen for each read so earlier reads cannot load it.
+                async with MilvusLiteStore(uri=str(db_path)) as second_store:
+                    knowledge = KnowledgeBase(
+                        name="persistent",
+                        description="Persisted test documents",
+                        embedding_model=embedding,
+                        vector_store=second_store,
+                        collection="kb_persistent",
+                    )
+                    results = await getattr(knowledge, method)(*args)
+                    self.assertEqual(
+                        [result.model_dump() for result in results],
+                        expected,
+                    )
 
     async def test_list_chunks_pagination_and_isolation(self) -> None:
         """list_chunks pages by chunk_index and isolates documents."""
@@ -585,6 +622,63 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
             ["v2-chunk0", "v2-chunk1"],
         )
 
+    async def test_none_metadata_filter_value_is_rejected(self) -> None:
+        """None filter values raise instead of a Milvus parse error."""
+        await self.store.create_collection("kb", dimensions=2)
+        await self.store.insert(
+            "kb",
+            [
+                VectorRecord(
+                    vector=[1.0, 0.0],
+                    document_id=doc,
+                    chunk=Chunk(
+                        content=TextBlock(text=doc),
+                        source=doc,
+                        chunk_index=0,
+                        total_chunks=1,
+                        metadata=metadata,
+                    ),
+                )
+                for doc, metadata in (
+                    ("explicit-null", {"reviewer": None}),
+                    ("missing", {}),
+                    ("set", {"reviewer": "alice"}),
+                )
+            ],
+        )
+        scope = {"reviewer": None}
+        calls = {
+            "search": lambda: self.store.search(
+                "kb",
+                [1.0, 0.0],
+                metadata_filter=scope,
+            ),
+            "list_documents": lambda: self.store.list_documents(
+                "kb",
+                metadata_filter=scope,
+            ),
+            "list_chunks": lambda: self.store.list_chunks(
+                "kb",
+                "explicit-null",
+                metadata_filter=scope,
+            ),
+            "delete": lambda: self.store.delete(
+                "kb",
+                "explicit-null",
+                metadata_filter=scope,
+            ),
+        }
+        for name, call_store in calls.items():
+            with self.subTest(method=name):
+                with self.assertRaisesRegex(ValueError, "'reviewer'"):
+                    await call_store()
+
+        documents = await self.store.list_documents("kb")
+        self.assertEqual(
+            sorted(document.document_id for document in documents),
+            ["explicit-null", "missing", "set"],
+        )
+
 
 class MilvusDeleteFilterTest(IsolatedAsyncioTestCase):
     """Check delete predicates without starting a Milvus service."""
@@ -615,3 +709,109 @@ class MilvusDeleteFilterTest(IsolatedAsyncioTestCase):
                     collection_name="shared",
                     filter='document_id == "doc"',
                 )
+
+
+class MilvusReadLoadsCollectionTest(IsolatedAsyncioTestCase):
+    """Read paths load the collection before touching Milvus.
+
+    Milvus can leave a collection in the ``released`` state, e.g. after the
+    host process restarts; searching or querying it then raises
+    ``Collection ... is in state 'released'``. The read helpers must
+    therefore call ``load_collection`` first. A mocked client keeps these
+    tests independent of a running Milvus service.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Create a store without connecting to Milvus."""
+        self.store = MilvusLiteStore()
+        self.client = Mock()
+
+    async def test_none_filter_is_rejected_before_connecting(self) -> None:
+        """Invalid filters fail before creating or loading a client."""
+        calls = {
+            "search": lambda: self.store.search(
+                "kb_1",
+                [1.0, 0.0],
+                metadata_filter={"reviewer": None},
+            ),
+            "list_documents": lambda: self.store.list_documents(
+                "kb_1",
+                metadata_filter={"reviewer": None},
+            ),
+        }
+        for name, call_store in calls.items():
+            with self.subTest(method=name), patch.object(
+                self.store,
+                "get_client",
+                side_effect=AssertionError("must not connect to Milvus"),
+            ) as get_client:
+                with self.assertRaises(ValueError) as error:
+                    await call_store()
+                self.assertEqual(
+                    str(error.exception),
+                    "MilvusLiteStore does not support None values in "
+                    "metadata_filter (keys: 'reviewer'): the backend cannot "
+                    "tell an explicitly null field from a missing key.",
+                )
+                get_client.assert_not_called()
+
+    async def test_search_loads_collection_first(self) -> None:
+        """search() loads the collection before issuing the search."""
+        self.client.search.return_value = [[]]
+        with patch.object(self.store, "get_client", return_value=self.client):
+            await self.store.search("kb_1", query_vector=[1.0, 0.0, 0.0])
+
+        self.assertEqual(
+            [call[0] for call in self.client.method_calls],
+            ["load_collection", "search"],
+        )
+        self.client.load_collection.assert_called_once_with(
+            collection_name="kb_1",
+        )
+
+    async def test_list_documents_loads_collection_first(self) -> None:
+        """list_documents() loads the collection before querying it."""
+        self.client.query_rows.return_value = []
+        with (
+            patch.object(self.store, "get_client", return_value=self.client),
+            patch.object(
+                self.store,
+                "_query_all_rows",
+                self.client.query_rows,
+            ),
+        ):
+            self.assertEqual(await self.store.list_documents("kb_1"), [])
+
+        self.assertEqual(
+            self.client.method_calls,
+            [
+                call.load_collection(collection_name="kb_1"),
+                call.query_rows(self.client, "kb_1", None),
+            ],
+        )
+
+    async def test_list_chunks_loads_collection_first(self) -> None:
+        """list_chunks() loads the collection before querying its page."""
+        self.client.query.return_value = []
+        with patch.object(self.store, "get_client", return_value=self.client):
+            self.assertEqual(
+                await self.store.list_chunks("kb_1", "doc-1"),
+                [],
+            )
+
+        self.assertEqual(
+            self.client.method_calls,
+            [
+                call.load_collection(collection_name="kb_1"),
+                call.query(
+                    collection_name="kb_1",
+                    filter=(
+                        'document_id == "doc-1" and '
+                        'chunk["chunk_index"] >= 0 and '
+                        'chunk["chunk_index"] < 30'
+                    ),
+                    output_fields=["chunk"],
+                    limit=16_384,
+                ),
+            ],
+        )

@@ -49,6 +49,7 @@ const ENGINE_LABELS: Record<string, string> = {
 	dashscope_tts: 'DashScope TTS',
 	openai_tts: 'OpenAI TTS',
 	gemini_tts: 'Gemini TTS',
+	minimax_tts: 'MiniMax TTS',
 };
 
 /** Read preset choices without treating an unlisted voice as invalid. */
@@ -203,7 +204,9 @@ function VoiceProfileDialog({
 	const canClone = !!credentialIsAvailable && (selectedEngine?.voice_cloning ?? false);
 
 	const selectedModelSupportsClone = selectedCard?.voice_cloning ?? false;
-	const cloneSupportsUpload = engine === 'dashscope_tts' || engine === 'openai_tts';
+	const cloneSupportsUpload =
+		engine === 'dashscope_tts' || engine === 'openai_tts' || engine === 'minimax_tts';
+	const cloneMaxSizeMB = engine === 'minimax_tts' ? 20 : MAX_AUDIO_SIZE_MB;
 	const enrollmentModel = selectedCard?.enrollment_model;
 
 	const handleConsentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -238,8 +241,8 @@ function VoiceProfileDialog({
 	const handleCloneUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
 		const file = e.target.files?.[0];
 		if (!file || !engine || !credentialId) return;
-		if (file.size > MAX_AUDIO_SIZE_BYTES) {
-			setCloneError(t('voiceProfile.fileTooLarge', { max: MAX_AUDIO_SIZE_MB }));
+		if (file.size > cloneMaxSizeMB * 1024 * 1024) {
+			setCloneError(t('voiceProfile.fileTooLarge', { max: cloneMaxSizeMB }));
 			return;
 		}
 		if (engine !== 'openai_tts' && !model) {
@@ -519,6 +522,11 @@ function VoiceProfileDialog({
 					{canClone && selectedModelSupportsClone && (
 						<div className="flex flex-col gap-2">
 							<Label>{t('voiceProfile.cloneVoice')}</Label>
+							{engine === 'minimax_tts' && (
+								<p className="text-xs text-muted-foreground">
+									{t('voiceProfile.minimaxCloneHint')}
+								</p>
+							)}
 							{enrollmentModel && (
 								<div className="flex flex-col gap-2">
 									<Label htmlFor="vp-enrollment-model">
@@ -609,7 +617,9 @@ function VoiceProfileDialog({
 									<input
 										ref={fileInputRef}
 										type="file"
-										accept="audio/*"
+										accept={
+											engine === 'minimax_tts' ? '.mp3,.m4a,.wav' : 'audio/*'
+										}
 										className="hidden"
 										onChange={handleCloneUpload}
 									/>

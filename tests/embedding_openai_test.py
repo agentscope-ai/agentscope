@@ -114,23 +114,26 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         self,
         mock_client_cls: Any,
     ) -> None:
-        """Unchanged requests must still hit cache keys from older versions."""
+        """Requests with extra arguments hit the endpoint-specific cache."""
         embeddings = [[0.1, 0.2]]
         mock_client = mock_client_cls.return_value
+        mock_client.base_url = "https://api.openai.com/v1/"
         mock_client.embeddings.create = AsyncMock(
             return_value=_make_response(embeddings, 1),
         )
         with TemporaryDirectory() as cache_dir:
             cache = FileEmbeddingCache(cache_dir=cache_dir)
-            # Older requests appended dimensions after per-call arguments.
             await cache.store(
                 embeddings=embeddings,
                 identifier={
-                    "input": ["hello"],
-                    "model": "text-embedding-3-small",
-                    "encoding_format": "float",
-                    "user": "test-user",
-                    "dimensions": 2,
+                    "base_url": "https://api.openai.com/v1/",
+                    "api_kwargs": {
+                        "input": ["hello"],
+                        "model": "text-embedding-3-small",
+                        "encoding_format": "float",
+                        "user": "test-user",
+                        "dimensions": 2,
+                    },
                 },
             )
             model = OpenAIEmbeddingModel(
@@ -354,3 +357,77 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result["embeddings"], [[0.1]])
         self.assertEqual(mock_client.embeddings.create.await_count, 2)
+
+    async def test_cache_isolated_by_base_url(self) -> None:
+        """Different endpoints do not share cached embedding vectors."""
+        import httpx
+        import openai
+
+        requests = []
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            self.assertEqual(request.url.path, "/v1/embeddings")
+            self.assertEqual(
+                json.loads(request.content),
+                {
+                    "input": ["hello"],
+                    "model": "shared-name",
+                    "encoding_format": "float",
+                    "dimensions": 2,
+                },
+            )
+            vector = (
+                [1.0, 0.0]
+                if request.url.host == "endpoint-a.test"
+                else [0.0, 1.0]
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "object": "list",
+                    "model": "shared-name",
+                    "data": [
+                        {
+                            "object": "embedding",
+                            "index": 0,
+                            "embedding": vector,
+                        },
+                    ],
+                    "usage": {"prompt_tokens": 1, "total_tokens": 1},
+                },
+            )
+
+        def create_client(**kwargs: Any) -> openai.AsyncOpenAI:
+            return openai.AsyncOpenAI(
+                http_client=httpx.AsyncClient(
+                    transport=httpx.MockTransport(handle_request),
+                ),
+                **kwargs,
+            )
+
+        cases = [
+            ("https://endpoint-a.test/v1", [[1.0, 0.0]], "api"),
+            ("https://endpoint-b.test/v1", [[0.0, 1.0]], "api"),
+            ("https://endpoint-a.test/v1/", [[1.0, 0.0]], "cache"),
+            ("https://endpoint-b.test/v1/", [[0.0, 1.0]], "cache"),
+        ]
+        with TemporaryDirectory() as cache_dir:
+            with patch("openai.AsyncClient", side_effect=create_client):
+                for base_url, vectors, source in cases:
+                    with self.subTest(base_url=base_url):
+                        model = OpenAIEmbeddingModel(
+                            credential=OpenAICredential(
+                                api_key="local-test-key",
+                                base_url=base_url,
+                            ),
+                            model="shared-name",
+                            dimensions=2,
+                            embedding_cache=FileEmbeddingCache(cache_dir),
+                        )
+                        async with model.client:
+                            result = await model(["hello"])
+                        self.assertEqual(result.embeddings, vectors)
+                        self.assertEqual(result.source, source)
+
+        self.assertEqual(len(requests), 2)

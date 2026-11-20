@@ -1181,6 +1181,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
                                 "disable_tools": None,
                                 "execution_timeout": None,
                                 "stream_progress": False,
+                                "trust_annotations": True,
                             },
                         ],
                     },

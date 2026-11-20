@@ -374,6 +374,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
         memory_max_tokens: int = Field(
             default=4_000,
+            ge=0,
             title="MEMORY.md Max Length",
             description=(
                 "The maximum tokens of the MEMORY.md inserted into the system "
@@ -412,6 +413,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
         retrieval_max_tokens_per_md: int = Field(
             default=2_000,
+            ge=0,
             title="Retrieval Max Tokens Per File",
             description=(
                 "Maximum tokens read from each memory file that is surfaced "
@@ -422,6 +424,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
         retrieval_max_files: int = Field(
             default=200,
+            ge=0,
             title="Retrieval Max Files",
             description=(
                 "The maximum number of Markdown memory files to consider "
@@ -431,6 +434,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
         retrieval_max_tokens_per_frontmatter: int = Field(
             default=256,
+            ge=0,
             title="Retrieval Max Tokens per Frontmatter",
             description=(
                 "The maximum estimated tokens of type and description per "

@@ -220,8 +220,11 @@ Usage:
         # not real filesystem paths — do NOT use backend.join_path here.
         # ``parent`` is a literal path, so its fnmatch metacharacters must be
         # escaped, otherwise the suggested rule matches sibling directories.
-        escaped = glob.escape(parent)
-        pattern = (escaped.rstrip("/\\") + "/**") if escaped else "**"
+        stem = glob.escape(parent).rstrip("/\\")
+        # A file at the filesystem root (or given by a bare relative name)
+        # has no directory component left. ``**`` would match every path in
+        # the repository, so suggest the file itself instead.
+        pattern = f"{stem}/**" if stem else glob.escape(file_path)
 
         return [
             PermissionRule(

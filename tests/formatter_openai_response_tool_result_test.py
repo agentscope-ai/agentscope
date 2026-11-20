@@ -36,6 +36,11 @@ class TestOpenAIResponseToolResultFormatter(IsolatedAsyncioTestCase):
     async def test_native_multimodal_tool_result(self) -> None:
         """Multimodal tool results use the native ordered output array."""
         fmt = OpenAIResponseFormatter()
+        image = URLSource(url=self.image_url, media_type="image/png")
+        pdf = Base64Source(
+            data="JVBERi0xLjQgZmFrZQ==",
+            media_type="application/pdf",
+        )
         msgs = [
             AssistantMsg(
                 name="assistant",
@@ -57,25 +62,14 @@ class TestOpenAIResponseToolResultFormatter(IsolatedAsyncioTestCase):
                                 ),
                             ),
                             TextBlock(text="The remote copy follows."),
-                            DataBlock(
-                                source=URLSource(
-                                    url=self.image_url,
-                                    media_type="image/png",
-                                ),
-                            ),
+                            DataBlock(source=image),
                             DataBlock(
                                 source=URLSource(
                                     url="https://example.com/audio.mp3",
                                     media_type="audio/mpeg",
                                 ),
                             ),
-                            DataBlock(
-                                name="report.pdf",
-                                source=Base64Source(
-                                    data="JVBERi0xLjQgZmFrZQ==",
-                                    media_type="application/pdf",
-                                ),
-                            ),
+                            DataBlock(name="report.pdf", source=pdf),
                             TextBlock(text="End of result."),
                         ],
                         state=ToolResultState.SUCCESS,
@@ -144,6 +138,12 @@ class TestOpenAIResponseToolResultFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+        image.media_type = "Image/PNG"
+        pdf.media_type = "Application/PDF"
+        self.assertListEqual(await fmt.format(msgs), res)
+        self.assertEqual(image.media_type, "Image/PNG")
+        self.assertEqual(pdf.media_type, "Application/PDF")
 
     async def test_unsupported_base64_audio_fallback(self) -> None:
         """Unsupported Base64 audio is persisted and returned as text."""

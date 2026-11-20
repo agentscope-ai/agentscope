@@ -219,7 +219,7 @@ class KnowledgeBase:
                 therefore pass a mixed list without per-KB filtering.
             top_k (`int`, defaults to ``5``):
                 Maximum number of results returned across all queries
-                (after dedup).
+                (after dedup).  Must be at least ``1``.
             score_threshold (`float | None`, optional):
                 Minimum :attr:`VectorSearchResult.score` for a hit to
                 be retained.  The scale depends on the store's metric —
@@ -232,7 +232,14 @@ class KnowledgeBase:
                 At most ``top_k`` deduplicated hits ordered by
                 descending similarity score.  Empty when there are no
                 queries the bound embedding model can consume.
+
+        Raises:
+            `ValueError`:
+                If ``top_k`` is not positive.
         """
+        if top_k < 1:
+            raise ValueError("top_k must be positive.")
+
         if not queries:
             return []
 

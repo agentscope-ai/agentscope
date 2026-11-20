@@ -6,6 +6,7 @@ Tests cover both non-streaming and streaming modes.
 """
 from copy import deepcopy
 from dataclasses import asdict
+from datetime import date
 import json
 from typing import Any
 import unittest
@@ -1129,6 +1130,11 @@ class MoonshotK3Test(IsolatedAsyncioTestCase):
             "kimi-k3.1-pro": "Kimi K3.1 Pro",
             "kimi-k3.1-pro-highspeed": "Kimi K3.1 Pro Highspeed",
         }
+        release_dates = {
+            "kimi-k3": date(2026, 7, 16),
+            "kimi-k3.1-pro": date(2026, 10, 23),
+            "kimi-k3.1-pro-highspeed": date(2026, 10, 23),
+        }
         for name in _K3_MODELS:
             with self.subTest(model=name):
                 self.assertIn(name, cards)
@@ -1141,6 +1147,7 @@ class MoonshotK3Test(IsolatedAsyncioTestCase):
                         "label": labels[name],
                         "status": "active",
                         "deprecated_at": None,
+                        "release_date": release_dates[name],
                         "input_types": [
                             "text/plain",
                             "application/x-thinking",

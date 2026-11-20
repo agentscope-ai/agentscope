@@ -175,7 +175,9 @@ the full memory lifecycle: conversation write-back, nightly/manual dream
 consolidation from daily cards into digest memory, and search across both daily
 and digest memory. Only the file/index jobs required by that lifecycle are
 registered; ReMe's resource ingestion, independent chat, daily-paper and
-operational jobs are not loaded. Search is **BM25-only** unless an
+operational jobs are not loaded. Dream consolidates daily cards into digest
+nodes; ReMe's separate proactive topic generation and tag indexing are not
+part of this embedded configuration. Search is **BM25-only** unless an
 `embedding_model` is provided:
 
 ```python

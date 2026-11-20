@@ -9,6 +9,15 @@ from .._utils._common import _generate_id
 from ..message import Msg
 
 
+class SteeringAcknowledgementUncertainError(RuntimeError):
+    """An acknowledgement may have committed and must not be rolled back.
+
+    Sources raise this error when they cannot resolve a commit outcome. The
+    middleware retains hints and yields their events before propagating the
+    error. Pending inputs may be delivered again after reply cleanup.
+    """
+
+
 @dataclass(frozen=True)
 class SteeringInput:
     """One ordered steering input with a source-owned identifier.
@@ -26,14 +35,16 @@ class SteeringSource(ABC):
     """Supply reply-scoped inputs without coupling agents to a transport.
 
     Reads must be non-destructive. Acknowledgement removes only the supplied
-    inputs and must raise before committing if it cannot accept the change.
+    inputs. Ordinary failures must guarantee that removal has not committed
+    and cannot commit later. A pending queue snapshot is not such a guarantee;
+    unresolved outcomes must raise SteeringAcknowledgementUncertainError.
     The middleware waits for acknowledgement in a shielded task, including
     when its caller is repeatedly cancelled. Sources must finish committing
     before returning and must not report post-commit cleanup or notification
     failures as acknowledgement failures. Cancellation is propagated only
     after the middleware has resolved whether to retain or roll back hints.
-    Committed hint events are yielded before cancellation is propagated so
-    event consumers can persist the same inputs as the agent context.
+    Committed and uncertain hint events are yielded before an error or
+    cancellation is propagated so consumers can persist the agent context.
     Lifecycle hooks are optional for externally managed sources.
     """
 

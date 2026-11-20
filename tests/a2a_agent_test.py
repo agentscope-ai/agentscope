@@ -16,7 +16,7 @@ from a2a.utils.errors import TaskNotFoundError
 from utils import AnyString
 
 from agentscope.agent import A2AAgent
-from agentscope.message import UserMsg
+from agentscope.message import Base64Source, DataBlock, UserMsg
 from agentscope.state import A2AAgentState
 
 
@@ -809,6 +809,55 @@ class A2AAgentTaskContinuationTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             [_.get_text_content() for _ in agent.state.observed_context],
             ["earlier"],
+        )
+        await agent.aclose()
+
+    async def test_rejected_input_keeps_observed_messages(self) -> None:
+        """An input the request builder rejects must not consume the
+        observed messages or start a reply that never ends."""
+        client = _FakeClient(
+            [
+                [
+                    types.StreamResponse(
+                        message=types.Message(
+                            message_id="msg-1",
+                            context_id="context-1",
+                            role=types.Role.ROLE_AGENT,
+                            parts=[types.Part(text="ok")],
+                        ),
+                    ),
+                ],
+            ],
+        )
+        agent = A2AAgent(self.card, client=client)
+
+        await agent.observe(UserMsg(name="user", content="earlier"))
+
+        bad = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=Base64Source(data="!!", media_type="image/png"),
+                ),
+            ],
+        )
+        events = []
+        with self.assertRaises(ValueError):
+            async for event in agent.reply_stream(bad):
+                events.append(event)
+
+        self.assertListEqual(events, [])
+        self.assertListEqual(client.requests, [])
+        self.assertEqual(
+            [_.get_text_content() for _ in agent.state.observed_context],
+            ["earlier"],
+        )
+
+        await agent.reply(UserMsg(name="user", content="later"))
+
+        self.assertEqual(
+            [_.text for _ in client.requests[0].message.parts],
+            ["earlier", "later"],
         )
         await agent.aclose()
 

@@ -939,7 +939,8 @@ async def read_knowledge_document(
     ].strip().lower() or "application/octet-stream"
     inline = not download and media_type in _INLINE_MEDIA_TYPES
     disposition = "inline" if inline else "attachment"
-    filename = quote(data.filename or "download")
+    # Encode "/" too: it is not allowed in RFC 5987 filename* values.
+    filename = quote(data.filename or "download", safe="")
     headers = {
         "Content-Disposition": (f"{disposition}; filename*=UTF-8''{filename}"),
         "Cache-Control": "private, max-age=60",

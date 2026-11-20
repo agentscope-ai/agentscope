@@ -295,6 +295,29 @@ class AgentState(BaseModel):
     """The context that allow the middlewares to store/get data across
     different replies."""
 
+    def get_reply_message(self, name: str) -> Msg | None:
+        """Find this agent's current reply, even after later messages.
+
+        Args:
+            name (`str`):
+                Author of the assistant reply to find.
+
+        Returns:
+            `Msg | None`:
+                The assistant message matching both ``name`` and the current
+                ``reply_id``, or ``None`` if it has not been created.
+        """
+        return next(
+            (
+                message
+                for message in reversed(self.context)
+                if message.id == self.reply_id
+                and message.role == "assistant"
+                and message.name == name
+            ),
+            None,
+        )
+
     def append_context(
         self,
         name: str,
@@ -306,14 +329,9 @@ class AgentState(BaseModel):
         `reply_id`. If such message doesn't exist, a new assistant message
         with agent's name and current reply ID will be created.
         """
-        # If append to the latest message
-        if (
-            self.context
-            and self.context[-1].role == "assistant"
-            and self.context[-1].name == name
-            and self.context[-1].id == self.reply_id
-        ):
-            self.context[-1].content.extend(blocks)
+        message = self.get_reply_message(name)
+        if message is not None:
+            message.content.extend(blocks)
         else:
             # Create a new assistant message with the current reply ID
             self.context.append(
@@ -326,7 +344,7 @@ class AgentState(BaseModel):
             )
 
     def has_awaiting_tool_calls(self, name: str) -> bool:
-        """Whether the tail assistant message written by ``name`` has
+        """Whether the current reply written by ``name`` has
         any tool call still awaiting an outside response — an
         ``ASKING`` user confirmation or a ``SUBMITTED`` external
         execution with no matching tool result yet.
@@ -343,7 +361,7 @@ class AgentState(BaseModel):
         return bool(self.get_awaiting_tool_calls(name))
 
     def get_awaiting_tool_calls(self, name: str) -> list[ToolCallBlock]:
-        """Get the tail assistant message's tool calls still awaiting an
+        """Get the current reply's tool calls still awaiting an
         outside response — an ``ASKING`` user confirmation or a
         ``SUBMITTED`` external execution with no matching tool result yet.
 
@@ -356,10 +374,8 @@ class AgentState(BaseModel):
             `list[ToolCallBlock]`:
                 The awaiting tool call blocks, empty if none.
         """
-        if not self.context:
-            return []
-        last_msg = self.context[-1]
-        if last_msg.role != "assistant" or last_msg.name != name:
+        last_msg = self.get_reply_message(name)
+        if last_msg is None:
             return []
         result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
         return [
@@ -386,14 +402,8 @@ class AgentState(BaseModel):
             `list[ToolCallBlock]`:
                 The unfinished tool call blocks, empty if none.
         """
-        if not self.context:
-            return []
-        last_msg = self.context[-1]
-        if (
-            last_msg.role != "assistant"
-            or last_msg.name != name
-            or last_msg.id != self.reply_id
-        ):
+        last_msg = self.get_reply_message(name)
+        if last_msg is None:
             return []
         result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
         return [
