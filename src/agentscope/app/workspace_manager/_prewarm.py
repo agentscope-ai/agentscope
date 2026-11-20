@@ -205,6 +205,19 @@ class WorkspacePrewarmMixin(WorkspaceManagerBase, Generic[T]):
             return await super()._mint_workspace_id()
         try:
             workspace = await future
+        except asyncio.CancelledError:
+            # A completed Future cannot be cancelled. If cancellation wins
+            # before this taker resumes, the producer has already handed off
+            # cleanup responsibility and will not dispose the result.
+            if (
+                future.done()
+                and not future.cancelled()
+                and future.exception() is None
+            ):
+                workspace = future.result()
+                self._built.discard(workspace)
+                await self._dispose_prewarmed(workspace)
+            raise
         except Exception:
             # Only a failed build reaches the taker as an exception;
             # ``_fill_slot`` cancels unclaimed slots instead. So a
