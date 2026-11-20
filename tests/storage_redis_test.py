@@ -3,6 +3,7 @@
 """Unit tests for RedisStorage using fakeredis."""
 
 from datetime import datetime as DateTime
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
@@ -31,7 +32,14 @@ from agentscope.app.storage import (
     SOPRunRecord,
     SOPStepDataV1,
 )
-from agentscope.app.storage import MCPRecord, SkillRecord
+from agentscope.app.storage import (
+    MCPRecord,
+    SkillRecord,
+    ChannelBinding,
+    ChannelRecord,
+    RoutingConfig,
+    SessionSettings,
+)
 from agentscope.credential import OllamaCredential
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.app.storage import AgentData
@@ -2201,3 +2209,181 @@ class TestRecordKeyTTL(IsolatedAsyncioTestCase):
         self.assertEqual(result, (record.model_dump_json(), AnyValue()))
         self.assertGreater(result[1], 0)
         self.assertLessEqual(result[1], 60)
+
+
+class _BrokenPipeline:
+    """Delegates to a real pipeline but fails on ``execute``."""
+
+    def __init__(self, real: Any) -> None:
+        self._real = real
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+    async def __aenter__(self) -> "_BrokenPipeline":
+        await self._real.__aenter__()
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> Any:
+        return await self._real.__aexit__(*exc_info)
+
+    async def execute(self, *args: object, **kwargs: object) -> Any:
+        raise ConnectionError("redis connection dropped mid-upsert")
+
+
+class _FlakyConnectionClient:
+    """Wraps a client whose pipelines always fail on ``execute``."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+    def pipeline(self, *args: object, **kwargs: object) -> _BrokenPipeline:
+        return _BrokenPipeline(self._client.pipeline(*args, **kwargs))
+
+
+class TestUpsertIndexAtomicity(IsolatedAsyncioTestCase):
+    """Record and index entries commit atomically (#3840).
+
+    A failure at any point of an upsert must leave neither a durable
+    record outside its indexes nor partial index entries behind.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up fixtures and remember the real client."""
+        self.storage = make_storage()
+        self.real_client = self.storage._client
+
+    def _break_pipelines(self) -> None:
+        """Make every pipeline execution fail after the writes queue."""
+        self.storage._client = _FlakyConnectionClient(self.real_client)
+
+    def _restore_client(self) -> None:
+        self.storage._client = self.real_client
+
+    async def test_interrupted_schedule_upsert_is_invisible(self) -> None:
+        """An interrupted schedule upsert leaves nothing behind."""
+        record = make_schedule_record("user-1", "agent-1")
+        self._break_pipelines()
+        with self.assertRaises(ConnectionError):
+            await self.storage.upsert_schedule("user-1", record)
+        self._restore_client()
+
+        self.assertIsNone(
+            await self.storage.get_schedule("user-1", record.id),
+        )
+        self.assertEqual(await self.storage.list_schedules("user-1"), [])
+        self.assertEqual(await self.storage.list_all_schedules(), [])
+
+    async def test_interrupted_channel_upsert_is_invisible(self) -> None:
+        """An interrupted channel upsert leaves nothing behind."""
+        record = ChannelRecord(
+            id="chan-1",
+            channel_type="feishu",
+            user_id="user-1",
+            routing=RoutingConfig(
+                bindings=[ChannelBinding(agent_id="agent-1")]
+            ),
+            session=SessionSettings(chat_model_config={"type": "x"}),
+        )
+        self._break_pipelines()
+        with self.assertRaises(ConnectionError):
+            await self.storage.upsert_channel(record, "bot-1")
+        self._restore_client()
+
+        self.assertIsNone(await self.storage.get_channel("chan-1"))
+        self.assertEqual(await self.storage.list_channels("user-1"), [])
+        self.assertEqual(await self.storage.list_all_channels(), [])
+        self.assertIsNone(
+            await self.storage.get_channel_id_by_platform_bot_id("bot-1"),
+        )
+
+    async def test_interrupted_skill_upsert_is_invisible(self) -> None:
+        """An interrupted skill upsert leaves the name index untouched."""
+        self._break_pipelines()
+        with self.assertRaises(ConnectionError):
+            await self.storage.upsert_skill(
+                "user-1",
+                make_skill_record("user-1"),
+            )
+        self._restore_client()
+
+        self.assertEqual(await self.storage.list_skills("user-1"), [])
+        self.assertIsNone(
+            await self.storage.get_skill_by_name("user-1", "gifgrep"),
+        )
+
+    async def test_successful_upserts_reach_every_index(self) -> None:
+        """Every index entry lands together with its record."""
+        schedule = make_schedule_record("user-1", "agent-1")
+        await self.storage.upsert_schedule("user-1", schedule)
+        self.assertEqual(
+            [item.id for item in await self.storage.list_all_schedules()],
+            [schedule.id],
+        )
+
+        channel = ChannelRecord(
+            id="chan-1",
+            channel_type="feishu",
+            user_id="user-1",
+            routing=RoutingConfig(
+                bindings=[ChannelBinding(agent_id="agent-1")]
+            ),
+            session=SessionSettings(chat_model_config={"type": "x"}),
+        )
+        await self.storage.upsert_channel(channel, "bot-1")
+        self.assertEqual(
+            [item.id for item in await self.storage.list_all_channels()],
+            ["chan-1"],
+        )
+        self.assertEqual(
+            await self.storage.get_channel_id_by_platform_bot_id("bot-1"),
+            "chan-1",
+        )
+
+        await self.storage.upsert_skill(
+            "user-1",
+            make_skill_record("user-1"),
+        )
+        listed = await self.storage.list_skills("user-1")
+        by_name = await self.storage.get_skill_by_name("user-1", "gifgrep")
+        self.assertEqual([item.id for item in listed], [by_name.id])
+
+    async def test_skill_rename_updates_the_name_index_atomically(
+        self,
+    ) -> None:
+        """Renaming a skill drops the previous name in the same commit."""
+        record = make_skill_record("user-1", name="old-name")
+        skill_id = await self.storage.upsert_skill("user-1", record)
+        record.name = "new-name"
+        await self.storage.upsert_skill("user-1", record)
+
+        self.assertEqual(
+            (await self.storage.get_skill_by_name("user-1", "new-name")).id,
+            skill_id,
+        )
+        self.assertIsNone(
+            await self.storage.get_skill_by_name("user-1", "old-name"),
+        )
+
+    async def test_interrupted_team_upsert_is_invisible(self) -> None:
+        """An interrupted team upsert leaves nothing behind."""
+        record = make_team_record("user-1")
+        self._break_pipelines()
+        with self.assertRaises(ConnectionError):
+            await self.storage.upsert_team("user-1", record)
+        self._restore_client()
+
+        self.assertIsNone(await self.storage.get_team("user-1", record.id))
+        self.assertEqual(await self.storage.list_teams("user-1"), [])
+
+    async def test_successful_team_upsert_reaches_the_index(self) -> None:
+        """A successful team upsert lands in the per-user index."""
+        record = make_team_record("user-1")
+        await self.storage.upsert_team("user-1", record)
+        self.assertEqual(
+            [item.id for item in await self.storage.list_teams("user-1")],
+            [record.id],
+        )
