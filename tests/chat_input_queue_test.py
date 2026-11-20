@@ -17,7 +17,7 @@ from service_wakeup_dispatcher_test import _FakeChatService, _FakeStorage
 from agentscope.app import _bus_ops
 from agentscope.app._chat_input_store import INPUT_EXECUTION
 from agentscope.app._bus_ops import (
-    _count_user_chat_inputs,
+    ChatQueueFullError,
     delete_chat_input,
     enqueue_chat_input,
     list_chat_inputs,
@@ -407,7 +407,13 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                 self.assertLess(len(local_claim), 1_000)
                 await queue._finish_chat_input_claim("s")
                 await delete_chat_input(bus, "u", "s", "a", second["id"])
-                self.assertEqual(await _count_user_chat_inputs(bus, "u"), 0)
+                self.assertEqual(await list_chat_inputs(bus, "s"), [])
+                self.assertFalse(
+                    await bus.registry_exists(
+                        MessageBusKeys.chat_input_inflight_registry(),
+                        "s",
+                    ),
+                )
                 self.assertEqual(
                     await bus.registry_getall(
                         MessageBusKeys.chat_input_user_sessions("u"),
@@ -1631,10 +1637,18 @@ class TestCorruptQueueMetadata(IsolatedAsyncioTestCase):
                         "s",
                         raw,
                     )
-                    self.assertEqual(
-                        await _count_user_chat_inputs(bus, "u"),
+                    with patch.object(
+                        MessageBusKeys,
+                        "CHAT_INPUT_USER_MAX_LEN",
                         2,
-                    )
+                    ), self.assertRaises(ChatQueueFullError):
+                        await enqueue_chat_input(
+                            bus,
+                            "u",
+                            "s",
+                            "a",
+                            UserMsg("u", "over quota"),
+                        )
             await enqueue_chat_input(
                 bus,
                 "u",

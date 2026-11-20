@@ -65,9 +65,12 @@ export interface PipelineVoiceOptions {
 		submissionId: string,
 		signal: AbortSignal,
 	) => Promise<InputResult>;
+	canListen: () => boolean;
+}
+
+interface VoiceObserver {
 	onState: (state: PipelineVoiceState, transcript: string) => void;
 	onError: (error: unknown) => void;
-	canListen: () => boolean;
 }
 
 /** One browser-owned, half-duplex conversation; Chat owns persistence and tools. */
@@ -112,7 +115,7 @@ export class PipelineVoiceSession {
 	private cleanupPromise: Promise<void> | null = null;
 	private cancellationPromise: Promise<void> | null = null;
 	private cancellationController: AbortController | null = null;
-	private observers = new Set<Pick<PipelineVoiceOptions, 'onState' | 'onError'>>();
+	private observers = new Set<VoiceObserver>();
 
 	constructor(options: PipelineVoiceOptions) {
 		this.options = options;
@@ -252,7 +255,7 @@ export class PipelineVoiceSession {
 		return this.cancellationPending;
 	}
 
-	subscribe(observer: Pick<PipelineVoiceOptions, 'onState' | 'onError'>): () => void {
+	subscribe(observer: VoiceObserver): () => void {
 		this.observers.add(observer);
 		return () => {
 			this.observers.delete(observer);
@@ -868,11 +871,9 @@ export class PipelineVoiceSession {
 
 	private setState(state: PipelineVoiceState): void {
 		this.state = state;
-		this.options.onState(state, this.transcript);
 		for (const observer of this.observers) observer.onState(state, this.transcript);
 	}
 	private reportError(error: unknown): void {
-		this.options.onError(error);
 		for (const observer of this.observers) observer.onError(error);
 	}
 	private clearSpeechTimer(): void {

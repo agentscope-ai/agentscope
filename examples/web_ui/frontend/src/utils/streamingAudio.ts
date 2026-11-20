@@ -42,14 +42,14 @@ type Listener = () => void;
 
 type Bytes = Uint8Array<ArrayBufferLike>;
 
-function base64ToBytes(b64: string): Bytes {
+export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
 	const binary = atob(b64);
 	const bytes = new Uint8Array(binary.length);
 	for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 	return bytes;
 }
 
-function concatBytes(a: Bytes, b: Bytes): Bytes {
+export function concatBytes(a: Bytes, b: Bytes): Uint8Array<ArrayBuffer> {
 	const out = new Uint8Array(a.length + b.length);
 	out.set(a, 0);
 	out.set(b, a.length);

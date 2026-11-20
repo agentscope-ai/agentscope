@@ -536,25 +536,27 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         self.session.config.pipeline_voice_config.chat_model_config = (
             voice_model
         )
-        models, snapshot = await self.service.pipeline_snapshot(
-            "user-1",
-            "session-1",
-            "agent-1",
-        )
+        models, snapshot = await self.service.pipeline_snapshot(self.session)
         original = snapshot.model_dump(mode="json")
-        response = await chat(
-            ChatRequest(
-                agent_id="agent-1",
-                session_id="session-1",
-                input=UserMsg("user", "voice input", id="voice"),
-                mode="pipeline_voice",
-            ),
-            user_id="user-1",
-            storage=self.storage,
-            chat_service=self.service,
-            chat_run_registry=None,
-            message_bus=self.bus,
-        )
+        with patch.object(
+            self.storage,
+            "get_session",
+            wraps=self.storage.get_session,
+        ) as get_session:
+            response = await chat(
+                ChatRequest(
+                    agent_id="agent-1",
+                    session_id="session-1",
+                    input=UserMsg("user", "voice input", id="voice"),
+                    mode="pipeline_voice",
+                ),
+                user_id="user-1",
+                storage=self.storage,
+                chat_service=self.service,
+                chat_run_registry=None,
+                message_bus=self.bus,
+            )
+        get_session.assert_awaited_once_with("user-1", "agent-1", "session-1")
         self.assertEqual(response.status, "queued")
         snapshot.parameters["voice"] = "changed locally"
         self.session.config.pipeline_voice_config.tts_model_config = _tts(
@@ -637,11 +639,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         primary = self.session.config.chat_model_config.model_copy(deep=True)
         fallback = primary.model_copy(update={"model": "backup"})
         self.session.config.fallback_chat_model_config = fallback
-        models, speech = await self.service.pipeline_snapshot(
-            "user-1",
-            "session-1",
-            "agent-1",
-        )
+        models, speech = await self.service.pipeline_snapshot(self.session)
         self.session.config.chat_model_config = primary.model_copy(
             update={"model": "changed"},
         )
@@ -669,11 +667,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         self.session.config.fallback_chat_model_config = fallback
         voice = primary.model_copy(update={"model": "voice"})
         self.session.config.pipeline_voice_config.chat_model_config = voice
-        models, speech = await self.service.pipeline_snapshot(
-            "user-1",
-            "session-1",
-            "agent-1",
-        )
+        models, speech = await self.service.pipeline_snapshot(self.session)
         self.assertEqual(models, ChatModelSnapshot(primary=voice))
         with patch(
             "agentscope.app._service._chat.has_pending_inbox_or_release",
@@ -709,11 +703,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         voice = self.session.config.chat_model_config
         self.session.config.chat_model_config = None
         self.session.config.pipeline_voice_config.chat_model_config = voice
-        models, speech = await self.service.pipeline_snapshot(
-            "user-1",
-            "session-1",
-            "agent-1",
-        )
+        models, speech = await self.service.pipeline_snapshot(self.session)
         with patch(
             "agentscope.app._service._chat.has_pending_inbox_or_release",
             side_effect=[True, False],
@@ -738,11 +728,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         )
         self.session.config.pipeline_voice_config.chat_model_config = None
         with self.assertRaises(HTTPException) as error:
-            await self.service.pipeline_snapshot(
-                "user-1",
-                "session-1",
-                "agent-1",
-            )
+            await self.service.pipeline_snapshot(self.session)
         self.assertEqual(error.exception.status_code, 422)
 
     async def test_inaccessible_voice_model_is_rejected(self) -> None:
@@ -751,11 +737,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             status_code=404,
         )
         with self.assertRaises(HTTPException) as error:
-            await self.service.pipeline_snapshot(
-                "user-1",
-                "session-1",
-                "agent-1",
-            )
+            await self.service.pipeline_snapshot(self.session)
         self.assertEqual(error.exception.status_code, 404)
         self.assertEqual(await list_chat_inputs(self.bus, "session-1"), [])
 
@@ -911,11 +893,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         await self._run(
             UserConfirmResultEvent(reply_id="voice-reply", confirm_results=[]),
         )
-        models, speech = await self.service.pipeline_snapshot(
-            "user-1",
-            "session-1",
-            "agent-1",
-        )
+        models, speech = await self.service.pipeline_snapshot(self.session)
         await self._run(
             UserMsg("user", "new input", id="new"),
             pipeline_chat_config=models,
@@ -961,9 +939,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                     profile.data.credential_id
                 )
                 models, speech = await self.service.pipeline_snapshot(
-                    "user-1",
-                    "session-1",
-                    "agent-1",
+                    self.session,
                 )
                 self.assertEqual(
                     (models, speech.model_dump()),
@@ -1026,11 +1002,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                         "response_format"
                     ] = "invalid"
                 with self.assertRaises(HTTPException) as error:
-                    await self.service.pipeline_snapshot(
-                        "user-1",
-                        "session-1",
-                        "agent-1",
-                    )
+                    await self.service.pipeline_snapshot(self.session)
                 self.assertEqual(error.exception.status_code, status)
 
     async def test_pipeline_checks_resolved_audio_format(self) -> None:
@@ -1039,19 +1011,11 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         config = self.session.config.pipeline_voice_config
         config.tts_model_config.parameters["response_format"] = "pcm"
         with self.assertRaises(HTTPException) as error:
-            await self.service.pipeline_snapshot(
-                "user-1",
-                "session-1",
-                "agent-1",
-            )
+            await self.service.pipeline_snapshot(self.session)
         self.assertEqual(error.exception.status_code, 422)
         profile.data.model = "tts-1"
         profile.data.voice = "alloy"
-        _, speech = await self.service.pipeline_snapshot(
-            "user-1",
-            "session-1",
-            "agent-1",
-        )
+        _, speech = await self.service.pipeline_snapshot(self.session)
         self.assertEqual(speech.parameters, {"voice": "alloy"})
         self.assertEqual(
             config.tts_model_config.parameters,
@@ -1070,11 +1034,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                 self.session.config.pipeline_voice_config = config
                 self.session.config.tts_model_config = _tts("ordinary")
                 with self.assertRaises(HTTPException) as error:
-                    await self.service.pipeline_snapshot(
-                        "user-1",
-                        "session-1",
-                        "agent-1",
-                    )
+                    await self.service.pipeline_snapshot(self.session)
                 self.assertEqual(error.exception.status_code, 422)
         self.validate.assert_not_awaited()
 

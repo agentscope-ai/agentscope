@@ -856,18 +856,10 @@ class ChatService:
 
     async def pipeline_snapshot(
         self,
-        user_id: str,
-        session_id: str,
-        agent_id: str,
+        session: SessionRecord,
     ) -> tuple[ChatModelSnapshot, TTSModelConfig]:
-        """Resolve voice models from one session snapshot before queuing."""
-        session = await self._storage.get_session(
-            user_id,
-            agent_id,
-            session_id,
-        )
-        if session is None:
-            raise HTTPException(status_code=404, detail="Session not found.")
+        """Resolve voice models from the owned session before queuing."""
+        user_id = session.user_id
         config = session.config.pipeline_voice_config
         if (
             config is None

@@ -60,6 +60,32 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
         self.addAsyncCleanup(queue.close)
         return queue
 
+    async def test_chat_admission_shares_queue_reads(self) -> None:
+        """Both quotas share one read of each indexed queue."""
+        async with InMemoryMessageBus() as bus:
+            await create_chat_submission(bus, "u", "other", "a")
+            with patch.object(
+                bus,
+                "queue_read",
+                wraps=bus.queue_read,
+            ) as read:
+                await enqueue_chat_input(
+                    bus,
+                    "u",
+                    "new",
+                    "a",
+                    UserMsg("u", "hello"),
+                )
+            self.assertEqual(
+                [call.args[0] for call in read.await_args_list],
+                [
+                    MessageBusKeys.chat_inputs("other"),
+                    MessageBusKeys.chat_inputs("new"),
+                    # Build the post-enqueue queue-changed notification.
+                    MessageBusKeys.chat_inputs("new"),
+                ],
+            )
+
     async def test_legacy_full_session_is_adopted_for_collection(self) -> None:
         """Old unindexed receipts cannot permanently consume the quota."""
         for bus in self.backends:

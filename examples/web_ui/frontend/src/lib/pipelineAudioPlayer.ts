@@ -1,9 +1,15 @@
-import { parseWavHeader, pcmToAudioBuffer } from '@/utils/streamingAudio';
+import {
+	base64ToBytes,
+	concatBytes,
+	parseWavHeader,
+	pcmToAudioBuffer,
+} from '@/utils/streamingAudio';
 
 interface AudioBlock {
 	id: string;
 	mediaType: string;
 	bytes: Uint8Array<ArrayBuffer>;
+	chunks: Uint8Array<ArrayBuffer>[];
 	header: ReturnType<typeof parseWavHeader>;
 	playbackDone?: Promise<void>;
 	finishPlayback?: () => void;
@@ -48,6 +54,7 @@ export class PipelineAudioPlayer {
 			id,
 			mediaType,
 			bytes: new Uint8Array(),
+			chunks: [],
 			header: null,
 			decoding: false,
 		});
@@ -58,12 +65,13 @@ export class PipelineAudioPlayer {
 		const block = this.blocks.find((item) => item.id === id);
 		if (!block || block.playbackDone) return;
 		try {
-			const decoded = atob(data);
-			const bytes = new Uint8Array(block.bytes.length + decoded.length);
-			bytes.set(block.bytes);
-			for (let i = 0; i < decoded.length; i++)
-				bytes[block.bytes.length + i] = decoded.charCodeAt(i);
-			block.bytes = bytes;
+			const chunk = base64ToBytes(data);
+			if (!chunk.length) return;
+			if (block.mediaType === 'audio/wav') {
+				block.bytes = block.bytes.length ? concatBytes(block.bytes, chunk) : chunk;
+			} else {
+				block.chunks.push(chunk);
+			}
 			this.pump();
 		} catch (error) {
 			this.onError(error);
@@ -137,14 +145,22 @@ export class PipelineAudioPlayer {
 					block.bytes = block.bytes.slice(count);
 					if (buffer) this.play(buffer);
 				}
-			} else if (block.playbackDone && block.bytes.length) {
+			} else if (block.playbackDone && block.chunks.length) {
 				block.decoding = true;
 				const generation = this.generation;
+				const bytes = new Uint8Array(
+					block.chunks.reduce((size, chunk) => size + chunk.length, 0),
+				);
+				let offset = 0;
+				for (const chunk of block.chunks) {
+					bytes.set(chunk, offset);
+					offset += chunk.length;
+				}
+				block.chunks = [];
 				void this.context
-					.decodeAudioData(block.bytes.buffer)
+					.decodeAudioData(bytes.buffer)
 					.then((buffer) => {
 						if (generation !== this.generation) return;
-						block.bytes = new Uint8Array();
 						block.decoding = false;
 						this.play(buffer);
 					})

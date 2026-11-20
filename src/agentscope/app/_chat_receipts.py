@@ -31,7 +31,11 @@ async def track_receipts(
     )
 
 
-async def receipt_count(bus: "MessageBus", session_id: str) -> int:
+async def receipt_count(
+    bus: "MessageBus",
+    session_id: str,
+    queued_ids: set[str] | None = None,
+) -> int:
     """Pending/claimed queue identities reserve their eventual receipt slot."""
     submissions = await bus.registry_getall(
         MessageBusKeys.chat_submissions(session_id),
@@ -40,8 +44,10 @@ async def receipt_count(bus: "MessageBus", session_id: str) -> int:
         MessageBusKeys.chat_input_cancellations(session_id),
     )
     records = [json.loads(value) for value in submissions.values()]
-    pending = await bus.queue_read(MessageBusKeys.chat_inputs(session_id))
-    ids = set(cancellations) | {p["id"] for _, p in pending}
+    if queued_ids is None:
+        pending = await bus.queue_read(MessageBusKeys.chat_inputs(session_id))
+        queued_ids = {p["id"] for _, p in pending}
+    ids = set(cancellations) | queued_ids
     # A partial enqueue may still need a cancellation receipt without a FIFO
     # entry. Count its reserved identity until it is cancelled or collected.
     ids.update(r["queue_item_id"] for r in records if r["state"] == "queued")
@@ -53,27 +59,6 @@ async def receipt_count(bus: "MessageBus", session_id: str) -> int:
         ids.add(json.loads(raw)["payload"]["id"])
     reserved = sum(r["state"] == "reserved" for r in records)
     return len(submissions) + len(ids) + reserved
-
-
-async def receipt_capacity(
-    bus: "MessageBus",
-    user_id: str,
-    session_id: str,
-    slots: int = 1,
-) -> bool:
-    """Check admission while the caller holds the user's quota lock."""
-    count = await receipt_count(bus, session_id) + slots
-    if count > MessageBusKeys.CHAT_RECEIPT_SESSION_MAX_LEN:
-        return False
-    sessions = await bus.registry_getall(
-        MessageBusKeys.chat_input_user_sessions(user_id),
-    )
-    for sid in sessions:
-        if sid != session_id:
-            count += await receipt_count(bus, sid)
-        if count > MessageBusKeys.CHAT_RECEIPT_USER_MAX_LEN:
-            return False
-    return count <= MessageBusKeys.CHAT_RECEIPT_USER_MAX_LEN
 
 
 def cancellation_receipt(user_id: str, agent_id: str) -> str:

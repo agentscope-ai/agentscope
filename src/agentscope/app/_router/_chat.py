@@ -46,7 +46,7 @@ from .._service import (
     SubagentHitlProjector,
 )
 from ..message_bus import MessageBus, MessageBusKeys
-from ..storage import StorageBase
+from ..storage import SessionRecord, StorageBase
 from .._bus_ops import (
     ChatSubmissionConflictError,
     cancel_chat_submission,
@@ -77,7 +77,7 @@ async def _ensure_session(
     user_id: str,
     agent_id: str,
     session_id: str,
-) -> None:
+) -> SessionRecord:
     """Ensure the caller owns the target session before queue access.
 
     Args:
@@ -100,6 +100,7 @@ async def _ensure_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session '{session_id}' not found.",
         )
+    return session
 
 
 @chat_router.post("/submissions")
@@ -564,7 +565,7 @@ async def chat(
     # path for both idle and busy sessions removes the check-then-spawn
     # race and gives rapid submissions a stable order.
     if isinstance(request.input, (Msg, list)):
-        await _ensure_session(
+        session = await _ensure_session(
             storage,
             user_id,
             request.agent_id,
@@ -575,9 +576,7 @@ async def chat(
             tts_config = None
             if request.mode == "pipeline_voice":
                 chat_config, tts_config = await chat_service.pipeline_snapshot(
-                    user_id,
-                    request.session_id,
-                    request.agent_id,
+                    session,
                 )
             item = await enqueue_chat_input(
                 message_bus,

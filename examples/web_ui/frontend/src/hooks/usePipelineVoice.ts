@@ -149,8 +149,6 @@ export function usePipelineVoice(options: Options) {
 						silent: true,
 					}),
 				canListen: () => optionsRef.current.canStart,
-				onState: () => undefined,
-				onError: () => undefined,
 			});
 			observe(session);
 			await session.start();
