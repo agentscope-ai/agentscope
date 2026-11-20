@@ -119,6 +119,17 @@ class ToolBase(ABC):
     the state will be injected by an argument named `_agent_state`. Note your
     tool should be able to accept such argument.
     """
+    is_offloadable: bool = True
+    """If this tool may be offloaded to a background task when it outlives
+    the offload middleware's timeout (``ToolOffloadMiddleware``). Tools
+    that must complete within the reply — or whose delayed completion
+    would confuse the caller — can opt out; they then always run
+    synchronously, exactly like ``is_state_injected`` tools."""
+    offload_timeout_secs: float | None = None
+    """Per-tool offload timeout override. ``None`` (default) uses the
+    application-wide ``tool_offload_timeout_secs``; a number makes the
+    offload middleware wait this many seconds for this tool before
+    offloading it. Ignored when :attr:`is_offloadable` is ``False``."""
     metadata_schema: dict[str, Any] | None = None
     """What an external executor must put in
     :attr:`~..message.ToolResultBlock.metadata`, as a JSON schema.
