@@ -54,7 +54,7 @@ jobs:
             echo "verdict=no" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # Otherwise the job token is left in .git/config, where the
           # agent's own shell could read it and act as this job.
