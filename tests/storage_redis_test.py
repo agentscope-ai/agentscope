@@ -3,8 +3,11 @@
 """Unit tests for RedisStorage using fakeredis."""
 
 from datetime import datetime as DateTime
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
+
+import asyncio
 
 import fakeredis.aioredis
 
@@ -39,6 +42,28 @@ from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.message import UserMsg, AssistantMsg, TextBlock
 from agentscope.sop import SOPPhase, SOPRunState, SOPStepRunState
 from agentscope.state import AgentState
+
+
+class PausedLindexRedis(fakeredis.aioredis.FakeRedis):
+    """FakeRedis that can hold one ``LINDEX 1`` call open.
+
+    Used to interleave a second delete with an in-flight one, at the
+    position the old ``delete_message`` resolved before removing.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(decode_responses=True)
+        self.pause_at_index_one = False
+        self.index_lookup_started = asyncio.Event()
+        self.continue_index_lookup = asyncio.Event()
+
+    async def lindex(self, name: str, index: int) -> Any:
+        """Pause on index 1 while armed, then delegate."""
+        if self.pause_at_index_one and index == 1:
+            self.pause_at_index_one = False
+            self.index_lookup_started.set()
+            await self.continue_index_lookup.wait()
+        return await super().lindex(name, index)
 
 
 def make_storage() -> RedisStorage:
@@ -602,6 +627,66 @@ class TestMessage(IsolatedAsyncioTestCase):
                 "indexed_ids": {second.id},
             },
         )
+
+    async def test_delete_message_interleaved_with_another_delete(
+        self,
+    ) -> None:
+        """A concurrent delete must not make this one remove the wrong
+        message.
+
+        The positional lookup and the removal used to be separate round
+        trips, so a second delete landing between them shifted every later
+        position and this call removed a message it never resolved.
+        """
+        first = UserMsg(name="alice", content="a")
+        second = UserMsg(name="alice", content="b")
+        third = UserMsg(name="alice", content="c")
+
+        redis = PausedLindexRedis()
+        self.storage._client = redis
+        for msg in (first, second, third):
+            await self.storage.upsert_message(
+                self.user_id,
+                self.session_id,
+                msg,
+            )
+
+        redis.pause_at_index_one = True
+        deleting_second = asyncio.create_task(
+            self.storage.delete_message(
+                self.user_id,
+                self.session_id,
+                second.id,
+            ),
+        )
+        try:
+            await asyncio.wait_for(
+                redis.index_lookup_started.wait(),
+                timeout=1,
+            )
+        except asyncio.TimeoutError:
+            # No positional lookup to interleave with: already atomic.
+            pass
+        deleted_first = await self.storage.delete_message(
+            self.user_id,
+            self.session_id,
+            first.id,
+        )
+        redis.continue_index_lookup.set()
+        deleted_second = await asyncio.wait_for(deleting_second, timeout=5)
+
+        messages, _ = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+        )
+        indexed_ids = await redis.smembers(
+            self.storage._message_index_key(self.user_id, self.session_id),
+        )
+
+        self.assertTrue(deleted_first)
+        self.assertTrue(deleted_second)
+        self.assertListEqual([m.id for m in messages], [third.id])
+        self.assertSetEqual(indexed_ids, {third.id})
 
     async def test_list_messages_empty_session(self) -> None:
         """list_messages returns an empty list for a session with no
