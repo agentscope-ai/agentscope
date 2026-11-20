@@ -397,6 +397,26 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     read_only,
                 )
 
+    async def test_env_assignments_are_not_skipped_blindly(self) -> None:
+        """Env assignments that can change the running program are not
+        skipped, so their commands cannot hide behind SAFE_COMMANDS."""
+        expected = {
+            "LD_PRELOAD=/tmp/evil.so grep -n todo src/a.py": False,
+            "PATH=/tmp/evil grep todo src/a.py": False,
+            "DYLD_INSERT_LIBRARIES=/tmp/evil.dylib grep -n todo x": False,
+            # Whitelisted assignments that cannot change the program keep
+            # the read-only fast path.
+            "NODE_ENV=prod grep -n todo src/a.py": True,
+            "DEBUG=1 cat /etc/passwd": True,
+            "grep todo src/a.py": True,
+        }
+        for cmd, read_only in expected.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.is_read_only_command(cmd),
+                    read_only,
+                )
+
     async def test_single_read_only_docker_commands(self) -> None:
         """Test single read-only docker commands."""
         read_only_commands = [
