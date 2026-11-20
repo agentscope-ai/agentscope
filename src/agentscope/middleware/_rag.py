@@ -868,7 +868,13 @@ class RAGMiddleware(MiddlewareBase):
         # original reply inputs (which are no longer in
         # ``agent.state.context`` by the time ``on_reasoning`` runs in
         # a tool-call loop).  Cleared in ``on_reply``'s finally.
-        self._cached_inputs: list[TextBlock | DataBlock] | None = None
+        #
+        # One slot per agent: a middleware instance may be shared across
+        # agents (see ``ReplyBudgetControlMiddleware``), and a single
+        # shared slot would let a concurrent reply of another agent query
+        # this one's knowledge base with its own message — then empty the
+        # slot under it when that other reply finishes first.
+        self._cached_inputs: dict[int, list[TextBlock | DataBlock]] = {}
 
     # ------------------------------------------------------------------
     # Agentic mode — expose the search tool
@@ -928,6 +934,7 @@ class RAGMiddleware(MiddlewareBase):
                 Whatever ``next_handler`` yields.
         """
         inputs = input_kwargs.get("inputs")
+        agent_key = id(agent)
 
         msgs: list[Msg] | None = None
         if isinstance(inputs, Msg):
@@ -961,13 +968,13 @@ class RAGMiddleware(MiddlewareBase):
                     first_text.text = f"{msg.name}: {first_text.text}"
                 blocks.extend(content)
 
-            self._cached_inputs = blocks
+            self._cached_inputs[agent_key] = blocks
 
         try:
             async for evt in next_handler(**input_kwargs):
                 yield evt
         finally:
-            self._cached_inputs = None
+            self._cached_inputs.pop(agent_key, None)
 
     async def on_reasoning(
         self,
@@ -1005,17 +1012,18 @@ class RAGMiddleware(MiddlewareBase):
                 from downstream.
         """
         hint: HintBlock | None = None
+        cached_inputs = self._cached_inputs.get(id(agent))
 
         try:
             if (
                 self._parameters.mode == "static"
                 and agent.state.cur_iter == 0
-                and self._cached_inputs
+                and cached_inputs
             ):
                 try:
                     results = await _search_across(
                         self._knowledge_bases,
-                        self._cached_inputs,
+                        cached_inputs,
                         top_k=self._parameters.top_k,
                         score_threshold=self._parameters.score_threshold,
                         rerank_model=self._rerank_model,
