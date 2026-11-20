@@ -17,6 +17,8 @@ Lifecycle is managed via the async context manager protocol
 (``__aenter__`` / ``__aexit__``), which the app lifespan calls
 automatically.
 """
+import hashlib
+import json
 from abc import ABC, abstractmethod
 from typing import Any, Self
 
@@ -48,6 +50,39 @@ class VectorRecord(BaseModel):
 
     chunk: Chunk
     """The business payload — content, source, structural metadata."""
+
+    scope: dict[str, Any] | None = None
+    """The fixed ``metadata_filter`` of the knowledge base that wrote this
+    record, or ``None`` when it is unscoped.  Built-in backends mix it
+    into the record identity when it is non-empty, so knowledge bases
+    sharing a collection never overwrite each other's records even when
+    they reuse a document ID.  Unscoped records keep their previous
+    identity.  Custom stores that derive deterministic record IDs should
+    include it as well."""
+
+
+def _scope_digest(scope: dict[str, Any] | None) -> str | None:
+    """Return a stable digest of a record scope.
+
+    Args:
+        scope (`dict[str, Any] | None`):
+            The scope carried by :attr:`VectorRecord.scope`.
+
+    Returns:
+        `str | None`:
+            The SHA-256 hex digest of the scope's sorted-key JSON form,
+            or ``None`` when the scope is ``None`` or empty.
+    """
+    if not scope:
+        return None
+    canonical = json.dumps(
+        scope,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class VectorSearchResult(BaseModel):
