@@ -11,6 +11,7 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 from agentscope.app._router._schema._tts_model import ListTTSModelsResponse
+from agentscope.asr import ASRModelCard
 from agentscope.credential import OpenAICredential
 from agentscope.model import (
     AnthropicChatModel,
@@ -55,6 +56,19 @@ def _write_yaml(content: str) -> str:
 
 class ModelCardTest(TestCase):
     """Verify model card loading, serialization, and parameter filtering."""
+
+    def test_speech_cards_reject_boolean_overrides(self) -> None:
+        """A false boolean is an invalid override mapping."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "speech.yaml"
+            path.write_text(
+                "name: test\nlabel: Test\nparameter_overrides: false\n",
+                encoding="utf-8",
+            )
+            for card in (ASRModelCard, TTSModelCard):
+                with self.subTest(card=card):
+                    with self.assertRaises(AttributeError):
+                        card.from_yaml(str(path), _Parameters)
 
     def test_null_override_removes_parameter(self) -> None:
         """A null parameter override removes the parameter without
@@ -460,3 +474,51 @@ class TTSModelCardTest(TestCase):
             [error["loc"] for error in raised.exception.errors()],
             [("release_date",)],
         )
+
+    def test_null_parameter_overrides_key_loads_as_empty(self) -> None:
+        """An empty ``parameter_overrides:`` key must not break the card.
+
+        YAML parses the bare key to ``None``, which a plain
+        ``.get(key, {})`` default does not cover.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom.yaml"
+            path.write_text(
+                "name: custom-tts\n"
+                "label: Custom TTS\n"
+                "parameter_overrides:\n",
+                encoding="utf-8",
+            )
+            card = TTSModelCard.from_yaml(str(path), _Parameters)
+
+        self.assertEqual(card.parameters_overrides, {})
+        self.assertEqual(
+            card.parameter_schema,
+            {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        )
+
+
+class ASRModelCardTest(TestCase):
+    """Verify ASR model cards tolerate an empty overrides key."""
+
+    def test_null_parameter_overrides_key_loads_as_empty(self) -> None:
+        """An empty ``parameter_overrides:`` key must not break the card.
+
+        YAML parses the bare key to ``None``, which a plain
+        ``.get(key, {})`` default does not cover.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-asr.yaml"
+            path.write_text(
+                "name: custom-asr\n"
+                "label: Custom ASR\n"
+                "parameter_overrides:\n",
+                encoding="utf-8",
+            )
+            card = ASRModelCard.from_yaml(str(path), _Parameters)
+
+        self.assertEqual(card.parameters_overrides, {})

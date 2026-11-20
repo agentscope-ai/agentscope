@@ -553,6 +553,39 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             await fmt.format(msgs),
         )
 
+    async def test_chat_formatter_unsupported_audio_skipped(
+        self,
+    ) -> None:
+        """Skip unsupported audio and preserve adjacent text."""
+        fmt = MoonshotChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="listen to this"),
+                    DataBlock(
+                        source=Base64Source(
+                            data="b2dnIGRhdGE=",
+                            media_type="audio/ogg",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "listen to this"},
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_video_extra_params(self) -> None:
         """Both Moonshot formatters preserve video-specific parameters."""
         block = DataBlock(
