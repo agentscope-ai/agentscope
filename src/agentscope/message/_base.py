@@ -518,6 +518,12 @@ class Msg(BaseModel):
                     # tool call).
                     if b is not None and b.state == ToolCallState.ASKING:
                         assert isinstance(b, ToolCallBlock)
+                        if result.confirmed:
+                            # A confirmation may carry the call the user
+                            # edited before allowing it, and that is what
+                            # ran; the rebuilt message must hold it too.
+                            b.name = result.tool_call.name
+                            b.input = result.tool_call.input
                         b.state = (
                             ToolCallState.ALLOWED
                             if result.confirmed
