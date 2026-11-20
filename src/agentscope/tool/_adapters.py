@@ -117,6 +117,20 @@ class FunctionTool(ToolBase):
         self._func = func
         self._permission = permission
 
+        # The model sends every argument by name, but positional-only
+        # parameters (e.g. ``def f(a, /)`` or builtins such as
+        # ``operator.add``) reject keywords, so ``call`` passes them by
+        # position.
+        try:
+            parameters = inspect.signature(func).parameters.values()
+        except (TypeError, ValueError):
+            parameters = []
+        self._positional_only_params = [
+            param
+            for param in parameters
+            if param.kind == inspect.Parameter.POSITIONAL_ONLY
+        ]
+
     async def check_permissions(
         self,
         *_args: Any,
@@ -148,7 +162,21 @@ class FunctionTool(ToolBase):
             `ToolChunk` or `AsyncGenerator[ToolChunk, None]`:
                 The normalized result of the function execution.
         """
-        result = self._func(**kwargs)
+        args: list[Any] = []
+        # Defaults of omitted parameters, needed only if a later
+        # positional-only argument is given.
+        skipped_defaults: list[Any] = []
+        for param in self._positional_only_params:
+            if param.name in kwargs:
+                args.extend(skipped_defaults)
+                skipped_defaults = []
+                args.append(kwargs.pop(param.name))
+            elif param.default is not inspect.Parameter.empty:
+                skipped_defaults.append(param.default)
+            else:
+                break
+
+        result = self._func(*args, **kwargs)
         if inspect.isawaitable(result):
             result = await result
 

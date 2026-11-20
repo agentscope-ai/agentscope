@@ -3,6 +3,7 @@
 """Toolkit test case."""
 import base64
 import json
+import operator
 from functools import partial
 from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
 from unittest import TestCase
@@ -1494,6 +1495,68 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "id": "test_state_injection",
             },
         )
+
+    async def test_positional_only_parameters(self) -> None:
+        """Positional-only parameters are exposed by name in the schema, so
+        their named arguments must be passed by position."""
+
+        def describe(
+            a: int,
+            b: int = 2,
+            c: int = 3,
+            /,
+            d: int = 4,
+            *,
+            e: int = 5,
+        ) -> str:
+            """Describe the arguments.
+
+            Args:
+                a: The first value.
+                b: The second value.
+                c: The third value.
+                d: The fourth value.
+                e: The fifth value.
+            """
+            return f"{a} {b} {c} {d} {e}"
+
+        toolkit = Toolkit(
+            tools=[
+                FunctionTool(describe),
+                # A builtin whose parameters are all positional-only
+                FunctionTool(operator.mul, name="mul"),
+            ],
+        )
+        self.assertListEqual(
+            list(toolkit.tool_groups[0].tools[0].input_schema["properties"]),
+            ["a", "b", "c", "d", "e"],
+        )
+
+        for name, arguments, expected in [
+            (
+                "describe",
+                {"a": 1, "b": 6, "c": 7, "d": 8, "e": 9},
+                "1 6 7 8 9",
+            ),
+            ("describe", {"a": 1}, "1 2 3 4 5"),
+            # The omitted ``b`` still takes its default before ``c``
+            ("describe", {"a": 1, "c": 7, "e": 9}, "1 2 7 4 9"),
+            ("mul", {"a": 6, "b": 7}, "42"),
+        ]:
+            response = None
+            async for result in toolkit.call_tool(
+                ToolCallBlock(
+                    id="test_positional_only",
+                    name=name,
+                    input=json.dumps(arguments),
+                ),
+                AgentState(),
+            ):
+                if isinstance(result, ToolResponse):
+                    response = result
+
+            self.assertEqual(response.state, "success")
+            self.assertEqual(response.content[0].text, expected)
 
     async def test_custom_input_schema(self) -> None:
         """Test overriding the auto-extracted schema with a custom one."""
