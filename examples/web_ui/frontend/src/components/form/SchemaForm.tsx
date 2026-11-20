@@ -21,7 +21,7 @@ import { Textarea } from '@/components/ui/textarea';
 
 const DEFAULT_SKIP_FIELDS = new Set(['id', 'type']);
 
-export type SchemaFormValue = string | number | boolean | null | undefined;
+export type SchemaFormValue = string | number | boolean | Record<string, number> | null | undefined;
 
 interface Props {
 	schema: JSONSchema;
