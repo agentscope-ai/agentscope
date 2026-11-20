@@ -16,7 +16,7 @@ def setup_logger(
     level: str,
     filepath: str | None = None,
 ) -> None:
-    """Set up the agentscope logger.
+    """Set up the agentscope logger, closing handlers being replaced.
 
     Args:
         level (`str`):
@@ -30,7 +30,9 @@ def setup_logger(
             f"Invalid logging level: {level}. Must be one of "
             f"'INFO', 'DEBUG', 'WARNING', 'ERROR', 'CRITICAL'.",
         )
-    logger.handlers.clear()
+    for previous_handler in logger.handlers[:]:
+        logger.removeHandler(previous_handler)
+        previous_handler.close()
     logger.setLevel(level)
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(_DEFAULT_FORMAT))
