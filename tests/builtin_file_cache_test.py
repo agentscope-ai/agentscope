@@ -536,6 +536,28 @@ class FileCacheTest(  # pylint: disable=too-many-public-methods
             content = f.read()
         self.assertEqual(content, "ALPHA\nBETA\ngamma\n")
 
+    async def test_read_then_edit_preserves_crlf(self) -> None:
+        """A cached CRLF file is written back with CRLF after an Edit."""
+        with open(self.test_file, "wb") as f:
+            f.write(b"alpha\r\nbeta\r\ngamma\r\n")
+
+        read_chunk = await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(read_chunk.state, "running")
+
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="beta",
+            new_string="BETA",
+            _agent_state=self.state,
+        )
+        self.assertEqual(edit_chunk.state, "running")
+
+        with open(self.test_file, "rb") as f:
+            self.assertEqual(f.read(), b"alpha\r\nBETA\r\ngamma\r\n")
+
     async def test_write_then_edit_without_reread(self) -> None:
         """Test Write updates the cache so Edit can use it afterwards."""
         with open(self.test_file, "w", encoding="utf-8") as f:

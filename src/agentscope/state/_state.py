@@ -27,6 +27,9 @@ class ReadCacheEntry(BaseModel):
     updated_at: float
     bytes: float
     file_path: str
+    line_ending: str = "\n"
+    """The line ending the file was read with. Cached lines are always
+    normalized to "\\n"; edits restore this ending when writing back."""
 
 
 class ToolContext(BaseModel):
@@ -92,6 +95,7 @@ class ToolContext(BaseModel):
         file_path: str,
         lines: list[str],
         mtime: float | None = None,
+        line_ending: str = "\n",
     ) -> None:
         """Cache file content with LRU eviction.
 
@@ -104,6 +108,9 @@ class ToolContext(BaseModel):
                 The file's modification time, obtained from the same
                 filesystem that read the file, e.g. a workspace backend.
                 Falls back to the host filesystem when not provided.
+            line_ending (`str`, defaults to ``"\\n"``):
+                The line ending the file was read with, restored when an
+                edit writes the cached content back.
         """
         if mtime is None:
             try:
@@ -149,6 +156,7 @@ class ToolContext(BaseModel):
                 updated_at=mtime,
                 bytes=new_entry_bytes,
                 file_path=file_path,
+                line_ending=line_ending,
             ),
         )
 

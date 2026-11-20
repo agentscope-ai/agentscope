@@ -23,7 +23,7 @@ from ...message import (
     ToolResultState,
 )
 from ...state import AgentState
-from ._backend import BackendBase, _normalize_newlines
+from ._backend import BackendBase, _detect_line_ending, _normalize_newlines
 
 _IMAGE_EXTENSIONS: dict[str, str] = {
     ".png": "image/png",
@@ -554,7 +554,9 @@ Usage:
                     lossy = True
                 # Normalize CRLF/CR so cached lines end in "\n" regardless
                 # of the platform the file was written on (Windows text
-                # files use "\r\n").
+                # files use "\r\n"). Remember the original ending so Edit
+                # can write the file back in the same style.
+                line_ending = _detect_line_ending(content_str)
                 content_str = _normalize_newlines(content_str)
                 lines = content_str.splitlines(keepends=True)
 
@@ -566,6 +568,7 @@ Usage:
                         file_path=file_path,
                         lines=lines,
                         mtime=mtime,
+                        line_ending=line_ending,
                     )
 
             # Apply offset and limit (offset is 1-based)
