@@ -719,6 +719,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
     # drops idle connections) surfaces as a benign per-poll timeout that
     # we ignore, instead of a fatal error that tears down the generator.
     _SUBSCRIBE_POLL_TIMEOUT_SECS = 1.0
+    _BARRIER_ATTEMPT_TIMEOUT_SECS = 5.0
 
     async def publish(
         self,
@@ -769,12 +770,23 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
 
         pubsub = self._client.pubsub()
         flushed = asyncio.Event()
-        marker = "agentscope-subscription-barrier"
+        marker = ""
 
         async def flush() -> None:
-            flushed.clear()
-            await pubsub.ping(marker)
-            await flushed.wait()
+            nonlocal marker
+            for _ in range(3):
+                marker = uuid.uuid4().hex
+                flushed.clear()
+                try:
+                    async with asyncio.timeout(
+                        self._BARRIER_ATTEMPT_TIMEOUT_SECS,
+                    ):
+                        await pubsub.ping(marker)
+                        await flushed.wait()
+                    return
+                except asyncio.TimeoutError:
+                    continue
+            raise TimeoutError("Redis subscription barrier timed out.")
 
         try:
             await pubsub.subscribe(key)
@@ -798,7 +810,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     continue
                 # RESP3 returns the PING payload as a scalar. Normalize it
                 # before redis-py can discard a decoded string as an ack.
-                if response in (marker, marker.encode()):
+                if isinstance(response, (str, bytes)):
                     response = ["pong", response]
                 message = await pubsub.handle_message(
                     response,

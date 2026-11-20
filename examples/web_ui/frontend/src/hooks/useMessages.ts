@@ -540,6 +540,7 @@ export function useMessages(
 		let retryTimer: ReturnType<typeof setTimeout> | undefined;
 		let retryDelay = 1000;
 		const playedBlocks = new Set<string>();
+		let oldestVisible: string | null | undefined;
 
 		const connect = async (reconnecting: boolean) => {
 			if (controller.signal.aborted) return;
@@ -547,19 +548,51 @@ export function useMessages(
 			try {
 				let eventCursor: string | null = null;
 				if (reconnecting || !takeFreshlyCreated(sessionId)) {
-					const { messages, is_running, event_cursor } = await sessionApi.messages(
+					const requests = reconnecting
+						? [...externalSubmissionsRef.current.entries()]
+						: [];
+					const options = {
+						signal: controller.signal,
+						silent: reconnecting,
+						timeoutMs: 15_000,
+					};
+					const latest = await sessionApi.messages(
 						sessionId,
 						agentId,
 						undefined,
-						{ signal: controller.signal, silent: reconnecting, timeoutMs: 15_000 },
+						options,
 					);
 					if (controller.signal.aborted) return;
-					eventCursor = event_cursor;
+					eventCursor = latest.event_cursor;
+					const { is_running } = latest;
+					const pages = [latest.messages];
+					let page = latest;
+					while (
+						oldestVisible !== undefined &&
+						page.has_more &&
+						page.messages.length &&
+						!page.messages.some((msg) => msg.id === oldestVisible)
+					) {
+						page = await sessionApi.messages(
+							sessionId,
+							agentId,
+							{
+								before: page.messages[0].id,
+								limit: 200,
+							},
+							options,
+						);
+						if (controller.signal.aborted) return;
+						const floor = page.messages.findIndex((msg) => msg.id === oldestVisible);
+						pages.push(floor < 0 ? page.messages : page.messages.slice(floor));
+					}
+					const messages = pages.reverse().flat();
 					if (reconnecting) {
 						// The checkpoint can precede audio we played before disconnecting.
 						for (const msg of msgsRef.current) {
 							for (const block of msg.content) {
-								if (audioManager?.getState(block.id)) playedBlocks.add(block.id);
+								if (audioManager?.suppressAutoplayOnReplay(block.id))
+									playedBlocks.add(block.id);
 							}
 						}
 						audioManager?.disposeAll();
@@ -569,6 +602,19 @@ export function useMessages(
 						? await restoreConversation(messages, controller.signal)
 						: messages;
 					if (controller.signal.aborted) return;
+					oldestVisible = messages[0]?.id ?? null;
+					for (const [id, request] of requests) {
+						if (externalSubmissionsRef.current.get(id) !== request) continue;
+						const reply = messages.find((msg) => msg.id === request.replyId);
+						for (const block of reply?.content ?? []) {
+							if (block.type === 'tool_result' && block.state !== 'running') {
+								request.toolCallIds.delete(block.id);
+							}
+						}
+						externalSubmissionsRef.current.delete(id);
+						if (!request.toolCallIds.size) request.resolve();
+						else request.reject(new Error(t('chat.externalExecution.unconfirmed')));
+					}
 					msgsRef.current = restored;
 					startingQueueRef.current = null;
 					replyQueueRef.current = null;
@@ -586,7 +632,7 @@ export function useMessages(
 					setActiveReplyId(active?.id ?? null);
 					setPhase(is_running || parked ? 'streaming' : 'idle');
 					setMsgs([...msgsRef.current]);
-				}
+				} else oldestVisible = null;
 				setLoadedKey(`${agentId}:${sessionId}`);
 				for await (const event of sessionApi.streamEvents(
 					sessionId,
@@ -631,7 +677,15 @@ export function useMessages(
 			abortRef.current = null;
 			clearInterruptTimer();
 		};
-	}, [agentId, sessionId, processEvent, restoreConversation, audioManager, clearInterruptTimer]);
+	}, [
+		agentId,
+		sessionId,
+		processEvent,
+		restoreConversation,
+		audioManager,
+		clearInterruptTimer,
+		t,
+	]);
 
 	/**
 	 * Send a user message. The first idle input appears in the conversation
@@ -662,8 +716,15 @@ export function useMessages(
 
 			const userMsg = UserMsg({ name: 'user', content });
 			const confirmQueue = (id: string) => {
-				if (activeSessionRef.current === session && acceptOptimistic(userMsg.id, id)) {
+				if (activeSessionRef.current !== session) return;
+				const outcome = acceptOptimistic(userMsg.id, id);
+				if (outcome === 'removed') {
 					removeUnstartedInput({ queue_item_id: id, message_ids: [userMsg.id] });
+				} else if (typeof outcome === 'object') {
+					msgsRef.current = msgsRef.current.map((msg) =>
+						msg === userMsg ? outcome : msg,
+					);
+					scheduleUpdate();
 				}
 			};
 			observer?.submitted(
@@ -799,6 +860,7 @@ export function useMessages(
 					optionsRef.current?.isRealtimeAudioActive?.() &&
 					optionsRef.current.sendRealtimeExternalExecutionResult
 				) {
+					if (!streamConnected) throw new Error(t('chat.externalExecution.reconnecting'));
 					// Sending a DataChannel frame does not acknowledge its result.
 					// Register first so even an immediate SSE response is matched.
 					const receipt = new Promise<void>((resolve, reject) => {
@@ -829,7 +891,7 @@ export function useMessages(
 				externalSubmissionsRef.current.delete(event.id);
 			}
 		},
-		[agentId, sessionId, session],
+		[agentId, sessionId, session, streamConnected, t],
 	);
 
 	/** Return a client-executed tool result and resume the parked reply. */

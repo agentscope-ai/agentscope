@@ -139,6 +139,7 @@ export function pcmToAudioBuffer(
 
 /** Live PCM playback for an in-progress WAV stream. */
 class WavStreamPlayer {
+	started = false;
 	private ctx: AudioContext | null = null;
 	private header: WavHeader | null = null;
 	private pending: Bytes = new Uint8Array(0);
@@ -184,6 +185,7 @@ class WavStreamPlayer {
 		source.connect(this.ctx.destination);
 		const startAt = Math.max(this.nextStartTime, this.ctx.currentTime);
 		source.start(startAt);
+		this.started = true;
 		this.nextStartTime = startAt + audioBuffer.duration;
 	}
 
@@ -233,6 +235,7 @@ interface Session {
 	livePlayer: WavStreamPlayer | null;
 	/** True if a live player was created — survives dispose. */
 	hadLivePlayer: boolean;
+	playedBlob: boolean;
 	autoplayElement: HTMLAudioElement | null;
 	state: StreamingAudioState;
 }
@@ -267,6 +270,15 @@ export class StreamingAudioManager {
 		return this.sessions.get(blockId)?.state ?? null;
 	}
 
+	/** Keep replay silent for audio already played or owned by another player. */
+	suppressAutoplayOnReplay(blockId: string): boolean {
+		const session = this.sessions.get(blockId);
+		return (
+			!!session &&
+			(session.autoplay !== true || session.playedBlob || !!session.livePlayer?.started)
+		);
+	}
+
 	/** Track an audio block; disable autoplay when another player owns output. */
 	start(
 		blockId: string,
@@ -286,6 +298,7 @@ export class StreamingAudioManager {
 			totalBytes: 0,
 			livePlayer,
 			hadLivePlayer: livePlayer !== null,
+			playedBlob: false,
 			autoplayElement: null,
 			state: { status: 'streaming', mediaType, url: null, interruptCount: 0 },
 		});
@@ -372,7 +385,12 @@ export class StreamingAudioManager {
 	private playBlob(session: Session, url: string): void {
 		const el = new Audio(url);
 		session.autoplayElement = el;
-		void el.play().catch(() => undefined);
+		void el.play().then(
+			() => {
+				session.playedBlob = true;
+			},
+			() => undefined,
+		);
 	}
 
 	/** Stop this reply's playback and finalize any unfinished blocks for replay. */
@@ -411,6 +429,7 @@ export class StreamingAudioManager {
 		for (const session of this.sessions.values()) {
 			if (typeof session.autoplay !== 'boolean') session.autoplay = false;
 			if (session.livePlayer) {
+				session.autoplay = false;
 				session.livePlayer.dispose();
 				session.livePlayer = null;
 			}
@@ -424,7 +443,7 @@ export class StreamingAudioManager {
 	 */
 	stopAllPlayback(): void {
 		for (const [blockId, session] of this.sessions) {
-			if (typeof session.autoplay !== 'boolean') session.autoplay = false;
+			session.autoplay = false;
 			this.stopBlockPlayback(session);
 			this.emit(blockId);
 		}

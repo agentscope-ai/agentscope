@@ -26,7 +26,7 @@ interface LocalChatInput {
 	message: Msg;
 	optimisticId: string;
 	queueId: string | null;
-	outcomes: Map<string, LocalInputOutcome>;
+	outcomes: Map<string, LocalInputOutcome | Msg>;
 }
 
 /** Return every message carried by queue items in FIFO order. */
@@ -227,6 +227,7 @@ export function useChatQueue(
 		(
 			{ queue_item_id: queueId, message_ids = [] }: ChatInputTerminalValue,
 			outcome: LocalInputOutcome,
+			startedMessages: Msg[] = [],
 		) => {
 			const rows = new Set(queueId ? [queueId] : []);
 			const provisional = new Set<Msg>();
@@ -234,7 +235,10 @@ export function useChatQueue(
 				if (queueId && !local.queueId) {
 					// An edit can replace every message ID before our POST returns.
 					const replaced = message_ids.length > 0 && !message_ids.includes(id);
-					local.outcomes.set(queueId, replaced ? 'removed' : outcome);
+					const started = startedMessages.find((msg) => msg.id === id);
+					if (started || !local.outcomes.has(queueId) || outcome === 'removed') {
+						local.outcomes.set(queueId, started ?? (replaced ? 'removed' : outcome));
+					}
 					continue;
 				}
 				if (queueId ? queueId !== local.queueId : !message_ids.includes(id)) continue;
@@ -258,7 +262,7 @@ export function useChatQueue(
 		(value: ChatInputStartedValue) => {
 			const item =
 				value.queue_item ?? itemsRef.current.find((row) => row.id === value.queue_item_id);
-			const provisional = retireItem(value, 'finished');
+			const provisional = retireItem(value, 'finished', item ? getQueueMessages([item]) : []);
 			return { item, provisional };
 		},
 		[retireItem],
@@ -267,14 +271,14 @@ export function useChatQueue(
 	const acceptOptimistic = useCallback(
 		(messageId: string, queueItemId: string) => {
 			const local = localInputs.current.get(messageId);
-			if (!local || local.queueId === queueItemId) return false;
+			if (!local || local.queueId === queueItemId) return;
 			local.queueId = queueItemId;
 			const outcome = local.outcomes.get(queueItemId);
 			local.outcomes.clear();
-			if (outcome === 'removed') return true;
+			if (outcome === 'removed') return outcome;
 			if (outcome) {
-				retireItem({ queue_item_id: queueItemId, message_ids: [messageId] }, outcome);
-				return false;
+				retireItem({ queue_item_id: queueItemId, message_ids: [messageId] }, 'finished');
+				return outcome;
 			}
 			const { optimisticId } = local;
 			updateItems(
@@ -282,7 +286,6 @@ export function useChatQueue(
 					item.id === optimisticId ? { ...item, id: queueItemId } : item,
 				),
 			);
-			return false;
 		},
 		[retireItem, updateItems],
 	);

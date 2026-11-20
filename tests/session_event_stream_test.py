@@ -11,6 +11,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from fakeredis.aioredis import FakeRedis
+from redis.asyncio.client import PubSub
 
 from agentscope.app._bus_ops import publish_session_event
 from agentscope.app._router import _session
@@ -292,6 +293,73 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
                         connection_pool=redis.connection_pool,
                     ) as bus:
                         await self._assert_replay_then_live(bus)
+
+    async def test_lost_redis_pong_during_replay(self) -> None:
+        """Retry one lost PONG or close without delivering past the gap."""
+        for drop_all in (False, True):
+            with self.subTest(drop_all=drop_all):
+                await self._check_lost_pong(drop_all)
+
+    async def _check_lost_pong(self, drop_all: bool) -> None:
+        async with (
+            FakeRedis(protocol=3, decode_responses=True) as redis,
+            RedisMessageBus(connection_pool=redis.connection_pool) as bus,
+            asyncio.timeout(3),
+        ):
+            cursor = await publish_session_event(bus, "s", {"frame": "seen"})
+            await publish_session_event(bus, "s", {"frame": "history"})
+            handle = PubSub.handle_message
+            markers = []
+
+            async def lose_pong(
+                sub: PubSub,
+                response: object,
+                ignore_subscribe_messages: bool = False,
+            ) -> dict | None:
+                event = await handle(sub, response, ignore_subscribe_messages)
+                if event and event["type"] == "pong":
+                    markers.append(event["data"])
+                    if len(markers) == 1:
+                        await publish_session_event(bus, "s", {"frame": "new"})
+                        return None
+                    if drop_all:
+                        return None
+                return event
+
+            connect = partial(
+                stream_session_events,
+                session_id="s",
+                agent_id="a",
+                user_id="u",
+                storage=_Storage(),  # type: ignore[arg-type]
+                message_bus=bus,
+                after=cursor,
+            )
+            response = await connect()
+            frames = []
+            with (
+                patch.object(PubSub, "handle_message", lose_pong),
+                patch.object(bus, "_BARRIER_ATTEMPT_TIMEOUT_SECS", 0.08),
+                patch.object(_session, "_HEARTBEAT_INTERVAL_SECS", 0.02),
+            ):
+                async with aclosing(response.body_iterator) as stream:
+                    async for frame in stream:
+                        if frame != ":\n\n":
+                            frames.append(_decode(frame))
+                            if frames[-1] == {"frame": "new"}:
+                                break
+            self.assertEqual(
+                frames,
+                [] if drop_all else [{"frame": "history"}, {"frame": "new"}],
+            )
+            self.assertEqual(len(set(markers)), 3 if drop_all else 2)
+            if drop_all:
+                response = await connect()
+                async with aclosing(response.body_iterator) as stream:
+                    self.assertEqual(
+                        [_decode(await anext(stream)) for _ in range(2)],
+                        [{"frame": "history"}, {"frame": "new"}],
+                    )
 
     async def test_event_at_replay_live_seam_is_delivered_once(self) -> None:
         """A seam event is deduplicated without hiding the next event."""

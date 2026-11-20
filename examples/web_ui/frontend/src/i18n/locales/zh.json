@@ -257,6 +257,8 @@
 		"externalExecution": {
 			"title": "{{name}} 正在等待外部执行器",
 			"rejected": "提交的结果未被接受，请检查回答后重新提交。",
+			"unconfirmed": "连接中断时，工具结果尚未确认。如果工具仍在等待，你可以重新提交。",
+			"reconnecting": "请等待聊天重新连接后，再提交工具结果。",
 			"description": "该工具需要由宿主应用提供的集成完成。"
 		},
 		"newSession": "新会话",

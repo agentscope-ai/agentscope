@@ -1164,7 +1164,10 @@ async def stream_session_events(
                         return
                     if not done:
                         yield ":\n\n"
-                await flushing
+                try:
+                    await flushing
+                except TimeoutError as exc:
+                    raise _SessionBarrierTimeout from exc
             finally:
                 flushing.cancel()
                 await asyncio.gather(flushing, return_exceptions=True)
