@@ -13,7 +13,7 @@ from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.message_bus import _in_memory_message_bus as _bus
 
 
@@ -72,6 +72,81 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         """Deleting a non-existent queue does not raise."""
         await self.bus.queue_delete("never-existed")
 
+    async def test_queue_read_is_non_destructive(self) -> None:
+        """Queue management can inspect entries without consuming them."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_push("k", {"i": 2})
+        first = await self.bus.queue_read("k", max_count=10)
+        second = await self.bus.queue_read("k", max_count=10)
+        self.assertEqual(
+            [payload for _entry_id, payload in first],
+            [{"i": 1}, {"i": 2}],
+        )
+        self.assertEqual(first, second)
+
+    async def test_queue_read_returns_deep_copies(self) -> None:
+        """Mutating a read snapshot cannot corrupt the stored queue."""
+        original = {"nested": {"value": 1}}
+        await self.bus.queue_push("k", original)
+        original["nested"]["value"] = 2
+
+        first = await self.bus.queue_read("k", max_count=1)
+        first[0][1]["nested"]["value"] = 3
+        second = await self.bus.queue_read("k", max_count=1)
+
+        self.assertEqual(second[0][1]["nested"]["value"], 1)
+
+    async def test_queue_replace_preserves_new_order(self) -> None:
+        """An editable queue can be atomically replaced and reordered."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_replace("k", [{"i": 3}, {"i": 2}])
+        entries = await self.bus.queue_drain("k", max_count=10)
+        self.assertEqual(
+            [payload for _entry_id, payload in entries],
+            [{"i": 3}, {"i": 2}],
+        )
+
+    async def test_queue_read_observes_sliding_expiry(self) -> None:
+        """Reads retain all entries until the refreshed key deadline."""
+        with patch.object(_bus.time, "monotonic", return_value=0):
+            first_id = await self.bus.queue_push("k", {"i": 1}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=5):
+            second_id = await self.bus.queue_push("k", {"i": 2}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=11):
+            self.assertEqual(
+                await self.bus.queue_read("k", max_count=1),
+                [(first_id, {"i": 1})],
+            )
+            self.assertEqual(
+                await self.bus.queue_read("k"),
+                [(first_id, {"i": 1}), (second_id, {"i": 2})],
+            )
+        with patch.object(_bus.time, "monotonic", return_value=15):
+            self.assertEqual(await self.bus.queue_read("k"), [])
+            self.assertEqual(await self.bus.queue_drain("k"), [])
+
+    async def test_queue_replace_clears_existing_expiry(self) -> None:
+        """Replacement queues do not inherit the old key's deadline."""
+        cases: tuple[list[dict], ...] = ([{"nested": {"i": 2}}], [])
+        for payloads in cases:
+            with self.subTest(payloads=payloads):
+                with patch.object(_bus.time, "monotonic", return_value=0):
+                    await self.bus.queue_push("k", {"i": 1}, ttl_secs=10)
+                with patch.object(_bus.time, "monotonic", return_value=5):
+                    ids = await self.bus.queue_replace("k", payloads)
+                    expected: list[tuple[str, dict]] = [
+                        (entry_id, {"nested": {"i": 2}}) for entry_id in ids
+                    ]
+                    self.assertEqual(len(ids), len(payloads))
+                    if payloads:
+                        payloads[0]["nested"]["i"] = 3
+                    else:
+                        entry_id = await self.bus.queue_push("k", {"i": 3})
+                        expected = [(entry_id, {"i": 3})]
+                with patch.object(_bus.time, "monotonic", return_value=11):
+                    self.assertEqual(await self.bus.queue_read("k"), expected)
+                    self.assertEqual(await self.bus.queue_drain("k"), expected)
+
     async def test_queue_isolation_between_keys(self) -> None:
         """Pushes to different keys are independent."""
         await self.bus.queue_push("a", {"x": 1})
@@ -80,6 +155,46 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         b = await self.bus.queue_drain("b", max_count=10)
         self.assertEqual([p for _id, p in a], [{"x": 1}])
         self.assertEqual([p for _id, p in b], [{"x": 2}])
+
+    async def test_zero_ttl_expires_immediately(self) -> None:
+        """A zero TTL expires the entry instead of disabling expiry."""
+        await self.bus.queue_push("k", {"x": 1}, ttl_secs=0)
+
+        self.assertEqual(await self.bus.queue_drain("k"), [])
+
+    async def test_push_refreshes_ttl_for_whole_queue(self) -> None:
+        """A later push keeps earlier entries until the refreshed deadline."""
+        with patch.object(_bus.time, "monotonic", return_value=0):
+            await self.bus.queue_push("k", {"i": 1}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=5):
+            await self.bus.queue_push("k", {"i": 2}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=11):
+            entries = await self.bus.queue_drain("k")
+
+        self.assertEqual(
+            [payload for _, payload in entries],
+            [{"i": 1}, {"i": 2}],
+        )
+
+    async def test_zero_ttl_expires_existing_queue(self) -> None:
+        """An immediate key expiry also removes entries already queued."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_push("k", {"i": 2}, ttl_secs=0)
+
+        self.assertEqual(await self.bus.queue_drain("k"), [])
+
+    async def test_push_without_ttl_keeps_existing_key_expiry(self) -> None:
+        """Omitting TTL does not cancel a previously set key expiry."""
+        with patch.object(_bus.time, "monotonic", return_value=0):
+            await self.bus.queue_push("k", {"i": 1}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=5):
+            first = await self.bus.queue_drain("k")
+            await self.bus.queue_push("k", {"i": 2})
+        with patch.object(_bus.time, "monotonic", return_value=11):
+            remaining = await self.bus.queue_drain("k")
+
+        self.assertEqual([payload for _, payload in first], [{"i": 1}])
+        self.assertEqual(remaining, [])
 
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):
@@ -508,7 +623,21 @@ class TestDomainHelpers(IsolatedAsyncioTestCase):
         sid = "s-purge"
         await self.bus.session_publish_event(sid, {"e": 1})
         await self.bus.inbox_push(sid, {"m": 1})
+        await self.bus.queue_push(
+            MessageBusKeys.chat_inputs(sid),
+            {"input": {"id": "queued"}},
+        )
         await self.bus.bg_task_register(sid, "t1", "{}")
+        await self.bus.registry_set(
+            MessageBusKeys.chat_input_pending_registry(),
+            sid,
+            '{"user_id":"u","agent_id":"a"}',
+        )
+        await self.bus.registry_set(
+            MessageBusKeys.chat_input_inflight_registry(),
+            sid,
+            '{"state":"claimed","payload":{"id":"queued"}}',
+        )
 
         await self.bus.session_purge(sid)
 
@@ -517,7 +646,26 @@ class TestDomainHelpers(IsolatedAsyncioTestCase):
             await self.bus.inbox_drain(sid, max_count=10),
             [],
         )
+        self.assertEqual(
+            await self.bus.queue_drain(
+                MessageBusKeys.chat_inputs(sid),
+                max_count=10,
+            ),
+            [],
+        )
         self.assertEqual(await self.bus.bg_task_list(sid), {})
+        self.assertFalse(
+            await self.bus.registry_exists(
+                MessageBusKeys.chat_input_pending_registry(),
+                sid,
+            ),
+        )
+        self.assertFalse(
+            await self.bus.registry_exists(
+                MessageBusKeys.chat_input_inflight_registry(),
+                sid,
+            ),
+        )
 
     async def test_task_cancel_pub_sub(self) -> None:
         """``task_publish_cancel`` → ``task_subscribe_cancel``

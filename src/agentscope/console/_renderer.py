@@ -77,14 +77,18 @@ def _format_tool_input(raw: str) -> str:
 
 class ConsoleRenderer:
     """Render :class:`~agentscope.event.AgentEvent` streams as line-based
-    terminal output, so that consuming :meth:`Agent.reply_stream` in the
-    terminal becomes a one-liner:
+    terminal output. Consume :meth:`Agent.reply_stream` and reset the
+    renderer if the stream fails:
 
     .. code-block:: python
 
         renderer = ConsoleRenderer()
-        async for event in agent.reply_stream(msg):
-            renderer.render(event)
+        try:
+            async for event in agent.reply_stream(msg):
+                renderer.render(event)
+        except BaseException:
+            renderer.reset()
+            raise
 
     The renderer prints text/thinking deltas as they arrive, buffers the
     concurrently-streamed tool calls/results via
@@ -120,12 +124,24 @@ class ConsoleRenderer:
         self.console = console or Console(highlight=False)
 
         self._msg: Msg | None = None
+        self._active_msgs: dict[str, Msg] = {}
         self._mid_stream = False
 
     @property
     def last_msg(self) -> Msg | None:
         """The reply message accumulated from the rendered events."""
         return self._msg
+
+    def reset(self) -> None:
+        """Release all accumulated messages and end any streamed line.
+
+        Call this when abandoning a stream or when it raises without a
+        ``ReplyEndEvent``. ``last_msg`` becomes ``None``. Do not reset on a
+        normal HITL pause: its pending replies are needed when resuming.
+        """
+        self._active_msgs.clear()
+        self._msg = None
+        self._break_line(quiet_ok=True)
 
     def render(self, event: AgentEvent) -> None:
         """Render the given agent event to the console.
@@ -194,12 +210,22 @@ class ConsoleRenderer:
         reply_id = getattr(event, "reply_id", None)
         if reply_id is None:
             return
+        msg = self._active_msgs.get(reply_id)
+        if msg is None:
+            if self._msg is not None and self._msg.id == reply_id:
+                msg = self._msg
+            else:
+                msg = AssistantMsg(name="agent", content=[], id=reply_id)
         if isinstance(event, ReplyStartEvent):
-            self._msg = AssistantMsg(name=event.name, content=[], id=reply_id)
-        elif self._msg is None or self._msg.id != reply_id:
-            # A continuation (e.g. after HITL) without a ReplyStartEvent
-            self._msg = AssistantMsg(name="agent", content=[], id=reply_id)
-        self._msg.append_event(event)
+            msg.name = event.name
+        self._msg = msg
+        msg.append_event(event)
+        # Keep paused replies across member events, without retaining every
+        # completed reply for the lifetime of the interactive console.
+        if msg.finished_at is None:
+            self._active_msgs[reply_id] = msg
+        else:
+            self._active_msgs.pop(reply_id, None)
 
     def _show(self, level: int) -> bool:
         """Whether the current verbosity covers the given level."""

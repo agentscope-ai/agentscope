@@ -64,7 +64,7 @@ class PDFParser(ParserBase):
 
         try:
             from pypdf import PdfReader
-            from pypdf.errors import PdfReadError
+            from pypdf.errors import PyPdfError
         except ImportError as e:
             raise ImportError(
                 "Please install pypdf to use the PDF parser. "
@@ -74,19 +74,21 @@ class PDFParser(ParserBase):
 
         try:
             reader = PdfReader(io.BytesIO(file))
-        except PdfReadError as e:
+            # pypdf reads page objects and content streams lazily, so read
+            # failures can also occur after the reader is constructed.
+            sections: list[Section] = []
+            for page_idx, page in enumerate(reader.pages, start=1):
+                text = page.extract_text() or ""
+                sections.append(
+                    Section(
+                        content=TextBlock(text=text),
+                        source=filename,
+                        metadata={"page": page_idx},
+                    ),
+                )
+        except PyPdfError as e:
             raise ValueError(
                 f"Failed to parse {filename!r} as PDF: {e}",
             ) from e
 
-        sections: list[Section] = []
-        for page_idx, page in enumerate(reader.pages, start=1):
-            text = page.extract_text() or ""
-            sections.append(
-                Section(
-                    content=TextBlock(text=text),
-                    source=filename,
-                    metadata={"page": page_idx},
-                ),
-            )
         return sections

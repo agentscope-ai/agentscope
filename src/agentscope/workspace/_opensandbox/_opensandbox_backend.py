@@ -90,14 +90,17 @@ class OpenSandboxBackend(BackendBase):
             `ExecResult`:
                 The captured exit code, stdout, and stderr. A non-zero
                 command exit is returned as a normal result; transport
-                errors yield an ``exit_code`` of ``-1``.
+                errors, and an exit code the provider leaves unset, yield
+                an ``exit_code`` of ``-1``.
         """
         command_line = " ".join(shlex.quote(arg) for arg in command)
         opts = self._make_run_opts(cwd=cwd or self._workdir, timeout=timeout)
         try:
             res = await self._sandbox.commands.run(command_line, opts=opts)
+            # The SDK leaves ``exit_code`` unset when the run's outcome is
+            # unknown (e.g. killed); report it as -1 rather than success.
             return ExecResult(
-                exit_code=int(getattr(res, "exit_code", 0) or 0),
+                exit_code=-1 if res.exit_code is None else res.exit_code,
                 stdout=self._execution_stream_bytes(res, "stdout"),
                 stderr=self._execution_stream_bytes(res, "stderr"),
             )

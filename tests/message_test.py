@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
+import json
 from unittest.async_case import IsolatedAsyncioTestCase
+
+from pydantic import ValidationError
 from utils import AnyString
 
 from agentscope.message import (
@@ -11,16 +14,250 @@ from agentscope.message import (
     Base64Source,
     ThinkingBlock,
     AssistantMsg,
+    SystemMsg,
     HintBlock,
     Msg,
     ToolCallBlock,
     ToolResultBlock,
     ToolResultState,
+    Usage,
 )
+from agentscope.types import ReplyFinishedReason
 
 
 class MessageTest(IsolatedAsyncioTestCase):
     """The template test case."""
+
+    def test_mixed_assistant_content_survives_json_round_trip(self) -> None:
+        """Restore concrete block types, nested data and provider fields."""
+        image = DataBlock(
+            source=Base64Source(data="aGVsbG8=", media_type="image/png"),
+        )
+        message = AssistantMsg(
+            name="agent",
+            content=[
+                ThinkingBlock(thinking="reasoning", signature="provider-sig"),
+                TextBlock(text="Hello 🌍"),
+                image,
+                HintBlock(hint=[TextBlock(text="context"), image]),
+                ToolCallBlock(id="call-1", name="render", input='{"n": 1}'),
+                ToolResultBlock(
+                    id="call-1",
+                    name="render",
+                    output=[
+                        TextBlock(text="rendered"),
+                        DataBlock(
+                            source=URLSource(
+                                url="https://example.com/chart.png",
+                                media_type="image/png",
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.SUCCESS,
+                    metadata={"duration": 2},
+                ),
+            ],
+            metadata={"session": {"labels": ["demo"]}},
+            structured_output={"answer": [1, 2]},
+            usage=Usage(
+                input_tokens=12,
+                output_tokens=3,
+                cache_input_tokens=4,
+                cache_creation_input_tokens=2,
+            ),
+            finished_reason=ReplyFinishedReason.COMPLETED,
+            finished_at="2026-01-01T00:00:01Z",
+        )
+
+        restored = Msg.model_validate_json(message.model_dump_json())
+
+        self.assertEqual(restored, message)
+        self.assertEqual(
+            [type(block) for block in restored.content],
+            [
+                ThinkingBlock,
+                TextBlock,
+                DataBlock,
+                HintBlock,
+                ToolCallBlock,
+                ToolResultBlock,
+            ],
+        )
+        self.assertEqual(
+            restored.content[0].model_dump(),
+            {
+                "type": "thinking",
+                "thinking": "reasoning",
+                "signature": "provider-sig",
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
+        )
+        self.assertEqual(restored.get_text_content(), "Hello 🌍")
+        # A restored conversation can be edited without changing its source.
+        before = message.model_dump()
+        restored.metadata["session"]["labels"].append("restored")
+        self.assertEqual(message.model_dump(), before)
+
+    def test_restoring_json_enforces_role_content_rules(self) -> None:
+        """Stored assistant-only content cannot be restored as user/system."""
+        message = AssistantMsg(
+            name="agent",
+            content=[ThinkingBlock(thinking="private reasoning")],
+        )
+        payload = json.loads(message.model_dump_json())
+        for role in ("user", "system"):
+            with self.subTest(role=role):
+                payload["role"] = role
+                with self.assertRaises(ValidationError):
+                    Msg.model_validate_json(json.dumps(payload))
+
+    def test_empty_and_textless_messages_remain_distinct(self) -> None:
+        """Preserve empty text blocks while returning text as a string."""
+        for factory in (UserMsg, SystemMsg, AssistantMsg):
+            for content, has_text in (([], False), ("", True)):
+                with self.subTest(factory=factory.__name__, content=content):
+                    message = factory(name="sender", content=content)
+                    restored = Msg.model_validate_json(
+                        message.model_dump_json(),
+                    )
+                    self.assertEqual(restored, message)
+                    self.assertEqual(
+                        {
+                            "text": restored.get_text_content(),
+                            "has_content": restored.has_content_blocks(),
+                            "has_text": restored.has_content_blocks("text"),
+                        },
+                        {
+                            "text": "",
+                            "has_content": has_text,
+                            "has_text": has_text,
+                        },
+                    )
+
+    def test_factories_preserve_explicit_identity_and_timestamps(self) -> None:
+        """Persistence IDs and timestamps must survive factory construction."""
+        created_at = "2026-01-01T00:00:00Z"
+        finished_at = "2026-01-01T00:00:01Z"
+        for factory, role in (
+            (UserMsg, "user"),
+            (SystemMsg, "system"),
+            (AssistantMsg, "assistant"),
+        ):
+            with self.subTest(role=role):
+                message = factory(
+                    name="sender",
+                    content="hello",
+                    id="persisted-id",
+                    created_at=created_at,
+                    finished_at=finished_at,
+                )
+                expected = {
+                    "id": "persisted-id",
+                    "name": "sender",
+                    "role": role,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "hello",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "metadata": {},
+                    "created_at": created_at,
+                    "finished_at": finished_at,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "usage": None,
+                }
+                self.assertEqual(message.model_dump(), expected)
+                default_message = factory(
+                    name="sender",
+                    content=[],
+                    created_at=created_at,
+                )
+                self.assertEqual(
+                    default_message.model_dump(),
+                    {
+                        **expected,
+                        "id": AnyString(),
+                        "content": [],
+                        "finished_at": (
+                            None if role == "assistant" else created_at
+                        ),
+                    },
+                )
+
+    def test_content_selection_preserves_order_and_original_message(
+        self,
+    ) -> None:
+        """Selecting multiple block types keeps their conversation order."""
+        message = AssistantMsg(
+            name="agent",
+            content=[
+                TextBlock(text="first"),
+                ThinkingBlock(thinking="hidden"),
+                HintBlock(hint="context"),
+                TextBlock(text="last"),
+            ],
+        )
+        before = message.model_dump_json()
+
+        self.assertEqual(
+            message.get_text_content(separator=" | "),
+            "first | last",
+        )
+        self.assertEqual(
+            list(message.get_content_blocks(["hint", "text"])),
+            [message.content[0], message.content[2], message.content[3]],
+        )
+        self.assertEqual(message.get_content_blocks("data"), [])
+        self.assertEqual(message.get_content_blocks([]), [])
+        self.assertTrue(message.has_content_blocks(["data", "hint"]))
+        self.assertFalse(message.has_content_blocks([]))
+        self.assertFalse(message.has_content_blocks("tool_call"))
+        self.assertEqual(message.model_dump_json(), before)
+
+    def test_get_text_content(self) -> None:
+        """Extract only top-level text and always return a string."""
+        data = DataBlock(
+            source=URLSource(
+                url="https://example.com/image.png",
+                media_type="image/png",
+            ),
+        )
+        thinking = ThinkingBlock(thinking="internal reasoning")
+        result = ToolResultBlock(
+            id="tool-result",
+            name="tool",
+            output=[TextBlock(text="nested text")],
+        )
+        cases = [
+            ([], "\n", ""),
+            ([data, thinking, result], "\n", ""),
+            ([TextBlock(text="")], "\n", ""),
+            ([TextBlock(text="hello")], "\n", "hello"),
+            (
+                [TextBlock(text="first"), data, TextBlock(text="second")],
+                "\n",
+                "first\nsecond",
+            ),
+            (
+                [TextBlock(text="first"), thinking, TextBlock(text="last")],
+                " | ",
+                "first | last",
+            ),
+            ([TextBlock(text=""), TextBlock(text="")], "\n", "\n"),
+            ([TextBlock(text="a"), TextBlock(text="b")], "", "ab"),
+        ]
+        for content, separator, expected in cases:
+            with self.subTest(content=content, separator=separator):
+                msg = AssistantMsg(name="assistant", content=content)
+                self.assertEqual(msg.get_text_content(separator), expected)
 
     async def test_creating_message(self) -> None:
         """The template test."""
@@ -98,6 +335,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                         url="https://example.com/image.png",
                         media_type="image/png",
                     ),
+                    detail="high",
                 ),
                 DataBlock(
                     source=Base64Source(
@@ -131,6 +369,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                             "media_type": "image/png",
                         },
                         "name": None,
+                        "detail": "high",
                         "created_at": AnyString(),
                         "finished_at": None,
                     },
@@ -312,3 +551,81 @@ class MessageTest(IsolatedAsyncioTestCase):
                     ),
                 ],
             )
+
+    async def test_append_usage_keeps_a_copy(self) -> None:
+        """The message accumulates a copy of the usage it is given."""
+        first = Usage(
+            input_tokens=10,
+            output_tokens=5,
+            cache_input_tokens=2,
+            cache_creation_input_tokens=1,
+        )
+        second = Usage(input_tokens=7, output_tokens=3, cache_input_tokens=4)
+        msg = AssistantMsg(name="agent", content=[])
+        msg.append_usage(first)
+        msg.append_usage(second)
+        accumulated = msg.usage
+        assert accumulated is not None
+
+        self.assertDictEqual(
+            {
+                "accumulated": accumulated.model_dump(),
+                "first": first.model_dump(),
+                "second": second.model_dump(),
+            },
+            {
+                "accumulated": {
+                    "input_tokens": 17,
+                    "output_tokens": 8,
+                    "cache_input_tokens": 6,
+                    "cache_creation_input_tokens": 1,
+                },
+                # Each model call keeps its own usage, so it can still be
+                # reported or accumulated into other messages afterwards.
+                "first": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_input_tokens": 2,
+                    "cache_creation_input_tokens": 1,
+                },
+                "second": {
+                    "input_tokens": 7,
+                    "output_tokens": 3,
+                    "cache_input_tokens": 4,
+                    "cache_creation_input_tokens": 0,
+                },
+            },
+        )
+
+    async def test_append_usage_does_not_share_one_object(self) -> None:
+        """Messages given the same usage stay independent."""
+        shared = Usage(input_tokens=4, output_tokens=2)
+        first = AssistantMsg(name="agent_a", content=[])
+        second = AssistantMsg(name="agent_b", content=[])
+        first.append_usage(shared)
+        second.append_usage(shared)
+        first.append_usage(Usage(input_tokens=1, output_tokens=1))
+        first_usage = first.usage
+        second_usage = second.usage
+        assert first_usage is not None and second_usage is not None
+
+        self.assertDictEqual(
+            {
+                "first": first_usage.model_dump(),
+                "second": second_usage.model_dump(),
+            },
+            {
+                "first": {
+                    "input_tokens": 5,
+                    "output_tokens": 3,
+                    "cache_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                },
+                "second": {
+                    "input_tokens": 4,
+                    "output_tokens": 2,
+                    "cache_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                },
+            },
+        )

@@ -2,6 +2,7 @@ import { ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
 import type {
 	ContentBlock,
 	DataBlock,
+	HintBlock,
 	Msg,
 	TextBlock,
 	ThinkingBlock,
@@ -15,6 +16,7 @@ import {
 	CheckCircle,
 	ChevronRight,
 	CirclePlay,
+	CornerDownRight,
 	Copy,
 	FileText,
 	FileVideo2,
@@ -66,6 +68,60 @@ interface ToolCallGroupBlock {
 }
 
 type ExtendedContentBlock = ContentBlock | ToolCallGroupBlock;
+
+const STEERING_HINT_SOURCE = 'chat_input_steering';
+
+const isSteeringHint = (block: ExtendedContentBlock): block is HintBlock =>
+	block.type === 'hint' && block.source === STEERING_HINT_SOURCE;
+
+const getHintItems = (block: HintBlock): (TextBlock | DataBlock)[] =>
+	typeof block.hint === 'string'
+		? [
+				{
+					type: 'text',
+					id: `${block.id}-text`,
+					text: block.hint,
+					created_at: block.created_at,
+				},
+			]
+		: block.hint;
+
+interface SteeringMessageBubbleProps {
+	blocks: ContentBlock[];
+	status: 'steering' | 'steered';
+}
+
+/** User-facing projection of a prompt steering the active reply. */
+export function SteeringMessageBubble({ blocks, status }: SteeringMessageBubbleProps) {
+	const { t } = useTranslation();
+	return (
+		<div className="flex w-full flex-col items-end gap-1">
+			<Bubble align="end" variant="muted">
+				<BubbleContent className="flex flex-col gap-2">
+					{blocks.map((block) => (
+						<ASBlock block={block} key={block.id} />
+					))}
+				</BubbleContent>
+			</Bubble>
+			<div
+				className="flex items-center gap-1 px-1 text-xs text-muted-foreground"
+				role="status"
+				aria-live="polite"
+			>
+				{status === 'steering' ? (
+					<Loader2 className="size-3 animate-spin" aria-hidden="true" />
+				) : (
+					<CornerDownRight className="size-3" aria-hidden="true" />
+				)}
+				<span>
+					{status === 'steering'
+						? t('chatQueue.stateSteering')
+						: t('chatQueue.stateSteered')}
+				</span>
+			</div>
+		</div>
+	);
+}
 
 /**
  * Pair every tool_call with its tool_result (by id) and collect *consecutive*
@@ -459,13 +515,21 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 			<MessageContent>
 				{blocks
 					.filter((block) => block.type !== 'data')
-					.map((block, index) => (
-						<Bubble key={index} variant={isUser ? 'muted' : 'ghost'}>
-							<BubbleContent>
-								<ASBlock block={block} />
-							</BubbleContent>
-						</Bubble>
-					))}
+					.map((block, index) =>
+						isSteeringHint(block) ? (
+							<SteeringMessageBubble
+								blocks={getHintItems(block)}
+								status="steered"
+								key={block.id}
+							/>
+						) : (
+							<Bubble key={index} variant={isUser ? 'muted' : 'ghost'}>
+								<BubbleContent>
+									<ASBlock block={block} />
+								</BubbleContent>
+							</Bubble>
+						),
+					)}
 				{message.finished_reason === ReplyFinishedReason.ERROR && (
 					<Alert
 						variant="destructive"
@@ -697,17 +761,7 @@ export function ASBlock({ block, ...props }: ASBlockProps) {
 			} else {
 				hintLabel = t('common.message');
 			}
-			const items: (TextBlock | DataBlock)[] =
-				typeof block.hint === 'string'
-					? [
-							{
-								type: 'text',
-								id: `${block.id}-text`,
-								text: block.hint,
-								created_at: block.created_at,
-							},
-						]
-					: block.hint;
+			const items = getHintItems(block);
 			return (
 				<Collapsible>
 					<CollapsibleTrigger asChild>

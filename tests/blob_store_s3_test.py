@@ -153,6 +153,29 @@ class S3BlobStoreTest(IsolatedAsyncioTestCase):
             await store.delete(uri)
             self.assertIsNone(await store.size(uri))
 
+    async def test_size_uses_the_bucket_in_the_uri(self) -> None:
+        """A legacy blob's measured length must match the bytes open yields."""
+        client = boto3.client(
+            "s3",
+            region_name=_REGION,
+            endpoint_url=self._endpoint_url,
+        )
+        client.create_bucket(Bucket="legacy-blobs")
+        key = "kb/abc/doc-legacy"
+        payload = b"original document in the legacy bucket"
+        client.put_object(Bucket="legacy-blobs", Key=key, Body=payload)
+        uri = f"s3://legacy-blobs/{key}"
+
+        async with self._store() as store:
+            # The same key in the current bucket must not supply the size.
+            await store.write_stream(key, io.BytesIO(b"new"))
+            async with store.open(uri) as stream:
+                self.assertEqual(await stream.read(), payload)
+            self.assertEqual(await store.size(uri), len(payload))
+
+            client.delete_object(Bucket="legacy-blobs", Key=key)
+            self.assertIsNone(await store.size(uri))
+
     async def test_bad_uri_scheme_rejected(self) -> None:
         """Non-``s3://`` URIs are refused before any network call."""
         async with self._store() as store:

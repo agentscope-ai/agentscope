@@ -11,6 +11,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _reject_none_metadata_values,
 )
 
 if TYPE_CHECKING:
@@ -159,11 +160,30 @@ class ElasticsearchStore(VectorStoreBase):
                 "record(s)",
             )
 
-    async def delete(self, collection: str, document_id: str) -> None:
-        """Delete every chunk belonging to one source document."""
+    async def delete(
+        self,
+        collection: str,
+        document_id: str,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> None:
+        """Delete every chunk belonging to one source document.
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document ID whose records should be removed.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Restrict deletion to records matching every metadata pair
+                in addition to the document ID. ``None`` disables filtering.
+        """
+        query: dict[str, Any] = {"term": {"document_id": document_id}}
+        if metadata_filter:
+            filters = [query, *self._metadata_filters(metadata_filter)]
+            query = {"bool": {"filter": filters}}
         await self.get_client().delete_by_query(
             index=collection,
-            query={"term": {"document_id": document_id}},
+            query=query,
             conflicts="proceed",
             refresh=self._refresh is not False,
         )
@@ -345,6 +365,7 @@ class ElasticsearchStore(VectorStoreBase):
                 if search_after is not None:
                     body["search_after"] = search_after
                 response = await client.search(**body)
+                pit_id = response.get("pit_id", pit_id)
                 hits = response["hits"]["hits"]
                 if not hits:
                     break
@@ -361,7 +382,6 @@ class ElasticsearchStore(VectorStoreBase):
                         index,
                         Chunk.model_validate(payload),
                     )
-                pit_id = response.get("pit_id", pit_id)
                 search_after = hits[-1]["sort"]
         finally:
             await client.close_point_in_time(id=pit_id)
@@ -378,7 +398,12 @@ class ElasticsearchStore(VectorStoreBase):
     def _metadata_filters(
         metadata_filter: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
-        """Translate exact metadata matches into Elasticsearch filters."""
+        """Translate exact metadata matches into Elasticsearch filters.
+
+        ``None`` values are rejected: Elasticsearch does not index
+        ``null``, so it cannot tell an explicit null from a missing key.
+        """
+        _reject_none_metadata_values("ElasticsearchStore", metadata_filter)
         return [
             {"term": {f"metadata.{key}": value}}
             for key, value in (metadata_filter or {}).items()

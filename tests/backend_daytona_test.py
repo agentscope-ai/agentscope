@@ -9,7 +9,6 @@ A live smoke suite exercises the real SDK mapping and is skipped unless
 import unittest
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from unittest.async_case import IsolatedAsyncioTestCase
 
 from _daytona_live_utils import (
     DAYTONA_API_KEY,
@@ -19,12 +18,16 @@ from _daytona_live_utils import (
     live_daytona_workspace_id,
 )
 
+from sandbox_test_support import CheckoutWheelTestCase
+
 from agentscope.workspace import DaytonaBackend, DaytonaWorkspace
 
 
 @unittest.skipUnless(DAYTONA_API_KEY, SKIP_REASON)
-class TestDaytonaBackendLive(IsolatedAsyncioTestCase):
+class TestDaytonaBackendLive(CheckoutWheelTestCase):
     """Live Daytona backend parity, skipped without credentials."""
+
+    workspace_type = DaytonaWorkspace
 
     @asynccontextmanager
     async def _live_backend(

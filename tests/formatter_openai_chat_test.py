@@ -3,13 +3,22 @@
 OpenAIMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+import base64
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
+from urllib.parse import unquote
+
+from nturl2path import url2pathname
 
 from agentscope.formatter import (
+    MoonshotChatFormatter,
+    MoonshotMultiAgentFormatter,
     OpenAIChatFormatter,
     OpenAIMultiAgentFormatter,
 )
+from agentscope.formatter._formatter_base import file_url_to_path
 from agentscope.message import (
     UserMsg,
     AssistantMsg,
@@ -29,7 +38,152 @@ from agentscope.message import (
 _FIXED_ID = "TESTID1234567"
 
 
-class TestOpenAIFormatter(IsolatedAsyncioTestCase):
+class TestFileUrlToPath(IsolatedAsyncioTestCase):
+    """Test local paths and Windows shares without URL normalization."""
+
+    def test_file_url_paths(self) -> None:
+        """Decode local paths and preserve Windows drive and share roots."""
+        module = "agentscope.formatter._formatter_base"
+        cases = [
+            ("posix", unquote, "/tmp/my%20file%23.png", "/tmp/my file#.png"),
+            (
+                "nt",
+                url2pathname,
+                "/C:/my%20file%23.png",
+                "C:\\my file#.png",
+            ),
+        ]
+        for platform, converter, path, expected in cases:
+            for authority in ("", "localhost", "LOCALHOST"):
+                with self.subTest(platform=platform, authority=authority):
+                    with (
+                        patch(f"{module}.os.name", platform),
+                        patch(f"{module}.url2pathname", converter),
+                    ):
+                        self.assertEqual(
+                            file_url_to_path("file://" + authority + path),
+                            expected,
+                        )
+
+    async def test_chat_formatter_windows_file_url(self) -> None:
+        """Read the addressed Windows drive or share and encode its bytes."""
+        module = "agentscope.formatter._formatter_base"
+        cases = [
+            ("file:///C:/my%20image.png", "C:\\my image.png"),
+            (
+                "file://fileserver/share/my%20image.png",
+                "\\\\fileserver\\share\\my image.png",
+            ),
+        ]
+        for url, expected_path in cases:
+            with self.subTest(url=url):
+                msg = UserMsg(
+                    name="user",
+                    content=[
+                        DataBlock(
+                            source=URLSource(url=url, media_type="image/png"),
+                        ),
+                    ],
+                )
+                with (
+                    patch(f"{module}.os.name", "nt"),
+                    patch(f"{module}.url2pathname", url2pathname),
+                    patch(
+                        "builtins.open",
+                        mock_open(read_data=b"image"),
+                    ) as opened,
+                ):
+                    res = await OpenAIChatFormatter().format([msg])
+                opened.assert_called_once_with(expected_path, "rb")
+                self.assertEqual(
+                    res,
+                    [
+                        {
+                            "role": "user",
+                            "name": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": (
+                                            "data:image/png;base64,aW1hZ2U="
+                                        ),
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                )
+
+    async def test_chat_formatter_rejects_remote_file_url_on_posix(
+        self,
+    ) -> None:
+        """Reject remote authorities before reading a local decoy file."""
+        module = "agentscope.formatter._formatter_base"
+        msg = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=URLSource(
+                        url="file://fileserver/share/image.png",
+                        media_type="image/png",
+                    ),
+                ),
+            ],
+        )
+        with (
+            patch(f"{module}.os.name", "posix"),
+            patch(f"{module}.url2pathname", unquote),
+            patch(
+                "builtins.open",
+                mock_open(read_data=b"local-decoy"),
+            ) as opened,
+        ):
+            with self.assertRaisesRegex(ValueError, "Remote file URLs"):
+                await OpenAIChatFormatter().format([msg])
+            opened.assert_not_called()
+
+
+class TestAudioInputTypes(IsolatedAsyncioTestCase):
+    """Check the audio contract shared by OpenAI Chat and Moonshot."""
+
+    async def test_audio_input_types(self) -> None:
+        """Advertise encodable formats and skip OGG under either policy."""
+        ogg = DataBlock(
+            source=Base64Source(data="T2dnUw==", media_type="audio/ogg"),
+        )
+        text = TextBlock(text="Listen to this.")
+        for cls in (
+            OpenAIChatFormatter,
+            OpenAIMultiAgentFormatter,
+            MoonshotChatFormatter,
+            MoonshotMultiAgentFormatter,
+        ):
+            default = cls()
+            with self.subTest(formatter=cls.__name__):
+                self.assertEqual(
+                    [t for t in default.input_types if t.startswith("audio/")],
+                    ["audio/wav", "audio/mp3", "audio/mpeg"],
+                )
+            for fmt in (default, cls(input_types=["text/plain", "audio/*"])):
+                with self.subTest(
+                    formatter=cls.__name__,
+                    types=fmt.input_types,
+                ):
+                    expected = await fmt.format(
+                        [UserMsg(name="user", content=[text])],
+                    )
+                    with self.assertLogs("as", level="WARNING") as logs:
+                        actual = await fmt.format(
+                            [UserMsg(name="user", content=[text, ogg])],
+                        )
+                    self.assertEqual(actual, expected)
+                    self.assertIn("audio/ogg", logs.output[0])
+
+
+class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Comprehensive tests for OpenAI Chat and MultiAgent formatters."""
 
     async def asyncSetUp(self) -> None:
@@ -284,6 +438,85 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
     # OpenAIChatFormatter tests
     # -------------------------------------------------------------------
 
+    async def test_chat_formatter_image_extra_params(self) -> None:
+        """DataBlock extra params are nested inside image_url payload."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=URLSource(
+                            url=self.image_url,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "Inspect this image."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": self.image_url,
+                                "detail": "high",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_audio_extra_params(self) -> None:
+        """DataBlock extra params are nested inside input_audio payload."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Transcribe this audio."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="ZmFrZSBhdWRpbyBkYXRh",
+                            media_type="audio/wav",
+                        ),
+                        extra_audio_param="value",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "Transcribe this audio."},
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "ZmFrZSBhdWRpbyBkYXRh",
+                                "format": "wav",
+                                "extra_audio_param": "value",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter(self) -> None:
         """Chat formatter produces exact output for various subsets."""
         fmt = OpenAIChatFormatter()
@@ -347,6 +580,111 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                 },
             ],
             res,
+        )
+
+    async def test_chat_formatter_percent_encoded_local_image(self) -> None:
+        """Local file:// image paths with spaces and '#' are decoded."""
+        image_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        data_uri = f"data:image/png;base64,{expected_b64}"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.png"
+            path.write_bytes(image_bytes)
+            fmt = OpenAIChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            TextBlock(text="What's in this image?"),
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "What's in this image?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_uri},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_percent_encoded_local_audio(self) -> None:
+        """Local file:// audio paths with spaces and '#' are decoded."""
+        audio_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.wav"
+            path.write_bytes(audio_bytes)
+            fmt = OpenAIChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="audio/wav",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertEqual(
+            res[0]["content"][0],
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": expected_b64,
+                    "format": "wav",
+                },
+            },
+        )
+
+    async def test_chat_formatter_percent_encoded_local_file(self) -> None:
+        """Local file:// PDF paths with spaces and '#' are decoded."""
+        file_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(file_bytes).decode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.pdf"
+            path.write_bytes(file_bytes)
+            fmt = OpenAIChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="application/pdf",
+                                ),
+                                name="my file #1.pdf",
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertEqual(
+            res[0]["content"][0]["file"]["file_data"],
+            f"data:application/pdf;base64,{expected_b64}",
         )
 
     async def test_chat_formatter_base64_pdf(self) -> None:
@@ -457,7 +795,7 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
         mock_get: Mock,
     ) -> None:
         """An un-encodable remote audio block is skipped before download."""
-        fmt = OpenAIChatFormatter()
+        fmt = OpenAIChatFormatter(input_types=["text/plain", "audio/*"])
 
         res = await fmt.format(
             [
@@ -537,12 +875,87 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_sanitizes_message_name(self) -> None:
+        """Message names must match the API pattern ``^[^\\s<|\\\\/>]+$``:
+        free-text agent and user names are made valid instead of being
+        forwarded verbatim, which the API rejects with a 400 error."""
+        msgs = [
+            UserMsg(name="John Doe", content="Hi"),
+            AssistantMsg(
+                name="Research Assistant",
+                content=[
+                    TextBlock(text="Let me check."),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="search",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="search",
+                        output="result",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="Done."),
+                ],
+            ),
+            AssistantMsg(name="a<b|c\\d/e>f", content="ok"),
+            AssistantMsg(name="", content="anonymous"),
+        ]
+        gt = [
+            {
+                "role": "user",
+                "name": "John_Doe",
+                "content": [{"type": "text", "text": "Hi"}],
+            },
+            {
+                "role": "assistant",
+                "name": "Research_Assistant",
+                "content": [{"type": "text", "text": "Let me check."}],
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "{}"},
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "result",
+                "name": "search",
+            },
+            {
+                "role": "assistant",
+                "name": "Research_Assistant",
+                "content": [{"type": "text", "text": "Done."}],
+            },
+            {
+                "role": "assistant",
+                "name": "a_b_c_d_e_f",
+                "content": [{"type": "text", "text": "ok"}],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "anonymous"}],
+            },
+        ]
+        res = await OpenAIChatFormatter().format(msgs)
+        self.assertListEqual(gt, res)
+
+        # Tool sequences in multi-agent conversations reuse the chat
+        # formatter, so their names are made valid as well.
+        res = await OpenAIMultiAgentFormatter().format(msgs[1:2])
+        self.assertListEqual(gt[1:4], res)
+
     async def test_chat_formatter_url_image_in_tool_result(
         self,
     ) -> None:
         """URL images in tool results are promoted to a follow-up user
         message."""
         fmt = OpenAIChatFormatter()
+        source = URLSource(url=self.image_url, media_type="image/png")
         msgs = [
             AssistantMsg(
                 name="assistant",
@@ -559,10 +972,7 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                             TextBlock(text="Here is the map."),
                             DataBlock(
                                 id=_FIXED_ID,
-                                source=URLSource(
-                                    url=self.image_url,
-                                    media_type="image/png",
-                                ),
+                                source=source,
                             ),
                         ],
                         state=ToolResultState.SUCCESS,
@@ -641,6 +1051,16 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+        for media_type, pattern in (
+            ("Image/PNG", "image/*"),
+            ("IMAGE/PNG", "IMAGE/*"),
+        ):
+            with self.subTest(media_type=media_type, pattern=pattern):
+                source.media_type = media_type
+                fmt = OpenAIChatFormatter(input_types=[pattern])
+                self.assertListEqual(await fmt.format(msgs), res)
+                self.assertEqual(source.media_type, media_type)
 
     async def test_chat_formatter_tool_result_image_id_is_deterministic(
         self,

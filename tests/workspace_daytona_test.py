@@ -31,6 +31,8 @@ from _daytona_live_utils import (
     live_daytona_workspace_id,
 )
 
+from sandbox_test_support import CheckoutWheelTestCase
+
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._manager import BackgroundTaskManager, SchedulerManager
 from agentscope.app._service import ResourceAccessService, get_toolkit
@@ -1111,18 +1113,23 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         )
         self.assertIn("/home/daytona/src/app.py", glob_text)
 
-    async def test_mcp_add_remove_persists_mcp_file(self) -> None:
-        """Dynamic MCP changes are reflected in the sandbox ``.mcp`` file."""
+    async def test_mcp_add_returns_proxy_and_persists_mcp_file(self) -> None:
+        """Adding an MCP returns the stored gateway proxy and persists it."""
         mcp = MCPClient(
             name="demo",
             mcp_config=StdioMCPConfig(command="node", args=["server.js"]),
             is_stateful=True,
         )
 
-        await self.workspace.add_mcp(mcp, agent_id="a", session_id="s")
+        registered = await self.workspace.add_mcp(
+            mcp,
+            agent_id="a",
+            session_id="s",
+        )
 
         live = self.workspace._mcp_instances[("a", "s")]
-        self.assertIn("demo", live)
+        self.assertIs(registered, live["demo"])
+        self.assertIsNot(registered, mcp)
         raw = await self.workspace._backend.read_file("/home/daytona/.mcp")
         data = json.loads(raw.decode("utf-8"))
         self.assertEqual(data["mcps"]["a"]["s"][0]["name"], "demo")
@@ -1173,6 +1180,8 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
                                 "enable_tools": None,
                                 "disable_tools": None,
                                 "execution_timeout": None,
+                                "stream_progress": False,
+                                "trust_annotations": True,
                             },
                         ],
                     },
@@ -1325,10 +1334,10 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
 
 
 def _mcp_server_script() -> bytes:
-    """Minimal FastMCP stdio server used by live reattach tests."""
-    return b"""from mcp.server import FastMCP
+    """Minimal MCPServer stdio server used by live reattach tests."""
+    return b"""from mcp.server import MCPServer
 
-mcp = FastMCP("Persist")
+mcp = MCPServer("Persist")
 
 
 @mcp.tool()
@@ -1399,8 +1408,10 @@ def _response_text(response: ToolResponse) -> str:
 
 
 @unittest.skipUnless(DAYTONA_API_KEY, SKIP_REASON)
-class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
+class TestDaytonaWorkspaceLive(CheckoutWheelTestCase):
     """Live Daytona workspace coverage, skipped without credentials."""
+
+    workspace_type = DaytonaWorkspace
 
     @asynccontextmanager
     async def _live_workspace(

@@ -2,6 +2,7 @@
 """The edit tool in agentscope."""
 import difflib
 import fnmatch
+import glob
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -56,8 +57,9 @@ Usage:
             },
             "old_string": {
                 "type": "string",
+                "minLength": 1,
                 "description": (
-                    "The exact string to replace. Must match exactly "
+                    "The nonempty string to replace. Must match exactly "
                     "including whitespace and indentation."
                 ),
             },
@@ -239,7 +241,13 @@ Usage:
         parent = self._backend.dirname(file_path)
         # Glob patterns are POSIX-style strings (matched by fnmatch),
         # not real filesystem paths — do NOT use backend.join_path here.
-        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
+        # ``parent`` is a literal path, so its fnmatch metacharacters must be
+        # escaped, otherwise the suggested rule matches sibling directories.
+        stem = glob.escape(parent).rstrip("/\\")
+        # A file at the filesystem root (or given by a bare relative name)
+        # has no directory component left. ``**`` would match every path in
+        # the repository, so suggest the file itself instead.
+        pattern = f"{stem}/**" if stem else glob.escape(file_path)
 
         return [
             PermissionRule(
@@ -259,6 +267,18 @@ Usage:
         _agent_state: AgentState | None = None,
     ) -> ToolChunk:
         """Execute the edit and return the result."""
+        if not old_string:
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text="Error: old_string must not be empty. "
+                        "Use the Write tool to populate an empty file.",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
         # Validate file_path is absolute
         if not self._backend.isabs(file_path):
             return ToolChunk(
@@ -327,9 +347,7 @@ Usage:
                 raw = await self._backend.read_file(file_path)
                 # Normalize CRLF/CR to match the cached-content path and
                 # the LF-based old_string the caller supplies.
-                content = _normalize_newlines(
-                    raw.decode("utf-8", errors="replace"),
-                )
+                content = _normalize_newlines(raw.decode("utf-8"))
             except Exception as e:
                 return ToolChunk(
                     content=[TextBlock(text=f"Error reading file: {str(e)}")],

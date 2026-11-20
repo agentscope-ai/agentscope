@@ -1,10 +1,19 @@
 # -*- coding: utf-8 -*-
 """The chat endpoint schema."""
 
-from pydantic import BaseModel, Field
+from typing import Annotated, Literal, TypeAlias
 
-from ....message import Msg
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from ..._client_external_tool import (
+    ClientBuiltinToolName,
+    ClientExternalToolDefinition,
+)
+from ....message import Msg, ToolResultState
+from ....tool import AskUser, AskUserMetadata
 from ....event import UserConfirmResultEvent, ExternalExecutionResultEvent
+
+NonEmptyMsgList: TypeAlias = Annotated[list[Msg], Field(min_length=1)]
 
 
 class ChatRequest(BaseModel):
@@ -20,7 +29,7 @@ class ChatRequest(BaseModel):
 
     input: (
         Msg
-        | list[Msg]
+        | NonEmptyMsgList
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
         | None
@@ -28,18 +37,140 @@ class ChatRequest(BaseModel):
         description="The input message(s), or agent event, or None.",
     )
 
+    client_builtin_tools: list[ClientBuiltinToolName] = Field(
+        default_factory=list,
+        max_length=1,
+        description="Native external tools supported by this client run.",
+    )
+
+    client_external_tools: list[ClientExternalToolDefinition] = Field(
+        default_factory=list,
+        max_length=16,
+        description=(
+            "External tools the active client can execute for this run."
+        ),
+    )
+
+    @field_validator("client_external_tools")
+    @classmethod
+    def validate_unique_client_external_tools(
+        cls,
+        value: list[ClientExternalToolDefinition],
+    ) -> list[ClientExternalToolDefinition]:
+        """Reject ambiguous duplicate client tool names."""
+        names = [tool.name for tool in value]
+        if len(names) != len(set(names)):
+            raise ValueError("Client external tool names must be unique.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_native_answers(self) -> "ChatRequest":
+        """Validate resumed native results even if the tool was disabled.
+
+        Disabling a tool governs future calls, not the contract of a call
+        already waiting for its result.
+        """
+        if isinstance(self.input, ExternalExecutionResultEvent):
+            for result in self.input.execution_results:
+                if (
+                    result.name == AskUser.name
+                    and result.state == ToolResultState.SUCCESS
+                ):
+                    AskUserMetadata.model_validate(result.metadata)
+        return self
+
 
 class ChatTriggerResponse(BaseModel):
-    """Response body for the fire-and-forget chat trigger.
+    """Response body for an accepted chat trigger.
 
-    Confirms that the chat run was scheduled. Events produced by the
-    run arrive separately via the session's SSE stream endpoint.
+    An ordinary user turn is accepted into the FIFO with ``queued``;
+    continuation and control triggers use ``started``. Resulting events
+    arrive separately via the session's SSE stream endpoint.
     """
 
-    status: str = Field(
+    status: Literal["started", "queued"] = Field(
         default="started",
-        description='Always ``"started"`` when the trigger succeeded.',
+        description=(
+            '``"queued"`` for an accepted ordinary user turn; '
+            '``"started"`` for continuation/control triggers.'
+        ),
     )
     session_id: str = Field(
-        description="Echo of the session id the run was started for.",
+        description="Session whose queue or run accepted the trigger.",
+    )
+    queue_item_id: str | None = Field(
+        default=None,
+        description="Stable queue item id for an ordinary user turn.",
+    )
+
+
+class ChatQueueItem(BaseModel):
+    """One ordinary user turn that has not started execution."""
+
+    id: str = Field(
+        description="Stable id used to edit, delete, or reorder this item.",
+    )
+    created_at: str = Field(
+        description="UTC ISO-8601 timestamp recorded when the item queued.",
+    )
+    input: Msg | NonEmptyMsgList = Field(
+        description="One message or non-empty ordered message list.",
+    )
+    state: Literal["queued", "steering", "failed"] = Field(
+        default="queued",
+        description="Current deferred-send or steering state.",
+    )
+    error: str | None = Field(
+        default=None,
+        description="Visible steering failure, when state is failed.",
+    )
+
+
+class ChatQueueResponse(BaseModel):
+    """Current editable FIFO snapshot for a session."""
+
+    items: list[ChatQueueItem] = Field(
+        description="Editable pending turns in FIFO execution order.",
+    )
+
+
+class UpdateChatQueueItemRequest(BaseModel):
+    """Replace the input carried by one pending queue item."""
+
+    agent_id: str = Field(
+        description="Agent that owns the target session.",
+    )
+    session_id: str = Field(
+        description="Session whose pending item will be updated.",
+    )
+    input: Msg | NonEmptyMsgList = Field(
+        description="Replacement message or non-empty message list.",
+    )
+
+
+class SteerChatQueueItemRequest(BaseModel):
+    """Reserve one pending input for a currently active reply."""
+
+    agent_id: str = Field(
+        description="Agent that owns the target session.",
+    )
+    session_id: str = Field(
+        description="Session whose pending item will steer the reply.",
+    )
+    reply_id: str = Field(
+        description="Active reply that should consume the pending item.",
+    )
+
+
+class ReorderChatQueueRequest(BaseModel):
+    """Set the complete pending queue order."""
+
+    agent_id: str = Field(
+        description="Agent that owns the target session.",
+    )
+    session_id: str = Field(
+        description="Session whose pending FIFO will be reordered.",
+    )
+    item_ids: list[str] = Field(
+        description="Exact desired permutation of all pending item ids.",
     )

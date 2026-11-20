@@ -16,6 +16,7 @@ import httpx
 from agentscope.app._service._errors import (
     _classify_error,
     _classify_type,
+    _extract_status,
     _GENERIC_MESSAGE,
 )
 from agentscope.exception import DeveloperOrientedException
@@ -78,6 +79,31 @@ class ClassifyErrorTest(unittest.TestCase):
                 self.assertEqual(
                     _classify_type(_AiohttpError(code)),
                     expected,
+                )
+
+    def test_boolean_status_is_ignored(self) -> None:
+        """Ignore boolean values in every status field."""
+        for flag in (True, False):
+            for source, error in (
+                ("status_code", _StatusError(flag)),
+                ("status", _AiohttpError(flag)),
+                ("response.status_code", _httpx_status_error(flag)),
+            ):
+                with self.subTest(source=source, flag=flag):
+                    self.assertEqual(
+                        (_extract_status(error), _classify_type(error)),
+                        (None, ErrorType.UNKNOWN),
+                    )
+
+    def test_boolean_status_does_not_hide_cause(self) -> None:
+        """Find the cause's status after skipping a boolean flag."""
+        for flag in (True, False):
+            with self.subTest(flag=flag):
+                error = _StatusError(flag)
+                error.__cause__ = _StatusError(429)
+                self.assertEqual(
+                    (_extract_status(error), _classify_type(error)),
+                    (429, ErrorType.RATE_LIMIT),
                 )
 
     def test_httpx_connection_errors(self) -> None:

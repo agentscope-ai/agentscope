@@ -12,6 +12,7 @@ import type {
 
 export interface MessagesResponse {
 	messages: Msg[];
+	event_cursor: string | null;
 	is_running: boolean;
 	has_more: boolean;
 }
@@ -104,16 +105,21 @@ export const sessionApi = {
 	 * @param sessionId - The session to subscribe to.
 	 * @param agentId - The agent that owns the session.
 	 * @param signal - Optional abort signal to close the connection.
+	 * @param after - Optional persisted-event cursor to resume after.
 	 * @returns An async generator yielding ``AgentEvent`` objects.
 	 */
 	streamEvents: async function* (
 		sessionId: string,
 		agentId: string,
 		signal?: AbortSignal,
+		after?: string | null,
 	): AsyncGenerator<AgentEvent> {
 		const res = await client.stream(`/sessions/${sessionId}/stream`, {
 			method: 'GET',
-			params: { agent_id: agentId },
+			params: {
+				agent_id: agentId,
+				...(after != null && { after }),
+			},
 			signal,
 		});
 

@@ -1,0 +1,32 @@
+# Source: https://developers.openai.com/api/docs/models/gpt-6.1-terra
+# Tool calling requires the Responses API.
+name: gpt-6.1-terra
+label: GPT-6.1 Terra (Responses API)
+status: active
+# Release date source: https://developers.openai.com/api/docs/changelog
+release_date: 2026-10-26
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - application/pdf
+
+output_types:
+  - text/plain
+
+context_size: 1050000
+output_size: 128000
+
+parameter_overrides:
+  temperature:
+    hidden: true
+  reasoning_effort:
+    # Terra supports none and low through max, but not minimal.
+    default: medium
+    anyOf:
+      - enum: [none, low, medium, high, xhigh, max]
+        type: string
+      - type: "null"

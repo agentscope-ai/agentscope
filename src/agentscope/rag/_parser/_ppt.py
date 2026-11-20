@@ -51,6 +51,28 @@ def _iter_shapes(shapes: Any) -> Iterator[Any]:
             yield shape
 
 
+def _normalise_breaks(text: str) -> str:
+    """Normalise PowerPoint line-break characters to ``\n``.
+
+    ``python-pptx`` renders an ``<a:br/>`` element - what the
+    PowerPoint UI produces for Shift+Enter - as a vertical tab, and
+    ``paragraph.text`` / ``cell.text`` hand that character straight
+    through. Left in place it both embeds a control character in the
+    extracted text and glues the two lines together, so they are
+    embedded as one token run.
+
+    Args:
+        text (`str`):
+            The raw text of a paragraph or a table cell.
+
+    Returns:
+        `str`:
+            The text with ``\r\n``, ``\r`` and ``\v``
+            replaced by ``\n``.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\v", "\n")
+
+
 def _extract_table_rows(table: Any) -> list[list[str]]:
     """Read a python-pptx table into a 2-D ``list[list[str]]``.
 
@@ -67,28 +89,23 @@ def _extract_table_rows(table: Any) -> list[list[str]]:
     for row in table.rows:
         cells: list[str] = []
         for cell in row.cells:
-            text = cell.text.strip()
-            text = (
-                text.replace("\r\n", "\n")
-                .replace("\r", "\n")
-                .replace("\v", "\n")
-            )
-            cells.append(text)
+            cells.append(_normalise_breaks(cell.text.strip()))
         rows.append(cells)
     return rows
 
 
-def _extract_image_bytes(shape: Any) -> bytes | None:
-    """Return the embedded image bytes for a picture shape, or ``None``.
+def _extract_image_data(shape: Any) -> tuple[bytes, str] | None:
+    """Return a picture's bytes and MIME type, or ``None``.
 
     Args:
         shape (`Any`):
             A python-pptx shape.  Non-picture shapes return ``None``.
 
     Returns:
-        `bytes | None`:
-            The raw image bytes, or ``None`` when ``shape`` is not a
-            picture / the bytes are unreadable.
+        `tuple[bytes, str] | None`:
+            The raw image bytes and their MIME type, falling back to
+            byte inspection when image metadata is unavailable. Returns
+            ``None`` when ``shape`` is not a picture or is unreadable.
     """
     from pptx.shapes.picture import Picture
 
@@ -97,10 +114,17 @@ def _extract_image_bytes(shape: Any) -> bytes | None:
     if not isinstance(shape, Picture):
         return None
     try:
-        return shape.image.blob
+        image = shape.image
+        image_bytes = image.blob
     except Exception as e:  # pylint: disable=broad-except
         logger.warning("Failed to extract image from PPT shape: %s", e)
         return None
+    try:
+        media_type = image.content_type
+    except Exception:  # pylint: disable=broad-except
+        # MIME metadata may be unavailable even when the bytes are readable.
+        media_type = None
+    return image_bytes, media_type or _guess_image_media_type(image_bytes)
 
 
 class PPTParser(ParserBase):
@@ -119,7 +143,8 @@ class PPTParser(ParserBase):
     ``slide_prefix`` / ``slide_suffix`` are wrapped around each
     slide's text content (the prefix is prepended to the slide's
     first text section, the suffix is appended to its last text
-    section).  Use ``None`` on either to disable wrapping.
+    section). Slides without text do not emit wrapper-only sections.
+    Use ``None`` on either to disable wrapping.
     """
 
     supported_media_types: list[str] = [
@@ -215,6 +240,7 @@ class PPTParser(ParserBase):
 
         try:
             from pptx import Presentation
+            from pptx.exc import InvalidXmlError
         except ImportError as e:
             raise ImportError(
                 "Please install python-pptx to use the PowerPoint "
@@ -231,10 +257,15 @@ class PPTParser(ParserBase):
             ) from e
 
         sections: list[Section] = []
-        for slide_idx, slide in enumerate(prs.slides):
-            sections.extend(
-                self._parse_slide(slide, slide_idx, filename),
-            )
+        try:
+            for slide_idx, slide in enumerate(prs.slides):
+                sections.extend(
+                    self._parse_slide(slide, slide_idx, filename),
+                )
+        except InvalidXmlError as e:
+            raise ValueError(
+                f"Failed to parse {filename!r} as PPTX: {e}",
+            ) from e
         return sections
 
     # ------------------------------------------------------------------
@@ -273,17 +304,13 @@ class PPTParser(ParserBase):
             )
             text_buffer.clear()
 
-        # Slide prefix lives at the very top of the first text section.
-        if prefix:
-            text_buffer.append(prefix)
-
         for shape in _iter_shapes(slide.shapes):
             # 1. Pictures — flush running text, emit a DataBlock section.
             if self.include_image:
-                image_bytes = _extract_image_bytes(shape)
-                if image_bytes is not None:
+                image_data = _extract_image_data(shape)
+                if image_data is not None:
+                    image_bytes, media_type = image_data
                     flush_text()
-                    media_type = _guess_image_media_type(image_bytes)
                     data = base64.b64encode(image_bytes).decode("utf-8")
                     slide_sections.append(
                         Section(
@@ -338,7 +365,7 @@ class PPTParser(ParserBase):
             if getattr(shape, "has_text_frame", False):
                 try:
                     parts = [
-                        para.text.strip()
+                        _normalise_breaks(para.text).strip()
                         for para in shape.text_frame.paragraphs
                         if para.text.strip()
                     ]
@@ -352,12 +379,16 @@ class PPTParser(ParserBase):
                 if parts:
                     text_buffer.append("\n".join(parts))
 
-        # Suffix goes onto the last text section of this slide.  If the
-        # slide ends on an image (text_buffer empty, no prior text
-        # section in this slide), create a small text-only carrier so
-        # the suffix is preserved.
-        if self.slide_suffix is not None:
-            text_buffer.append(self.slide_suffix)
-
         flush_text()
+        # Decorate real text only: wrappers are not indexable slide content.
+        text_blocks = [
+            section.content
+            for section in slide_sections
+            if isinstance(section.content, TextBlock)
+        ]
+        if text_blocks:
+            if prefix:
+                text_blocks[0].text = f"{prefix}\n{text_blocks[0].text}"
+            if self.slide_suffix is not None:
+                text_blocks[-1].text += f"\n{self.slide_suffix}"
         return slide_sections

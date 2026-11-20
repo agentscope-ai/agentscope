@@ -253,6 +253,9 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
         self._connected = False
         self._cold_start_buffer: str = ""
         self._cold_start_done: bool = False
+        # Set by ``synthesize()``: it ends the provider session, so the next
+        # utterance has to open a new one first.
+        self._needs_reconnect = False
         self._accumulated_text: str = ""
 
     def _create_client(self) -> None:
@@ -281,6 +284,7 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
             mode="server_commit",
         )
         self._connected = True
+        self._needs_reconnect = False
 
     async def close(self) -> None:
         """Close the WebSocket connection."""
@@ -330,6 +334,9 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
         if not text:
             return TTSResponse(content=None)
 
+        if self._needs_reconnect:
+            await self._reconnect()
+
         self._accumulated_text += text
 
         if not self._cold_start_done:
@@ -350,14 +357,16 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
             if ready:
                 try:
                     self._tts_client.append_text(self._cold_start_buffer)
-                except WebSocketConnectionClosedException:
+                except (WebSocketConnectionClosedException, ConnectionError):
+                    # ``ConnectionError`` is what dashscope >= 1.26.1 raises
+                    # on a closed connection.
                     return TTSResponse(content=None)
                 self._cold_start_buffer = ""
                 self._cold_start_done = True
         else:
             try:
                 self._tts_client.append_text(text)
-            except WebSocketConnectionClosedException:
+            except (WebSocketConnectionClosedException, ConnectionError):
                 return TTSResponse(content=None)
 
         return self._callback.get_audio_response(block=False)
@@ -372,6 +381,9 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
         If text was previously pushed via :meth:`push`, this flushes any
         remaining buffered text, commits, and waits for audio. If ``text``
         is provided, it is appended before committing.
+
+        This ends the provider session. The next :meth:`push` or
+        :meth:`synthesize` call opens a new one.
 
         Args:
             text (`str | None`, defaults to `None`):
@@ -392,6 +404,9 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
                 "TTS model is not connected. Call `connect()` first.",
             )
 
+        if self._needs_reconnect:
+            await self._reconnect()
+
         if text is not None:
             self._accumulated_text += text
 
@@ -405,6 +420,10 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
 
         for attempt in range(self.max_retries):
             try:
+                # ``session.finish`` makes the server close the connection,
+                # and a failed attempt leaves it unusable as well.
+                self._needs_reconnect = True
+
                 if unsent:
                     self._tts_client.append_text(unsent)
 
@@ -436,7 +455,7 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
                     )
                 break
 
-            except WebSocketConnectionClosedException:
+            except (WebSocketConnectionClosedException, ConnectionError):
                 if attempt < self.max_retries - 1:
                     logger.warning(
                         "TTS WebSocket closed, retrying (%d/%d) in %.1fs...",

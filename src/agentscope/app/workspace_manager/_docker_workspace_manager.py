@@ -68,7 +68,7 @@ class DockerWorkspaceManager(
         *,
         isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         base_image: str = DEFAULT_BASE_IMAGE,
-        node_version: str = "20",
+        node_version: str = "22.23.4",
         extra_pip: list[str] | None = None,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
@@ -99,9 +99,8 @@ class DockerWorkspaceManager(
                 session creation always wins over this policy.
             base_image (`str`, defaults to `DEFAULT_BASE_IMAGE`):
                 Base Docker image; must provide ``python3``.
-            node_version (`str`, defaults to `"20"`):
-                Major Node.js version (e.g. ``"20"``) to bake into
-                the image.
+            node_version (`str`, defaults to `"22.23.4"`):
+                Node.js image version to bake into the image.
             extra_pip (`list[str] | None`, optional):
                 Extra Python packages to install into the gateway
                 venv at image-build time.
@@ -180,7 +179,7 @@ class DockerWorkspaceManager(
         """
         root = os.path.realpath(self._basedir)
         workdir = os.path.realpath(os.path.join(root, workspace_id))
-        if not workdir.startswith(root + os.sep):
+        if not self._is_strictly_inside(root, workdir):
             raise ValueError(
                 f"workspace_id {workspace_id!r} escapes the workspace "
                 f"base directory",
@@ -195,9 +194,42 @@ class DockerWorkspaceManager(
         # ``basedir`` are declined rather than rejected, leaving the
         # caller with an ordinary empty workspace.
         legacy = os.path.realpath(os.path.join(root, user_id, agent_id))
-        if legacy.startswith(root + os.sep) and os.path.isdir(legacy):
+        if self._is_strictly_inside(root, legacy) and os.path.isdir(legacy):
             return legacy
         return workdir
+
+    @staticmethod
+    def _is_strictly_inside(root: str, path: str) -> bool:
+        """Whether ``path`` is an entry strictly below ``root``.
+
+        ``path.startswith(root + os.sep)`` cannot decide this: when
+        ``root`` is a filesystem root the separator doubles (``"/"``
+        becomes ``"//"`` and ``"D:\\"`` becomes ``"D:\\\\"``), so no path
+        ever matches and every workspace id is rejected. The relative
+        path carries the same relation and stays valid for every root.
+
+        Args:
+            root (`str`):
+                The absolute, resolved directory expected to contain
+                ``path``.
+            path (`str`):
+                The absolute, resolved candidate entry.
+
+        Returns:
+            `bool`:
+                `True` if ``path`` lies below ``root`` rather than at or
+                above it.
+        """
+        try:
+            relative = os.path.relpath(path, root)
+        except ValueError:
+            # Different drives on Windows: nothing is below the root.
+            return False
+        return (
+            relative != os.curdir
+            and relative != os.pardir
+            and not relative.startswith(os.pardir + os.sep)
+        )
 
     # ── workspace construction ────────────────────────────────────
 
@@ -231,7 +263,12 @@ class DockerWorkspaceManager(
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The container may already be running and nothing holds it.
+            await self._dispose_prewarmed(ws)
+            raise
         return ws
 
     # ── public API ────────────────────────────────────────────────
@@ -275,36 +312,35 @@ class DockerWorkspaceManager(
         """
         del session_id  # accepted for interface parity; not used here
 
-        if not workspace_id:
-            workspace_id = await self.assign_workspace_id(
-                user_id=user_id,
-                agent_id=agent_id,
-                session_id="",
-            )
+        resolved_id: str = workspace_id or await self.assign_workspace_id(
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id="",
+        )
 
         async with self._lock:
-            cached = self._cache.get(workspace_id)
+            cached = self._cache.get(resolved_id)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
+                self._cache[resolved_id] = (ws, time.monotonic())
                 return ws
 
         # Cache miss: build under the lock to prevent two concurrent
         # get_workspace(workspace_id=X) calls from creating two
         # workspaces for the same id.
         async with self._lock:
-            cached = self._cache.get(workspace_id)
+            cached = self._cache.get(resolved_id)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
+                self._cache[resolved_id] = (ws, time.monotonic())
                 return ws
 
             ws = await self._build_and_start(
-                workspace_id=workspace_id,
+                workspace_id=resolved_id,
                 user_id=user_id,
                 agent_id=agent_id,
             )
-            self._cache[workspace_id] = (ws, time.monotonic())
+            self._cache[resolved_id] = (ws, time.monotonic())
             return ws
 
     @deprecated(

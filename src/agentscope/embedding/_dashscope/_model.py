@@ -16,6 +16,7 @@ Text payloads may be passed either as bare ``str`` or as
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Any
@@ -135,8 +136,8 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 persisted ``dimensions`` inside ``parameters``.
             parameters (`DashScopeEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                Provider-specific non-dimensional parameters.  Currently
-                empty for DashScope.
+                Provider-specific non-dimensional text parameters, such as
+                ``text_type``. Per-call keyword arguments take precedence.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -227,11 +228,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 self._limits.max_videos,
             )
 
-        results: list[EmbeddingResponse] = await asyncio.gather(
-            *(self._call_with_retry(batch, **kwargs) for batch in batches),
-        )
-
-        return self._merge_responses(results)
+        return await self._call_batches(batches, **kwargs)
 
     def _split_multimodal_batches(
         self,
@@ -350,13 +347,21 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         api_kwargs: dict[str, Any] = {
             "input": texts,
             "model": self.model,
+            "api_key": self.api_key,
             "dimension": self.dimensions,
+            **self.parameters.model_dump(exclude_none=True),
             **kwargs,
+        }
+
+        # Exclude api_key from cache identifier to avoid persisting secrets
+        # and to keep cache valid across key rotations.
+        cache_identifier = {
+            k: v for k, v in api_kwargs.items() if k != "api_key"
         }
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
             )
             if cached:
                 return EmbeddingResponse(
@@ -370,7 +375,6 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         start_time = datetime.now()
         response = await asyncio.to_thread(
             dashscope.embeddings.TextEmbedding.call,
-            api_key=self.api_key,
             **api_kwargs,
         )
         time = (datetime.now() - start_time).total_seconds()
@@ -381,11 +385,15 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             )
 
         embeddings = [
-            entry["embedding"] for entry in response.output["embeddings"]
+            entry["embedding"]
+            for _, entry in sorted(
+                enumerate(response.output["embeddings"]),
+                key=lambda item: item[1].get("text_index", item[0]),
+            )
         ]
         if self.embedding_cache:
             await self.embedding_cache.store(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
                 embeddings=embeddings,
             )
         return EmbeddingResponse(
@@ -431,14 +439,14 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             "input": formatted,
             "model": self.model,
             "api_key": self.api_key,
+            "dimension": self.dimensions,
             **kwargs,
         }
 
-        # Exclude api_key from cache identifier to avoid persisting secrets
-        # and to keep cache valid across key rotations.
-        cache_identifier = {
-            k: v for k, v in api_kwargs.items() if k != "api_key"
-        }
+        # Exclude api_key and isolate the cache identifier from SDK mutations.
+        cache_identifier = copy.deepcopy(
+            {k: v for k, v in api_kwargs.items() if k != "api_key"},
+        )
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
@@ -465,7 +473,13 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 f"DashScope multimodal embedding API error: {res}",
             )
 
-        embeddings = [entry["embedding"] for entry in res.output["embeddings"]]
+        embeddings = [
+            entry["embedding"]
+            for _, entry in sorted(
+                enumerate(res.output["embeddings"]),
+                key=lambda item: item[1].get("index", item[0]),
+            )
+        ]
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=cache_identifier,
