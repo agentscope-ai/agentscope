@@ -229,10 +229,9 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(
-            chunks[0].content[0].text,
-            "x" * 30000 + "\n... (output truncated)",
-        )
+        notice, output = chunks[0].content[0].text.split("\n", 1)
+        self.assertIn("the first 30000 of 30001 characters", notice)
+        self.assertEqual(output, "x" * 30000)
 
     async def test_success_includes_stderr(self) -> None:
         """Preserve stderr even when the command exits successfully."""
@@ -273,11 +272,11 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
             )
         ]
 
-        suffix = "\n... (output truncated)"
         text = chunks[0].content[0].text
         self.assertEqual(chunks[0].state, "error")
-        self.assertTrue(text.endswith(suffix))
-        self.assertEqual(len(text), 30000 + len(suffix))
+        notice, output = text.split("\n", 1)
+        self.assertTrue(notice.startswith("[Output truncated"))
+        self.assertEqual(len(output), 30000)
 
     async def test_backend_exception_returns_error_chunk(self) -> None:
         """Convert unexpected backend failures into tool errors."""
