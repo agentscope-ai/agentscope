@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """OpenAI TTS model implementation using the Audio Speech API."""
 import base64
+from collections.abc import Mapping
 from datetime import datetime
 from typing import (
     Any,
@@ -159,6 +160,16 @@ class OpenAITTSModel(TTSModelBase):
         if self.parameters.instructions:
             request_kwargs["instructions"] = self.parameters.instructions
         request_kwargs.update(kwargs)
+
+        stream_format = request_kwargs.get("stream_format")
+        extra_body = request_kwargs.get("extra_body")
+        if isinstance(extra_body, Mapping):
+            stream_format = extra_body.get("stream_format", stream_format)
+        if stream_format == "sse":
+            raise ValueError(
+                "OpenAITTSModel does not decode stream_format='sse'. "
+                "Use stream_format='audio' instead.",
+            )
 
         media_type = _MEDIA_TYPES.get(
             request_kwargs["response_format"],

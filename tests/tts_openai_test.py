@@ -198,6 +198,32 @@ class TestOpenAITTSModel(IsolatedAsyncioTestCase):
 
         self.assertEqual(result.content.source.media_type, _MEDIA_TYPE_WAV)
 
+    async def test_rejects_sse_before_requesting_speech(self) -> None:
+        """SSE events cannot be returned as raw audio in either mode."""
+        for stream in (False, True):
+            for options in (
+                {"stream_format": "sse"},
+                {
+                    "stream_format": "audio",
+                    "extra_body": {"stream_format": "sse"},
+                },
+            ):
+                with self.subTest(stream=stream, options=options):
+                    client = _make_mock_client(b"", [])
+                    model = OpenAITTSModel(
+                        credential=OpenAICredential(api_key="test"),
+                        model="gpt-4o-mini-tts",
+                        stream=stream,
+                    )
+                    model.client = client
+
+                    with self.assertRaisesRegex(ValueError, "stream_format"):
+                        await model.synthesize("Hello", **options)
+
+                    speech = client.audio.speech
+                    speech.create.assert_not_called()
+                    speech.with_streaming_response.create.assert_not_called()
+
     async def test_per_call_format_controls_media_type(self) -> None:
         """Both output modes label audio using the effective API format."""
         for stream in (False, True):
