@@ -372,6 +372,7 @@ class KnowledgeBase:
                 vector=vector,
                 document_id=document_id,
                 chunk=chunk,
+                scope=self._metadata_filter,
             )
             for vector, chunk in zip(response.embeddings, chunks)
         ]

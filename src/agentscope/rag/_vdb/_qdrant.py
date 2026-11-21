@@ -22,6 +22,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _record_identity_key,
 )
 from .._document import Chunk
 
@@ -193,9 +194,10 @@ class QdrantStore(VectorStoreBase):
         can remove all records of one document.
 
         Point IDs are derived deterministically from
-        ``(document_id, chunk_index)`` so that re-indexing the same
-        document after a mid-pipeline crash upserts over the previous
-        records instead of duplicating them.
+        ``(document_id, chunk_index)`` (and the record's scope when
+        scoped) so that re-indexing the same document after a
+        mid-pipeline crash upserts over the previous records instead of
+        duplicating them, without colliding across scopes.
 
         Args:
             collection (`str`):
@@ -226,10 +228,9 @@ class QdrantStore(VectorStoreBase):
 
     @staticmethod
     def _point_id(record: VectorRecord) -> str:
-        """Deterministic point ID for ``(document_id, chunk_index)``.
+        """Derive the point ID from the document, chunk, and scope.
 
-        ``\0`` separates the fields because it cannot occur in either,
-        so no pair can collide with another. Re-inserting the same
+        Re-inserting the same
         chunk therefore upserts in place — the idempotency the indexing
         pipeline relies on when it retries after a crash.
 
@@ -241,7 +242,7 @@ class QdrantStore(VectorStoreBase):
             `str`:
                 A UUIDv5 string (Qdrant requires UUID-shaped IDs).
         """
-        raw = f"{record.document_id}\0{record.chunk.chunk_index}"
+        raw = _record_identity_key(record)
         return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
     async def delete(
