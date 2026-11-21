@@ -172,11 +172,69 @@ class ToolContext(BaseModel):
         ]
 
 
+def _numeric_task_id(task_id: str) -> int | None:
+    """Return a base-10 task id, or ``None`` when it is not an integer."""
+    try:
+        return int(task_id)
+    except (TypeError, ValueError):
+        return None
+
+
 class TaskContext(BaseModel):
-    """The task context."""
+    """The task context.
+
+    ``task_id_high_water`` is the highest numeric task id allocated in this
+    context. Deleting a task does not lower it, so an allocated id is never
+    reused. States saved before this field existed omit it. On load the mark
+    is raised to the highest numeric id still present. Ids that were already
+    deleted before the field existed are not recorded and may be issued again.
+    """
 
     tasks: list[Task] = Field(default_factory=lambda: [])
     """The task context."""
+
+    task_id_high_water: int = 0
+    """Highest numeric task id allocated in this context.
+
+    ``0`` means no numeric id has been allocated yet. The next id is one
+    greater than both this mark and any numeric id still in ``tasks``.
+    """
+
+    @model_validator(mode="after")
+    def _initialize_task_id_high_water(self) -> "TaskContext":
+        """Raise a missing or low mark up to the surviving numeric ids.
+
+        Older saved states have no mark. Initializing from the tasks that
+        are still stored keeps later ids above those tasks. The mark is
+        never lowered, including when every task has been deleted.
+        """
+        self._sync_task_id_high_water()
+        return self
+
+    def _sync_task_id_high_water(self) -> int:
+        """Raise the mark to cover surviving numeric ids and return it."""
+        observed = max(self.task_id_high_water, 0)
+        for task in self.tasks:
+            numeric_id = _numeric_task_id(task.id)
+            if numeric_id is not None and numeric_id > observed:
+                observed = numeric_id
+        self.task_id_high_water = observed
+        return observed
+
+    def allocate_task_id(self) -> str:
+        """Allocate a numeric task id this context has not issued.
+
+        Non-numeric ids, such as legacy UUIDs, are ignored. The mark
+        advances to the issued id and stays there after the task is deleted.
+
+        Returns:
+            `str`:
+                Decimal id above the high-water mark and any numeric id
+                still present.
+        """
+        next_id = self._sync_task_id_high_water() + 1
+        self.task_id_high_water = next_id
+        return str(next_id)
 
 
 class ReplyContext(BaseModel):
