@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import io
 import posixpath
+import stat
 import tarfile
 from typing import Any
 
@@ -169,11 +170,74 @@ class DockerBackend(BackendBase):
             tar.close()
         raise FileNotFoundError(f"not found in container: {path}")
 
+    async def _get_write_metadata(
+        self,
+        path: str,
+    ) -> tuple[int, int, int] | None:
+        """Read access bits and numeric ownership of an existing regular file.
+
+        Prefer stat to avoid downloading the old contents. Images without
+        a compatible stat command can still provide metadata via Docker's
+        archive API. Do not follow the final symlink: put_archive replaces it.
+        """
+        from aiodocker import exceptions as aiodocker_exceptions
+
+        try:
+            result = await self.exec_shell(
+                ["stat", "-c", "%f %u %g", "--", path],
+            )
+        except aiodocker_exceptions.DockerError:
+            result = None
+
+        if result is not None and result.ok():
+            try:
+                mode_text, uid_text, gid_text = result.stdout.split()
+                mode = int(mode_text, 16)
+                uid, gid = int(uid_text), int(gid_text)
+            except ValueError:
+                pass
+            else:
+                known_types = (
+                    stat.S_IFREG,
+                    stat.S_IFDIR,
+                    stat.S_IFLNK,
+                    stat.S_IFCHR,
+                    stat.S_IFBLK,
+                    stat.S_IFIFO,
+                    stat.S_IFSOCK,
+                )
+                if (
+                    0 <= mode <= 0xFFFF
+                    and stat.S_IFMT(mode) in known_types
+                    and uid >= 0
+                    and gid >= 0
+                ):
+                    if stat.S_ISREG(mode):
+                        return mode & 0o777, uid, gid
+                    return None
+
+        try:
+            archive = await self._container.get_archive(path)
+        except aiodocker_exceptions.DockerError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+        with archive:
+            member = archive.next()
+            if member is None or member.name != posixpath.basename(path):
+                raise OSError(f"Invalid metadata archive for {path}")
+            if member.isfile():
+                return member.mode & 0o777, member.uid, member.gid
+        return None
+
     async def write_file(self, path: str, data: bytes) -> None:
         """Write raw bytes to a file inside the container.
 
         Creates the parent directory first since ``put_archive``
-        requires it to exist.
+        requires it to exist. Existing regular files keep their ordinary
+        access permissions and numeric ownership. Special permission bits
+        are cleared, and new files use the archive defaults (mode 0644).
 
         Args:
             path (`str`):
@@ -185,9 +249,16 @@ class DockerBackend(BackendBase):
         name = posixpath.basename(path)
 
         await self.exec_shell(["mkdir", "-p", parent])
+        # Docker cleans archive paths lexically and resolves relative paths
+        # from the container root, independently of the exec working directory.
+        metadata = await self._get_write_metadata(
+            posixpath.normpath(posixpath.join("/", parent, name)),
+        )
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w") as tf:
             info = tarfile.TarInfo(name=name)
             info.size = len(data)
+            if metadata is not None:
+                info.mode, info.uid, info.gid = metadata
             tf.addfile(info, io.BytesIO(data))
         await self._container.put_archive(parent, buf.getvalue())
