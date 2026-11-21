@@ -27,7 +27,8 @@ import uuid
 
 from sandbox_test_support import CheckoutWheelTestCase
 
-from agentscope.tool import ExecResult
+from agentscope.state import AgentState
+from agentscope.tool import Edit, ExecResult, Read
 from agentscope.workspace import DockerWorkspace, DockerBackend
 from agentscope.workspace._docker._make_dockerfile import CONTAINER_WORKDIR
 
@@ -155,6 +156,83 @@ class TestDockerBackend(CheckoutWheelTestCase):
         """Reading a non-existent file raises ``FileNotFoundError``."""
         with self.assertRaises(FileNotFoundError):
             await self.backend.read_file(f"{CONTAINER_WORKDIR}/nope.txt")
+
+    async def test_edit_preserves_executable_and_private_file_metadata(
+        self,
+    ) -> None:
+        """Read/Edit keep executable scripts and private files usable."""
+        script = f"{CONTAINER_WORKDIR}/editable-script.sh"
+        private = f"{CONTAINER_WORKDIR}/private.txt"
+        await self.backend.write_file(script, b"#!/bin/sh\necho before\n")
+        await self.backend.write_file(private, b"before\n")
+        for command in (
+            ["chmod", "755", script],
+            ["chmod", "600", private],
+            ["chown", "1234:2345", script, private],
+        ):
+            self.assertTrue((await self.backend.exec_shell(command)).ok())
+
+        state = AgentState()
+        read = Read(backend=self.backend)
+        edit = Edit(backend=self.backend)
+        for path, mode in ((script, "755"), (private, "600")):
+            with self.subTest(path=path):
+                await read(file_path=path, _agent_state=state)
+                chunk = await edit(
+                    file_path=path,
+                    old_string="before",
+                    new_string="after",
+                    _agent_state=state,
+                )
+                self.assertEqual(chunk.state, "running")
+                metadata = await self.backend.exec_shell(
+                    ["stat", "-c", "%a %u %g", "--", path],
+                )
+                self.assertTrue(metadata.ok())
+                self.assertEqual(
+                    metadata.stdout.decode().strip(),
+                    f"{mode} 1234 2345",
+                )
+                self.assertIn(b"after", await self.backend.read_file(path))
+        executed = await self.backend.exec_shell([script])
+        self.assertTrue(executed.ok())
+        self.assertEqual(executed.stdout, b"after\n")
+
+    async def test_overwrite_metadata_follows_archive_path_normalization(
+        self,
+    ) -> None:
+        """A symlink followed by '..' must not supply another file's mode."""
+        directory_a = f"{CONTAINER_WORKDIR}/metadata-a"
+        directory_b = f"{CONTAINER_WORKDIR}/metadata-b"
+        destination = f"{directory_a}/file"
+        unrelated = f"{directory_b}/file"
+        await self.backend.write_file(destination, b"private")
+        await self.backend.write_file(unrelated, b"unrelated")
+        for command in (
+            ["mkdir", "-p", f"{directory_b}/child"],
+            ["ln", "-s", f"{directory_b}/child", f"{directory_a}/link"],
+            ["chmod", "600", destination],
+            ["chmod", "755", unrelated],
+            ["chown", "1234:2345", destination],
+            ["chown", "3456:4567", unrelated],
+        ):
+            self.assertTrue((await self.backend.exec_shell(command)).ok())
+
+        await self.backend.write_file(f"{directory_a}/link/../file", b"new")
+        for path, content, expected_metadata in (
+            (destination, b"new", "600 1234 2345"),
+            (unrelated, b"unrelated", "755 3456 4567"),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(await self.backend.read_file(path), content)
+                metadata = await self.backend.exec_shell(
+                    ["stat", "-c", "%a %u %g", "--", path],
+                )
+                self.assertTrue(metadata.ok())
+                self.assertEqual(
+                    metadata.stdout.decode().strip(),
+                    expected_metadata,
+                )
 
     # ── derived filesystem helpers (shell-based) ───────────────────
 
