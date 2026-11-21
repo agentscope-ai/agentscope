@@ -4075,6 +4075,7 @@ class Agent:
                         # Keep the block id so replay groups one payload.
                         block_id=block.id,
                         media_type=block.source.media_type,
+                        name=block.name,
                         data=block.source.data,
                     )
                 elif isinstance(block.source, URLSource):
@@ -4083,5 +4084,6 @@ class Agent:
                         tool_call_id=tool_call_id,
                         block_id=block.id,
                         media_type=block.source.media_type,
+                        name=block.name,
                         url=str(block.source.url),
                     )
