@@ -249,6 +249,11 @@
 		"copyMarkdown": "复制 Markdown 原文"
 	},
 	"chat": {
+		"toolLogin": {
+			"cancel": "取消操作",
+			"working": "正在登录…",
+			"submitError": "登录表单提交失败。"
+		},
 		"ttsFailed": "语音生成失败，文字回复继续。",
 		"inputPlaceholder": "输入消息...",
 		"confirmToolCall": "允许此操作？",

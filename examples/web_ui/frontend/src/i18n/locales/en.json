@@ -249,6 +249,11 @@
 		"copyMarkdown": "Copy Markdown source"
 	},
 	"chat": {
+		"toolLogin": {
+			"cancel": "Cancel operation",
+			"working": "Signing in…",
+			"submitError": "Could not submit the login form."
+		},
 		"ttsFailed": "Speech generation failed. Text replies will continue.",
 		"inputPlaceholder": "Type a message...",
 		"confirmToolCall": "Allow this action?",

@@ -37,6 +37,8 @@ from ._router import (
     sop_router,
     workspace_router,
 )
+from ._router._tool_login import tool_login_router
+from .tool_login import ToolLogin
 from ._types import (
     AgentMiddlewareFactory,
     AgentToolFactory,
@@ -132,6 +134,7 @@ def create_app(
     extra_middlewares: list[FastAPIMiddleware] | None = None,
     extra_agent_middlewares: AgentMiddlewareFactory | None = None,
     extra_agent_tools: AgentToolFactory | None = None,
+    tool_login: ToolLogin | None = None,
     tool_offload_timeout_secs: float | None = 10.0,
     custom_subagent_templates: list[SubAgentTemplate] | None = None,
     custom_agent_cls: Type[Agent] | None = None,
@@ -279,6 +282,8 @@ def create_app(
             availability depends on the caller (per-tenant integrations,
             user-specific credentials).  The returned tools are added to
             the workspace-derived tools in the toolkit's ``"basic"`` group.
+        tool_login (`ToolLogin | None`, optional):
+            Private interactive authentication for enabled service tools.
         custom_subagent_templates (`list[SubAgentTemplate] | None`, optional):
             Reusable blueprints for sub-agent creation within teams.
             Each template defines a sub-agent *type* (e.g. ``"researcher"``,
@@ -345,6 +350,7 @@ def create_app(
     app.state.knowledge_base_manager = knowledge_base_manager
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
+    app.state.tool_login = tool_login
     app.state.tool_offload_timeout_secs = tool_offload_timeout_secs
     app.state.custom_agent_cls = custom_agent_cls
     app.state.resource_access_policy = (
@@ -450,6 +456,7 @@ def create_app(
         mcp_router,
         schedule_router,
         session_router,
+        tool_login_router,
         skill_router,
         sop_router,
         workspace_router,

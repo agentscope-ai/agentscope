@@ -16,7 +16,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { ChatViewport } from './ChatViewport';
-import type { SessionRecord, SessionSourceKind } from '@/api';
+import type { ChatModelConfig, SessionRecord, SessionSourceKind } from '@/api';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
@@ -103,13 +103,15 @@ const ChatPageInner = () => {
 	}>();
 	const { t } = useTranslation();
 	const { agents, refetch: refetchAgents, remove: removeAgent } = useAgents();
+	const selectedAgent = agents.find((a) => a.id === urlAgentId) ?? null;
 	const {
 		sessions,
+		loading: sessionsLoading,
 		refetch: refetchSessions,
 		create: createSession,
 		update: updateSession,
 		remove: removeSession,
-	} = useSessions(urlAgentId ?? null);
+	} = useSessions(selectedAgent?.id ?? null);
 
 	const { isMobile, setOpen, setOpenMobile } = useSidebar();
 	const [editOpen, setEditOpen] = useState(false);
@@ -118,8 +120,8 @@ const ChatPageInner = () => {
 	const [renameSession, setRenameSession] = useState<SessionRecord | null>(null);
 	const [deleteSessionOpen, setDeleteSessionOpen] = useState(false);
 	const [sessionToDelete, setSessionToDelete] = useState<SessionRecord | null>(null);
+	const [creatingSession, setCreatingSession] = useState(false);
 
-	const selectedAgent = agents.find((a) => a.id === urlAgentId) ?? null;
 	const currentView = sessions.find((v) => v.session.id === urlSessionId) ?? null;
 	// Show a per-origin icon only when sessions actually mix sources —
 	// a uniform list needs no disambiguation.
@@ -147,20 +149,19 @@ const ChatPageInner = () => {
 	// from another page, or from a new tab — reopens it instead of
 	// making them pick the same pair again.
 	useEffect(() => {
-		if (!urlAgentId || !urlSessionId) return;
-		localStorage.setItem(LAST_AGENT_KEY, urlAgentId);
+		if (!selectedAgent || !urlSessionId) return;
+		localStorage.setItem(LAST_AGENT_KEY, selectedAgent.id);
 		localStorage.setItem(LAST_SESSION_KEY, urlSessionId);
-	}, [urlAgentId, urlSessionId]);
+	}, [selectedAgent, urlSessionId]);
 
-	// Redirect: URL is missing an agent → reopen the last one viewed,
-	// falling back to the first, and rewrite the URL in-place (replace
-	// so we don't pollute history).
+	// Restore the last available agent when opening a bare or stale chat URL.
 	useEffect(() => {
-		if (urlAgentId || agents.length === 0) return;
+		if (selectedAgent || agents.length === 0) return;
 		const remembered = localStorage.getItem(LAST_AGENT_KEY);
 		const agent = agents.find((a) => a.id === remembered) ?? agents[0];
-		navigate(`/chat/${agent.id}`, { replace: true });
-	}, [agents, urlAgentId, navigate]);
+		const sessionPath = urlSessionId ? `/${urlSessionId}` : '';
+		navigate(`/chat/${agent.id}${sessionPath}`, { replace: true });
+	}, [agents, selectedAgent, urlSessionId, navigate]);
 
 	// Redirect: URL has an agent but no session, or its sessionId no
 	// longer exists for this agent → reopen the last session viewed
@@ -187,22 +188,28 @@ const ChatPageInner = () => {
 	 * whatever ChatViewport's auto-pick happens to land on. Navigates
 	 * to the freshly created session.
 	 */
-	const handleCreateSession = async () => {
-		if (!urlAgentId) return;
+	const handleCreateSession = async (model?: ChatModelConfig) => {
+		if (!urlAgentId || creatingSession) return;
 		const seedConfig = currentView?.session.config ?? sessions[0]?.session.config;
-		const res = await createSession({
-			agent_id: urlAgentId,
-			...(seedConfig?.chat_model_config
-				? { chat_model_config: seedConfig.chat_model_config }
-				: {}),
-			...(seedConfig?.fallback_chat_model_config
-				? { fallback_chat_model_config: seedConfig.fallback_chat_model_config }
-				: {}),
-			...(seedConfig?.realtime_model_config
-				? { realtime_model_config: seedConfig.realtime_model_config }
-				: {}),
-		});
-		navigate(`/chat/${urlAgentId}/${res.session_id}`);
+		const chatModel = model ?? seedConfig?.chat_model_config;
+		setCreatingSession(true);
+		try {
+			const res = await createSession({
+				agent_id: urlAgentId,
+				...(chatModel ? { chat_model_config: chatModel } : {}),
+				...(seedConfig?.fallback_chat_model_config
+					? { fallback_chat_model_config: seedConfig.fallback_chat_model_config }
+					: {}),
+				...(seedConfig?.realtime_model_config
+					? { realtime_model_config: seedConfig.realtime_model_config }
+					: {}),
+			});
+			navigate(`/chat/${urlAgentId}/${res.session_id}`);
+		} catch {
+			// The API client displays the error.
+		} finally {
+			setCreatingSession(false);
+		}
 	};
 
 	const handleAgentDeleted = async () => {
@@ -308,7 +315,11 @@ const ChatPageInner = () => {
 						<SidebarGroupContent className="flex min-h-0 flex-1 flex-col">
 							<SidebarGroup>
 								<SidebarMenu className="mb-2">
-									<Button id="tour-create-session" onClick={handleCreateSession}>
+									<Button
+										id="tour-create-session"
+										disabled={creatingSession}
+										onClick={() => void handleCreateSession()}
+									>
 										<Plus />
 										{t('chat.newSession')}
 									</Button>
@@ -521,6 +532,12 @@ const ChatPageInner = () => {
 				<ChatViewport
 					agentId={effectiveAgentId}
 					sessionId={effectiveSessionId}
+					onStartSession={
+						selectedAgent && !sessionsLoading && sessions.length === 0
+							? handleCreateSession
+							: undefined
+					}
+					startingSession={creatingSession}
 					onSessionsChanged={refetchSessions}
 				/>
 			</div>
