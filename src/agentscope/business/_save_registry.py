@@ -32,6 +32,10 @@ def _actions_for(plan, inputs):
     actions = []
     for step in plan["actions"]:
         action = dict(step)
+        if (condition := action.pop("when", None)) and inputs.get(
+            condition,
+        ) in (None, ""):
+            continue
         if field := action.pop("field", None):
             value = inputs.get(field)
             if value is None:
@@ -73,6 +77,7 @@ class SaveBusinessRegistry:
             actions: list[dict],
             missing: dict,
             complete: dict,
+            counterexamples: list[dict] | None = None,
         ) -> dict:
             """生成并验收 ERP 新增草稿及回查，成功后注册到原会话。
 
@@ -88,12 +93,18 @@ class SaveBusinessRegistry:
                     也可用 button 或 text 定位可见文字。value 是写入的文本或键名。
                     文本录入步骤可用 field 代替 value 以绑定业务输入；
                     按文字点击也可用 field 代替 text。wait 的 state 可用 hidden。
+                    when 可绑定字段，字段缺填时跳过该页面步骤。
                 missing: 缺填样本，含 inputs 对象和原页面具体 actions。
                 complete: 补齐样本，使用同一份业务数据补全必填项，结构同 missing。
+                counterexamples: Agent 从源码和 API 自行提出的 1 至 5 个拒绝样本。
+                    各含 name、rule、evidence、inputs 和 actions。evidence 包含
+                    源码相对 path 与行号 line。以补齐样本为基线，改变须被拒绝的输入。
+                    原客户端或生成工具尝试写入都会阻止注册，反例不发送到 ERP。
             """
             return await self.register(
                 directory, business, client_source, client_route,
                 save_route, detail_route, issue_selector, actions, missing, complete,
+                counterexamples,
             )
 
         return [
@@ -152,9 +163,74 @@ class SaveBusinessRegistry:
             ),
         ]
 
+    def _validate_counterexamples(self, cases, fields, complete):
+        if not isinstance(cases, list) or not 1 <= len(cases) <= 5:
+            raise ValueError("注册前请从源码和 API 提交 1 至 5 个应被拒绝的反例。")
+        names = set()
+        variants = set()
+        for case in cases:
+            name, rule = case.get("name"), case.get("rule")
+            if not isinstance(name, str) or not name.strip() or name in names:
+                raise ValueError("反例须有唯一名称。")
+            if not isinstance(rule, str) or not rule.strip():
+                raise ValueError("请说明反例违反的业务规则。")
+            evidence = case.get("evidence", {})
+            path, line = evidence.get("path"), evidence.get("line")
+            if not isinstance(path, str) or type(line) is not int or line < 1:
+                raise ValueError("反例须附源码路径与行号。")
+            source = (self.source / path).resolve()
+            if (
+                not source.is_relative_to(self.source)
+                or source.suffix not in {".vue", ".js", ".ts", ".mjs", ".java", ".json"}
+                or not source.is_file()
+                or line > len(source.read_text().splitlines())
+            ):
+                raise ValueError("反例的源码依据无法复核。")
+            inputs = case.get("inputs")
+            if (
+                not isinstance(inputs, dict)
+                or set(inputs) - set(fields)
+                or inputs == complete["inputs"]
+            ):
+                raise ValueError("反例必须改变补齐样本的已绑定业务输入。")
+            actions = case.get("actions")
+            if not isinstance(actions, list) or not actions or actions[-1].get("action") != "click":
+                raise ValueError("反例必须在原客户端实际点击保存。")
+            variant = json.dumps(inputs, sort_keys=True)
+            if variant in variants:
+                raise ValueError("反例须使用不同的输入。")
+            names.add(name)
+            variants.add(variant)
+
+    async def _check_counterexamples(self, plan, cases):
+        observations = []
+        for case in cases:
+            original = await self.capture(plan, case["actions"], False)
+            generated = await self.capture(
+                plan, _actions_for(plan, case["inputs"]), False,
+            )
+            blocked = (
+                original.get("attempted") is False
+                and generated.get("attempted") is False
+                and bool(original.get("issue"))
+                and original["issue"] == generated.get("issue")
+            )
+            observations.append({
+                "name": case["name"],
+                "rule": case["rule"],
+                "evidence": case["evidence"],
+                "passed": blocked,
+                "originalAttemptedSave": original.get("attempted"),
+                "generatedAttemptedSave": generated.get("attempted"),
+                "originalIssue": original.get("issue", ""),
+                "generatedIssue": generated.get("issue", ""),
+                "erpWrites": 0,
+            })
+        return observations
+
     async def register(
         self, directory, business, source_file, client_route, save_route,
-        detail_route, issue_selector, actions, missing, complete,
+        detail_route, issue_selector, actions, missing, complete, counterexamples=None,
     ):
         if not business.strip() or not re.fullmatch(r"/[\w/-]+", client_route):
             raise ValueError("需要业务名称及原客户端相对路由")
@@ -181,6 +257,8 @@ class SaveBusinessRegistry:
         fields = sorted({step["field"] for step in actions if step.get("field")})
         if not fields or not all(field.isidentifier() for field in fields):
             raise ValueError("需要将页面操作绑定到命名的业务字段")
+        if any(step.get("when") and step["when"] not in fields for step in actions):
+            raise ValueError("页面步骤的执行条件须绑定到业务字段。")
         for case in (missing, complete):
             if set(case["inputs"]) - set(fields):
                 raise ValueError("验收数据包含未绑定的业务字段")
@@ -193,6 +271,7 @@ class SaveBusinessRegistry:
             if value not in (None, "")
         ):
             raise ValueError("补齐组应保留缺填组已有的业务数据")
+        self._validate_counterexamples(counterexamples, fields, complete)
         plan = {
             "business": business,
             "clientRoute": client_route,
@@ -210,15 +289,32 @@ class SaveBusinessRegistry:
             raise ValueError("OpenAPI 操作 ID 超出工具名限制")
         path = directory / f"{plan['saveTool']}.json"
         checkpoint = directory / f".{plan['saveTool']}.pending"
+        acceptance = hashlib.sha256(json.dumps(
+            [missing, complete, counterexamples], ensure_ascii=False, sort_keys=True,
+        ).encode()).hexdigest()
         async with self.lock:
-            if path.exists():
-                return json.loads(path.read_text())["verification"]
             if checkpoint.exists():
                 return {
                     "registered": False,
                     "stage": "verify_prior_save",
                     "message": "此前已开始写入验收。请回查已知单号，避免重复保存。",
                     "checkpoint": json.loads(checkpoint.read_text()),
+                }
+            if path.exists():
+                current = json.loads(path.read_text())
+                if current["plan"] == plan and current["verification"].get(
+                    "acceptanceSha256",
+                ) == acceptance:
+                    return current["verification"]
+
+            observations = await self._check_counterexamples(plan, counterexamples)
+            if not all(case["passed"] for case in observations):
+                return {
+                    "registered": False,
+                    "stage": "counterexamples",
+                    "message": "反例未在保存前被两端同样拦截，已阻止注册。",
+                    "counterexamples": observations,
+                    "erpWrites": 0,
                 }
             original = await self.capture(plan, missing["actions"], False)
             generated = await self.capture(plan, _actions_for(plan, missing["inputs"]), False)
@@ -278,6 +374,8 @@ class SaveBusinessRegistry:
             report = {
                 "registered": True,
                 "business": business,
+                "acceptanceSha256": acceptance,
+                "counterexamples": observations,
                 "missing": {"issue": original["issue"], "erpWrites": 0},
                 "complete": {
                     "originalId": original_saved["id"],

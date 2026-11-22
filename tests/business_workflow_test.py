@@ -54,11 +54,12 @@ class WorkflowTest(unittest.TestCase):
                 {"action": "click", "text": "保存"},
             ]
             captures = []
+            validate_missing = True
 
             async def capture(_plan, actions, live):
                 captures.append(live)
                 purpose = next((a["value"] for a in actions if a["action"] == "fill"), None)
-                if not purpose:
+                if not purpose and validate_missing:
                     return {"attempted": False, "issue": "请填写用途"}
                 request = {"purpose": purpose}
                 if not live:
@@ -76,19 +77,49 @@ class WorkflowTest(unittest.TestCase):
                 self.source, self.openapi, self.root / "published", capture, detail
             )
             register = registry.tools("owner", "agent")[0]
-            report = await register(
+            missing = {"inputs": {}, "actions": cases[1:]}
+            counterexamples = [{
+                "name": "Missing purpose",
+                "rule": "A card must have a purpose",
+                "evidence": {"path": "Card.vue", "line": 2},
+                **missing,
+            }]
+            request = dict(
                 business="Receiving", client_source="Card.vue", client_route="/receiving",
                 save_route="/v3/cards", detail_route="/v3/cards/{id}",
                 issue_selector=".save-issue", actions=cases,
-                missing={"inputs": {}, "actions": cases[1:]},
+                missing=missing,
                 complete={
                     "inputs": {"purpose": "测试"},
                     "actions": [{"action": "fill", "selector": "#purpose", "value": "测试"}, cases[1]],
                 },
             )
+            with self.assertRaisesRegex(ValueError, "提交 1 至 5 个"):
+                await register(**request, counterexamples=[])
+            self.assertEqual(captures, [])
+
+            # Both clients mistakenly make the same save attempt. Parity
+            # alone would accept this, but the counterexample requires zero.
+            validate_missing = False
+            denied = await register(**request, counterexamples=counterexamples)
+            blocked = json.loads(denied.content[0].text)
+            self.assertFalse(blocked["registered"])
+            self.assertEqual(blocked["stage"], "counterexamples")
+            self.assertTrue(blocked["counterexamples"][0]["originalAttemptedSave"])
+            self.assertTrue(blocked["counterexamples"][0]["generatedAttemptedSave"])
+            self.assertEqual(captures, [False, False])
+            self.assertFalse(list((self.root / "published").rglob("*")))
+
+            validate_missing = True
+            captures.clear()
+            report = await register(**request, counterexamples=counterexamples)
             result = json.loads(report.content[0].text)
             self.assertTrue(result["registered"])
-            self.assertEqual(captures, [False, False, False, False, True, True])
+            self.assertTrue(result["counterexamples"][0]["passed"])
+            self.assertEqual(captures, [False] * 6 + [True, True])
+            repeated = await register(**request, counterexamples=counterexamples)
+            self.assertEqual(json.loads(repeated.content[0].text), result)
+            self.assertEqual(captures.count(True), 2)
             self.assertEqual(len(registry.tools("owner", "agent")), 3)
             self.assertEqual(len(registry.tools("owner", "another")), 1)
 
