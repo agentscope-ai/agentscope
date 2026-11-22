@@ -20,6 +20,7 @@ from pydantic import (
 
 from ._builtin import ResetTools, SkillViewer
 from ._base import ToolBase
+from ._business_search import BusinessToolSearch, PublishedBusinessTool
 from ._response import ToolResponse, ToolChunk
 from ..skill import SkillLoaderBase, Skill
 from ._types import RegisteredTool
@@ -171,6 +172,8 @@ class Toolkit:
     async def get_tool_schemas(
         self,
         groups: list[str] | None = None,
+        *,
+        state: AgentState | None = None,
     ) -> list[dict]:
         """Get the JSON schemas of the currently available tool functions
         based on the given activated tool groups.
@@ -182,7 +185,11 @@ class Toolkit:
             groups (`list[str] | None`, optional):
                 A list of group names to filter the tool function. The "basic"
                 group will always be included regardless of the filter. If not
-                provided, only the "basic" group will be included.
+                provided, use the groups in state, or just "basic" if no
+                state is supplied.
+            state (`AgentState | None`, optional):
+                In a text conversation, expose the search entry and the
+                session's selected business tools. Omit for a static schema list.
 
         Example:
             .. code-block:: JSON
@@ -216,9 +223,15 @@ class Toolkit:
         function_schemas = []
 
         # Get all available tools
+        if groups is None and state is not None:
+            groups = state.tool_context.activated_groups
         tools_dict = await self._get_available_tools(groups)
-        for tool in tools_dict.values():
-            function_schemas.append(tool.get_tool_schema())
+        for entry in tools_dict.values():
+            tool = entry.tool
+            if isinstance(tool, (BusinessToolSearch, PublishedBusinessTool)):
+                if not await tool.show_schema(state):
+                    continue
+            function_schemas.append(entry.get_tool_schema())
 
         return function_schemas
 
@@ -564,6 +577,20 @@ class Toolkit:
                     group=group.name,
                 )
 
+        catalog = [
+            entry.tool for entry in available_tools.values()
+            if isinstance(entry.tool, PublishedBusinessTool)
+            and entry.tool.business
+        ]
+        if catalog:
+            name = "search_business_tools"
+            suffix = 1
+            while name in available_tools:
+                suffix += 1
+                name = f"search_business_tools_{suffix}"
+            available_tools[name] = RegisteredTool(
+                tool=BusinessToolSearch(name, catalog),
+            )
         return available_tools
 
     async def check_tool_available(

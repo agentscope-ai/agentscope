@@ -3439,9 +3439,7 @@ class Agent:
             await self.toolkit.add_tool(self._compression_tool)
 
         # Get the tools schemas
-        tools = await self.toolkit.get_tool_schemas(
-            self.state.tool_context.activated_groups,
-        )
+        tools = await self.toolkit.get_tool_schemas(state=self.state)
 
         return {
             "messages": messages,

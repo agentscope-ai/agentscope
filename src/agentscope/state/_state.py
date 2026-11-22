@@ -43,6 +43,9 @@ class ToolContext(BaseModel):
     """The names of the activated tool groups, each group contains a set of
     tools."""
 
+    selected_business_tools: list[str] = Field(default_factory=list)
+    """Business schemas selected by the latest search in this session."""
+
     async def get_cache(
         self,
         file_path: str,

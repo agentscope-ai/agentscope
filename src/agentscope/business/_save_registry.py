@@ -11,6 +11,7 @@ from pathlib import Path
 
 from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import FunctionTool
+from agentscope.tool._business_search import PublishedBusinessTool
 
 from ._business import bind_operation, write_definition
 from ._save_operation import SaveOperations
@@ -287,8 +288,13 @@ class SaveBusinessRegistry:
                 return await operations.recover(operation_id, plan, self.read_detail)
             return await self.read_detail(plan["detailRoute"], receipt_id)
 
-        save_tool = FunctionTool(
+        # Keep legacy read-by-ID calls working. Only discover records bound
+        # to the current ledger in a new text conversation.
+        same_ledger = self.target_label and plan.get("targetLabel") == self.target_label
+        business = plan["business"] if same_ledger else None
+        save_tool = PublishedBusinessTool(
             save,
+            business=business, action="save",
             name=plan["saveTool"],
             description=f"新增{plan['business']}草稿并回查。保留原客户端的字段校验。"
             "每次调用都会申请新增一张，仅在用户要求新增时使用。恢复或重试请用回查工具和原操作 ID。",
@@ -309,8 +315,9 @@ class SaveBusinessRegistry:
         save_tool.bind_confirmation = bind_confirmation
         return [
             save_tool,
-            FunctionTool(
+            PublishedBusinessTool(
                 read,
+                business=business, action="readback",
                 name=plan["readTool"],
                 description=f"按 operation_id 恢复{plan['business']}保存结果，或按 receipt_id 回查单据。只读。",
                 is_read_only=True,

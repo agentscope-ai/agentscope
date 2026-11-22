@@ -12,6 +12,7 @@ import httpx
 
 from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import FunctionTool
+from agentscope.tool._business_search import PublishedBusinessTool
 
 from ._business import as_tool, build, preview, write_definition
 
@@ -125,21 +126,29 @@ class BusinessRegistry:
 
         return [
             FunctionTool(register_business_tool, permission=_ALLOW, is_concurrency_safe=False),
-            *(
-                self._runtime(json.loads(file.read_text())["artifact"])
-                for file in sorted(directory.glob("*.json"))
-            ),
+            *(self._published_tool(file) for file in sorted(directory.glob("*.json"))),
         ]
 
-    def _runtime(self, artifact: dict) -> FunctionTool:
+    def _published_tool(self, path: Path) -> FunctionTool:
+        record = json.loads(path.read_bytes())
+        operation = record["artifact"]["operation"]
+        business = (
+            record.get("verification", {}).get("business")
+            or (operation.get("description") or "").partition("。")[0]
+            or operation["name"]
+        )
+        return self._runtime(record["artifact"], business)
+
+    def _runtime(self, artifact: dict, business: str) -> FunctionTool:
         async def invoke(**inputs):
             auth = self.get_read_auth() if self.get_read_auth else None
             token = await self.get_token() if auth is None else None
             return await as_tool(artifact, self.base_url, token, auth=auth)(**inputs)
 
         operation = artifact["operation"]
-        return FunctionTool(
+        return PublishedBusinessTool(
             invoke,
+            business=business, action="query",
             name=operation["name"],
             description=operation["description"],
             input_schema=artifact["inputSchema"],
@@ -174,7 +183,7 @@ class BusinessRegistry:
         api_prefix = urlsplit(self.base_url).path.rstrip("/")
         evidence = []
         requests = set()
-        invoke = self._runtime(artifact)
+        invoke = self._runtime(artifact, business)
         for sample in samples:
             capture = await self.capture(client_route, api_prefix + route_regex, sample["actions"])
             reference = capture["request"]
