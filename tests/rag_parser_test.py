@@ -3750,3 +3750,46 @@ class WordParserContentControlTest(IsolatedAsyncioTestCase):
             [(s.content.text, s.source, s.metadata) for s in wrapped],
             [(s.content.text, s.source, s.metadata) for s in plain],
         )
+
+
+class GuessImageMediaTypeTest(IsolatedAsyncioTestCase):
+    """Sniffing must not mislabel HEIC/HEIF bytes as JPEG.
+
+    This only fixes the fallback guess used when an embedded image has
+    no content type (e.g. an Office image part); it does not add HEIC
+    as a supported upload type.
+    """
+
+    def test_heic_signatures(self) -> None:
+        """HEIC/HEIF brands (heic/heix/mif1/msf1) get image/heic."""
+        from agentscope.rag._parser._utils import _guess_image_media_type
+
+        for brand in (b"heic", b"heix", b"mif1", b"msf1"):
+            with self.subTest(brand=brand):
+                self.assertEqual(
+                    _guess_image_media_type(
+                        b"\x00\x00\x00\x18ftyp" + brand + b"\x00" * 10,
+                    ),
+                    "image/heic",
+                )
+
+    def test_known_signatures_and_fallback_are_unchanged(self) -> None:
+        """PNG/JPEG/WebP still sniff correctly; unknown bytes stay JPEG."""
+        from agentscope.rag._parser._utils import _guess_image_media_type
+
+        self.assertEqual(
+            _guess_image_media_type(b"\x89PNG\r\n\x1a\n" + b"\x00" * 4),
+            "image/png",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"\xff\xd8\xff" + b"\x00" * 4),
+            "image/jpeg",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"RIFFxxxxWEBP" + b"\x00" * 4),
+            "image/webp",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"not an image at all"),
+            "image/jpeg",
+        )

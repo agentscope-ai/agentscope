@@ -44,6 +44,13 @@ def _guess_image_media_type(data: bytes) -> str:
     # WebP: ``RIFF`` at offset 0 + ``WEBP`` at offset 8.
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
+    # HEIC/HEIF: ``ftyp`` at offset 4 + a HEIC brand at offset 8.
+    if (
+        len(data) >= 12
+        and data[4:8] == b"ftyp"
+        and data[8:12] in (b"heic", b"heix", b"mif1", b"msf1")
+    ):
+        return "image/heic"
     return "image/jpeg"
 
 
