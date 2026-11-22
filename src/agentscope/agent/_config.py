@@ -418,7 +418,8 @@ class ReActConfig(BaseModel):
         strict=True,
         description=(
             "Maximum rounds in one auto-continued text reply, including the "
-            "last text-only summary. Leave empty for no total limit."
+            "last text-only summary. The model is reminded once when three "
+            "rounds remain. Leave empty for no total limit."
         ),
     )
 

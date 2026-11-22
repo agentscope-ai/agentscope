@@ -6,7 +6,7 @@ from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
-from utils import AnyString, MockModel
+from utils import AnyString, MockModel, track_hint_counts
 
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.model import ChatResponse
@@ -1669,7 +1669,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
     async def test_total_cap_survives_a_parked_parallel_round(self) -> None:
         self.agent.react_config.auto_continue = True
-        self.agent.react_config.max_total_iters = 3
+        self.agent.react_config.max_total_iters = 4
         self.agent.toolkit = Toolkit(tools=[MockExternalConcurrentTool()])
         calls = [
             ToolCallBlock(
@@ -1677,25 +1677,32 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 name=self.concurrent_tool_name,
                 input=self.tool_input_1,
             )
-            for i in range(3)
+            for i in range(4)
         ]
         self.model.set_responses([
             ChatResponse(content=calls[:1], is_last=True),
-            ChatResponse(content=calls[1:], is_last=True),
+            ChatResponse(content=calls[1:3], is_last=True),
+            ChatResponse(content=calls[3:], is_last=True),
             self.final_mock_responses,
         ])
+        reminders = self.enterContext(
+            track_hint_counts(self.model, "3 rounds remain"),
+        )
         await self.agent.reply(UserMsg("user", "run"))
         reply_id = self.agent.state.reply_id
         for i, call in enumerate(calls):
             # Each HTTP resumption may run on a fresh worker with only the
             # persisted state. The second round receives its results separately.
             snapshot = json.loads(self.agent.state.model_dump_json())
+            if i == 0:
+                # Resume a snapshot from before the reminder was introduced.
+                del snapshot["reply_context"]["total_iters_reminder_sent"]
             if i == 1:
-                # Older snapshots have only the regular iteration count.
+                # Older snapshots start from their saved iteration count.
                 del snapshot["reply_context"]["total_iters"]
             self.agent.state = AgentState.model_validate(snapshot)
             self.assertEqual(
-                self.agent.state.reply_context.total_iters, (0, 1, 1)[i],
+                self.agent.state.reply_context.total_iters, (0, 1, 1, 2)[i],
             )
             result = await self.agent.reply(
                 ExternalExecutionResultEvent(
@@ -1708,9 +1715,10 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     ],
                 ),
             )
-            self.assertEqual(self.model.cnt, (2, 2, 3)[i])
+            self.assertEqual(self.model.cnt, (2, 2, 3, 4)[i])
         self.assertEqual(result.finished_reason, "exceed_max_iters")
-        self.assertEqual(self.agent.state.reply_context.total_iters, 3)
+        self.assertEqual(self.agent.state.reply_context.total_iters, 4)
+        self.assertEqual(reminders, [0, 1, 0, 0])
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

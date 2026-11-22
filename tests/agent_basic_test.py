@@ -6,7 +6,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
 from pydantic import ValidationError
-from utils import AnyString, MockModel
+from utils import AnyString, MockModel, track_hint_counts
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
 from agentscope.model import ChatResponse, ChatUsage, FinishedReason
@@ -964,12 +964,16 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         ]
         final = ChatResponse(content=[TextBlock(text="done")], is_last=True)
         self.model.set_responses([*calls, final])
+        reminders = self.enterContext(
+            track_hint_counts(self.model, "3 rounds remain"),
+        )
 
         msg = await self.agent.reply(UserMsg(name="user", content="Go"))
 
         self.assertEqual(msg.finished_reason, ReplyFinishedReason.COMPLETED)
         self.assertEqual(self.agent.reply_iteration_limit, rounds + 2)
         self.assertEqual(self.model.cnt, rounds + 1)
+        self.assertEqual(reminders, [0] * (rounds + 1))
         reply = self.agent.state.get_reply_message(self.agent.name)
         self.assertEqual(len(reply.get_content_blocks("tool_result")), rounds)
 
@@ -1024,6 +1028,9 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         ]
         text = ChatResponse(content=[TextBlock(text="summary")], is_last=True)
         self.model.set_responses([*calls, text, text])
+        reminders = self.enterContext(
+            track_hint_counts(self.model, "3 rounds remain"),
+        )
         with patch.object(
             MockModel, "__call__", wraps=self.model.__call__,
         ) as infer:
@@ -1042,6 +1049,7 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
             )
             self.assertEqual(self.agent.state.reply_context.total_iters, 1)
             self.assertIsNone(infer.call_args.kwargs["tool_choice"])
+        self.assertEqual(reminders, [1, 0, 0, 1])
 
     async def test_one_round_cap_denies_tools_in_summary(self) -> None:
         self.agent.react_config = ReActConfig(
@@ -1052,6 +1060,9 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
             id="unexpected", name="mock_sequential_tool", input='{"input":"x"}',
         )
         self.model.set_responses([ChatResponse(content=[call], is_last=True)])
+        reminders = self.enterContext(
+            track_hint_counts(self.model, "3 rounds remain"),
+        )
         with patch.object(MockSequentialTool, "__call__") as execute:
             result = await self.agent.reply(UserMsg("user", "finish"))
             execute.assert_not_called()
@@ -1059,6 +1070,7 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
             result.finished_reason, ReplyFinishedReason.EXCEED_MAX_ITERS,
         )
         self.assertEqual(self.model.cnt, 1)
+        self.assertEqual(reminders, [0])
         self.assertFalse(
             self.agent.state.get_unfinished_tool_calls(self.agent.name),
         )

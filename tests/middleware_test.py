@@ -5,7 +5,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 from typing import Any, AsyncGenerator, Awaitable, Callable, Union
 
-from utils import AnyString, MockModel
+from utils import AnyString, MockModel, track_hint_counts
 from pydantic import BaseModel
 from agentscope.event import AgentEvent, ReplyEndEvent
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
@@ -133,12 +133,15 @@ class TestMiddleware(IsolatedAsyncioTestCase):
 
         self.mock_model.set_responses([
             ChatResponse(content=[TextBlock(text=text)], is_last=True)
-            for text in ("first", "second", "final summary")
+            for text in ("first", "second", "third", "final summary")
         ])
         agent = Agent(
             name="worker", system_prompt="Work.", model=self.mock_model,
-            react_config=ReActConfig(auto_continue=True, max_total_iters=3),
+            react_config=ReActConfig(auto_continue=True, max_total_iters=4),
             middlewares=[RequestAnotherRound()],
+        )
+        reminders = self.enterContext(
+            track_hint_counts(self.mock_model, "3 rounds remain"),
         )
         events = [item async for item in agent.reply_stream(
             UserMsg("user", "go"), yield_final_msg=True,
@@ -146,7 +149,8 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         ends = [item for item in events if isinstance(item, ReplyEndEvent)]
         self.assertEqual([item.finished_reason for item in ends], ["exceed_max_iters"])
         self.assertEqual(events[-1].get_content_blocks("text")[0].text, "final summary")
-        self.assertEqual((agent.state.reply_context.total_iters, self.mock_model.cnt), (3, 3))
+        self.assertEqual((agent.state.reply_context.total_iters, self.mock_model.cnt), (4, 4))
+        self.assertEqual(reminders, [0, 1, 0, 0])
 
     async def test_on_reply_middleware_swallow_reply_end(self) -> None:
         """Test swallowing the ReplyEndEvent forces another reasoning

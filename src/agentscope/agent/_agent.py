@@ -1779,6 +1779,23 @@ class Agent:
         # Get the input arguments for the chat model, including messages and
         # tools
         kwargs = await self._prepare_model_input()
+        reply = self.state.reply_context
+        if (
+            self.remaining_total_iters == 3
+            and not reply.total_iters_reminder_sent
+        ):
+            # The countdown belongs to this inference only. A parked reply
+            # keeps the delivery flag, without replaying a stale countdown.
+            hint = HintBlock(
+                hint=(
+                    "<system-reminder>3 rounds remain in this reply, including "
+                    "this round. The last is reserved for a text-only summary. "
+                    "Use at most two rounds for tools and prioritize verifying "
+                    "outstanding results. Finish sooner if ready.</system-reminder>"
+                ),
+            )
+            kwargs["messages"].append(AssistantMsg(self.name, [hint]))
+            reply.total_iters_reminder_sent = True
 
         # Call the chat model
         res = await self._call_model(

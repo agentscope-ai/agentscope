@@ -197,6 +197,9 @@ class ReplyContext(BaseModel):
     """Completed rounds, including rounds re-opened by middleware. Older
     reply snapshots start from their saved iteration count."""
 
+    total_iters_reminder_sent: bool = False
+    """Whether this reply has received its three-round reminder."""
+
     extra_iters: int = 0
     """The latest successful tool round, persisted across HITL so the reply
     has a full iteration budget after that round."""
