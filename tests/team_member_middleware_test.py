@@ -122,6 +122,7 @@ class TeamMemberLoopMiddlewareTest(IsolatedAsyncioTestCase):
         responses: list,
         *,
         max_iters: int = 5,
+        max_total_iters: int | None = None,
         max_nudges: int = 3,
         extra_tools: list | None = None,
     ) -> list:
@@ -133,7 +134,10 @@ class TeamMemberLoopMiddlewareTest(IsolatedAsyncioTestCase):
             system_prompt="You are a worker.",
             model=self.model,
             toolkit=toolkit,
-            react_config=ReActConfig(max_iters=max_iters),
+            react_config=ReActConfig(
+                max_iters=max_iters, auto_continue=max_total_iters is not None,
+                max_total_iters=max_total_iters,
+            ),
             middlewares=[
                 TeamMemberLoopMiddleware(
                     leader_name="Leader",
@@ -266,6 +270,15 @@ class TeamMemberLoopMiddlewareTest(IsolatedAsyncioTestCase):
                 "model_calls": 3,
             },
         )
+
+    async def test_total_cap_ends_repeated_team_reminders(self) -> None:
+        items = await self._run(
+            [_text("first"), _text("retry"), _text("summary")],
+            max_iters=1, max_nudges=10, max_total_iters=3,
+        )
+        self.assertEqual(self.model.cnt, 3)
+        self.assertEqual([e.finished_reason for e in self._end_events(items)],
+                         [ReplyFinishedReason.EXCEED_MAX_ITERS])
 
     async def test_exceed_max_iters_is_nudged_then_failed(self) -> None:
         """The EXCEED ending is nudged too, and also bounded."""

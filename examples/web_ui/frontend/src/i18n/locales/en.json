@@ -337,6 +337,13 @@
 			"max-iters": {
 				"label": "Max iterations"
 			},
+			"auto-continue": {
+				"label": "Auto-continue"
+			},
+			"max-total-iters": {
+				"label": "Total iteration limit for auto-continue",
+				"description": "Applies to auto-continued text replies and includes the final summary. Leave blank for no total limit."
+			},
 			"stop-on-reject": {
 				"label": "Stop on reject"
 			},

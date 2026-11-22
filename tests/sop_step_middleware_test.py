@@ -118,6 +118,7 @@ class SOPStepSubmitMiddlewareTest(IsolatedAsyncioTestCase):
         responses: list,
         *,
         max_iters: int = 5,
+        max_total_iters: int | None = None,
         max_nudges: int = 3,
         extra_tools: list | None = None,
         submit: ToolBase | None = None,
@@ -132,7 +133,10 @@ class SOPStepSubmitMiddlewareTest(IsolatedAsyncioTestCase):
             system_prompt="You make hulls.",
             model=self.model,
             toolkit=toolkit,
-            react_config=ReActConfig(max_iters=max_iters),
+            react_config=ReActConfig(
+                max_iters=max_iters, auto_continue=max_total_iters is not None,
+                max_total_iters=max_total_iters,
+            ),
             middlewares=[SOPStepSubmitMiddleware(max_nudges=max_nudges)],
             injection_config=InjectionConfig(inject_runtime_state=False),
         )
@@ -189,6 +193,15 @@ class SOPStepSubmitMiddlewareTest(IsolatedAsyncioTestCase):
                 "submissions": [{"handover": "a hull"}],
             },
         )
+
+    async def test_total_cap_ends_repeated_submission_reminders(self) -> None:
+        items = await self._run(
+            [_text("first"), _text("retry"), _text("summary")],
+            max_iters=1, max_nudges=10, max_total_iters=3,
+        )
+        self.assertEqual(self.model.cnt, 3)
+        self.assertEqual([e.finished_reason for e in self._end_events(items)],
+                         [ReplyFinishedReason.EXCEED_MAX_ITERS])
 
     async def test_the_nudges_run_out(self) -> None:
         """An attempt that never submits fails rather than looping."""

@@ -109,7 +109,7 @@ class SOPStepSubmitMiddleware(MiddlewareBase):
                 yield event
                 continue
 
-            if self._submitted(agent):
+            if agent.remaining_total_iters == 0 or self._submitted(agent):
                 yield event
                 continue
 
@@ -151,7 +151,7 @@ class SOPStepSubmitMiddleware(MiddlewareBase):
             # Free one iteration so the agent can actually make the call.
             agent.state.cur_iter = min(
                 agent.state.cur_iter,
-                agent.react_config.max_iters - 1,
+                agent.reply_iteration_limit - 1,
             )
 
             hint_block = HintBlock(

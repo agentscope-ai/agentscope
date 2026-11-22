@@ -394,10 +394,33 @@ class ReActConfig(BaseModel):
     max_iters: int = Field(
         title="Max Iterations",
         default=50,
-        description="The maximum number of reasoning-acting iterations in "
-        "one reply",
+        description=(
+            "The maximum number of reasoning-acting iterations per reply, "
+            "or between successful tool rounds when auto-continue is enabled."
+        ),
     )
     """The maximum number of iterations for the reasoning-acting loop."""
+
+    auto_continue: bool = Field(
+        title="Automatically Continue Long Replies",
+        default=False,
+        description=(
+            "Refresh the iteration budget after each successful tool round "
+            "in a text reply, up to max_total_iters if configured."
+        ),
+    )
+    """Whether successful tool rounds refresh the budget for text replies."""
+
+    max_total_iters: int | None = Field(
+        title="Total Iterations for Auto-Continue",
+        default=None,
+        ge=1,
+        strict=True,
+        description=(
+            "Maximum rounds in one auto-continued text reply, including the "
+            "last text-only summary. Leave empty for no total limit."
+        ),
+    )
 
     structured_output_grace_iters: int = Field(
         title="Grace Iters for Structured Output",

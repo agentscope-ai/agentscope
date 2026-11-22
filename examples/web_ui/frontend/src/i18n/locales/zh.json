@@ -337,6 +337,13 @@
 			"max-iters": {
 				"label": "最大迭代次数"
 			},
+			"auto-continue": {
+				"label": "自动续跑"
+			},
+			"max-total-iters": {
+				"label": "自动续跑总轮数上限",
+				"description": "用于开启自动续跑的文本回复，最后一轮用于总结。留空表示不设总上限。"
+			},
 			"stop-on-reject": {
 				"label": "拒绝时停止"
 			},

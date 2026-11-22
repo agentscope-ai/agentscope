@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, Union
 from utils import AnyString, MockModel
 from pydantic import BaseModel
 from agentscope.event import AgentEvent, ReplyEndEvent
-from agentscope.agent import Agent, ContextConfig, InjectionConfig
+from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
 from agentscope.message import (
@@ -121,6 +121,32 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             "mw1_post",
         ]
         self.assertListEqual(self.execution_log, expected)
+
+    async def test_rewinding_middleware_cannot_extend_total_cap(self) -> None:
+        class RequestAnotherRound(MiddlewareBase):
+            async def on_reply(self, agent, input_kwargs, next_handler):
+                async for item in next_handler(**input_kwargs):
+                    if isinstance(item, ReplyEndEvent):
+                        agent.state.cur_iter = 0
+                        continue
+                    yield item
+
+        self.mock_model.set_responses([
+            ChatResponse(content=[TextBlock(text=text)], is_last=True)
+            for text in ("first", "second", "final summary")
+        ])
+        agent = Agent(
+            name="worker", system_prompt="Work.", model=self.mock_model,
+            react_config=ReActConfig(auto_continue=True, max_total_iters=3),
+            middlewares=[RequestAnotherRound()],
+        )
+        events = [item async for item in agent.reply_stream(
+            UserMsg("user", "go"), yield_final_msg=True,
+        )]
+        ends = [item for item in events if isinstance(item, ReplyEndEvent)]
+        self.assertEqual([item.finished_reason for item in ends], ["exceed_max_iters"])
+        self.assertEqual(events[-1].get_content_blocks("text")[0].text, "final summary")
+        self.assertEqual((agent.state.reply_context.total_iters, self.mock_model.cnt), (3, 3))
 
     async def test_on_reply_middleware_swallow_reply_end(self) -> None:
         """Test swallowing the ReplyEndEvent forces another reasoning

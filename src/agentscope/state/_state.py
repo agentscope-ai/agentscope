@@ -190,6 +190,17 @@ class ReplyContext(BaseModel):
     """The current iteration of the agent's reasoning-acting loop in this
     reply."""
 
+    total_iters: int = Field(
+        default_factory=lambda data: data["cur_iter"],
+        ge=0,
+    )
+    """Completed rounds, including rounds re-opened by middleware. Older
+    reply snapshots start from their saved iteration count."""
+
+    extra_iters: int = 0
+    """The latest successful tool round, persisted across HITL so the reply
+    has a full iteration budget after that round."""
+
     structured_schema: Type[BaseModel] | dict | None = None
     """The reply's structured output requirement, a pydantic model class in
     process and serialized as its JSON schema dict."""
@@ -204,6 +215,11 @@ class ReplyContext(BaseModel):
 
     structured_output: dict | None = None
     """The structured output generated within this reply."""
+
+    def finish_iteration(self) -> None:
+        """Count a completed round once all its tool calls have results."""
+        self.cur_iter += 1
+        self.total_iters += 1
 
 
 class AgentState(BaseModel):

@@ -1842,12 +1842,15 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
     async def test_confirmation_resumption_counts_round_once(self) -> None:
         """Denied and approved rounds each count once toward the budget."""
         self.agent.toolkit = Toolkit(tools=[MockUserConfirmConcurrentTool()])
-        for confirmed, max_iters, finished_reason in (
-            (False, 1, "exceed_max_iters"),
-            (True, 2, "completed"),
+        for confirmed, max_iters, total_cap, finished_reason in (
+            (False, 1, None, "exceed_max_iters"),
+            (True, 2, None, "completed"),
+            (True, 10, 2, "exceed_max_iters"),
         ):
-            with self.subTest(confirmed=confirmed):
+            with self.subTest(confirmed=confirmed, total_cap=total_cap):
                 self.agent.react_config.max_iters = max_iters
+                self.agent.react_config.max_total_iters = total_cap
+                self.agent.react_config.auto_continue = total_cap is not None
                 tool_call = ToolCallBlock(
                     id=self.tool_call_id_1,
                     name=self.concurrent_tool_name,
@@ -1890,7 +1893,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         ),
                         (finished_reason, 2, 2),
                     )
-                    if not confirmed:
+                    if not confirmed or total_cap is not None:
                         self.assertEqual(
                             model_call.call_args.kwargs["tool_choice"].mode,
                             "none",
