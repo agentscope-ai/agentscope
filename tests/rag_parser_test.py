@@ -2570,6 +2570,43 @@ class WordParserTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(sections), 1)
         self.assertEqual(sections[0].content.text, "Paragraph one.")
 
+    async def test_fully_deleted_paragraph_is_still_a_blank_line(self) -> None:
+        """A paragraph whose only text was tracked-deleted stays blank."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        doc = DocxDocument()
+        doc.add_paragraph("first")
+        deleted_only = parse_xml(
+            f'<w:p {nsdecls("w")}>'
+            '<w:del w:id="1" w:author="test">'
+            "<w:r><w:delText>gone</w:delText></w:r></w:del>"
+            "</w:p>",
+        )
+        # Insert before the section properties: a raw body.append would
+        # land after <w:sectPr> and read as a trailing paragraph, whose
+        # blank line is intentionally dropped.
+        from docx.oxml.ns import qn
+
+        # pylint: disable-next=protected-access
+        body = doc.element.body
+        sect_pr = body.find(qn("w:sectPr"))
+        if sect_pr is not None:
+            sect_pr.addprevious(deleted_only)
+        else:
+            body.append(deleted_only)
+        doc.add_paragraph("third")
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        sections = await WordParser(include_image=False).parse(
+            buffer.getvalue(),
+            "demo.docx",
+        )
+
+        self.assertEqual(sections[0].content.text, "first\n\nthird")
+
     async def test_table_merges_by_default(self) -> None:
         """``separate_table=False`` merges the table into surrounding
         text."""
