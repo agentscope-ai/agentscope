@@ -270,6 +270,17 @@ class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
         await backend.write_file(nested, b"nested")
         self.assertEqual(await backend.read_file(nested), b"nested")
 
+        # Option-like basenames must remain literal tar file operands.
+        for name in ("-notes.txt", "--version", "-C", "--", "-"):
+            with self.subTest(filename=name):
+                path = f"{POD_WORKDIR}/data/{name}"
+                payload = name.encode() + b"\x00\xff\r\n"
+                await backend.write_file(path, payload)
+                try:
+                    self.assertEqual(await backend.read_file(path), payload)
+                finally:
+                    await backend.delete_path(path)
+
         # 4f. read_file on missing path
         with self.assertRaises(FileNotFoundError):
             await backend.read_file(f"{POD_WORKDIR}/does_not_exist")
