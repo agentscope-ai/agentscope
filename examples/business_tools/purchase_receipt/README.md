@@ -109,3 +109,5 @@ node "$CASE/capture.cjs" --client "$ERP/frontend-user" --chromium "$CHROMIUM" \
 已发布的草稿保存工具在确认框中显示账套和本次操作 ID。刷新、重复确认或换 worker 时沿用同一 ID。宿主须为不同账套配置唯一且稳定的 `target_label`，并将页面操作原样传给 `capture_client.cjs`。浏览器收到保存回执后，会先将单据 ID 写入共享注册目录，再由服务端回查详情。
 
 恢复时将 `operation_id` 传给该业务的回查工具。返回 `saved_needs_readback` 表示已取得单据 ID，可再次回查。返回 `needs_reconciliation` 表示保存请求可能已送达，须在原账套核对。另行确认新增草稿会产生新的操作 ID。
+
+回查字段与确认草稿不同会返回 `saved_needs_review`。字段映射、回执格式和其他业务系统的接入示例见[通用保存与回查说明](../README.md)。

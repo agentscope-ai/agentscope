@@ -50,7 +50,8 @@ def registry(root, *, mode="ok", target="offline ledger"):
         if mode == "timeout":
             raise TimeoutError
         assert str(receipt_id) in (root / "drafts").read_text().splitlines()
-        return {"order": {"id": receipt_id}, "purpose": "test", "label": "离线验收"}
+        purpose = "other" if mode == "mismatch" else "test"
+        return {"order": {"id": receipt_id}, "purpose": purpose, "label": "离线验收"}
 
     return SaveBusinessRegistry(root, root / "spec", root / "registry", capture,
                                 detail, target_label=target)
@@ -187,6 +188,13 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
         saved = await self.read()
         self.assertEqual(saved["detail"]["order"]["id"], pending["id"])
         self.assertEqual(await self.save(), saved)
+        self.assertEqual(self.counts(), (1, 1, 2))
+
+    async def test_matching_receipt_with_wrong_business_fields_is_not_finished(self):
+        pending = await self.save("mismatch")
+        self.assertEqual(pending["status"], "saved_needs_review")
+        self.assertEqual(pending["differing_fields"], ["purpose"])
+        self.assertEqual((await self.read())["status"], "saved")
         self.assertEqual(self.counts(), (1, 1, 2))
 
     async def test_browser_dies_between_receipt_and_python_result(self):

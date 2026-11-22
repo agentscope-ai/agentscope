@@ -121,7 +121,7 @@ class WorkflowTest(unittest.TestCase):
             prompt, = [event for event in events if isinstance(event, RequireUserConfirmEvent)]
             notice = prompt.model_dump()["tool_calls"][0]["confirmation_message"]
             self.assertIn("离线账套", notice)
-            self.assertIn("两张", notice)
+            self.assertIn("两条", notice)
             registry.capture.assert_not_awaited()
             await agent.reply(UserConfirmResultEvent(
                 reply_id=prompt.reply_id, confirm_results=[ConfirmResult(confirmed=False, tool_call=call)],
@@ -183,7 +183,7 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(decision.behavior, PermissionBehavior.ASK)
             self.assertTrue(decision.bypass_immune)
             self.assertIn("测试账套 A", decision.message)
-            self.assertIn("两张", decision.message)
+            self.assertIn("两条", decision.message)
             missing = {"inputs": {}, "actions": cases[1:]}
             evidence = self.source / "validation.ts"
             evidence.write_text("export const rejectInvalid = true // 用途校验", encoding="utf-8")

@@ -1,6 +1,7 @@
 name: Web UI
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -16,7 +17,7 @@ on:
 
 jobs:
   check:
-    if: github.event_name != 'pull_request' || false == contains(github.event.pull_request.title, 'WIP')
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && !contains(github.event.pull_request.title, 'WIP'))
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -44,3 +45,35 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  confirmation:
+    name: Keyboard confirmation (${{ matrix.os }})
+    if: github.event_name != 'pull_request' || !contains(github.event.pull_request.title, 'WIP')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-26]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: examples/web_ui
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.4"
+          cache: pnpm
+          cache-dependency-path: examples/web_ui/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter frontend build
+      - name: Test keyboard confirmation
+        run: |
+          pnpm --filter frontend exec playwright-core install --with-deps chromium
+          pnpm --filter frontend test:confirmation
