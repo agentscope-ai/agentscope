@@ -1661,6 +1661,30 @@ class ChatService:
                     input_msg = None
 
             finally:
+                # The agent loop ran, so the run may have written files to
+                # the session workspace: tell session UIs to refetch their
+                # directory listing. Fires on every loop exit — success,
+                # error reply, interruption, or cancellation — and before
+                # the bookkeeping below, so a failure there cannot swallow
+                # the signal. Assembly failures never reach this point, so
+                # they stay silent (see ``chat_input_failed`` semantics).
+                # Best-effort: the signal must never fail the run.
+                try:
+                    event = CustomEvent(
+                        name="workspace_changed",
+                        value={"session_id": session_id},
+                    )
+                    await publish_session_event(
+                        self._message_bus,
+                        session_id,
+                        event.model_dump(mode="json"),
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception(
+                        "Failed to publish workspace_changed for session %s.",
+                        session_id,
+                    )
+
                 # An interrupt unwinds past the loop's own exit check, so
                 # the run may still be registered as the inbox consumer.
                 # Hand the registration back and wake the session when
