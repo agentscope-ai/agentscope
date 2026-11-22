@@ -179,6 +179,24 @@ class BusinessToolSearchTest(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(self.state.tool_context.selected_business_tools, [])
 
+    async def test_query_only_replaces_previously_selected_write_and_readback(self):
+        for phrase in ("不要新建采购入库单，只查现有单据", "采购入库单只查，不要录入",
+                       "不必开具采购入库单", "查询已经新建的采购入库单", "不要回查，只查采购入库单列表"):
+            with self.subTest(phrase=phrase):
+                await search(self.toolkit, self.state, SAVE)
+                self.assertEqual(await search(self.toolkit, self.state, phrase), [QUERY])
+                visible = names(await self.toolkit.get_tool_schemas(state=self.state))
+                self.assertIn(QUERY, visible)
+                self.assertNotIn(SAVE, visible)
+                self.assertNotIn(READBACK, visible)
+        await search(self.toolkit, self.state, SAVE)
+        self.assertEqual(await search(self.toolkit, self.state, "不要新建，只查"), [QUERY])
+        self.assertCountEqual(await search(self.toolkit, AgentState(), "不要新建，只查"), [QUERY, SALES])
+        self.assertEqual(await search(self.toolkit, self.state, "不要新建，按操作 ID 回查采购入库单"),
+                         [READBACK])
+        self.assertEqual(await search(self.toolkit, self.state, "不要新建，只查采购入库单的操作 ID"),
+                         [READBACK])
+
     async def test_schemas_follow_session_permissions_group_and_publication(
         self,
     ):

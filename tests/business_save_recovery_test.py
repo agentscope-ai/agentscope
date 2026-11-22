@@ -50,7 +50,8 @@ def registry(root, *, mode="ok", target="offline ledger"):
         if mode == "timeout":
             raise TimeoutError
         assert str(receipt_id) in (root / "drafts").read_text().splitlines()
-        return {"order": {"id": receipt_id}, "purpose": "test"}
+        purpose = "other" if mode == "mismatch" else "test"
+        return {"order": {"id": receipt_id}, "purpose": purpose, "label": "离线验收"}
 
     return SaveBusinessRegistry(root, root / "spec", root / "registry", capture,
                                 detail, target_label=target)
@@ -81,7 +82,7 @@ def call():
 
 async def resume(root, mode="ok", approved=True, draft=None):
     agent = worker(root, mode)
-    agent.state = AgentState.model_validate_json((root / "parked").read_text())
+    agent.state = AgentState.model_validate_json((root / "parked").read_bytes())
     agent.model.set_responses([ChatResponse(content=[TextBlock(text="done")], is_last=True)])
     approval = call()
     if draft is not None:
@@ -123,7 +124,7 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
         request, = prompt.tool_calls
         self.assertIn(request.confirmation_id, request.confirmation_message)
         self.assertIn("offline ledger", request.confirmation_message)
-        (self.root / "parked").write_text(agent.state.model_dump_json())
+        (self.root / "parked").write_text(agent.state.model_dump_json(), encoding="utf-8")
         return request.confirmation_id
 
     async def save(self, mode="ok"):
@@ -163,6 +164,7 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
                 results.append(json.loads(out))
             self.assertEqual(results[0], results[1])
             self.assertEqual(results[0]["status"], "saved")
+            self.assertEqual(results[0]["detail"]["label"], "离线验收")
             self.assertEqual(results[0]["operation_id"], self.op)
             self.assertEqual(self.counts()[:2], (1, 1))
         finally:
@@ -188,6 +190,13 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.save(), saved)
         self.assertEqual(self.counts(), (1, 1, 2))
 
+    async def test_matching_receipt_with_wrong_business_fields_is_not_finished(self):
+        pending = await self.save("mismatch")
+        self.assertEqual(pending["status"], "saved_needs_review")
+        self.assertEqual(pending["differing_fields"], ["purpose"])
+        self.assertEqual((await self.read())["status"], "saved")
+        self.assertEqual(self.counts(), (1, 1, 2))
+
     async def test_browser_dies_between_receipt_and_python_result(self):
         result = await self.save("crash_after_receipt")
         self.assertEqual(result["status"], "saved")
@@ -197,10 +206,14 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
     async def test_draft_is_bound_to_confirmation_and_denial_cannot_submit(self):
         self.assertEqual((await self.read())["status"], "awaiting_confirmation")
         self.assertEqual((await resume(self.root, approved=False)).state, "denied")
+        self.assertEqual((await self.read())["status"], "denied")
+        self.assertEqual((await self.save())["status"], "denied")  # Stale approval on another worker.
+        self.assertEqual((await resume(self.root, approved=False)).state, "denied")
         self.assertEqual((await resume(self.root, draft={"purpose": "changed"})).state, "error")
         self.assertFalse((self.root / "requests").exists())
-        first = await self.save()
         self.assertNotEqual(await self.park(), self.op)
+        first = await self.save()
+        self.assertNotEqual(await self.park(), first["operation_id"])
         second = await self.save()
         self.assertNotEqual(first["operation_id"], second["operation_id"])
         self.assertEqual(self.counts()[:2], (2, 2))
@@ -219,7 +232,7 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((self.root / "requests").exists())
 
     async def test_older_parked_save_without_receipt_needs_reconciliation(self):
-        snapshot = json.loads((self.root / "parked").read_text())
+        snapshot = json.loads((self.root / "parked").read_bytes())
         for msg in snapshot["context"]:
             for block in msg["content"]:
                 block.pop("confirmation_id", None)
@@ -230,4 +243,4 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__" and sys.argv[1:2] == ["--resume"]:
     result = asyncio.run(resume(Path(sys.argv[2]), "concurrent"))
-    print(result.output[0].text)
+    sys.stdout.buffer.write(result.output[0].text.encode("utf-8"))

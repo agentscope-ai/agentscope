@@ -14,7 +14,22 @@ from agentscope.tool import FunctionTool
 from agentscope.tool._business_search import PublishedBusinessTool
 
 from ._business import bind_operation, write_definition
-from ._save_operation import SaveOperations
+from ._save_operation import (
+    ReadbackView, ReceiptId, SaveOperations, differing_fields, readback_fields, valid_receipt,
+)
+
+
+def _default_readback(plan, detail):
+    header = detail.get("order", detail) if isinstance(detail, dict) else None
+    if not isinstance(header, dict):
+        raise ValueError("回查记录格式无效")
+    if header is detail:
+        return header["id"], detail
+    fields = {**header, **detail}
+    for key in header.keys() & detail.keys():
+        if header[key] != detail[key]:
+            del fields[key]  # Ambiguous fields need an explicit connector mapping.
+    return header["id"], fields
 
 
 def _readback_business_fields(saved):
@@ -71,14 +86,21 @@ def _readback_business_fields(saved):
     return normalize(document)
 
 
-def _same_saved_draft(original, generated):
-    if not generated.get("detail") or original["id"] == generated.get("id"):
+def _same_saved_draft(original, generated, plan=None, inputs=None, readback_view=_default_readback):
+    if not valid_receipt(original.get("id")) or not valid_receipt(generated.get("id")):
         return False
     try:
-        return (
-            original["request"] == generated["request"]
-            and _readback_business_fields(original) == _readback_business_fields(generated)
-        )
+        if original["id"] == generated["id"] or original["request"] != generated["request"]:
+            return False
+        projections = []
+        for saved in (original, generated):
+            fields = readback_fields(readback_view, plan, saved["detail"], saved["id"])
+            if differing_fields(inputs or {}, fields):
+                return False
+            # Legacy documents also verify their generated parent/child links.
+            projections.append(_readback_business_fields(saved) if readback_view is _default_readback
+                               else fields)
+        return projections[0] == projections[1]
     except (KeyError, TypeError, ValueError):
         return False
 
@@ -124,7 +146,12 @@ _ACCEPTANCE_VERSION = 3
 
 
 class SaveBusinessRegistry:
-    """Compile a scoped client action plan and require both save outcomes."""
+    """Compile and verify a client save on a named target system.
+
+    A host may supply readback_view(plan, detail) returning the stable record
+    ID and business fields in confirmed-input names, types and units. The
+    default understands flat records and the existing ERP order envelope.
+    """
 
     def __init__(
         self,
@@ -132,20 +159,31 @@ class SaveBusinessRegistry:
         openapi: Path,
         storage: Path,
         capture: Callable[[dict, list[dict], bool], Awaitable[dict]],
-        read_detail: Callable[[str, int], Awaitable[dict]],
+        read_detail: Callable[[str, ReceiptId], Awaitable[dict]],
         *,
         target_label: str | None = None,
+        tool_prefix: str = "erp",
+        readback_view: ReadbackView = _default_readback,
     ):
         self.source = source.resolve()
         self.openapi = openapi
         self.storage = storage
         self.capture = capture
         self.read_detail = read_detail
+        if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]{0,31}", tool_prefix):
+            raise ValueError("业务工具前缀须以字母开头，且最多包含 32 个字母、数字或下划线。")
+        self.tool_prefix = tool_prefix
         self.target_label = (target_label or "").strip()
+        self.readback_view = readback_view
 
     def tools(self, user_id, agent_id):
         key = json.dumps([user_id, agent_id]).encode()
-        directory = self.storage / hashlib.sha256(key).hexdigest()
+        storage = self.storage
+        registrar = "register_save_business_tool"
+        if self.tool_prefix != "erp":
+            storage = storage / self.tool_prefix
+            registrar = f"register_{self.tool_prefix}_save_business_tool"
+        directory = storage / hashlib.sha256(key).hexdigest()
 
         async def register_save_business_tool(
             business: str,
@@ -159,7 +197,7 @@ class SaveBusinessRegistry:
             complete: dict,
             counterexamples: list[dict] | None = None,
         ) -> dict:
-            """生成并验收 ERP 新增草稿及回查。验收会在绑定账套新增两张草稿。
+            """生成并验收业务草稿的新增和回查。验收会在绑定系统新增两条草稿。
 
             Args:
                 business: 用户提供的业务名称。
@@ -180,7 +218,7 @@ class SaveBusinessRegistry:
                     各含 name、rule、evidence、inputs 和 actions。evidence 包含
                     源码相对 path 与行号 line。以补齐样本为基线，改变须被拒绝的输入。
                     至少一组须独立于普通缺填样本，覆盖不同的实际输入和操作。
-                    原客户端或生成工具尝试写入都会阻止注册，反例不发送到 ERP。
+                    原客户端或生成工具尝试写入都会阻止注册，反例不写入目标系统。
             """
             return await self.register(
                 directory, business, client_source, client_route,
@@ -191,14 +229,15 @@ class SaveBusinessRegistry:
         return [
             FunctionTool(
                 register_save_business_tool,
+                name=registrar,
                 is_concurrency_safe=False,
                 permission=PermissionDecision(
                     behavior=PermissionBehavior.ASK,
                     bypass_immune=True,
                     message=(
-                        f"在账套「{self.target_label}」中执行保存验收？"
-                        "原客户端和生成工具将各创建一张草稿，共两张。"
-                        if self.target_label else "当前尚未配置目标账套，仅可预览。"
+                        f"在目标「{self.target_label}」中执行保存验收？"
+                        "原客户端和生成工具将各创建一条草稿，共两条。"
+                        if self.target_label else "当前尚未配置目标系统，仅可预览。"
                     ),
                 ),
             ),
@@ -238,16 +277,21 @@ class SaveBusinessRegistry:
     def _published_tools(self, path):
         record = json.loads(path.read_bytes())
         save, read = self._runtime(record["plan"], path)
-        return [save, read] if self._current(record) else [read]
+        if self._current(record):
+            return [save, read]
+        if record["plan"].get("targetLabel") == self.target_label:
+            read.confirmation_denials = save.confirmation_denials
+        return [read]
 
     def _runtime(self, plan, path):
         operations = SaveOperations(path.parent)
 
         def bind_confirmation(session_id, reply_id, call_id, inputs):
             op = operations.prepare(plan, inputs, session_id, reply_id, call_id)
-            return op, f"在账套「{plan['targetLabel']}」新增一张{plan['business']}草稿？操作 ID：{op}"
+            return op, f"在目标「{plan['targetLabel']}」新增一条{plan['business']}草稿？操作 ID：{op}"
 
         async def save(*, _confirmation_id=None, _confirmed_inputs=None, **inputs):
+            inline_detail = None
             async with _publication_lock(path):
                 record = json.loads(path.read_bytes())
                 if record["plan"] != plan or not self._current(record):
@@ -257,7 +301,7 @@ class SaveBusinessRegistry:
                     # Pre-upgrade approvals have no durable evidence that
                     # another worker did or did not already submit the POST.
                     return {"status": "needs_reconciliation",
-                            "message": "缺少原保存操作 ID，请在原账套核对是否已经建单。"}
+                            "message": "缺少原保存操作 ID，请在原系统核对是否已创建记录。"}
                 draft = _confirmed_inputs if _confirmed_inputs is not None else inputs
                 if operations.claim(op, plan, draft):
                     actions = _actions_for(plan, draft)
@@ -268,24 +312,22 @@ class SaveBusinessRegistry:
                         # The adapter may have sent the POST before failing.
                         saved = {}
                     receipt_id = saved.get("id")
-                    if type(receipt_id) is int and receipt_id > 0:
+                    if valid_receipt(receipt_id):
                         operations.record_receipt(op, receipt_id, saved)
-                        detail = saved.get("detail")
-                        header = detail.get("order", detail) if isinstance(detail, dict) else None
-                        if isinstance(header, dict) and header.get("id") == receipt_id:
-                            operations.finish(op, {**saved, "status": "saved"})
-                    elif saved.get("attempted") is False:
+                        inline_detail = saved.get("detail")
+                    elif receipt_id is None and saved.get("attempted") is False:
                         operations.finish(op, {**saved, "status": "blocked"})
-            return await operations.recover(op, plan, self.read_detail)
+            return await operations.recover(op, plan, self.read_detail, self.readback_view, inline_detail)
 
-        async def read(receipt_id: int | None = None, operation_id: str | None = None):
-            """按保存操作 ID 恢复，或根据 ERP 内部 ID 回查单据。"""
+        async def read(receipt_id: int | str | None = None, operation_id: str | None = None):
+            """按保存操作 ID 恢复，或根据目标系统的记录 ID 回查。"""
             if (operation_id is None) == (receipt_id is None):
-                raise ValueError("请提供操作 ID 或单据 ID 中的一项。")
+                raise ValueError("请提供操作 ID 或记录 ID 中的一项。")
+            bound_target = plan.get("targetLabel")
+            if (operation_id is not None or bound_target) and bound_target != self.target_label:
+                raise ValueError("目标系统已变更，请在原系统核对。")
             if operation_id is not None:
-                if plan.get("targetLabel") != self.target_label:
-                    raise ValueError("账套已变更，请在原账套核对。")
-                return await operations.recover(operation_id, plan, self.read_detail)
+                return await operations.recover(operation_id, plan, self.read_detail, self.readback_view)
             return await self.read_detail(plan["detailRoute"], receipt_id)
 
         # Keep legacy read-by-ID calls working. Only discover records bound
@@ -297,7 +339,7 @@ class SaveBusinessRegistry:
             business=business, action="save",
             name=plan["saveTool"],
             description=f"新增{plan['business']}草稿并回查。保留原客户端的字段校验。"
-            "每次调用都会申请新增一张，仅在用户要求新增时使用。恢复或重试请用回查工具和原操作 ID。",
+            "每次调用都会申请新增一条，仅在用户要求新增时使用。恢复或重试请用回查工具和原操作 ID。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -309,21 +351,22 @@ class SaveBusinessRegistry:
             is_concurrency_safe=False,
             permission=PermissionDecision(
                 behavior=PermissionBehavior.ASK, bypass_immune=True,
-                message=f"在账套「{self.target_label}」新增草稿？",
+                message=f"在目标「{self.target_label}」新增草稿？",
             ),
         )
         save_tool.bind_confirmation = bind_confirmation
+        save_tool.confirmation_denials = {save_tool.name: lambda op: operations.deny(op, plan)}
         return [
             save_tool,
             PublishedBusinessTool(
                 read,
                 business=business, action="readback",
                 name=plan["readTool"],
-                description=f"按 operation_id 恢复{plan['business']}保存结果，或按 receipt_id 回查单据。只读。",
+                description=f"按 operation_id 恢复{plan['business']}保存结果，或按 receipt_id 回查记录。只读。",
                 is_read_only=True,
                 permission=PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
-                    message="Read a saved draft on the bound ERP.",
+                    message="Read a saved record on the bound system.",
                 ),
             ),
         ]
@@ -355,7 +398,7 @@ class SaveBusinessRegistry:
                 not source.is_relative_to(self.source)
                 or source.suffix not in {".vue", ".js", ".ts", ".mjs", ".java", ".json"}
                 or not source.is_file()
-                or line > len(source.read_text().splitlines())
+                or line > len(source.read_text(encoding="utf-8").splitlines())
             ):
                 raise ValueError("反例的源码依据无法复核。")
             inputs = case.get("inputs")
@@ -465,8 +508,8 @@ class SaveBusinessRegistry:
             "issueSelector": issue_selector,
             "actions": actions,
             "fields": fields,
-            "saveTool": "erp_save_" + save["name"],
-            "readTool": "erp_read_" + detail["name"],
+            "saveTool": f"{self.tool_prefix}_save_" + save["name"],
+            "readTool": f"{self.tool_prefix}_read_" + detail["name"],
             "source": {"file": source_file, "sha256": hashlib.sha256(raw).hexdigest()},
             "apiSha256": hashlib.sha256(self.openapi.read_bytes()).hexdigest(),
         }
@@ -490,13 +533,20 @@ class SaveBusinessRegistry:
                     current["verification"]["registered"] = False
                     write_definition(path, current)
                 raise
+            binding = hashlib.sha256(json.dumps([plan, acceptance], sort_keys=True).encode()).hexdigest()
             if checkpoint.exists():
-                return {
+                pending = json.loads(checkpoint.read_bytes())
+                result = {
                     "registered": False,
                     "stage": "verify_prior_save",
-                    "message": "此前已开始写入验收。请回查已知单号，避免重复保存。",
-                    "checkpoint": json.loads(checkpoint.read_text()),
+                    "message": "此前已开始写入验收。请在原系统核对已有记录。",
                 }
+                if pending.get("binding") not in (None, binding):
+                    return result
+                result["checkpoint"] = pending
+                if pending.get("binding") == binding:
+                    result["readbacks"] = await self._check_pending(plan, complete["inputs"], pending)
+                return result
             if current:
                 if self._current(current) and current["plan"] == plan and current["verification"].get(
                     "acceptanceSha256",
@@ -520,7 +570,7 @@ class SaveBusinessRegistry:
             if original.get("attempted") or generated.get("attempted") or (
                 not original.get("issue") or original["issue"] != generated.get("issue")
             ):
-                raise ValueError("缺填组未得到相同的保存前拦截，未发出 ERP 写入")
+                raise ValueError("缺填组未得到相同的保存前拦截，未向目标系统写入")
 
             original_preview = await self.capture(plan, complete["actions"], False)
             generated_preview = await self.capture(plan, _actions_for(plan, complete["inputs"]), False)
@@ -539,28 +589,31 @@ class SaveBusinessRegistry:
             if not self.target_label:
                 return {
                     "registered": False, "stage": "target_required", "erpWrites": 0,
-                    "message": "预览已完成。请由宿主配置 target_label 标明目标账套后再申请写入验收。",
+                    "message": "预览已完成。请由宿主配置 target_label 标明目标系统后再申请写入验收。",
                 }
             directory.mkdir(parents=True, exist_ok=True)
-            write_definition(checkpoint, {"stage": "original_save"})
+            write_definition(checkpoint, {"stage": "original_save", "binding": binding})
             original_saved = await self.capture(plan, complete["actions"], True)
-            if not original_saved.get("detail"):
-                if not original_saved.get("attempted"):
+            original_id = original_saved.get("id")
+            if not valid_receipt(original_id) or not original_saved.get("detail"):
+                if original_id is None and original_saved.get("attempted") is False:
                     checkpoint.unlink()
                 else:
                     write_definition(checkpoint, {
-                        "stage": "original_readback", "originalId": original_saved.get("id"),
+                        "stage": "original_readback", "binding": binding, "originalId": original_id,
                     })
                 return {"registered": False, "stage": "original_save", "result": original_saved}
             write_definition(checkpoint, {
-                "stage": "generated_save", "originalId": original_saved["id"],
+                "stage": "generated_save", "binding": binding, "originalId": original_id,
             })
             generated_saved = await self.capture(plan, _actions_for(plan, complete["inputs"]), True)
             write_definition(checkpoint, {
-                "stage": "compare_saved", "originalId": original_saved["id"],
+                "stage": "compare_saved", "binding": binding, "originalId": original_id,
                 "generatedId": generated_saved.get("id"),
             })
-            if not _same_saved_draft(original_saved, generated_saved):
+            if not _same_saved_draft(
+                original_saved, generated_saved, plan, complete["inputs"], self.readback_view,
+            ):
                 return {
                     "registered": False,
                     "stage": "compare_saved",
@@ -590,3 +643,21 @@ class SaveBusinessRegistry:
             write_definition(path, {"plan": plan, "verification": report})
             checkpoint.unlink()
         return report
+
+    async def _check_pending(self, plan, inputs, pending):
+        """Recheck known receipts without repeating either acceptance write."""
+        checks = {}
+        for name in ("originalId", "generatedId"):
+            receipt_id = pending.get(name)
+            if not valid_receipt(receipt_id):
+                continue
+            try:
+                detail = await self.read_detail(plan["detailRoute"], receipt_id)
+                fields = readback_fields(self.readback_view, plan, detail, receipt_id)
+                differences = differing_fields(inputs, fields)
+            except Exception:
+                checks[name] = {"status": "saved_needs_readback"}
+            else:
+                checks[name] = ({"status": "saved_needs_review", "differing_fields": differences}
+                                if differences else {"status": "saved"})
+        return checks

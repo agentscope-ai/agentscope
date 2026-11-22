@@ -28,11 +28,37 @@ jobs:
       run: |
         uv pip install -q -e .[dev]
         uv pip install coverage pytest
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+    - name: Install the business fixture parser
+      working-directory: src/agentscope/business
+      run: pnpm install --frozen-lockfile
     - name: Run tests with coverage
       env:
         GRPC_VERBOSITY: ERROR
       run: |
-        coverage run -m pytest tests -v
+        coverage run -m pytest tests -v --junitxml="${{ runner.temp }}/unittest.xml"
+    - name: Require both business parser suites to run
+      shell: python
+      run: |
+        import os
+        from pathlib import Path
+        from xml.etree import ElementTree
+
+        report = ElementTree.parse(Path(os.environ["RUNNER_TEMP"]) / "unittest.xml")
+        required = {"business_tool_test.BusinessToolTest": 7, "business_workflow_test.WorkflowTest": 9}
+        for suite, minimum in required.items():
+            cases = [case for case in report.iter("testcase")
+                     if case.get("classname", "").split(".")[-2:] == suite.split(".")]
+            names = {case.attrib["name"] for case in cases}
+            skipped = [case.attrib["name"] for case in cases if case.find("skipped") is not None]
+            if skipped or len(names) < minimum:
+                raise SystemExit(f"{suite}: expected at least {minimum} tests, found {len(names)}, skipped {skipped}")
+            print(f"{suite}: {len(names)} passed")
     - name: Generate coverage report
       run: |
         coverage report -m

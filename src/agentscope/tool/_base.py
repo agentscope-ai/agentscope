@@ -106,6 +106,10 @@ class ToolBase(ABC):
     """Optional host hook binding session, reply, call and inputs to an
     operation ID and prompt. The toolkit injects that ID at execution."""
 
+    confirmation_denials: dict[str, Callable[[str], None]] | None = None
+    """Host callbacks keyed by the original tool name, passed the bound operation ID.
+    A readback tool can retain the callback when its write tool is suspended."""
+
     def needs_bound_confirmation(
         self, decision: PermissionDecision, call: "ToolCallBlock",
     ) -> bool:

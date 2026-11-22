@@ -31,7 +31,7 @@ def node(script: str, *args: str, data: dict | None = None) -> dict:
             ["node", str(HERE / script), *args],
             stdin=payload,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=30,
             check=False,
         )
@@ -691,7 +691,7 @@ def main() -> None:
             )
         print(compiled["operation"]["name"])
         return
-    artifact = json.loads(args.artifact.read_text())
+    artifact = json.loads(args.artifact.read_bytes())
     if artifact.get("format") == WORKFLOW_FORMAT:
         if args.command == "inspect" and not args.tool:
             print(

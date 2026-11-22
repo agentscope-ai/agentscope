@@ -639,6 +639,22 @@ class Toolkit:
 
         return tools[tool_name].tool
 
+    def deny_confirmation(self, call: ToolCallBlock) -> None:
+        """Notify the host using the original, server-bound call."""
+        if call.confirmation_id is None:
+            return
+        # These callbacks belong to the host. Rejecting a pending call does not
+        # need to connect to an MCP server or activate a tool group.
+        tools = {tool.name: tool for group in self.tool_groups for tool in group.tools}
+        candidates = [tools[call.name]] if call.name in tools else tools.values()
+        for tool in candidates:
+            handlers = tool.confirmation_denials
+            if handlers and call.name in handlers:
+                handlers[call.name](call.confirmation_id)
+                return
+        if call.name not in tools:
+            raise ToolNotFoundError(f"Cannot resolve the pending confirmation for '{call.name}'.")
+
     async def get_tool(self, name: str) -> ToolBase | None:
         """Get tool instance by its name.
 

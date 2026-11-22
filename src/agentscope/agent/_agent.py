@@ -2053,7 +2053,7 @@ class Agent:
                                 self._engine.add_rule(rule)
 
                     else:
-                        # Update the state to deny and handling
+                        self.toolkit.deny_confirmation(tool_call)
                         async for evt in self._handle_error_tool_call(
                             tool_call,
                             message=(
