@@ -41,9 +41,14 @@ export function ToolLoginDialog({
 	useEffect(() => {
 		const controller = new AbortController();
 		void client
-			.get<LoginView | null>(path, { agent_id: agentId }, {
-				silent: true, signal: controller.signal,
-			})
+			.get<LoginView | null>(
+				path,
+				{ agent_id: agentId },
+				{
+					silent: true,
+					signal: controller.signal,
+				},
+			)
 			.then((pending) => {
 				if (!controller.signal.aborted) setView(pending);
 			})
@@ -85,7 +90,11 @@ function LoginForm({
 		setError('');
 		try {
 			await client.stream(path, {
-				method, body, params: { agent_id: agentId }, silent: true, timeoutMs: 45_000,
+				method,
+				body,
+				params: { agent_id: agentId },
+				silent: true,
+				timeoutMs: 45_000,
 			});
 			refresh();
 		} catch (err) {
@@ -133,9 +142,18 @@ function LoginForm({
 							</div>
 						);
 					})}
-					{error && <p role="alert" className="text-destructive">{error}</p>}
+					{error && (
+						<p role="alert" className="text-destructive">
+							{error}
+						</p>
+					)}
 					<DialogFooter>
-						<Button type="button" variant="outline" disabled={pending} onClick={() => void perform('DELETE')}>
+						<Button
+							type="button"
+							variant="outline"
+							disabled={pending}
+							onClick={() => void perform('DELETE')}
+						>
 							{t('chat.toolLogin.cancel')}
 						</Button>
 						<Button type="submit" disabled={pending}>

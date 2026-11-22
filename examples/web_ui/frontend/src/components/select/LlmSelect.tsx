@@ -1,5 +1,5 @@
 import { ChevronDown, PlusCircle, Ban } from 'lucide-react';
-import { useRef } from 'react';
+import { useState } from 'react';
 
 import type { ChatModelConfig } from '@/api';
 import { Button } from '@/components/ui/button';
@@ -55,7 +55,7 @@ export function LlmSelect({
 }: Props) {
 	const { groups, loading } = useAvailableModels();
 	const { t } = useTranslation();
-	const pendingSelection = useRef<ChatModelConfig | null>(null);
+	const [pendingSelection, setPendingSelection] = useState<ChatModelConfig | null>(null);
 	// Credentials whose model list failed to load come back with an empty
 	// `models` array; drop them so they don't render empty submenus
 	const groupEntries = Object.entries(groups)
@@ -77,7 +77,7 @@ export function LlmSelect({
 			parameters: {},
 		};
 		if (selectOnClose) {
-			pendingSelection.current = config;
+			setPendingSelection(config);
 		} else {
 			onChange?.(config);
 		}
@@ -118,9 +118,10 @@ export function LlmSelect({
 				align="start"
 				className="min-w-48 max-h-72 overflow-y-auto"
 				onCloseAutoFocus={() => {
-					const config = pendingSelection.current;
-					pendingSelection.current = null;
-					if (config) onChange?.(config);
+					if (pendingSelection) {
+						setPendingSelection(null);
+						onChange?.(pendingSelection);
+					}
 				}}
 			>
 				{!loading && !hasOptions ? (

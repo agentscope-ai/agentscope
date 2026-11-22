@@ -29,8 +29,8 @@ import { asrApi, sessionApi } from '@/api';
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
-import { ToolLoginDialog } from '@/components/dialog/ToolLoginDialog';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
+import { ToolLoginDialog } from '@/components/dialog/ToolLoginDialog';
 import { BackgroundTasksPanel } from '@/components/panel/BackgroundTasksPanel';
 import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
 import { McpPanel } from '@/components/panel/McpPanel';
@@ -1007,11 +1007,14 @@ export function ChatViewport({
 										className="max-w-full font-mono text-muted-foreground hover:text-foreground"
 										value={selectedModel}
 										onChange={handleLlmChange}
-									selectOnClose={!sessionId}
+										selectOnClose={!sessionId}
 										onAddCredential={() => setCredentialOpen(true)}
-									disabled={
-										configPending || voiceBusy || startingSession || (!sessionId && !onStartSession)
-									}
+										disabled={
+											configPending ||
+											voiceBusy ||
+											startingSession ||
+											(!sessionId && !onStartSession)
+										}
 									/>
 									<ModelParametersPopover
 										selectedModel={selectedModel}
@@ -1302,7 +1305,12 @@ export function ChatViewport({
 				</Sheet>
 			)}
 			{agentId && sessionId && (
-				<ToolLoginDialog key={agentId + ":" + sessionId} agentId={agentId} sessionId={sessionId} change={toolLoginChange} />
+				<ToolLoginDialog
+					key={agentId + ':' + sessionId}
+					agentId={agentId}
+					sessionId={sessionId}
+					change={toolLoginChange}
+				/>
 			)}
 			<CreateCredentialDialog open={credentialOpen} onOpenChange={setCredentialOpen} />
 		</>
