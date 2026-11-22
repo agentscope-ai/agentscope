@@ -37,6 +37,8 @@ def _guess_image_media_type(data: bytes) -> str:
         b"GIF87a": "image/gif",
         b"GIF89a": "image/gif",
         b"BM": "image/bmp",
+        b"II*\x00": "image/tiff",
+        b"MM\x00*": "image/tiff",
     }
     for signature, media_type in signatures.items():
         if data.startswith(signature):
@@ -44,6 +46,9 @@ def _guess_image_media_type(data: bytes) -> str:
     # WebP: ``RIFF`` at offset 0 + ``WEBP`` at offset 8.
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
+    # AVIF: ``ftyp`` at offset 4 + ``avif`` at offset 8.
+    if len(data) >= 12 and data[4:8] == b"ftyp" and data[8:12] == b"avif":
+        return "image/avif"
     return "image/jpeg"
 
 
@@ -82,11 +87,15 @@ def _table_to_markdown(table_data: list[list[str]]) -> str:
     if not table_data:
         return ""
 
-    num_cols = len(table_data[0])
+    # Ragged input: a later row may be longer than the header (e.g. a
+    # hand-built table whose first row omits trailing empty cells).
+    # Size the table by its widest row so no column is silently lost.
+    num_cols = max(len(row) for row in table_data)
     if num_cols == 0:
         return ""
 
     header = [_format_markdown_table_cell(cell) for cell in table_data[0]]
+    header += [""] * (num_cols - len(table_data[0]))
     lines = [
         "| " + " | ".join(header) + " |",
         "| " + " | ".join(["---"] * num_cols) + " |",

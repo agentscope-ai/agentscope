@@ -3271,6 +3271,48 @@ class WordParserInlineSeparatorTest(IsolatedAsyncioTestCase):
                     _expected_word_sections(expected),
                 )
 
+    async def test_table_deleted_text_is_omitted(self) -> None:
+        """Tracked deletions in a cell are omitted, like in paragraphs."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        document = DocxDocument()
+        table = document.add_table(rows=1, cols=1)
+        paragraph = parse_xml(
+            f'<w:p {nsdecls("w")}>'
+            "<w:r><w:t>kept</w:t></w:r>"
+            '<w:del w:id="1" w:author="test">'
+            "<w:r><w:t>deleted-secret</w:t></w:r></w:del>"
+            '<w:ins w:id="2" w:author="test">'
+            "<w:r><w:t>inserted</w:t></w:r></w:ins>"
+            "</w:p>",
+        )
+        cell = table.cell(0, 0)
+        # pylint: disable-next=protected-access
+        cell._tc.replace(cell.paragraphs[0]._p, paragraph)
+        buffer = io.BytesIO()
+        document.save(buffer)
+
+        for table_format, expected in (
+            ("markdown", "| keptinserted |\n| --- |\n"),
+            (
+                "json",
+                "<system-info>A table loaded as a JSON array:</system-info>"
+                '\n[["keptinserted"]]',
+            ),
+        ):
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format=table_format,
+                ).parse(buffer.getvalue(), "demo.docx")
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections(expected),
+                )
+
 
 class WordParserParagraphTest(IsolatedAsyncioTestCase):
     """Regression coverage for paragraph and text-box extraction."""
@@ -3749,4 +3791,90 @@ class WordParserContentControlTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             [(s.content.text, s.source, s.metadata) for s in wrapped],
             [(s.content.text, s.source, s.metadata) for s in plain],
+        )
+
+
+class TableToMarkdownTest(IsolatedAsyncioTestCase):
+    """Ragged tables keep their widest row instead of truncating it.
+
+    Regular Word/PPT/Excel tables are rectangular, so this only bites
+    when a first row omits trailing empty cells (or a hand-built table
+    is rendered directly) — the fix is scoped to that case.
+    """
+
+    def test_ragged_rows_are_padded_to_widest_row(self) -> None:
+        """A longer later row is kept; the short header is padded."""
+        from agentscope.rag._parser._utils import _table_to_markdown
+
+        self.assertEqual(
+            _table_to_markdown([["Title"], ["A", "B", "C"]]),
+            "| Title |  |  |\n| --- | --- | --- |\n| A | B | C |\n",
+        )
+
+    def test_rectangular_tables_are_unchanged(self) -> None:
+        """The common case renders exactly as before."""
+        from agentscope.rag._parser._utils import _table_to_markdown
+
+        self.assertEqual(
+            _table_to_markdown([["A", "B"], ["1", "2"]]),
+            "| A | B |\n| --- | --- |\n| 1 | 2 |\n",
+        )
+        self.assertEqual(_table_to_markdown([]), "")
+        self.assertEqual(_table_to_markdown([[]]), "")
+
+    def test_excel_ragged_rows_are_padded_to_widest_row(self) -> None:
+        """The Excel renderer shares the same widest-row rule."""
+        parser = ExcelParser(include_sheet_names=False)
+        self.assertEqual(
+            parser._table_to_markdown([["Title"], ["A", "B", "C"]], "S1"),
+            "| Title |  |  |\n| --- | --- | --- |\n| A | B | C |\n",
+        )
+
+
+class GuessImageMediaTypeTest(IsolatedAsyncioTestCase):
+    """Sniffing must not mislabel TIFF/AVIF bytes as JPEG.
+
+    This only fixes the fallback guess used when an embedded image has
+    no content type (e.g. an Office image part); it does not add TIFF
+    or AVIF as supported upload types.
+    """
+
+    def test_tiff_and_avif_signatures(self) -> None:
+        """TIFF (both byte orders) and AVIF get their own media type."""
+        from agentscope.rag._parser._utils import _guess_image_media_type
+
+        self.assertEqual(
+            _guess_image_media_type(b"II*\x00" + b"\x00" * 10),
+            "image/tiff",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"MM\x00*" + b"\x00" * 10),
+            "image/tiff",
+        )
+        self.assertEqual(
+            _guess_image_media_type(
+                b"\x00\x00\x00\x18ftypavif" + b"\x00" * 10,
+            ),
+            "image/avif",
+        )
+
+    def test_known_signatures_and_fallback_are_unchanged(self) -> None:
+        """PNG/JPEG/WebP still sniff correctly; unknown bytes stay JPEG."""
+        from agentscope.rag._parser._utils import _guess_image_media_type
+
+        self.assertEqual(
+            _guess_image_media_type(b"\x89PNG\r\n\x1a\n" + b"\x00" * 4),
+            "image/png",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"\xff\xd8\xff" + b"\x00" * 4),
+            "image/jpeg",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"RIFFxxxxWEBP" + b"\x00" * 4),
+            "image/webp",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"not an image at all"),
+            "image/jpeg",
         )
