@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """The chat model configuration, used as DTO layer."""
 
 from pydantic import BaseModel, Field
@@ -20,5 +21,7 @@ class ListModelsRequest(BaseModel):
     )
     credential_id: str | None = Field(
         default=None,
-        description="Select a stored credential's model catalog when available.",
+        description=(
+            "Select a stored credential's model catalog when available."
+        ),
     )

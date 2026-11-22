@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Source-backed business tools for client actions with OpenAPI contracts."""
 
 from ._business import as_tool, build, discover, preview

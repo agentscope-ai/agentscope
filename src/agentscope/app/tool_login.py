@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Private, interactive authentication for a tool running in a chat."""
 
 import asyncio
@@ -5,7 +6,13 @@ import hashlib
 import json
 import math
 import time
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Iterator,
+    Mapping,
+    AsyncIterator,
+)
 from contextlib import aclosing, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -20,11 +27,18 @@ from ._bus_ops import publish_session_event
 from .message_bus import MessageBus, MessageBusKeys
 
 LoginScope = tuple[str, str, str]
-_scope: ContextVar[LoginScope | None] = ContextVar("tool_login_scope", default=None)
+_scope: ContextVar[LoginScope | None] = ContextVar(
+    "tool_login_scope",
+    default=None,
+)
 
 
 @contextmanager
-def tool_login_scope(user_id: str, agent_id: str, session_id: str) -> Iterator[None]:
+def tool_login_scope(
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+) -> Iterator[None]:
     """Bind a chat run and its tools to the current session."""
     token = _scope.set((user_id, agent_id, session_id))
     try:
@@ -89,14 +103,22 @@ CompleteStep = Callable[
 
 
 @asynccontextmanager
-async def _subscribed(bus, channel, *, until=None):
-    """Subscribe before advertising a form or sending a command needing a reply."""
+async def _subscribed(
+    bus: MessageBus,
+    channel: str,
+    *,
+    until: asyncio.Future | None = None,
+) -> AsyncIterator[tuple[asyncio.Future, AsyncIterator[dict]]]:
+    """Subscribe before advertising a form or sending a command needing a
+    reply."""
     ready = asyncio.Event()
     async with aclosing(bus.subscribe(channel, on_ready=ready.set)) as stream:
-        first = asyncio.create_task(anext(stream))
+        first = asyncio.ensure_future(anext(stream))
         started = asyncio.create_task(ready.wait())
         try:
-            waiting = (first, started) if until is None else (first, started, until)
+            waiting = (
+                (first, started) if until is None else (first, started, until)
+            )
             await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
             if until is not None and until.done():
                 raise LoginEnded("This login request has ended.")
@@ -109,21 +131,29 @@ async def _subscribed(bus, channel, *, until=None):
             await asyncio.gather(first, started, return_exceptions=True)
 
 
-def _directory(scope):
+def _directory(scope: LoginScope) -> str:
     digest = hashlib.sha256(json.dumps(scope).encode()).hexdigest()
     return MessageBusKeys.tool_login_forms(digest)
 
 
-_RELAY_ERRORS = {cls.__name__: cls for cls in (
-    LoginConflict, LoginEnded, LoginFailed, LoginRejected,
-)}
+_RELAY_ERRORS = {
+    cls.__name__: cls
+    for cls in (
+        LoginConflict,
+        LoginEnded,
+        LoginFailed,
+        LoginRejected,
+    )
+}
 
 
 @dataclass
 class _Pending:
     view: LoginView
     complete: CompleteStep = field(repr=False)
-    result: asyncio.Future[LoginSuccess | LoginFailed | None] = field(repr=False)
+    result: asyncio.Future[LoginSuccess | LoginFailed | None] = field(
+        repr=False,
+    )
     created: float = field(default_factory=time.time)
     listener: asyncio.Task | None = field(default=None, repr=False)
     waiters: int = 0
@@ -140,19 +170,23 @@ class ToolLogin:
 
     @staticmethod
     def current_scope() -> LoginScope:
-        """Return the active chat scope, for example to key an adapter cache."""
+        """Return the active chat scope, for example to key an adapter
+        cache."""
         scope = _scope.get()
         if scope is None:
             raise LoginEnded("Tool login requires an active chat session.")
         return scope
 
     async def _notify(self, scope: LoginScope) -> None:
-        # Events carry only an invalidation. Forms are read from the scoped API.
+        # Events carry only an invalidation. Forms are read from the scoped
+        # API.
         try:
             await publish_session_event(
                 self._bus,
                 scope[2],
-                CustomEvent(name="tool_login_changed", value={}).model_dump(mode="json"),
+                CustomEvent(name="tool_login_changed", value={}).model_dump(
+                    mode="json",
+                ),
             )
         except Exception:  # pylint: disable=broad-exception-caught
             logger.warning("Could not notify chat of a tool login change")
@@ -181,22 +215,28 @@ class ToolLogin:
             async with asyncio.timeout(self._timeout):
                 result = await asyncio.shield(pending.result)
             if result is None:
-                raise LoginEnded("Login cancelled. Stop the current operation.")
+                raise LoginEnded(
+                    "Login cancelled. Stop the current operation.",
+                )
             if isinstance(result, LoginFailed):
                 raise LoginFailed(str(result))
             return result.value
         except TimeoutError:
             if self._finish(key, pending, None):
                 await self._notify(scope)
-            raise LoginEnded("Login timed out. Stop the current operation.") from None
+            raise LoginEnded(
+                "Login timed out. Stop the current operation.",
+            ) from None
         finally:
             pending.waiters -= 1
             if pending.waiters == 0:
                 self._finish(key, pending, None)
-                await asyncio.shield(pending.listener)
+                if pending.listener is not None:
+                    await asyncio.shield(pending.listener)
 
-    async def _advertise(self, scope, pending):
-        # Only public form metadata is stored. Passwords and replies use private,
+    async def _advertise(self, scope: LoginScope, pending: _Pending) -> None:
+        # Only public form metadata is stored. Passwords and replies use
+        # private,
         # transient channels and are never written to the chat replay log.
         value = {
             "view": pending.view.model_dump(mode="json"),
@@ -204,12 +244,14 @@ class ToolLogin:
             "expires": pending.created + self._timeout,
         }
         await self._bus.registry_set(
-            _directory(scope), pending.view.id, json.dumps(value),
+            _directory(scope),
+            pending.view.id,
+            json.dumps(value),
             ttl_secs=max(1, math.ceil(self._timeout)),
         )
         await self._notify(scope)
 
-    async def _withdraw(self, scope, login_id):
+    async def _withdraw(self, scope: LoginScope, login_id: str) -> None:
         try:
             await self._bus.registry_del(_directory(scope), login_id)
         except Exception:
@@ -217,72 +259,145 @@ class ToolLogin:
             # public form records also carry the original request deadline.
             logger.warning("Could not remove expired tool login form")
 
-    async def _serve(self, key, pending):
+    async def _serve(
+        self,
+        key: tuple[LoginScope, str],
+        pending: _Pending,
+    ) -> None:
         scope, _ = key
         login_id = pending.view.id
         channel = MessageBusKeys.tool_login_command(login_id)
         try:
-            async with _subscribed(self._bus, channel, until=pending.result) as (incoming, stream):
+            async with _subscribed(
+                self._bus,
+                channel,
+                until=pending.result,
+            ) as (incoming, stream):
                 if pending.result.done():
                     return
                 await self._advertise(scope, pending)
                 try:
                     async with asyncio.TaskGroup() as handlers:
                         while not pending.result.done():
-                            await asyncio.wait((incoming, pending.result), return_when=asyncio.FIRST_COMPLETED)
+                            await asyncio.wait(
+                                (incoming, pending.result),
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
                             if incoming.done():
                                 command = incoming.result()
-                                handlers.create_task(self._handle_command(scope, pending, command))
-                                incoming = asyncio.create_task(anext(stream))
+                                handlers.create_task(
+                                    self._handle_command(
+                                        scope,
+                                        pending,
+                                        command,
+                                    ),
+                                )
+                                incoming = asyncio.ensure_future(anext(stream))
                 finally:
                     incoming.cancel()
                     await asyncio.gather(incoming, return_exceptions=True)
         except Exception:
-            self._finish(key, pending, LoginFailed("Tool login transport unavailable."))
+            self._finish(
+                key,
+                pending,
+                LoginFailed("Tool login transport unavailable."),
+            )
         finally:
             await self._withdraw(scope, login_id)
             await self._notify(scope)
 
-    async def _handle_command(self, scope, pending, command):
+    async def _handle_command(
+        self,
+        scope: LoginScope,
+        pending: _Pending,
+        command: dict,
+    ) -> None:
         # Keep listening during a slow adapter call so another tab can cancel
         # or receive an immediate revision conflict.
         reply = {}
         login_id = pending.view.id
         try:
-            async with asyncio.timeout(max(0, pending.created + self._timeout - time.time())):
+            async with asyncio.timeout(
+                max(0, pending.created + self._timeout - time.time()),
+            ):
                 if command["action"] == "cancel":
                     await self._cancel_local(scope, login_id)
                 else:
-                    await self._submit_local(scope, login_id, command["revision"], command["values"])
-        except (LoginConflict, LoginEnded, LoginFailed, LoginRejected) as error:
-            kind = next(name for name, cls in _RELAY_ERRORS.items() if isinstance(error, cls))
+                    await self._submit_local(
+                        scope,
+                        login_id,
+                        command["revision"],
+                        command["values"],
+                    )
+        except (
+            LoginConflict,
+            LoginEnded,
+            LoginFailed,
+            LoginRejected,
+        ) as error:
+            kind = next(
+                name
+                for name, cls in _RELAY_ERRORS.items()
+                if isinstance(error, cls)
+            )
             reply = {"error": kind, "message": str(error)}
         except Exception:
-            reply = {"error": "LoginFailed", "message": "The service could not complete login."}
-        await self._bus.publish(MessageBusKeys.tool_login_reply(command["request"]), reply)
+            reply = {
+                "error": "LoginFailed",
+                "message": "The service could not complete login.",
+            }
+        await self._bus.publish(
+            MessageBusKeys.tool_login_reply(command["request"]),
+            reply,
+        )
 
     async def pending_view(self, scope: LoginScope) -> LoginView | None:
-        """Find the oldest active form, including those owned by another worker."""
+        """Find the oldest active form, including those owned by another
+        worker."""
         records = (await self._bus.registry_getall(_directory(scope))).values()
-        live = (r for r in map(json.loads, records) if r["expires"] > time.time())
-        oldest = min(live, key=lambda r: (r["created"], r["view"]["id"]), default=None)
+        live = (
+            r for r in map(json.loads, records) if r["expires"] > time.time()
+        )
+        oldest = min(
+            live,
+            key=lambda r: (r["created"], r["view"]["id"]),
+            default=None,
+        )
         return LoginView.model_validate(oldest["view"]) if oldest else None
 
-    async def _forward(self, scope, login_id, action, **payload):
+    async def _forward(
+        self,
+        scope: LoginScope,
+        login_id: str,
+        action: str,
+        **payload: Any,
+    ) -> None:
         record = await self._bus.registry_get(_directory(scope), login_id)
-        remaining = json.loads(record)["expires"] - time.time() if record else 0
+        remaining = (
+            json.loads(record)["expires"] - time.time() if record else 0
+        )
         if remaining <= 0:
             raise LoginEnded("This login request has ended.")
         request_id = uuid4().hex
         try:
             async with asyncio.timeout(remaining):
-                async with _subscribed(self._bus, MessageBusKeys.tool_login_reply(request_id)) as (reply, _):
-                    await self._bus.publish(MessageBusKeys.tool_login_command(login_id), {
-                        "action": action, "request": request_id, **payload,
-                    })
+                async with _subscribed(
+                    self._bus,
+                    MessageBusKeys.tool_login_reply(request_id),
+                ) as (reply, _):
+                    await self._bus.publish(
+                        MessageBusKeys.tool_login_command(login_id),
+                        {
+                            "action": action,
+                            "request": request_id,
+                            **payload,
+                        },
+                    )
                     result = await reply
         except (TimeoutError, StopAsyncIteration):
-            raise LoginEnded("The login worker did not respond in time.") from None
+            raise LoginEnded(
+                "The login worker did not respond in time.",
+            ) from None
         if error := result.get("error"):
             raise _RELAY_ERRORS[error](result["message"])
 
@@ -301,7 +416,11 @@ class ToolLogin:
     def pending(self, scope: LoginScope) -> LoginView | None:
         """Return the oldest visible login request for a chat."""
         return next(
-            (entry.view for (owner, _), entry in self._pending.items() if owner == scope),
+            (
+                entry.view
+                for (owner, _), entry in self._pending.items()
+                if owner == scope
+            ),
             None,
         )
 
@@ -322,27 +441,48 @@ class ToolLogin:
         try:
             self._find(scope, login_id)
         except LoginEnded:
-            return await self._forward(scope, login_id, "submit", revision=revision, values=values)
+            return await self._forward(
+                scope,
+                login_id,
+                "submit",
+                revision=revision,
+                values=values,
+            )
         await self._submit_local(scope, login_id, revision, values)
 
-    async def _submit_local(self, scope, login_id, revision, values):
+    async def _submit_local(
+        self,
+        scope: LoginScope,
+        login_id: str,
+        revision: int,
+        values: dict,
+    ) -> None:
         service, pending = self._find(scope, login_id)
         if pending.submitting or pending.view.revision != revision:
-            raise LoginConflict("This login step has changed or is being submitted.")
+            raise LoginConflict(
+                "This login step has changed or is being submitted.",
+            )
         step = pending.view.step
         fields = {item.name for item in step.fields}
         if values.keys() - fields or any(
             item.required and not values.get(item.name) for item in step.fields
         ):
-            raise LoginRejected("Complete the fields in the current login form.")
+            raise LoginRejected(
+                "Complete the fields in the current login form.",
+            )
 
         pending.submitting = True
         key = (scope, service)
         try:
             try:
-                completion = asyncio.ensure_future(pending.complete(step, values))
+                completion = asyncio.ensure_future(
+                    pending.complete(step, values),
+                )
                 try:
-                    await asyncio.wait((completion, pending.result), return_when=asyncio.FIRST_COMPLETED)
+                    await asyncio.wait(
+                        (completion, pending.result),
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
                     if pending.result.done():
                         raise LoginEnded("This login request has ended.")
                     result = completion.result()
@@ -359,7 +499,9 @@ class ToolLogin:
                 await self._withdraw(scope, login_id)
             else:
                 pending.view = LoginView(
-                    id=login_id, revision=revision + 1, step=result,
+                    id=login_id,
+                    revision=revision + 1,
+                    step=result,
                 )
                 await self._advertise(scope, pending)
         finally:
@@ -373,7 +515,7 @@ class ToolLogin:
             return await self._forward(scope, login_id, "cancel")
         await self._cancel_local(scope, login_id)
 
-    async def _cancel_local(self, scope, login_id):
+    async def _cancel_local(self, scope: LoginScope, login_id: str) -> None:
         service, pending = self._find(scope, login_id)
         self._finish((scope, service), pending, None)
         await self._withdraw(scope, login_id)

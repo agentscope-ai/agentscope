@@ -1,5 +1,8 @@
+# -*- coding: utf-8 -*-
 """Compare a generated request or persisted receipt to the original client."""
 
+from collections.abc import Callable, Awaitable
+from typing import Any
 import hashlib
 import json
 from copy import deepcopy
@@ -10,32 +13,35 @@ import httpx
 from agentscope.business import preview
 
 
-def compare(expected, actual, path="$"):
-    """Report the first difference, including omissions and JSON type changes."""
+def compare(expected: object, actual: object, path: str = "$") -> None:
+    """Report the first difference, including omissions and JSON type
+    changes."""
     if isinstance(expected, dict) and isinstance(actual, dict):
         if expected.keys() != actual.keys():
             raise ValueError(
                 f"{path}: missing {sorted(expected.keys() - actual.keys())}, "
-                f"extra {sorted(actual.keys() - expected.keys())}"
+                f"extra {sorted(actual.keys() - expected.keys())}",
             )
         for key in expected:
             compare(expected[key], actual[key], f"{path}.{key}")
     elif isinstance(expected, list) and isinstance(actual, list):
         if len(expected) != len(actual):
             raise ValueError(
-                f"{path}: length {len(actual)}, expected {len(expected)}"
+                f"{path}: length {len(actual)}, expected {len(expected)}",
             )
         for index, (left, right) in enumerate(
-            zip(expected, actual, strict=True)
+            zip(expected, actual, strict=True),
         ):
             compare(left, right, f"{path}[{index}]")
     elif expected != actual or isinstance(expected, bool) != isinstance(
-        actual, bool
+        actual,
+        bool,
     ):
         raise ValueError(f"{path}: expected {expected!r}, received {actual!r}")
 
 
-def check_cases(bundle, reference):
+def check_cases(bundle: dict, reference: dict) -> list[dict]:
+    """Check the generated requests against the recorded browser cases."""
     save, read = (bundle["tools"][role] for role in ("save", "detail"))
     report = bundle["discovery"]
     page = report["handler"].rsplit("#", 1)[0]
@@ -47,7 +53,7 @@ def check_cases(bundle, reference):
     if "editorProgram" not in save["plan"]:
         raise ValueError(
             "Incomplete editor program: "
-            + report.get("editorDiagnostic", "missing")
+            + report.get("editorDiagnostic", "missing"),
         )
     names = [c["name"] for c in reference["cases"]]
     expected_cases = {
@@ -83,10 +89,12 @@ def check_cases(bundle, reference):
         else:
             if expected is None:
                 raise ValueError(
-                    f"{name}: the client blocked saving but the tool accepted it"
+                    f"{name}: the client blocked saving but the tool "
+                    "accepted it",
                 )
             compare(expected, actual, name)
-            # The reference API returns test ID 918 to the original save handler.
+            # The reference API returns test ID 918 to the original save
+            # handler.
             read_req = preview(read, {read["operation"]["pathNames"][0]: 918})
             compare("GET", read_req["method"], name)
             compare([read_req["path"]], case["reads"], name + ".reads")
@@ -98,13 +106,14 @@ def check_cases(bundle, reference):
                     "path": actual["path"],
                     "lines": len(body["details"]),
                     "goodsTotalAmount": body["order"]["goodsTotalAmount"],
-                }
+                },
             )
     return results
 
 
-def business_values(receipt, document_id):
-    """Validate generated identities and relationships before normalizing them."""
+def business_values(receipt: dict, document_id: int) -> dict:
+    """Validate generated identities and relationships before normalizing
+    them."""
     value = deepcopy(receipt)
     header = value["order"]
     compare(document_id, header["id"], "order.id")
@@ -113,7 +122,7 @@ def business_values(receipt, document_id):
         raise ValueError("Missing ERP bill number")
     seen = {}
 
-    def record(row, table, parent=None):
+    def record(row: dict, table: str, parent: int | None = None) -> int:
         key = row["id"]
         if (
             not isinstance(key, int)
@@ -147,7 +156,13 @@ def business_values(receipt, document_id):
     return value
 
 
-async def persisted_cases(reference, base_url, token, invoke):
+async def persisted_cases(
+    reference: dict,
+    base_url: str,
+    token: str,
+    invoke: Callable[[str, dict], Awaitable[Any]],
+) -> list[dict]:
+    """Compare records saved by the original client and the generated tool."""
     results = []
     async with httpx.AsyncClient(
         base_url=base_url.rstrip("/") + "/",
@@ -161,13 +176,15 @@ async def persisted_cases(reference, base_url, token, invoke):
                 continue
             ref = case["request"]
             response = await client.request(
-                ref["method"], ref["path"].lstrip("/"), json=ref["body"]
+                ref["method"],
+                ref["path"].lstrip("/"),
+                json=ref["body"],
             )
             response.raise_for_status()
             envelope = response.json()
             if envelope.get("code") != 200:
                 raise ValueError(
-                    f"Original request: {envelope.get('message')}"
+                    f"Original request: {envelope.get('message')}",
                 )
             first = envelope["data"]
             print(f"{case['name']} 原客户端保存 ID {first}", flush=True)
@@ -185,7 +202,11 @@ async def persisted_cases(reference, base_url, token, invoke):
             values = business_values(left, first)
             compare(values, business_values(right, second), case["name"])
             digest = hashlib.sha256(
-                json.dumps(values, sort_keys=True, ensure_ascii=False).encode()
+                json.dumps(
+                    values,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ).encode(),
             ).hexdigest()
             results.append(
                 {
@@ -193,12 +214,16 @@ async def persisted_cases(reference, base_url, token, invoke):
                     "originalBill": left["order"]["billNo"],
                     "toolBill": right["order"]["billNo"],
                     "businessValuesSha256": digest,
-                }
+                },
             )
     return results
 
 
-async def persisted_required_cases(bundle, reference, invoke):
+async def persisted_required_cases(
+    bundle: dict,
+    reference: dict,
+    invoke: Callable[[str, dict], Awaitable[Any]],
+) -> list[dict]:
     """Replay the live browser cases through the normal tool entry points."""
     from unittest.mock import patch
 
@@ -219,7 +244,12 @@ async def persisted_required_cases(bundle, reference, invoke):
     send = httpx.AsyncClient.send
     requests = []
 
-    async def record(client, request, *args, **kwargs):
+    async def record(
+        client: httpx.AsyncClient,
+        request: httpx.Request,
+        *args: Any,
+        **kwargs: Any,
+    ) -> httpx.Response:
         requests.append(request)
         return await send(client, request, *args, **kwargs)
 
@@ -229,7 +259,8 @@ async def persisted_required_cases(bundle, reference, invoke):
         with patch.object(httpx.AsyncClient, "send", record):
             try:
                 receipt_id = await invoke(
-                    "save", {argument: case["input"][argument]}
+                    "save",
+                    {argument: case["input"][argument]},
                 )
             except ValueError as exc:
                 if expected:
@@ -248,7 +279,7 @@ async def persisted_required_cases(bundle, reference, invoke):
                         "toolPrompt": str(exc),
                         "originalSaves": 0,
                         "toolSaves": 0,
-                    }
+                    },
                 )
                 continue
         if expected is None:
@@ -259,7 +290,9 @@ async def persisted_required_cases(bundle, reference, invoke):
         if not writes[0].url.path.endswith(expected["path"]):
             raise ValueError(f"{name}: tool used a different request path")
         compare(
-            expected["body"], json.loads(writes[0].content), name + ".request"
+            expected["body"],
+            json.loads(writes[0].content),
+            name + ".request",
         )
         first = int(case["reads"][0].rsplit("/", 1)[-1])
         original = await invoke("detail", {"id": first})
@@ -271,7 +304,9 @@ async def persisted_required_cases(bundle, reference, invoke):
             raise ValueError("Expected two independent receipts")
         values = business_values(original, first)
         compare(
-            values, business_values(saved, receipt_id), name + ".persisted"
+            values,
+            business_values(saved, receipt_id),
+            name + ".persisted",
         )
         results.append(
             {
@@ -286,6 +321,6 @@ async def persisted_required_cases(bundle, reference, invoke):
                 "batchLocation": saved["details"][1]["batches"][0][
                     "warehouseLocation"
                 ],
-            }
+            },
         )
     return results

@@ -1,5 +1,7 @@
+# -*- coding: utf-8 -*-
 """Infer a document workflow from the client and its API contract."""
 
+from collections.abc import Iterator
 import asyncio
 import hashlib
 import json
@@ -20,7 +22,10 @@ from ._business import (
 WORKFLOW_FORMAT = "agentscope.business-workflow.v1"
 
 
-def property_paths(schema, prefix=()):
+def property_paths(
+    schema: dict,
+    prefix: tuple = (),
+) -> Iterator[tuple[str, dict, tuple]]:
     """Yield property locations including OpenAPI allOf wrappers."""
     if not isinstance(schema, dict):
         return
@@ -30,33 +35,39 @@ def property_paths(schema, prefix=()):
         yield from property_paths(child, (*prefix, "allOf", index))
 
 
-def properties(schema):
+def properties(schema: dict) -> dict:
+    """Collect properties declared in a schema and its compositions."""
     return {key: value for key, value, _ in property_paths(schema)}
 
 
-def editor_body_schema(schema, defaults, program):
+def editor_body_schema(
+    schema: dict,
+    defaults: list[dict],
+    program: dict,
+) -> None:
     """Retain wire nulls produced by form defaults and relation cleanup."""
     nulls = {(d["section"], d["field"]) for d in defaults}
     nulls.update(tuple(item["path"]) for item in program["nullableRelations"])
 
-    def visit(node, path=()):
-        if not isinstance(node, dict):
+    def visit(item: object, path: tuple = ()) -> None:
+        if not isinstance(item, dict):
             return
-        for key, child in node.get("properties", {}).items():
+        for key, child in item.get("properties", {}).items():
             field = (*path, key)
-            if field in nulls and key not in node.get("required", ()):
+            if field in nulls and key not in item.get("required", ()):
                 kind = child.get("type") if isinstance(child, dict) else None
                 if isinstance(kind, str) and kind != "null":
                     child["type"] = [kind, "null"]
             visit(child, field)
-        for member in node.get("allOf", []):
+        for member in item.get("allOf", []):
             visit(member, path)
-        visit(node.get("items"), path)
+        visit(item.get("items"), path)
 
     visit(schema)
 
 
-def select_pair(document, business):
+def select_pair(document: dict, business: str) -> tuple[str, str]:
+    """Find the unique create and detail routes for this business."""
     pairs = []
     for route, methods in document["paths"].items():
         save = methods.get("post", {})
@@ -75,12 +86,13 @@ def select_pair(document, business):
                 pairs.append((route, detail_route))
     if len(pairs) != 1:
         raise ValueError(
-            f"Expected one documented create/read pair for {business!r}, found {pairs}"
+            f"Expected one documented create/read pair for {business!r}, "
+            f"found {pairs}",
         )
     return pairs[0]
 
 
-def approval_defaults(detail, defaults):
+def approval_defaults(detail: dict, defaults: list[dict]) -> Iterator[dict]:
     """A null editor default also needs an API-documented later obligation."""
     nullable = {(d["section"], d["field"]): d["evidence"] for d in defaults}
     for status, schema in detail["responses"].items():
@@ -104,7 +116,10 @@ def approval_defaults(detail, defaults):
                             "status": status,
                             "schemaPath": list(fp),
                             "schema": {**field, "type": ["number", "null"]},
-                            "reason": "Draft default is null; the API requires this field at approval.",
+                            "reason": (
+                                "Draft default is null; the API requires "
+                                "this field at approval."
+                            ),
                             "source": source,
                             "apiDescription": description,
                         }
@@ -118,7 +133,7 @@ def generate(source: Path, openapi: Path, business: str) -> dict:
     raw_api = openapi.read_bytes()
     document = json.loads(raw_api)
     save_route, detail_route = select_pair(document, business)
-    spec = {
+    spec: dict = {
         "save": {"route": save_route, "method": "POST"},
         "detail": {"route": detail_route, "method": "GET"},
     }
@@ -144,7 +159,8 @@ def generate(source: Path, openapi: Path, business: str) -> dict:
         for media in response.get("content", {}).values():
             schema = media.get("schema", {})
             envelope = definitions.get(
-                schema.get("$ref", "").rsplit("/", 1)[-1], schema
+                schema.get("$ref", "").rsplit("/", 1)[-1],
+                schema,
             )
             if any(
                 field.get("type") == "object"
@@ -164,7 +180,8 @@ def generate(source: Path, openapi: Path, business: str) -> dict:
     inferred = node("extract.mjs", str(source.resolve()), "--infer", data=spec)
     report = inferred["report"]
     for role, op in ops.items():
-        # Use the documented success discriminator when the API wraps errors in HTTP 200.
+        # Use the documented success discriminator when the API wraps errors in
+        # HTTP 200.
         for key, field in properties(op["responses"].get("200") or {}).items():
             match = re.search(
                 r"(\d+)\s*(?:表示成功|means success)",
@@ -189,7 +206,9 @@ def generate(source: Path, openapi: Path, business: str) -> dict:
         saved_type.get("type") == "object"
         and identifier["type"] != "object"
         and re.search(
-            r"\bID\b", saved_type.get("description", ""), re.IGNORECASE
+            r"\bID\b",
+            saved_type.get("description", ""),
+            re.IGNORECASE,
         )
     ):
         inferred["save"]["responseCorrections"] = [
@@ -197,13 +216,16 @@ def generate(source: Path, openapi: Path, business: str) -> dict:
                 "status": "200",
                 "schemaPath": ["properties", prop],
                 "schema": dict(identifier),
-                "reason": "The client passes the create result into the documented detail path parameter.",
+                "reason": (
+                    "The client passes the create result into the documented "
+                    "detail path parameter."
+                ),
                 "source": report["readArgument"],
                 "apiDescription": saved_type["description"],
-            }
+            },
         ]
     inferred["detail"]["responseCorrections"] = list(
-        approval_defaults(ops["detail"], inferred["defaults"])
+        approval_defaults(ops["detail"], inferred["defaults"]),
     )
     artifacts = {
         role: build(source, None, openapi, inferred[role]) for role in ops
@@ -214,7 +236,9 @@ def generate(source: Path, openapi: Path, business: str) -> dict:
         save["plan"]["editorProgram"] = program
         save["plan"]["hashes"].update(program["hashes"])
         editor_body_schema(
-            save["operation"]["bodySchema"], inferred["defaults"], program
+            save["operation"]["bodySchema"],
+            inferred["defaults"],
+            program,
         )
         editor_body_schema(
             save["inputSchema"]["properties"][program["argument"]],
@@ -226,7 +250,9 @@ def generate(source: Path, openapi: Path, business: str) -> dict:
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {name: {} for name in program["state"]},
-                "description": "Loaded editor reference data for the same ERP session.",
+                "description": (
+                    "Loaded editor reference data for the same ERP session."
+                ),
             }
         report["editor"] = {
             "builder": program["builder"],
@@ -247,7 +273,7 @@ def generate(source: Path, openapi: Path, business: str) -> dict:
                 for c in program["calculators"]
             ):
                 report["wholeFunctionFields"].append(
-                    {key: field[key] for key in ("each", "field", "evidence")}
+                    {key: field[key] for key in ("each", "field", "evidence")},
                 )
                 omit_computed_requirement(
                     save["inputSchema"]["properties"][program["argument"]],
@@ -264,7 +290,7 @@ def generate(source: Path, openapi: Path, business: str) -> dict:
         != inferred["pageHash"]
     ):
         raise ValueError(
-            "Client changed during discovery. Run generation again."
+            "Client changed during discovery. Run generation again.",
         )
     for role, artifact in artifacts.items():
         if (
@@ -272,17 +298,17 @@ def generate(source: Path, openapi: Path, business: str) -> dict:
             != hashlib.sha256(raw_api).hexdigest()
         ):
             raise ValueError(
-                "OpenAPI changed during discovery. Run generation again."
+                "OpenAPI changed during discovery. Run generation again.",
             )
         if artifact["operation"]["route"] != spec[role]["route"]:
             raise ValueError(
-                "Compiled route does not match the discovered operation"
+                "Compiled route does not match the discovered operation",
             )
     if report["omitted"]:
         skipped = ", ".join(f["field"] for f in report["omitted"])
-        artifacts["save"]["operation"]["description"] += (
-            f" 当前工具尚未实现这些客户端派生字段的计算：{skipped}。"
-        )
+        artifacts["save"]["operation"][
+            "description"
+        ] += f" 当前工具尚未实现这些客户端派生字段的计算：{skipped}。"
     return {
         "format": WORKFLOW_FORMAT,
         "business": business,
@@ -292,9 +318,10 @@ def generate(source: Path, openapi: Path, business: str) -> dict:
 
 
 def discovery_tool(source: Path, openapi: Path, output: Path) -> FunctionTool:
-    """Give an AgentScope agent a source/API pair and a destination for its tools."""
+    """Give an AgentScope agent a source/API pair and a destination for its
+    tools."""
 
-    async def generate_business_tools(business: str):
+    async def generate_business_tools(business: str) -> dict:
         bundle = await asyncio.to_thread(generate, source, openapi, business)
         write_definition(output, bundle)
         report = bundle["discovery"]
@@ -312,10 +339,11 @@ def discovery_tool(source: Path, openapi: Path, output: Path) -> FunctionTool:
                 ]
             ],
             "clientOnlyChecks": report.get("editor", {}).get(
-                "requiresClient", []
+                "requiresClient",
+                [],
             ),
             "inputs": sorted(
-                {key for f in report["fields"] for key in f["inputs"]}
+                {key for f in report["fields"] for key in f["inputs"]},
             ),
             "unresolved": [f["field"] for f in report["omitted"]],
         }
@@ -326,7 +354,10 @@ def discovery_tool(source: Path, openapi: Path, output: Path) -> FunctionTool:
         description="根据已提供的源码和 OpenAPI 发现指定单据的新增、回查和明细计算，生成可试运行的工具。",
         permission=PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
-            message="Generate a local definition at the host-selected output path.",
+            message=(
+                "Generate a local definition at the host-selected output "
+                "path."
+            ),
         ),
         input_schema={
             "type": "object",

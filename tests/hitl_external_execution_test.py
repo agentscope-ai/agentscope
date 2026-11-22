@@ -1537,7 +1537,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         self.agent.toolkit = Toolkit(tools=[MockExternalConcurrentTool()])
         for max_iters, auto_continue in ((1, False), (2, False), (1, True)):
             with self.subTest(
-                max_iters=max_iters, auto_continue=auto_continue
+                max_iters=max_iters,
+                auto_continue=auto_continue,
             ):
                 self.agent.react_config.max_iters = max_iters
                 self.agent.react_config.auto_continue = auto_continue
@@ -1668,6 +1669,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             )
 
     async def test_total_cap_survives_a_parked_parallel_round(self) -> None:
+        """Total cap survives a parked parallel round."""
         self.agent.react_config.auto_continue = True
         self.agent.react_config.max_total_iters = 4
         self.agent.toolkit = Toolkit(tools=[MockExternalConcurrentTool()])
@@ -1679,12 +1681,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             )
             for i in range(4)
         ]
-        self.model.set_responses([
-            ChatResponse(content=calls[:1], is_last=True),
-            ChatResponse(content=calls[1:3], is_last=True),
-            ChatResponse(content=calls[3:], is_last=True),
-            self.final_mock_responses,
-        ])
+        self.model.set_responses(
+            [
+                ChatResponse(content=calls[:1], is_last=True),
+                ChatResponse(content=calls[1:3], is_last=True),
+                ChatResponse(content=calls[3:], is_last=True),
+                self.final_mock_responses,
+            ],
+        )
         reminders = self.enterContext(
             track_hint_counts(self.model, "3 rounds remain"),
         )
@@ -1692,7 +1696,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         reply_id = self.agent.state.reply_id
         for i, call in enumerate(calls):
             # Each HTTP resumption may run on a fresh worker with only the
-            # persisted state. The second round receives its results separately.
+            # persisted state. The second round receives its results
+            # separately.
             snapshot = json.loads(self.agent.state.model_dump_json())
             if i == 0:
                 # Resume a snapshot from before the reminder was introduced.
@@ -1702,14 +1707,17 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 del snapshot["reply_context"]["total_iters"]
             self.agent.state = AgentState.model_validate(snapshot)
             self.assertEqual(
-                self.agent.state.reply_context.total_iters, (0, 1, 1, 2)[i],
+                self.agent.state.reply_context.total_iters,
+                (0, 1, 1, 2)[i],
             )
             result = await self.agent.reply(
                 ExternalExecutionResultEvent(
                     reply_id=reply_id,
                     execution_results=[
                         ToolResultBlock(
-                            id=call.id, name=call.name, output="ok",
+                            id=call.id,
+                            name=call.name,
+                            output="ok",
                             state=ToolResultState.SUCCESS,
                         ),
                     ],

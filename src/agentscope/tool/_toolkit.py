@@ -189,7 +189,8 @@ class Toolkit:
                 state is supplied.
             state (`AgentState | None`, optional):
                 In a text conversation, expose the search entry and the
-                session's selected business tools. Omit for a static schema list.
+                session's selected business tools. Omit for a static schema
+                list.
 
         Example:
             .. code-block:: JSON
@@ -325,7 +326,10 @@ class Toolkit:
 
             if tool_func.bind_confirmation is not None:
                 # Keep host approval metadata separate from model arguments.
-                kwargs = {"_confirmation_id": tool_call.confirmation_id, "_confirmed_inputs": kwargs}
+                kwargs = {
+                    "_confirmation_id": tool_call.confirmation_id,
+                    "_confirmed_inputs": kwargs,
+                }
 
             if inspect.iscoroutinefunction(tool_func.__call__):
                 res = await tool_func(**kwargs)
@@ -578,7 +582,8 @@ class Toolkit:
                 )
 
         catalog = [
-            entry.tool for entry in available_tools.values()
+            entry.tool
+            for entry in available_tools.values()
             if isinstance(entry.tool, PublishedBusinessTool)
             and entry.tool.business
         ]
@@ -645,15 +650,23 @@ class Toolkit:
             return
         # These callbacks belong to the host. Rejecting a pending call does not
         # need to connect to an MCP server or activate a tool group.
-        tools = {tool.name: tool for group in self.tool_groups for tool in group.tools}
-        candidates = [tools[call.name]] if call.name in tools else tools.values()
+        tools = {
+            tool.name: tool
+            for group in self.tool_groups
+            for tool in group.tools
+        }
+        candidates = (
+            [tools[call.name]] if call.name in tools else tools.values()
+        )
         for tool in candidates:
             handlers = tool.confirmation_denials
             if handlers and call.name in handlers:
                 handlers[call.name](call.confirmation_id)
                 return
         if call.name not in tools:
-            raise ToolNotFoundError(f"Cannot resolve the pending confirmation for '{call.name}'.")
+            raise ToolNotFoundError(
+                f"Cannot resolve the pending confirmation for '{call.name}'.",
+            )
 
     async def get_tool(self, name: str) -> ToolBase | None:
         """Get tool instance by its name.

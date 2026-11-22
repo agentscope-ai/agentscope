@@ -134,7 +134,8 @@ class SOPStepSubmitMiddlewareTest(IsolatedAsyncioTestCase):
             model=self.model,
             toolkit=toolkit,
             react_config=ReActConfig(
-                max_iters=max_iters, auto_continue=max_total_iters is not None,
+                max_iters=max_iters,
+                auto_continue=max_total_iters is not None,
                 max_total_iters=max_total_iters,
             ),
             middlewares=[SOPStepSubmitMiddleware(max_nudges=max_nudges)],
@@ -195,13 +196,18 @@ class SOPStepSubmitMiddlewareTest(IsolatedAsyncioTestCase):
         )
 
     async def test_total_cap_ends_repeated_submission_reminders(self) -> None:
+        """Total cap ends repeated submission reminders."""
         items = await self._run(
             [_text("first"), _text("retry"), _text("summary")],
-            max_iters=1, max_nudges=10, max_total_iters=3,
+            max_iters=1,
+            max_nudges=10,
+            max_total_iters=3,
         )
         self.assertEqual(self.model.cnt, 3)
-        self.assertEqual([e.finished_reason for e in self._end_events(items)],
-                         [ReplyFinishedReason.EXCEED_MAX_ITERS])
+        self.assertEqual(
+            [e.finished_reason for e in self._end_events(items)],
+            [ReplyFinishedReason.EXCEED_MAX_ITERS],
+        )
 
     async def test_the_nudges_run_out(self) -> None:
         """An attempt that never submits fails rather than looping."""

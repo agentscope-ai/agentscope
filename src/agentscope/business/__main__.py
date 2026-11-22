@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Command-line interface for source-backed business tools."""
 
 import subprocess

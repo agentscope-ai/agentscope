@@ -67,7 +67,10 @@ async def get_model(
         else None
     )
     local_cards = None
-    if isinstance(credential, OpenAICredential) and model_cls is OpenAIChatModel:
+    if (
+        isinstance(credential, OpenAICredential)
+        and model_cls is OpenAIChatModel
+    ):
         local_cards = await list_local_models(credential)
     model = model_cls(
         credential=credential,

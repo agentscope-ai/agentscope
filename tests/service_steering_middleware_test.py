@@ -1258,24 +1258,42 @@ class TestSteeringMiddleware(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_final_summary_keeps_late_input_for_the_next_reply(self) -> None:
+    async def test_final_summary_keeps_late_input_for_the_next_reply(
+        self,
+    ) -> None:
+        """Final summary keeps late input for the next reply."""
         bus = InMemoryMessageBus()
         agent = _make_agent()
         agent.remaining_total_iters = 1
         item = await enqueue_chat_input(
-            bus, "user", "session", "agent", UserMsg("user", "next task"),
+            bus,
+            "user",
+            "session",
+            "agent",
+            UserMsg("user", "next task"),
         )
         summary = AssistantMsg(id="reply", name="agent", content="Summary")
 
-        async def summarize(**_kwargs):
-            await steer_chat_input(bus, "user", "session", "agent", item["id"], "reply")
+        async def summarize(**_kwargs: object) -> AsyncGenerator:
+            await steer_chat_input(
+                bus,
+                "user",
+                "session",
+                "agent",
+                item["id"],
+                "reply",
+            )
             yield summary
 
         async with bus.acquire_lock(MessageBusKeys.session_lock("session")):
             await register_active_chat_reply(bus, "session", "reply")
-            events = await _collect(SteeringMiddleware(bus).on_reasoning(
-                agent, {"tool_choice": ToolChoice(mode="none")}, summarize,
-            ))
+            events = await _collect(
+                SteeringMiddleware(bus).on_reasoning(
+                    agent,
+                    {"tool_choice": ToolChoice(mode="none")},
+                    summarize,
+                ),
+            )
             await finish_active_chat_reply(bus, "session", "reply")
         self.assertEqual(events, [summary])
         queued = await list_chat_inputs(bus, "session")

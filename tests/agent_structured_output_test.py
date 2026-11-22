@@ -148,11 +148,15 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
         )
 
     async def test_structured_reply_uses_its_own_budget(self) -> None:
+        """Structured reply uses its own budget."""
         self.agent.react_config.auto_continue = True
         self.agent.react_config.max_total_iters = 1
-        self.model.set_responses([self.text_response, self.structured_tool_call])
+        self.model.set_responses(
+            [self.text_response, self.structured_tool_call],
+        )
         result = await self.agent.reply(
-            UserMsg("user", "Weather?"), structured_schema=WeatherReport,
+            UserMsg("user", "Weather?"),
+            structured_schema=WeatherReport,
         )
         self.assertEqual(result.finished_reason, "completed")
         self.assertEqual(result.structured_output["city"], "Hangzhou")

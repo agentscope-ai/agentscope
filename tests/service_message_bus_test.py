@@ -8,6 +8,7 @@ the abstract surface (queue / log / pubsub / lock) and the domain helpers
 (``session_run`` / ``session_publish_event`` / ``inbox_*`` / ``wakeup_*``)
 that are layered on top.
 """
+from collections.abc import Mapping
 import asyncio
 from contextlib import AsyncExitStack
 from typing import Any
@@ -475,33 +476,59 @@ class TestPubSubPrimitive(IsolatedAsyncioTestCase):
         await self._stack.aclose()
         await self.fr.aclose()
 
-    async def test_private_login_across_independent_redis_clients(self) -> None:
+    async def test_private_login_across_independent_redis_clients(
+        self,
+    ) -> None:
+        """Private login across independent redis clients."""
         from agentscope.app.tool_login import (
-            LoginField, LoginStep, LoginSuccess, ToolLogin, tool_login_scope,
+            LoginField,
+            LoginStep,
+            LoginSuccess,
+            ToolLogin,
+            tool_login_scope,
         )
 
         server = fakeredis.FakeServer()
         workers = []
         for _ in range(2):
-            client = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+            client = fakeredis.aioredis.FakeRedis(
+                server=server,
+                decode_responses=True,
+            )
             self._stack.push_async_callback(client.aclose)
             bus = await self._stack.enter_async_context(_make_bus(client))
             workers.append(ToolLogin(bus, timeout=3))
         owner, gateway = workers
         scope = ("user", "agent", "session")
-        step = LoginStep(title="Sign in", description="", submit_label="OK",
-                         fields=[LoginField(name="password", label="Password", kind="secret")])
+        step = LoginStep(
+            title="Sign in",
+            description="",
+            submit_label="OK",
+            fields=[
+                LoginField(name="password", label="Password", kind="secret"),
+            ],
+        )
 
-        async def complete(_, values):
+        async def complete(
+            _: LoginStep,
+            values: Mapping[str, str],
+        ) -> LoginSuccess:
             self.assertEqual(values["password"], "fixture")
             return LoginSuccess("result")
 
         with tool_login_scope(*scope):
-            request = asyncio.create_task(owner.request("service", step, complete))
+            request = asyncio.create_task(
+                owner.request("service", step, complete),
+            )
             async with asyncio.timeout(2):
                 while (view := await gateway.pending_view(scope)) is None:
                     await asyncio.sleep(0.01)
-            await gateway.submit(scope, view.id, view.revision, {"password": "fixture"})
+            await gateway.submit(
+                scope,
+                view.id,
+                view.revision,
+                {"password": "fixture"},
+            )
             self.assertEqual(await request, "result")
             self.assertIsNone(await gateway.pending_view(scope))
 

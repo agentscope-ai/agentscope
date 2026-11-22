@@ -406,6 +406,7 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
         )
 
     def test_auto_continue_cap_can_be_set_and_cleared(self) -> None:
+        """Auto continue cap can be set and cleared."""
         config = {"auto_continue": True, "max_total_iters": 7}
         created = self.client.post(
             "/agent/",
@@ -414,16 +415,24 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(created.status_code, 201)
         path = "/agent/" + created.json()["agent_id"]
-        stored, = self.client.get("/agent/", headers=HEADERS).json()["agents"]
+        (stored,) = self.client.get("/agent/", headers=HEADERS).json()[
+            "agents"
+        ]
         self.assertEqual(
-            stored["data"]["chat_config"]["react_config"]["max_total_iters"], 7,
+            stored["data"]["chat_config"]["react_config"]["max_total_iters"],
+            7,
         )
         updated = self.client.patch(
             path,
             headers=HEADERS,
-            json={"chat_config": {"react_config": {
-                "auto_continue": True, "max_total_iters": None,
-            }}},
+            json={
+                "chat_config": {
+                    "react_config": {
+                        "auto_continue": True,
+                        "max_total_iters": None,
+                    },
+                },
+            },
         )
         self.assertEqual(updated.status_code, 200)
         react_config = updated.json()["data"]["chat_config"]["react_config"]

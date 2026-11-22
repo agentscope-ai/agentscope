@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Read recent purchase receipts through the ERP client's list API."""
 
 from collections.abc import Awaitable, Callable
@@ -6,8 +7,9 @@ import httpx
 
 
 def recent_purchase_receipts(
-    base_url: str, get_token: Callable[[], Awaitable[str]]
-):
+    base_url: str,
+    get_token: Callable[[], Awaitable[str]],
+) -> Callable[[int], Awaitable[dict]]:
     """Bind the purchase receipt list query to the host's ERP connection."""
 
     async def query_recent_purchase_receipts(limit: int = 5) -> dict:
@@ -21,7 +23,9 @@ def recent_purchase_receipts(
 
         # PurchaseOrderView.vue loads the list through purchaseOrderApi.page.
         async with httpx.AsyncClient(
-            base_url=base_url, timeout=15, trust_env=False
+            base_url=base_url,
+            timeout=15,
+            trust_env=False,
         ) as client:
             response = await client.get(
                 "purchase/order/page",

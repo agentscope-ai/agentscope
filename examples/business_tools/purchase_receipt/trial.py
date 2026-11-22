@@ -1,5 +1,7 @@
+# -*- coding: utf-8 -*-
 """Reproduce the two-line Yuanjing purchase receipt case."""
 
+from typing import Any
 import argparse
 import asyncio
 import json
@@ -17,22 +19,25 @@ from agentscope.tool import Toolkit
 HERE = Path(__file__).resolve().parent
 
 
-def read_json(path):
+def read_json(path: Path) -> Any:
+    """Decode a JSON fixture from disk."""
     return json.loads(path.read_bytes())
 
 
-def compare(label, actual, expected):
+def compare(label: str, actual: object, expected: object) -> None:
+    """Raise on a mismatch between the expected and observed values."""
     if actual != expected:
         raise ValueError(
-            f"{label}: expected {expected!r}, received {actual!r}"
+            f"{label}: expected {expected!r}, received {actual!r}",
         )
 
 
-async def run(args):
+async def run(args: argparse.Namespace) -> None:
+    """Run the selected purchase receipt trial."""
     with TemporaryDirectory() as scratch:
         output = args.output or Path(scratch) / "workflow.json"
         kit = Toolkit(
-            tools=[discovery_tool(args.source, args.openapi, output)]
+            tools=[discovery_tool(args.source, args.openapi, output)],
         )
         discover = await kit.get_tool("generate_business_tools")
         reply = await discover(business="采购入库单")
@@ -51,11 +56,11 @@ async def run(args):
             args.required_reference,
             args.submit,
             args.read_id is not None,
-        )
+        ),
     ):
         if args.results:
             args.results.write_text(
-                json.dumps(results, ensure_ascii=False, indent=2) + "\n"
+                json.dumps(results, ensure_ascii=False, indent=2) + "\n",
             )
         return
     base = args.base_url
@@ -64,7 +69,7 @@ async def run(args):
     token = os.environ.get("BUSINESS_API_TOKEN")
     toolkit = Toolkit(tools=[as_tool(a, base, token) for a in (save, detail)])
 
-    async def invoke(role, values):
+    async def invoke(role: str, values: dict) -> Any:
         tool = await toolkit.get_tool(artifacts[role]["operation"]["name"])
         text = (await tool(**values)).content[0].text
         try:
@@ -74,27 +79,33 @@ async def run(args):
 
     if args.required_reference:
         results["live"] = await persisted_required_cases(
-            bundle, read_json(args.required_reference), invoke
+            bundle,
+            read_json(args.required_reference),
+            invoke,
         )
         print(json.dumps(results["live"], ensure_ascii=False))
         if args.results:
             args.results.write_text(
-                json.dumps(results, ensure_ascii=False, indent=2) + "\n"
+                json.dumps(results, ensure_ascii=False, indent=2) + "\n",
             )
         return
 
     if args.compare_persisted:
         results["persisted"] = await persisted_cases(
-            reference, base, token, invoke
+            reference,
+            base,
+            token,
+            invoke,
         )
         print(json.dumps(results["persisted"], ensure_ascii=False))
         if args.results:
             args.results.write_text(
-                json.dumps(results, ensure_ascii=False, indent=2) + "\n"
+                json.dumps(results, ensure_ascii=False, indent=2) + "\n",
             )
         return
 
-    # Preserve the single-draft trial and read-only verification on another ledger.
+    # Preserve the single-draft trial and read-only verification on another
+    # ledger.
     scenario = read_json(HERE / "expected.json")[-1]
     inputs = deepcopy(original)
     inputs["data"]["details"][1].update(scenario["patch"])
@@ -111,7 +122,10 @@ async def run(args):
     header = receipt["order"]
     compare("detail count", len(receipt["details"]), len(rows))
     for saved, sent, predicted in zip(
-        receipt["details"], rows, scenario["rows"], strict=True
+        receipt["details"],
+        rows,
+        scenario["rows"],
+        strict=True,
     ):
         sent = {**sent, **predicted}
         for field in (
@@ -123,11 +137,15 @@ async def run(args):
             *scenario["rows"][0],
         ):
             compare(
-                field, Decimal(str(saved[field])), Decimal(str(sent[field]))
+                field,
+                Decimal(str(saved[field])),
+                Decimal(str(sent[field])),
             )
     compare("id", int(header["id"]), doc_id)
     compare(
-        "goodsTotalAmount", Decimal(str(header["goodsTotalAmount"])), total
+        "goodsTotalAmount",
+        Decimal(str(header["goodsTotalAmount"])),
+        total,
     )
     if not header.get("billNo"):
         raise ValueError("The ERP returned no bill number")
@@ -143,17 +161,23 @@ async def run(args):
                 "goodsTotalAmount": header["goodsTotalAmount"],
             },
             ensure_ascii=False,
-        )
+        ),
     )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--source", type=Path, required=True, help="ERP frontend src directory"
+        "--source",
+        type=Path,
+        required=True,
+        help="ERP frontend src directory",
     )
     parser.add_argument(
-        "--openapi", type=Path, required=True, help="ERP OpenAPI JSON file"
+        "--openapi",
+        type=Path,
+        required=True,
+        help="ERP OpenAPI JSON file",
     )
     parser.add_argument(
         "--input",
@@ -167,10 +191,14 @@ if __name__ == "__main__":
         help="Keep the generated workflow and its source evidence",
     )
     parser.add_argument(
-        "--reference", type=Path, default=HERE / "client_cases.json"
+        "--reference",
+        type=Path,
+        default=HERE / "client_cases.json",
     )
     parser.add_argument(
-        "--results", type=Path, help="Save the differential acceptance results"
+        "--results",
+        type=Path,
+        help="Save the differential acceptance results",
     )
     parser.add_argument("--base-url", help="ERP API root, including /api")
     mode = parser.add_mutually_exclusive_group()
@@ -182,7 +210,10 @@ if __name__ == "__main__":
     mode.add_argument(
         "--compare-persisted",
         action="store_true",
-        help="Create two drafts for each of three paired cases on the test ERP",
+        help=(
+            "Create two drafts for each of three paired cases on the test "
+            "ERP"
+        ),
     )
     mode.add_argument(
         "--submit",
@@ -190,6 +221,8 @@ if __name__ == "__main__":
         help="Create one new draft in the selected ERP",
     )
     mode.add_argument(
-        "--read-id", type=int, help="Verify an existing trial receipt by ID"
+        "--read-id",
+        type=int,
+        help="Verify an existing trial receipt by ID",
     )
     asyncio.run(run(parser.parse_args()))

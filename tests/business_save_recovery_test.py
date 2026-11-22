@@ -1,4 +1,7 @@
-"""Recover published saves through the agent, using a non-idempotent fake ERP."""
+# -*- coding: utf-8 -*-
+"""Recover published saves through the agent, using a non-idempotent fake
+ERP."""
+from collections.abc import AsyncIterator
 import asyncio
 import hashlib
 import json
@@ -9,14 +12,24 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from utils import MockModel
+
 from agentscope.agent import Agent
 from agentscope.business import SaveBusinessRegistry
-from agentscope.event import ConfirmResult, RequireUserConfirmEvent, UserConfirmResultEvent
-from agentscope.message import TextBlock, ToolCallBlock, UserMsg
+from agentscope.event import (
+    ConfirmResult,
+    RequireUserConfirmEvent,
+    UserConfirmResultEvent,
+)
+from agentscope.message import (
+    TextBlock,
+    ToolCallBlock,
+    UserMsg,
+    ToolResultBlock,
+)
 from agentscope.model import ChatResponse
 from agentscope.state import AgentState
-from agentscope.tool import Toolkit
-from utils import MockModel
+from agentscope.tool import Toolkit, ToolChunk
 
 
 HERE = Path(__file__).resolve().parent
@@ -25,17 +38,36 @@ FAKE_BROWSER = HERE / "fixtures/business_tools/fake_save_browser.cjs"
 SAVE = "erp_save_card"
 
 
-def registry(root, *, mode="ok", target="offline ledger"):
-    async def capture(plan, actions, live):
+def registry(
+    root: Path,
+    *,
+    mode: str = "ok",
+    target: str = "offline ledger",
+) -> SaveBusinessRegistry:
+    """Build a registry backed by the fake browser and receipt store."""
+
+    async def capture(plan: dict, actions: list[dict], live: bool) -> dict:
         assert live
         child = await asyncio.create_subprocess_exec(
-            "node", str(CAPTURE), stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "BUSINESS_PLAYWRIGHT_MODULE": str(FAKE_BROWSER),
-                 "FAKE_ERP_ROOT": str(root), "FAKE_SAVE_MODE": mode},
+            "node",
+            str(CAPTURE),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={
+                **os.environ,
+                "BUSINESS_PLAYWRIGHT_MODULE": str(FAKE_BROWSER),
+                "FAKE_ERP_ROOT": str(root),
+                "FAKE_SAVE_MODE": mode,
+            },
         )
-        payload = {"origin": "https://erp.invalid", "clientRoute": "/card", "storage": {},
-                   "actions": actions, "save": {**plan, "live": live}}
+        payload = {
+            "origin": "https://erp.invalid",
+            "clientRoute": "/card",
+            "storage": {},
+            "actions": actions,
+            "save": {**plan, "live": live},
+        }
         stdout, stderr = await child.communicate(json.dumps(payload).encode())
         if child.returncode in (81, 82):
             raise ConnectionError("lost browser worker")
@@ -43,7 +75,7 @@ def registry(root, *, mode="ok", target="offline ledger"):
             raise RuntimeError(stderr.decode())
         return json.loads(stdout)
 
-    async def detail(route, receipt_id):
+    async def detail(route: str, receipt_id: int | str) -> dict:
         assert route == "/cards/{id}"
         with (root / "requests").open("a") as log:
             log.write(f"GET {receipt_id}\n")
@@ -51,17 +83,35 @@ def registry(root, *, mode="ok", target="offline ledger"):
             raise TimeoutError
         assert str(receipt_id) in (root / "drafts").read_text().splitlines()
         purpose = "other" if mode == "mismatch" else "test"
-        return {"order": {"id": receipt_id}, "purpose": purpose, "label": "离线验收"}
+        return {
+            "order": {"id": receipt_id},
+            "purpose": purpose,
+            "label": "离线验收",
+        }
 
-    return SaveBusinessRegistry(root, root / "spec", root / "registry", capture,
-                                detail, target_label=target)
+    return SaveBusinessRegistry(
+        root,
+        root / "spec",
+        root / "registry",
+        capture,
+        detail,
+        target_label=target,
+    )
 
 
-def worker(root, mode="ok"):
+def worker(root: Path, mode: str = "ok") -> Agent:
+    """Create a fresh agent that shares the persisted operation state."""
     model = MockModel(context_size=16000)
     tools = registry(root, mode=mode).tools("owner", "agent")
+
     class ContendingToolkit(Toolkit):
-        async def call_tool(self, tool_call, state):
+        """Synchronize workers before they attempt to claim a save."""
+
+        async def call_tool(
+            self,
+            tool_call: ToolCallBlock,
+            state: AgentState,
+        ) -> AsyncIterator[ToolChunk]:
             # Both workers must be inside execution of the approved call
             # before either of them can claim the external write.
             (root / f"worker-{os.getpid()}.ready").touch()
@@ -72,92 +122,167 @@ def worker(root, mode="ok"):
                 yield chunk
 
     toolkit = ContendingToolkit if mode == "concurrent" else Toolkit
-    return Agent(name="test", system_prompt="Save the draft.", model=model,
-                 toolkit=toolkit(tools=tools))
+    return Agent(
+        name="test",
+        system_prompt="Save the draft.",
+        model=model,
+        toolkit=toolkit(tools=tools),
+    )
 
 
-def call():
+def call() -> ToolCallBlock:
+    """Build the tool call used by the fixture model."""
     return ToolCallBlock(id="save-call", name=SAVE, input='{"purpose":"test"}')
 
 
-async def resume(root, mode="ok", approved=True, draft=None):
+async def resume(
+    root: Path,
+    mode: str = "ok",
+    approved: bool = True,
+    draft: dict | None = None,
+) -> ToolResultBlock:
+    """Reload a parked agent and submit the confirmation decision."""
     agent = worker(root, mode)
-    agent.state = AgentState.model_validate_json((root / "parked").read_bytes())
-    agent.model.set_responses([ChatResponse(content=[TextBlock(text="done")], is_last=True)])
+    agent.state = AgentState.model_validate_json(
+        (root / "parked").read_bytes(),
+    )
+    agent.model.set_responses(
+        [ChatResponse(content=[TextBlock(text="done")], is_last=True)],
+    )
     approval = call()
     if draft is not None:
         approval.input = json.dumps(draft)
-    await agent.reply(UserConfirmResultEvent(reply_id=agent.state.reply_id, confirm_results=[
-        ConfirmResult(confirmed=approved, tool_call=approval),
-    ]))
-    block, = agent.state.get_reply_message(agent.name).get_content_blocks("tool_result")
+    await agent.reply(
+        UserConfirmResultEvent(
+            reply_id=agent.state.reply_id,
+            confirm_results=[
+                ConfirmResult(confirmed=approved, tool_call=approval),
+            ],
+        ),
+    )
+    (block,) = agent.state.get_reply_message(agent.name).get_content_blocks(
+        "tool_result",
+    )
     return block
 
 
 class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
+    """Verify save recovery across worker restarts and ambiguous responses."""
+
+    async def asyncSetUp(self) -> None:
+        # pylint: disable-next=consider-using-with
         self.root = Path(self.enterContext(TemporaryDirectory()))
         (self.root / "spec").write_text("{}")
-        scope = hashlib.sha256(json.dumps(["owner", "agent"]).encode()).hexdigest()
+        scope = hashlib.sha256(
+            json.dumps(["owner", "agent"]).encode(),
+        ).hexdigest()
         self.directory = self.root / "registry" / scope
         self.directory.mkdir(parents=True)
         self.plan = {
-            "business": "Card", "targetLabel": "offline ledger", "saveTool": SAVE,
-            "readTool": "erp_read_card", "detailRoute": "/cards/{id}", "saveRoute": "/cards",
-            "issueSelector": ".issue", "actions": [
+            "business": "Card",
+            "targetLabel": "offline ledger",
+            "saveTool": SAVE,
+            "readTool": "erp_read_card",
+            "detailRoute": "/cards/{id}",
+            "saveRoute": "/cards",
+            "issueSelector": ".issue",
+            "actions": [
                 {"action": "fill", "selector": "#purpose", "field": "purpose"},
                 {"action": "click", "selector": "#save"},
-            ], "fields": ["purpose"], "ruleHashes": {},
+            ],
+            "fields": ["purpose"],
+            "ruleHashes": {},
             "apiSha256": hashlib.sha256(b"{}").hexdigest(),
         }
-        (self.directory / "card.json").write_text(json.dumps({
-            "plan": self.plan, "verification": {"version": 3, "registered": True},
-        }))
+        (self.directory / "card.json").write_text(
+            json.dumps(
+                {
+                    "plan": self.plan,
+                    "verification": {"version": 3, "registered": True},
+                },
+            ),
+        )
         self.op = await self.park()
 
-    async def park(self):
+    async def park(self) -> str:
+        """Run the agent until it requests approval and persist its state."""
         agent = worker(self.root)
-        agent.model.set_responses([ChatResponse(content=[call()], is_last=True)])
-        prompts = [item async for item in agent.reply_stream(UserMsg("owner", "保存草稿"))
-                   if isinstance(item, RequireUserConfirmEvent)]
-        prompt, = prompts
-        request, = prompt.tool_calls
+        agent.model.set_responses(
+            [ChatResponse(content=[call()], is_last=True)],
+        )
+        prompts = [
+            item
+            async for item in agent.reply_stream(UserMsg("owner", "保存草稿"))
+            if isinstance(item, RequireUserConfirmEvent)
+        ]
+        (prompt,) = prompts
+        (request,) = prompt.tool_calls
         self.assertIn(request.confirmation_id, request.confirmation_message)
         self.assertIn("offline ledger", request.confirmation_message)
-        (self.root / "parked").write_text(agent.state.model_dump_json(), encoding="utf-8")
+        (self.root / "parked").write_text(
+            agent.state.model_dump_json(),
+            encoding="utf-8",
+        )
         return request.confirmation_id
 
-    async def save(self, mode="ok"):
+    async def save(self, mode: str = "ok") -> dict:
+        """Resume the parked save and decode its result."""
         result = await resume(self.root, mode)
         return json.loads(result.output[0].text)
 
-    async def read(self):
+    async def read(self) -> dict:
+        """Query the previously confirmed operation through its read tool."""
         agent = worker(self.root)
-        lookup = ToolCallBlock(id="recover", name="erp_read_card",
-                               input=json.dumps({"operation_id": self.op}))
-        agent.model.set_responses([
-            ChatResponse(content=[lookup], is_last=True),
-            ChatResponse(content=[TextBlock(text="done")], is_last=True),
-        ])
+        lookup = ToolCallBlock(
+            id="recover",
+            name="erp_read_card",
+            input=json.dumps({"operation_id": self.op}),
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(content=[lookup], is_last=True),
+                ChatResponse(content=[TextBlock(text="done")], is_last=True),
+            ],
+        )
         await agent.reply(UserMsg("owner", "核对原操作"))
-        result, = agent.state.get_reply_message(agent.name).get_content_blocks("tool_result")
+        (result,) = agent.state.get_reply_message(
+            agent.name,
+        ).get_content_blocks("tool_result")
         return json.loads(result.output[0].text)
 
-    def counts(self):
+    def counts(self) -> tuple[int, int, int]:
+        """Count writes, saved drafts and read requests in the fake
+        service."""
         requests = (self.root / "requests").read_text().splitlines()
         drafts = (self.root / "drafts").read_text().splitlines()
-        return requests.count("POST"), len(drafts), len(requests) - requests.count("POST")
+        return (
+            requests.count("POST"),
+            len(drafts),
+            len(requests) - requests.count("POST"),
+        )
 
-    async def test_concurrent_workers_resume_the_same_confirmation(self):
-        children = [await asyncio.create_subprocess_exec(
-            sys.executable, __file__, "--resume", str(self.root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        ) for _ in range(2)]
+    async def test_concurrent_workers_resume_the_same_confirmation(
+        self,
+    ) -> None:
+        """Concurrent workers resume the same confirmation."""
+        children = [
+            await asyncio.create_subprocess_exec(
+                sys.executable,
+                __file__,
+                "--resume",
+                str(self.root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            for _ in range(2)
+        ]
         try:
-            replies = await asyncio.wait_for(asyncio.gather(
-                *(child.communicate() for child in children),
-            ), 30)
+            replies = await asyncio.wait_for(
+                asyncio.gather(
+                    *(child.communicate() for child in children),
+                ),
+                30,
+            )
             results = []
             for child, (out, err) in zip(children, replies):
                 self.assertEqual(child.returncode, 0, err.decode())
@@ -173,7 +298,8 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
                     child.kill()
                 await child.wait()
 
-    async def test_lost_post_response_requires_reconciliation(self):
+    async def test_lost_post_response_requires_reconciliation(self) -> None:
+        """Lost post response requires reconciliation."""
         lost = await self.save("lost")
         self.assertEqual(lost["status"], "needs_reconciliation")
         self.assertEqual(lost["operation_id"], self.op)
@@ -181,7 +307,8 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.read(), lost)
         self.assertEqual(self.counts(), (1, 1, 0))
 
-    async def test_readback_timeout_retries_only_get(self):
+    async def test_readback_timeout_retries_only_get(self) -> None:
+        """Readback timeout retries only get."""
         pending = await self.save("timeout")
         self.assertEqual(pending["status"], "saved_needs_readback")
         self.assertEqual(self.counts(), (1, 1, 1))
@@ -190,26 +317,50 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.save(), saved)
         self.assertEqual(self.counts(), (1, 1, 2))
 
-    async def test_matching_receipt_with_wrong_business_fields_is_not_finished(self):
+    async def test_matching_receipt_with_wrong_business_fields_is_not_finished(
+        self,
+    ) -> None:
+        """Matching receipt with wrong business fields is not finished."""
         pending = await self.save("mismatch")
         self.assertEqual(pending["status"], "saved_needs_review")
         self.assertEqual(pending["differing_fields"], ["purpose"])
         self.assertEqual((await self.read())["status"], "saved")
         self.assertEqual(self.counts(), (1, 1, 2))
 
-    async def test_browser_dies_between_receipt_and_python_result(self):
+    async def test_browser_dies_between_receipt_and_python_result(
+        self,
+    ) -> None:
+        """Browser dies between receipt and python result."""
         result = await self.save("crash_after_receipt")
         self.assertEqual(result["status"], "saved")
         self.assertEqual(await self.read(), result)
         self.assertEqual(self.counts(), (1, 1, 1))
 
-    async def test_draft_is_bound_to_confirmation_and_denial_cannot_submit(self):
-        self.assertEqual((await self.read())["status"], "awaiting_confirmation")
-        self.assertEqual((await resume(self.root, approved=False)).state, "denied")
+    async def test_draft_is_bound_to_confirmation_and_denial_cannot_submit(
+        self,
+    ) -> None:
+        """Draft is bound to confirmation and denial cannot submit."""
+        self.assertEqual(
+            (await self.read())["status"],
+            "awaiting_confirmation",
+        )
+        self.assertEqual(
+            (await resume(self.root, approved=False)).state,
+            "denied",
+        )
         self.assertEqual((await self.read())["status"], "denied")
-        self.assertEqual((await self.save())["status"], "denied")  # Stale approval on another worker.
-        self.assertEqual((await resume(self.root, approved=False)).state, "denied")
-        self.assertEqual((await resume(self.root, draft={"purpose": "changed"})).state, "error")
+        self.assertEqual(
+            (await self.save())["status"],
+            "denied",
+        )  # Stale approval on another worker.
+        self.assertEqual(
+            (await resume(self.root, approved=False)).state,
+            "denied",
+        )
+        self.assertEqual(
+            (await resume(self.root, draft={"purpose": "changed"})).state,
+            "error",
+        )
         self.assertFalse((self.root / "requests").exists())
         self.assertNotEqual(await self.park(), self.op)
         first = await self.save()
@@ -218,20 +369,31 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(first["operation_id"], second["operation_id"])
         self.assertEqual(self.counts()[:2], (2, 2))
 
-    async def test_other_users_and_ledgers_cannot_recover_the_operation(self):
-        other_scope = hashlib.sha256(json.dumps(["other", "agent"]).encode()).hexdigest()
+    async def test_other_users_and_ledgers_cannot_recover_the_operation(
+        self,
+    ) -> None:
+        """Other users and ledgers cannot recover the operation."""
+        other_scope = hashlib.sha256(
+            json.dumps(["other", "agent"]).encode(),
+        ).hexdigest()
         other = self.directory.parent / other_scope
         other.mkdir()
         shutil.copyfile(self.directory / "card.json", other / "card.json")
         for tools in (
             registry(self.root).tools("other", "agent"),
-            registry(self.root, target="another ledger").tools("owner", "agent"),
+            registry(self.root, target="another ledger").tools(
+                "owner",
+                "agent",
+            ),
         ):
             with self.assertRaises(ValueError):
                 await tools[-1](operation_id=self.op)
         self.assertFalse((self.root / "requests").exists())
 
-    async def test_older_parked_save_without_receipt_needs_reconciliation(self):
+    async def test_older_parked_save_without_receipt_needs_reconciliation(
+        self,
+    ) -> None:
+        """Older parked save without receipt needs reconciliation."""
         snapshot = json.loads((self.root / "parked").read_bytes())
         for msg in snapshot["context"]:
             for block in msg["content"]:
@@ -242,5 +404,5 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
 
 
 if __name__ == "__main__" and sys.argv[1:2] == ["--resume"]:
-    result = asyncio.run(resume(Path(sys.argv[2]), "concurrent"))
-    sys.stdout.buffer.write(result.output[0].text.encode("utf-8"))
+    worker_result = asyncio.run(resume(Path(sys.argv[2]), "concurrent"))
+    sys.stdout.buffer.write(worker_result.output[0].text.encode("utf-8"))

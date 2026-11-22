@@ -1008,9 +1008,14 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(self.agent.reply_iteration_limit, 3)
         self.assertEqual(self.model.cnt, 4)
 
-    async def test_total_cap_includes_summary_and_resets_per_reply(self) -> None:
+    async def test_total_cap_includes_summary_and_resets_per_reply(
+        self,
+    ) -> None:
+        """Total cap includes summary and resets per reply."""
         self.agent.react_config = ReActConfig(
-            max_iters=1, auto_continue=True, max_total_iters=3,
+            max_iters=1,
+            auto_continue=True,
+            max_total_iters=3,
         )
         self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
         calls = [
@@ -1032,32 +1037,48 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
             track_hint_counts(self.model, "3 rounds remain"),
         )
         with patch.object(
-            MockModel, "__call__", wraps=self.model.__call__,
+            MockModel,
+            "__call__",
+            wraps=self.model.__call__,
         ) as infer:
             result = await self.agent.reply(UserMsg("user", "continue"))
             self.assertEqual(
-                result.finished_reason, ReplyFinishedReason.EXCEED_MAX_ITERS,
+                result.finished_reason,
+                ReplyFinishedReason.EXCEED_MAX_ITERS,
             )
-            self.assertEqual(result.get_content_blocks("text")[0].text, "summary")
+            self.assertEqual(
+                result.get_content_blocks("text")[0].text,
+                "summary",
+            )
             self.assertEqual(self.agent.state.reply_context.total_iters, 3)
             self.assertEqual(infer.call_count, 3)
             self.assertIsNone(infer.call_args_list[1].kwargs["tool_choice"])
-            self.assertEqual(infer.call_args.kwargs["tool_choice"].mode, "none")
-            next_reply = await self.agent.reply(UserMsg("user", "new question"))
             self.assertEqual(
-                next_reply.finished_reason, ReplyFinishedReason.COMPLETED,
+                infer.call_args.kwargs["tool_choice"].mode,
+                "none",
+            )
+            next_reply = await self.agent.reply(
+                UserMsg("user", "new question"),
+            )
+            self.assertEqual(
+                next_reply.finished_reason,
+                ReplyFinishedReason.COMPLETED,
             )
             self.assertEqual(self.agent.state.reply_context.total_iters, 1)
             self.assertIsNone(infer.call_args.kwargs["tool_choice"])
         self.assertEqual(reminders, [1, 0, 0, 1])
 
     async def test_one_round_cap_denies_tools_in_summary(self) -> None:
+        """One round cap denies tools in summary."""
         self.agent.react_config = ReActConfig(
-            auto_continue=True, max_total_iters=1,
+            auto_continue=True,
+            max_total_iters=1,
         )
         self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
         call = ToolCallBlock(
-            id="unexpected", name="mock_sequential_tool", input='{"input":"x"}',
+            id="unexpected",
+            name="mock_sequential_tool",
+            input='{"input":"x"}',
         )
         self.model.set_responses([ChatResponse(content=[call], is_last=True)])
         reminders = self.enterContext(
@@ -1067,7 +1088,8 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
             result = await self.agent.reply(UserMsg("user", "finish"))
             execute.assert_not_called()
         self.assertEqual(
-            result.finished_reason, ReplyFinishedReason.EXCEED_MAX_ITERS,
+            result.finished_reason,
+            ReplyFinishedReason.EXCEED_MAX_ITERS,
         )
         self.assertEqual(self.model.cnt, 1)
         self.assertEqual(reminders, [0])
@@ -1076,6 +1098,7 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         )
 
     def test_total_cap_accepts_only_positive_integers_or_none(self) -> None:
+        """Total cap accepts only positive integers or none."""
         self.assertIsNone(ReActConfig().max_total_iters)
         for value in (0, -1, 2.5, True):
             with self.subTest(value=value), self.assertRaises(ValidationError):

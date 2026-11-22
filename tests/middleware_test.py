@@ -122,36 +122,6 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         ]
         self.assertListEqual(self.execution_log, expected)
 
-    async def test_rewinding_middleware_cannot_extend_total_cap(self) -> None:
-        class RequestAnotherRound(MiddlewareBase):
-            async def on_reply(self, agent, input_kwargs, next_handler):
-                async for item in next_handler(**input_kwargs):
-                    if isinstance(item, ReplyEndEvent):
-                        agent.state.cur_iter = 0
-                        continue
-                    yield item
-
-        self.mock_model.set_responses([
-            ChatResponse(content=[TextBlock(text=text)], is_last=True)
-            for text in ("first", "second", "third", "final summary")
-        ])
-        agent = Agent(
-            name="worker", system_prompt="Work.", model=self.mock_model,
-            react_config=ReActConfig(auto_continue=True, max_total_iters=4),
-            middlewares=[RequestAnotherRound()],
-        )
-        reminders = self.enterContext(
-            track_hint_counts(self.mock_model, "3 rounds remain"),
-        )
-        events = [item async for item in agent.reply_stream(
-            UserMsg("user", "go"), yield_final_msg=True,
-        )]
-        ends = [item for item in events if isinstance(item, ReplyEndEvent)]
-        self.assertEqual([item.finished_reason for item in ends], ["exceed_max_iters"])
-        self.assertEqual(events[-1].get_content_blocks("text")[0].text, "final summary")
-        self.assertEqual((agent.state.reply_context.total_iters, self.mock_model.cnt), (4, 4))
-        self.assertEqual(reminders, [0, 1, 0, 0])
-
     async def test_on_reply_middleware_swallow_reply_end(self) -> None:
         """Test swallowing the ReplyEndEvent forces another reasoning
         round within the same reply."""
@@ -1454,6 +1424,67 @@ class TestMiddleware(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         self.execution_log.clear()
+
+
+class IterationLimitMiddlewareTest(IsolatedAsyncioTestCase):
+    """Exercise the iteration cap across middleware continuations."""
+
+    async def test_rewinding_middleware_cannot_extend_total_cap(self) -> None:
+        """Rewinding middleware cannot extend total cap."""
+
+        class RequestAnotherRound(MiddlewareBase):
+            """Ask the agent to continue after its model call."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                async for item in next_handler(**input_kwargs):
+                    if isinstance(item, ReplyEndEvent):
+                        agent.state.cur_iter = 0
+                        continue
+                    yield item
+
+        model = MockModel()
+        model.set_responses(
+            [
+                ChatResponse(content=[TextBlock(text=text)], is_last=True)
+                for text in ("first", "second", "third", "final summary")
+            ],
+        )
+        agent = Agent(
+            name="worker",
+            system_prompt="Work.",
+            model=model,
+            react_config=ReActConfig(auto_continue=True, max_total_iters=4),
+            middlewares=[RequestAnotherRound()],
+        )
+        reminders = self.enterContext(
+            track_hint_counts(model, "3 rounds remain"),
+        )
+        events = [
+            item
+            async for item in agent.reply_stream(
+                UserMsg("user", "go"),
+                yield_final_msg=True,
+            )
+        ]
+        ends = [item for item in events if isinstance(item, ReplyEndEvent)]
+        self.assertEqual(
+            [item.finished_reason for item in ends],
+            ["exceed_max_iters"],
+        )
+        self.assertEqual(
+            events[-1].get_content_blocks("text")[0].text,
+            "final summary",
+        )
+        self.assertEqual(
+            (agent.state.reply_context.total_iters, model.cnt),
+            (4, 4),
+        )
+        self.assertEqual(reminders, [0, 1, 0, 0])
 
 
 class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):

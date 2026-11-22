@@ -1,7 +1,8 @@
+# -*- coding: utf-8 -*-
 """Declarative JSON password authentication for host-bound business APIs."""
 
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, AsyncGenerator
 from typing import Any
 
 import httpx
@@ -9,7 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ._business import validate_api_base_url
 from ..app.tool_login import (
-    LoginFailed, LoginField, LoginRejected, LoginStep, LoginSuccess, ToolLogin,
+    LoginFailed,
+    LoginField,
+    LoginRejected,
+    LoginStep,
+    LoginSuccess,
+    ToolLogin,
 )
 
 
@@ -23,7 +29,8 @@ def at_path(payload: object, path: str) -> Any:
 
 
 def json_object(response: httpx.Response) -> dict:
-    """Read optional JSON while preserving the HTTP status for classification."""
+    """Read optional JSON while preserving the HTTP status for
+    classification."""
     try:
         payload = response.json()
     except ValueError:
@@ -32,7 +39,8 @@ def json_object(response: httpx.Response) -> dict:
 
 
 class ResponseMatch(BaseModel):
-    """Conjunction of status and exact JSON conditions supplied by the agent."""
+    """Conjunction of status and exact JSON conditions supplied by the
+    agent."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -45,7 +53,8 @@ class ResponseMatch(BaseModel):
             return False
         payload = json_object(response)
         return (self.status is not None or bool(self.fields)) and all(
-            (actual := at_path(payload, key)) == value and type(actual) is type(value)
+            (actual := at_path(payload, key)) == value
+            and type(actual) is type(value)
             for key, value in self.fields.items()
         )
 
@@ -75,7 +84,10 @@ class PasswordProfile(BaseModel):
     )
     session_path: str = Field(
         pattern=r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$",
-        description="Dotted JSON path to the session object in the same login response.",
+        description=(
+            "Dotted JSON path to the session object in the same login "
+            "response."
+        ),
     )
     client_route: str
     query_path: str = Field(pattern=r"^(?:/[A-Za-z0-9_-]+)+$")
@@ -86,7 +98,8 @@ class PasswordProfile(BaseModel):
         return any(rule.matches(response) for rule in self.rejected)
 
     def session_expired(self, response: httpx.Response) -> bool:
-        """Classify a protected endpoint response using this service's rules."""
+        """Classify a protected endpoint response using this service's
+        rules."""
         return any(rule.matches(response) for rule in self.expired)
 
 
@@ -120,15 +133,23 @@ class PasswordConnection:
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
-            base_url=self.base_url, timeout=15, trust_env=False,
-            follow_redirects=False, transport=self.transport,
+            base_url=self.base_url,
+            timeout=15,
+            trust_env=False,
+            follow_redirects=False,
+            transport=self.transport,
         )
 
     async def _login(self, profile: PasswordProfile, password: str) -> dict:
         values = {**self.context, "password": password}
-        request = {name: values[role] for name, role in profile.request_fields.items()}
+        request = {
+            name: values[role] for name, role in profile.request_fields.items()
+        }
         async with self._client() as client:
-            response = await client.post(profile.login_path.lstrip("/"), json=request)
+            response = await client.post(
+                profile.login_path.lstrip("/"),
+                json=request,
+            )
         if profile.credentials_rejected(response):
             raise PasswordRejected("密码错误，请重试。")
         if not profile.accepted.matches(response):
@@ -139,7 +160,11 @@ class PasswordConnection:
                 raise LoginRejected(notice)
         token = at_path(payload, profile.token_path)
         session = at_path(payload, profile.session_path)
-        if not isinstance(token, str) or not token or not isinstance(session, dict):
+        if (
+            not isinstance(token, str)
+            or not token
+            or not isinstance(session, dict)
+        ):
             raise LoginFailed("登录响应与 token_path 或 session_path 不一致，请核对登录响应结构。")
         return {"token": token, "session": session}
 
@@ -176,8 +201,15 @@ class PasswordConnection:
             self._tokens.popitem(last=False)
         return auth
 
-    async def _prompt(self, profile, on_bad_password):
-        async def complete(_step: LoginStep, values: Mapping[str, str]) -> LoginSuccess:
+    async def _prompt(
+        self,
+        profile: PasswordProfile,
+        on_bad_password: Callable[[], None] | None,
+    ) -> dict:
+        async def complete(
+            _step: LoginStep,
+            values: Mapping[str, str],
+        ) -> LoginSuccess:
             try:
                 auth = await self._login(profile, values["password"])
             except PasswordRejected:
@@ -192,20 +224,31 @@ class PasswordConnection:
                 title=f"{self.title} 需要重新登录",
                 description="请输入当前密码，登录成功后会继续刚才的操作。",
                 submit_label="登录并继续",
-                fields=[LoginField(name="password", label="密码", kind="secret")],
+                fields=[
+                    LoginField(name="password", label="密码", kind="secret"),
+                ],
             ),
             complete,
         )
 
     def read_auth(self, profile: PasswordProfile) -> httpx.Auth:
-        """Authenticate a registered GET and resume that request after private login."""
+        """Authenticate a registered GET and resume that request after private
+        login."""
         connection = self
 
         class ReadAuth(httpx.Auth):
-            async def async_auth_flow(self, request):
+            """Authenticate read requests to the bound service."""
+
+            async def async_auth_flow(
+                self,
+                request: httpx.Request,
+            ) -> AsyncGenerator[httpx.Request, httpx.Response]:
+                """Resume the original query after refreshing its session."""
                 base = httpx.URL(connection.base_url)
                 if request.method != "GET" or (
-                    request.url.scheme, request.url.host, request.url.port
+                    request.url.scheme,
+                    request.url.host,
+                    request.url.port,
                 ) != (base.scheme, base.host, base.port):
                     raise ValueError("服务登录适配器只支持已绑定地址的查询。")
                 session = await connection.connect(profile)
@@ -214,9 +257,13 @@ class PasswordConnection:
                 await response.aread()
                 if profile.session_expired(response):
                     session = await connection.connect(
-                        profile, expired_token=session["token"], interactive=True,
+                        profile,
+                        expired_token=session["token"],
+                        interactive=True,
                     )
-                    request.headers["Authorization"] = "Bearer " + session["token"]
+                    request.headers["Authorization"] = (
+                        "Bearer " + session["token"]
+                    )
                     retried = yield request
                     await retried.aread()
                     if profile.session_expired(retried):
@@ -233,22 +280,26 @@ class PasswordConnection:
         on_bad_password: Callable[[], None] | None = None,
         prepare: Callable[[dict], Awaitable[Mapping[str, Any]]] | None = None,
     ) -> httpx.Response:
-        """Send a GET, retrying once after an adapter-recognized session loss."""
+        """Send a GET, retrying once after an adapter-recognized session
+        loss."""
         auth = await self.connect(profile, on_bad_password=on_bad_password)
         if prepare is not None:
             params = await prepare(auth)
         async with self._client() as client:
             response = await client.get(
-                profile.query_path.lstrip("/"), params=params,
+                profile.query_path.lstrip("/"),
+                params=params,
                 headers={"Authorization": f"Bearer {auth['token']}"},
             )
             if profile.session_expired(response):
                 auth = await self.connect(
-                    profile, expired_token=auth["token"],
+                    profile,
+                    expired_token=auth["token"],
                     on_bad_password=on_bad_password,
                 )
                 response = await client.get(
-                    profile.query_path.lstrip("/"), params=params,
+                    profile.query_path.lstrip("/"),
+                    params=params,
                     headers={"Authorization": f"Bearer {auth['token']}"},
                 )
         return response

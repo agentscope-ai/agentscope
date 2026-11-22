@@ -186,11 +186,13 @@ class ToolCallBlock(BaseModel):
     """The suggestions for this tool call when asking user, used to maintain
     the suggestions across requests."""
     confirmation_message: str | None = Field(
-        default=None, exclude_if=lambda value: value is None,
+        default=None,
+        exclude_if=lambda value: value is None,
     )
     """Host-provided explanation of a sensitive operation awaiting approval."""
     confirmation_id: str | None = Field(
-        default=None, exclude_if=lambda value: value is None,
+        default=None,
+        exclude_if=lambda value: value is None,
     )
     """Host-issued reference to the operation presented for confirmation."""
     created_at: str = Field(default_factory=_generate_timestamp)

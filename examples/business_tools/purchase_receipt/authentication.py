@@ -1,6 +1,6 @@
+# -*- coding: utf-8 -*-
 """ERP acceptance wiring for a profile produced from its source and OpenAPI."""
 
-import json
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -11,7 +11,9 @@ import httpx
 
 from agentscope.app.tool_login import LoginScope
 from agentscope.business._password_auth import (
-    PasswordConnection, PasswordProfile, json_object,
+    PasswordConnection,
+    PasswordProfile,
+    json_object,
 )
 
 
@@ -41,7 +43,11 @@ class PurchaseAuthentication:
 
     def _validate_profile(self, profile: PasswordProfile) -> None:
         # Keep credential routing bound to the trusted OpenAPI login operation.
-        for path in (profile.login_path, profile.query_path, profile.client_route):
+        for path in (
+            profile.login_path,
+            profile.query_path,
+            profile.client_route,
+        ):
             if not re.fullmatch(r"/[a-zA-Z0-9_/-]+", path) or "//" in path:
                 raise ValueError("请提供源码或 OpenAPI 中的相对路由。")
         endpoints = self.contract["paths"]
@@ -50,7 +56,9 @@ class PurchaseAuthentication:
             raise ValueError("登录目标应为所给 OpenAPI 的认证登录操作。")
         schema = login["requestBody"]["content"]["application/json"]["schema"]
         if "$ref" in schema:
-            schema = self.contract["components"]["schemas"][schema["$ref"].split("/")[-1]]
+            schema = self.contract["components"]["schemas"][
+                schema["$ref"].split("/")[-1]
+            ]
         schema_fields = schema["properties"]
         bound = profile.request_fields
         if (
@@ -63,27 +71,36 @@ class PurchaseAuthentication:
         if "get" not in endpoints.get(profile.query_path, {}):
             raise ValueError("验收业务必须是 OpenAPI 声明的只读 GET。")
         if not all(
-            (path := (self.source / item.path).resolve()).is_relative_to(self.source)
+            (path := (self.source / item.path).resolve()).is_relative_to(
+                self.source,
+            )
             and path.suffix in {".vue", ".js", ".ts", ".mjs", ".java"}
-            and path.is_file() and item.start <= item.end <= len(path.read_text().splitlines())
+            and path.is_file()
+            and item.start <= item.end <= len(path.read_text().splitlines())
             for item in profile.evidence
         ):
             raise ValueError("请提供源码中实际存在的文件及行范围。")
 
     def stage(self, profile: PasswordProfile) -> dict:
-        """Stage a login profile and wait for the same chat's acceptance query."""
+        """Stage a login profile and wait for the same chat's acceptance
+        query."""
         self._validate_profile(profile)
         scope = self.connection.broker.current_scope()
         self._candidates[scope] = _Candidate(profile)
         return {
             "status": "staged",
-            "next": "直接调用 query_recent_purchase_receipts 开始验收。若弹窗出现，请等待用户在弹窗内登录。对照通过后自动注册。",
+            "next": (
+                "直接调用 query_recent_purchase_receipts 开始验收。若弹窗出现，请等待用户在弹窗内登录。对"
+                "照通过后自动注册。"
+            ),
         }
 
     def published(self) -> PasswordProfile | None:
         """Read the published profile, if one has passed parity."""
         if self.artifact.exists():
-            profile = PasswordProfile.model_validate_json(self.artifact.read_bytes())
+            profile = PasswordProfile.model_validate_json(
+                self.artifact.read_bytes(),
+            )
             self._validate_profile(profile)
             return profile
         return None
@@ -111,13 +128,17 @@ class PurchaseAuthentication:
         async def prepare(auth: dict) -> dict:
             nonlocal reference
             reference = await self.capture_browser(
-                profile.client_route, "/api" + profile.query_path, [], login=auth["session"],
+                profile.client_route,
+                "/api" + profile.query_path,
+                [],
+                login=auth["session"],
                 login_acceptance=True,
             )
             return reference["request"]["query"]
 
         response = await self.connection.read(
-            profile, {"current": 1, "size": limit},
+            profile,
+            {"current": 1, "size": limit},
             on_bad_password=mark_bad_password,
             prepare=prepare if candidate else None,
         )
@@ -129,21 +150,39 @@ class PurchaseAuthentication:
         summary = {
             "total": data["total"],
             "records": [
-                {key: row.get(key) for key in (
-                    "billNo", "billDate", "createdTime",
-                    "supplierName", "goodsTotalAmount",
-                )}
+                {
+                    key: row.get(key)
+                    for key in (
+                        "billNo",
+                        "billDate",
+                        "createdTime",
+                        "supplierName",
+                        "goodsTotalAmount",
+                    )
+                }
                 for row in data["records"][:limit]
             ],
         }
         if candidate:
-            summary["authentication"] = self._publish(candidate, scope, reference, data)
+            summary["authentication"] = self._publish(
+                candidate,
+                scope,
+                reference,
+                data,
+            )
         return summary
 
-    def _publish(self, candidate: _Candidate, scope: LoginScope, reference: dict, data: dict) -> dict:
+    def _publish(
+        self,
+        candidate: _Candidate,
+        scope: LoginScope,
+        reference: dict | None,
+        data: dict,
+    ) -> dict:
         profile = candidate.profile
         if (
-            not reference or reference["request"]["path"] != profile.query_path
+            not reference
+            or reference["request"]["path"] != profile.query_path
             or reference["response"].get("code") != 200
             or reference["response"]["data"] != data
         ):
@@ -167,5 +206,7 @@ class PurchaseAuthentication:
             "status": "registered",
             "same_request_and_result": True,
             "old_password_rejected": True,
-            "original_client_branches_checked": [case["name"] for case in reference["authCases"]],
+            "original_client_branches_checked": [
+                case["name"] for case in reference["authCases"]
+            ],
         }

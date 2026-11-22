@@ -25,14 +25,17 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
 
     @staticmethod
     def tool_login_forms(scope_digest: str) -> str:
+        """Return the registry key for a session's pending login forms."""
         return f"tool-login:forms:{scope_digest}"
 
     @staticmethod
     def tool_login_command(login_id: str) -> str:
+        """Return the command channel for a pending login."""
         return f"tool-login:command:{login_id}"
 
     @staticmethod
     def tool_login_reply(request_id: str) -> str:
+        """Return the private reply channel for a login command."""
         return f"tool-login:reply:{request_id}"
 
     # ------------------------------------------------------------------

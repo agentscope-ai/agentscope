@@ -1,5 +1,7 @@
+# -*- coding: utf-8 -*-
 """Compile a client action and an OpenAPI operation into an AgentScope tool."""
 
+from typing import Any
 import argparse
 import asyncio
 import hashlib
@@ -40,7 +42,11 @@ def node(script: str, *args: str, data: dict | None = None) -> dict:
     return json.loads(result.stdout)
 
 
-def dereference(value, document, trail=()):
+def dereference(
+    value: Any,
+    document: dict,
+    trail: tuple[str, ...] = (),
+) -> Any:
     """Resolve local JSON pointers so the artifact works offline."""
     if isinstance(value, list):
         return [dereference(item, document, trail) for item in value]
@@ -48,13 +54,13 @@ def dereference(value, document, trail=()):
         return value
     if "$dynamicRef" in value or "$id" in value:
         raise ValueError(
-            "Schema resource IDs and dynamic references are unsupported"
+            "Schema resource IDs and dynamic references are unsupported",
         )
     if "$ref" in value:
         ref = value["$ref"]
         if len(value) != 1 or not ref.startswith("#/") or ref in trail:
             raise ValueError(
-                f"Expected a standalone, acyclic local reference: {ref}"
+                f"Expected a standalone, acyclic local reference: {ref}",
             )
         target = document
         for key in ref[2:].split("/"):
@@ -63,7 +69,7 @@ def dereference(value, document, trail=()):
     return {k: dereference(v, document, trail) for k, v in value.items()}
 
 
-def openapi_schema(schema, version):
+def openapi_schema(schema: dict, version: str) -> dict:
     """Translate the OpenAPI 3.0 nullable and exclusive bound keywords."""
     if not version.startswith("3.0.") or not isinstance(schema, dict):
         return schema
@@ -89,10 +95,12 @@ def openapi_schema(schema, version):
 
 
 def json_schema(content: dict, version: str) -> dict | bool:
+    """Extract the JSON payload schema for this OpenAPI version."""
     if "application/json" not in content and "*/*" not in content:
         raise ValueError("This operation requires a JSON representation")
     schema = content.get("application/json", content.get("*/*")).get(
-        "schema", {}
+        "schema",
+        {},
     )
     schema = openapi_schema(schema, version)
     Draft202012Validator.check_schema(schema)
@@ -112,7 +120,8 @@ def bind_operation(document: dict, endpoint: dict) -> dict:
     ]
     if len(candidates) != 1:
         raise ValueError(
-            f"Expected one OpenAPI match for {verb.upper()} {source_route}, found {len(candidates)}"
+            f"Expected one OpenAPI match for {verb.upper()} {source_route}, "
+            f"found {len(candidates)}",
         )
     route, item = candidates[0]
     op = dereference(item[verb], document)
@@ -129,7 +138,7 @@ def bind_operation(document: dict, endpoint: dict) -> dict:
         if location not in ("query", "path"):
             if param.get("required"):
                 raise ValueError(
-                    f"Unsupported required {location} parameter: {key}"
+                    f"Unsupported required {location} parameter: {key}",
                 )
             continue
         style = "form" if location == "query" else "simple"
@@ -172,9 +181,12 @@ def bind_operation(document: dict, endpoint: dict) -> dict:
 
 
 def discover(
-    source: Path, openapi: Path, http_client: str | None = None
+    source: Path,
+    openapi: Path,
+    http_client: str | None = None,
 ) -> dict:
-    """Find supported actions with a matching API and expose skipped candidates."""
+    """Find supported actions with a matching API and expose skipped
+    candidates."""
     scan = node(
         "extract.mjs",
         str(source.resolve()),
@@ -197,7 +209,7 @@ def discover(
                 "route": op["route"],
                 "calls": action["calls"],
                 "method": action["endpoint"]["method"],
-            }
+            },
         )
     helpers = {f for match in matches for f in match["calls"]}
     return {
@@ -210,7 +222,11 @@ def discover(
     }
 
 
-def omit_computed_requirement(schema, path, field):
+def omit_computed_requirement(
+    schema: dict,
+    path: list | tuple,
+    field: str,
+) -> None:
     """The caller may omit fields that the compiled plan will overwrite."""
     if not isinstance(schema, dict):
         return
@@ -230,7 +246,10 @@ def omit_computed_requirement(schema, path, field):
 
 
 def build(
-    source: Path, entry: str | None, openapi: Path, profile: dict | None = None
+    source: Path,
+    entry: str | None,
+    openapi: Path,
+    profile: dict | None = None,
 ) -> dict:
     """Build a portable tool definition with source and API evidence."""
     profile = profile or {}
@@ -253,24 +272,29 @@ def build(
         candidates = [m["entry"] for m in scan["actions"]]
         if len(candidates) != 1:
             raise ValueError(
-                f"Expected one action, found {candidates}. Use discover or specify --entry."
+                f"Expected one action, found {candidates}. Use discover or "
+                "specify --entry.",
             )
         entry = candidates[0]
     file, separator, symbol = entry.rpartition("#")
     if not separator or not file or not symbol:
         raise ValueError("Use --entry relative/file#function")
     plan = node(
-        "extract.mjs", str(source.resolve()), file, symbol, json.dumps(profile)
+        "extract.mjs",
+        str(source.resolve()),
+        file,
+        symbol,
+        json.dumps(profile),
     )
     raw = openapi.read_bytes()
     document = json.loads(raw)
     if profile.get("openapiJavaObjectMaps"):
         # Spring's Map<String, Object> components describe arbitrary Java
         # values as JSON objects. The values may also be scalars or null.
-        def normalize_map_values(schema):
+        def normalize_map_values(schema: dict) -> None:
             if isinstance(schema, dict):
                 if schema.get("type") == "object" and schema.get(
-                    "additionalProperties"
+                    "additionalProperties",
                 ) == {"type": "object"}:
                     schema["additionalProperties"] = True
                 for value in schema.values():
@@ -279,7 +303,9 @@ def build(
                 for value in schema:
                     normalize_map_values(value)
 
-        for name, schema in document.get("components", {}).get("schemas", {}).items():
+        for name, schema in (
+            document.get("components", {}).get("schemas", {}).items()
+        ):
             if name.endswith("MapStringObject"):
                 normalize_map_values(schema)
     operation = bind_operation(document, plan["endpoint"])
@@ -297,13 +323,13 @@ def build(
             or parts[-2] != "properties"
         ):
             raise ValueError(
-                "A correction must select one declared response property"
+                "A correction must select one declared response property",
             )
         for step in parts[:-1]:
             parent = parent[step]
         if parts[-1] not in parent:
             raise ValueError(
-                "Correction refers to an undeclared response property"
+                "Correction refers to an undeclared response property",
             )
         Draft202012Validator.check_schema(correction["schema"])
         parent[parts[-1]] = correction["schema"]
@@ -319,7 +345,7 @@ def build(
     result = plan["functions"][plan["entry"]]["steps"][-1]["return"]
     if result.get("request"):
 
-        def bind_argument(expression, contract):
+        def bind_argument(expression: dict, contract: dict) -> None:
             name = expression.get("variable")
             if name in schema["properties"] and not schema["properties"][name]:
                 schema["properties"][name] = contract
@@ -336,7 +362,9 @@ def build(
                         p["name"]: p["schema"] for p in query_parameters
                     },
                     "required": [
-                        p["name"] for p in query_parameters if p.get("required")
+                        p["name"]
+                        for p in query_parameters
+                        if p.get("required")
                     ],
                     "additionalProperties": False,
                 },
@@ -356,7 +384,9 @@ def build(
             if p["in"] == "path"
         }
         for key, expression in zip(
-            operation["pathNames"], result["bindings"], strict=True
+            operation["pathNames"],
+            result["bindings"],
+            strict=True,
         ):
             bind_argument(expression, path_schemas[key])
     Draft202012Validator.check_schema(schema)
@@ -377,16 +407,18 @@ def build(
     }
 
 
-def validate(schema, value, label: str) -> None:
+def validate(schema: dict, value: Any, label: str) -> None:
+    """Validate a value against its declared JSON schema."""
     try:
         Draft202012Validator(schema, format_checker=FormatChecker()).validate(
-            value
+            value,
         )
     except ValidationError as err:
         raise ValueError(f"{label} {err.json_path}: {err.message}") from err
 
 
 def preview(artifact: dict, inputs: dict) -> dict:
+    """Build the request for the supplied inputs without sending it."""
     if artifact.get("format") != FORMAT:
         raise ValueError("Unsupported tool definition")
     validate(artifact["inputSchema"], inputs, "Tool input")
@@ -401,7 +433,7 @@ def preview(artifact: dict, inputs: dict) -> dict:
     declared = {p["name"] for p in op["parameters"] if p["in"] == "query"}
     if extra := set(wire["query"]) - declared:
         raise ValueError(
-            f"Query parameters absent from OpenAPI: {sorted(extra)}"
+            f"Query parameters absent from OpenAPI: {sorted(extra)}",
         )
     for param in op["parameters"]:
         key, location = param["name"], param["in"]
@@ -418,7 +450,14 @@ def preview(artifact: dict, inputs: dict) -> dict:
     return req
 
 
-async def load_editor_lists(artifact, inputs, client, base_url, headers):
+async def load_editor_lists(
+    artifact: dict,
+    inputs: dict,
+    client: httpx.AsyncClient,
+    base_url: str,
+    headers: dict,
+) -> dict:
+    """Fetch the reference data used by the original editor."""
     program = artifact["plan"].get("editorProgram", {})
     lookups = program.get("lookups", {})
     supplied = inputs.get("editorState", {})
@@ -440,7 +479,7 @@ async def load_editor_lists(artifact, inputs, client, base_url, headers):
         },
     )
 
-    async def read(route, query):
+    async def read(route: str, query: dict) -> list:
         response = await client.get(
             base_url.rstrip("/") + route,
             params=query,
@@ -458,7 +497,7 @@ async def load_editor_lists(artifact, inputs, client, base_url, headers):
             rows = rows.get(key)
         return rows
 
-    async def resolve(name, lookup):
+    async def resolve(name: str, lookup: dict) -> tuple[str, list | dict]:
         if "templates" in lookup:
             columns = {}
             for resource, template in lookup["templates"].items():
@@ -466,11 +505,11 @@ async def load_editor_lists(artifact, inputs, client, base_url, headers):
                 match = re.fullmatch(r"(/[^{}]+)\{\w+\}", template)
                 if not match or template.startswith("//"):
                     raise ValueError(
-                        f"Invalid column lookup template: {template}"
+                        f"Invalid column lookup template: {template}",
                     )
                 paths = [match[1] + quote(code, safe="") for code in codes]
                 values = await asyncio.gather(
-                    *(read(path, {}) for path in paths)
+                    *(read(path, {}) for path in paths),
                 )
                 columns[resource] = dict(zip(codes, values, strict=True))
             return name, columns
@@ -486,7 +525,7 @@ async def load_editor_lists(artifact, inputs, client, base_url, headers):
         if lookup.get("kind") == "object":
             if not isinstance(rows, dict):
                 raise TypeError(
-                    f"Expected an ERP configuration map for {name}"
+                    f"Expected an ERP configuration map for {name}",
                 )
             return name, rows
         if lookup.get("records") and isinstance(rows, dict):
@@ -500,7 +539,7 @@ async def load_editor_lists(artifact, inputs, client, base_url, headers):
             resolve(name, lookup)
             for name, lookup in lookups.items()
             if name not in state
-        )
+        ),
     )
     return {**inputs, "editorState": {**state, **dict(resolved)}}
 
@@ -511,8 +550,7 @@ def validate_api_base_url(base_url: str, *, authenticated: bool) -> None:
     if (
         url.scheme not in ("http", "https")
         or not url.hostname
-        or url.username is not None
-        or url.password is not None
+        or (url.username, url.password) != (None, None)
         or url.query
         or url.fragment
     ):
@@ -526,19 +564,30 @@ def validate_api_base_url(base_url: str, *, authenticated: bool) -> None:
 
 
 def as_tool(
-    artifact: dict, base_url: str, token: str | None = None, *, auth: httpx.Auth | None = None
+    artifact: dict,
+    base_url: str,
+    token: str | None = None,
+    *,
+    auth: httpx.Auth | None = None,
 ) -> FunctionTool:
     """Load a built definition for use in Toolkit(tools=[...])."""
     validate_api_base_url(base_url, authenticated=bool(token or auth))
     op = artifact["operation"]
 
-    async def invoke(**inputs):
+    async def invoke(**inputs: Any) -> dict:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         async with httpx.AsyncClient(
-            timeout=15, follow_redirects=False, trust_env=False, auth=auth
+            timeout=15,
+            follow_redirects=False,
+            trust_env=False,
+            auth=auth,
         ) as client:
             inputs = await load_editor_lists(
-                artifact, inputs, client, base_url, headers
+                artifact,
+                inputs,
+                client,
+                base_url,
+                headers,
             )
             req = await asyncio.to_thread(preview, artifact, inputs)
             kwargs = {"json": req["body"]} if "body" in req else {}
@@ -553,7 +602,8 @@ def as_tool(
         status = str(response.status_code)
         contract = op["responses"]
         key = next(
-            (k for k in (status, "2XX", "default") if k in contract), None
+            (k for k in (status, "2XX", "default") if k in contract),
+            None,
         )
         if key is None:
             raise ValueError(f"Undeclared response HTTP {status}")
@@ -570,7 +620,7 @@ def as_tool(
             )
             if media != "application/json":
                 raise ValueError(
-                    f"Expected application/json, received {media}"
+                    f"Expected application/json, received {media}",
                 )
             payload = response.json()
             success = artifact.get("profile", {}).get("success")
@@ -578,8 +628,13 @@ def as_tool(
                 not isinstance(payload, dict)
                 or payload.get(success["field"]) != success["equals"]
             ):
+                message = (
+                    payload.get("message", "")
+                    if isinstance(payload, dict)
+                    else "invalid envelope"
+                )
                 raise ValueError(
-                    f"Business request failed: {payload.get('message', '') if isinstance(payload, dict) else 'invalid envelope'}"
+                    f"Business request failed: {message}",
                 )
             validate(contract[key], payload, "Response")
         result = {"status": response.status_code, "result": payload}
@@ -599,6 +654,7 @@ def as_tool(
 
 
 def write_definition(path: Path, artifact: dict) -> None:
+    """Write a compiled business tool definition to disk."""
     contents = (
         json.dumps(artifact, indent=2, ensure_ascii=False, allow_nan=False)
         + "\n"
@@ -610,6 +666,7 @@ def write_definition(path: Path, artifact: dict) -> None:
 
 
 def main() -> None:
+    """Compile a tool from the source and API supplied on the command line."""
     from ._workflow import WORKFLOW_FORMAT, generate
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -641,7 +698,9 @@ def main() -> None:
             cmd.add_argument("--openapi", type=Path, required=True)
         if command in ("preview", "run"):
             cmd.add_argument(
-                "--input", required=True, help="Tool input as JSON"
+                "--input",
+                required=True,
+                help="Tool input as JSON",
             )
         if command in ("inspect", "preview", "run"):
             cmd.add_argument("--tool", choices=("save", "detail"))
@@ -659,7 +718,7 @@ def main() -> None:
                 discover(args.source, args.openapi, args.http_client),
                 indent=2,
                 ensure_ascii=False,
-            )
+            ),
         )
         return
     if args.command in ("build", "check"):
@@ -672,7 +731,7 @@ def main() -> None:
             current = generate(args.source, args.openapi, existing["business"])
             if existing != current:
                 raise ValueError(
-                    "Source or API changed. Regenerate the workflow."
+                    "Source or API changed. Regenerate the workflow.",
                 )
             print(current["discovery"]["handler"])
             return
@@ -687,7 +746,8 @@ def main() -> None:
             write_definition(args.artifact, compiled)
         elif compiled != existing:
             raise ValueError(
-                "Source or API changed. Inspect the differences and rebuild the tool."
+                "Source or API changed. Inspect the differences and rebuild "
+                "the tool.",
             )
         print(compiled["operation"]["name"])
         return
@@ -695,7 +755,11 @@ def main() -> None:
     if artifact.get("format") == WORKFLOW_FORMAT:
         if args.command == "inspect" and not args.tool:
             print(
-                json.dumps(artifact["discovery"], ensure_ascii=False, indent=2)
+                json.dumps(
+                    artifact["discovery"],
+                    ensure_ascii=False,
+                    indent=2,
+                ),
             )
             return
         if not args.tool:
@@ -705,7 +769,7 @@ def main() -> None:
         plan = artifact["plan"]
         api = artifact["apiEvidence"]
         print(
-            f"OpenAPI {api['file']}#{api['pointer']}  SHA-256 {api['sha256']}"
+            f"OpenAPI {api['file']}#{api['pointer']}  SHA-256 {api['sha256']}",
         )
         print(
             artifact["operation"]["name"],
@@ -721,7 +785,7 @@ def main() -> None:
                 print(f"  {e['file']}:{e['start']}-{e['end']}  {e['code']}")
         for ref in plan["endpoint"]["transport"]:
             print(
-                f"  {ref['file']}:{ref['start']}-{ref['end']}  {ref['code']}"
+                f"  {ref['file']}:{ref['start']}-{ref['end']}  {ref['code']}",
             )
         if correction := artifact["profile"].get("responseCorrection"):
             print("Response contract:", correction["reason"])
@@ -730,12 +794,15 @@ def main() -> None:
     elif args.command == "preview":
         print(
             json.dumps(
-                preview(artifact, json.loads(args.input)), ensure_ascii=False
-            )
+                preview(artifact, json.loads(args.input)),
+                ensure_ascii=False,
+            ),
         )
     else:
         tool = as_tool(
-            artifact, args.base_url, os.getenv("BUSINESS_API_TOKEN")
+            artifact,
+            args.base_url,
+            os.getenv("BUSINESS_API_TOKEN"),
         )
         response = asyncio.run(tool(**json.loads(args.input)))
         print(response.content[0].text)

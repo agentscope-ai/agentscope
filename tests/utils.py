@@ -159,10 +159,12 @@ class MockModel(ChatModelBase):
 def track_hint_counts(model: MockModel, text: str) -> Iterator[list[int]]:
     """Count matching hints in each model call before history changes."""
     counts: list[int] = []
-    call_api = model._call_api
+    call_api = model._call_api  # pylint: disable=protected-access
 
     async def record(
-        *args: Any, messages: list[Msg], **kwargs: Any,
+        *args: Any,
+        messages: list[Msg],
+        **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         count = sum(
             isinstance(block.hint, str) and text in block.hint

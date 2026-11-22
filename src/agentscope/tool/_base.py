@@ -101,17 +101,22 @@ class ToolBase(ABC):
     """The tool protocol."""
 
     bind_confirmation: Callable[
-        [str, str, str, dict], tuple[str, str]
+        [str, str, str, dict],
+        tuple[str, str],
     ] | None = None
     """Optional host hook binding session, reply, call and inputs to an
     operation ID and prompt. The toolkit injects that ID at execution."""
 
     confirmation_denials: dict[str, Callable[[str], None]] | None = None
-    """Host callbacks keyed by the original tool name, passed the bound operation ID.
-    A readback tool can retain the callback when its write tool is suspended."""
+    """Host callbacks keyed by the original tool name, passed the bound
+    operation ID.
+    A readback tool can retain the callback when its write tool is
+    suspended."""
 
     def needs_bound_confirmation(
-        self, decision: PermissionDecision, call: "ToolCallBlock",
+        self,
+        decision: PermissionDecision,
+        call: "ToolCallBlock",
     ) -> bool:
         """Require a bound approval for each fresh invocation of this tool."""
         return (
@@ -121,16 +126,26 @@ class ToolBase(ABC):
         )
 
     def prepare_confirmation(
-        self, call: "ToolCallBlock", decision: PermissionDecision,
-        session_id: str, reply_id: str, inputs: dict,
+        self,
+        call: "ToolCallBlock",
+        decision: PermissionDecision,
+        session_id: str,
+        reply_id: str,
+        inputs: dict,
     ) -> None:
         """Attach the host's approval details to the persistent tool call."""
         call.suggested_rules = decision.suggested_rules or []
         if decision.bypass_immune:
             call.confirmation_message = decision.message
         if self.bind_confirmation is not None:
-            call.confirmation_id, call.confirmation_message = self.bind_confirmation(
-                session_id, reply_id, call.id, inputs,
+            (
+                call.confirmation_id,
+                call.confirmation_message,
+            ) = self.bind_confirmation(
+                session_id,
+                reply_id,
+                call.id,
+                inputs,
             )
 
     name: str

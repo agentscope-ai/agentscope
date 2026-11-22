@@ -1,5 +1,7 @@
+# -*- coding: utf-8 -*-
 """Publish source-backed tools after a live client comparison."""
 
+from typing import Any
 import asyncio
 import hashlib
 import json
@@ -29,9 +31,13 @@ def _input_from_capture(artifact: dict, query: dict) -> dict:
     if argument is None:
         if not artifact["inputSchema"]["required"]:
             return {}
-        raise ValueError("Provide inputs for an adapter with transformed arguments")
-    converters = {
-        "integer": int, "number": float, "boolean": {"true": True, "false": False}.__getitem__,
+        raise ValueError(
+            "Provide inputs for an adapter with transformed arguments",
+        )
+    converters: dict[str, Callable[[str], object]] = {
+        "integer": int,
+        "number": float,
+        "boolean": {"true": True, "false": False}.__getitem__,
         "string": str,
     }
     parameters = {
@@ -92,11 +98,12 @@ class BusinessRegistry:
         scope = json.dumps([user_id, agent_id]).encode()
         return self.storage / hashlib.sha256(scope).hexdigest()
 
-    def _business_result(self, payload):
+    def _business_result(self, payload: Any) -> Any:
         if not isinstance(payload, dict):
             return payload
         return {
-            k: v for k, v in payload.items()
+            k: v
+            for k, v in payload.items()
             if k not in self.volatile_envelope_fields
         }
 
@@ -122,11 +129,24 @@ class BusinessRegistry:
                     value: 文本或键名} 操作页面。若工具不是直接传递查询参数，
                     该用例还需提供与浏览器输入等价的 inputs。
             """
-            return await self.register(directory, business, entry, client_route, samples)
+            return await self.register(
+                directory,
+                business,
+                entry,
+                client_route,
+                samples,
+            )
 
         return [
-            FunctionTool(register_business_tool, permission=_ALLOW, is_concurrency_safe=False),
-            *(self._published_tool(file) for file in sorted(directory.glob("*.json"))),
+            FunctionTool(
+                register_business_tool,
+                permission=_ALLOW,
+                is_concurrency_safe=False,
+            ),
+            *(
+                self._published_tool(file)
+                for file in sorted(directory.glob("*.json"))
+            ),
         ]
 
     def _published_tool(self, path: Path) -> FunctionTool:
@@ -140,15 +160,18 @@ class BusinessRegistry:
         return self._runtime(record["artifact"], business)
 
     def _runtime(self, artifact: dict, business: str) -> FunctionTool:
-        async def invoke(**inputs):
+        async def invoke(**inputs: Any) -> dict:
             auth = self.get_read_auth() if self.get_read_auth else None
             token = await self.get_token() if auth is None else None
-            return await as_tool(artifact, self.base_url, token, auth=auth)(**inputs)
+            return await as_tool(artifact, self.base_url, token, auth=auth)(
+                **inputs,
+            )
 
         operation = artifact["operation"]
         return PublishedBusinessTool(
             invoke,
-            business=business, action="query",
+            business=business,
+            action="query",
             name=operation["name"],
             description=operation["description"],
             input_schema=artifact["inputSchema"],
@@ -157,15 +180,24 @@ class BusinessRegistry:
         )
 
     async def register(
-        self, directory: Path, business: str, entry: str, client_route: str,
+        self,
+        directory: Path,
+        business: str,
+        entry: str,
+        client_route: str,
         samples: list[dict],
     ) -> dict:
+        """Verify the client behavior before publishing a tool."""
         if not business.strip() or not re.fullmatch(r"/[\w/-]+", client_route):
             raise ValueError("需要业务名称和原客户端的相对页面路由")
         if not 2 <= len(samples) <= 5:
             raise ValueError("需要 2 至 5 组客户端验收用例")
         artifact = await asyncio.to_thread(
-            build, self.source, entry, self.openapi, self.profile
+            build,
+            self.source,
+            entry,
+            self.openapi,
+            self.profile,
         )
         endpoint = artifact["plan"]["endpoint"]
         operation = artifact["operation"]
@@ -176,16 +208,20 @@ class BusinessRegistry:
         if len(tool_name) > 64:
             raise ValueError("OpenAPI 操作 ID 超过工具名称的长度限制")
         operation["name"] = tool_name
-        operation["description"] = (
-            f"{business}。{operation['description']}。使用 ERP 返回的数据回答。"
-        )
+        operation[
+            "description"
+        ] = f"{business}。{operation['description']}。使用 ERP 返回的数据回答。"
         route_regex = _route_regex(operation["route"])
         api_prefix = urlsplit(self.base_url).path.rstrip("/")
         evidence = []
         requests = set()
         invoke = self._runtime(artifact, business)
         for sample in samples:
-            capture = await self.capture(client_route, api_prefix + route_regex, sample["actions"])
+            capture = await self.capture(
+                client_route,
+                api_prefix + route_regex,
+                sample["actions"],
+            )
             reference = capture["request"]
             if not re.fullmatch(route_regex, reference["path"]):
                 raise ValueError(f"{sample['name']}：没有捕获到对应的原客户端请求")
@@ -196,10 +232,14 @@ class BusinessRegistry:
             if (
                 request["method"] != reference["method"]
                 or request["path"] != reference["path"]
-                or httpx.QueryParams(request.get("query", {})) != httpx.QueryParams(reference["query"])
+                or httpx.QueryParams(request.get("query", {}))
+                != httpx.QueryParams(reference["query"])
             ):
                 raise ValueError(f"{sample['name']}：工具请求与原客户端不一致")
-            dedup = (request["path"], tuple(sorted(reference["query"].items())))
+            dedup = (
+                request["path"],
+                tuple(sorted(reference["query"].items())),
+            )
             if dedup in requests:
                 raise ValueError("验收用例必须产生不同的 API 请求")
             requests.add(dedup)
@@ -209,15 +249,27 @@ class BusinessRegistry:
             if result["status"] != capture["status"] or original != generated:
                 raise ValueError(f"{sample['name']}：工具返回与原客户端不一致")
             response_hash = hashlib.sha256(
-                json.dumps(original, ensure_ascii=False, sort_keys=True).encode()
+                json.dumps(
+                    original,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ).encode(),
             ).hexdigest()
-            data = original.get("data") if isinstance(original, dict) else original
-            evidence.append({
-                "sample": sample["name"],
-                "request": reference,
-                "total": data.get("total") if isinstance(data, dict) else None,
-                "responseSha256": response_hash,
-            })
+            data = (
+                original.get("data")
+                if isinstance(original, dict)
+                else original
+            )
+            evidence.append(
+                {
+                    "sample": sample["name"],
+                    "request": reference,
+                    "total": data.get("total")
+                    if isinstance(data, dict)
+                    else None,
+                    "responseSha256": response_hash,
+                },
+            )
 
         report = {
             "business": business,
@@ -230,7 +282,11 @@ class BusinessRegistry:
         }
         async with self.lock:
             directory.mkdir(parents=True, exist_ok=True)
-            write_definition(directory / f"{tool_name}.json", {
-                "artifact": artifact, "verification": report,
-            })
+            write_definition(
+                directory / f"{tool_name}.json",
+                {
+                    "artifact": artifact,
+                    "verification": report,
+                },
+            )
         return report

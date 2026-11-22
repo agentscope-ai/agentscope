@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Model cards advertised by loopback OpenAI-compatible servers."""
 
 from urllib.parse import urlsplit
@@ -12,7 +13,8 @@ from ...model import ModelCard, OpenAIChatModel
 async def list_local_models(
     credential: OpenAICredential,
 ) -> list[ModelCard] | None:
-    """Use the server's own chat catalog for loopback OpenAI-compatible URLs."""
+    """Use the server's own chat catalog for loopback OpenAI-compatible
+    URLs."""
     if not credential.base_url:
         return None
     address = urlsplit(credential.base_url)
@@ -26,7 +28,8 @@ async def list_local_models(
         or address.fragment
     ):
         raise HTTPException(
-            status_code=400, detail="Invalid local model server URL"
+            status_code=400,
+            detail="Invalid local model server URL",
         )
 
     try:
@@ -38,7 +41,9 @@ async def list_local_models(
             response = await client.get(
                 credential.base_url.rstrip("/") + "/models",
                 headers={
-                    "Authorization": f"Bearer {credential.api_key.get_secret_value()}",
+                    "Authorization": (
+                        f"Bearer {credential.api_key.get_secret_value()}"
+                    ),
                 },
             )
             if response.status_code in (404, 405):
@@ -72,11 +77,15 @@ async def list_local_models(
             if isinstance(display_name, str)
             else None
         )
-        # oMLX exposes Anthropic compatibility names for the same local weights.
-        # Keep the alias selectable if its underlying model has no catalog entry.
+        # oMLX exposes Anthropic compatibility names for the same local
+        # weights.
+        # Keep the alias selectable if its underlying model has no catalog
+        # entry.
+        is_alias = entry.get("owned_by") == "omlx" and entry.get(
+            "anthropic_family_tier",
+        )
         if (
-            entry.get("owned_by") == "omlx"
-            and entry.get("anthropic_family_tier")
+            is_alias
             and target is not None
             and target.get("owned_by") == "omlx"
             and not target.get("anthropic_family_tier")
@@ -87,7 +96,8 @@ async def list_local_models(
         context = size if type(size) is int and size > 0 else 8192
         limit = entry.get("max_tokens")
         output = min(
-            context, limit if type(limit) is int and limit > 0 else 4096
+            context,
+            limit if type(limit) is int and limit > 0 else 4096,
         )
         label = (
             f"{display_name} ({name})"
@@ -109,6 +119,6 @@ async def list_local_models(
                 output_size=output,
                 parameter_schema=schema,
                 parameters_overrides={},
-            )
+            ),
         )
     return cards

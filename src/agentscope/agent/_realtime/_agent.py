@@ -2488,13 +2488,20 @@ class RealtimeAgent:
                 state=ToolResultState.DENIED,
             )
             return
-        if tool.needs_bound_confirmation(decision, call) or decision.behavior in (
+        if tool.needs_bound_confirmation(
+            decision,
+            call,
+        ) or decision.behavior in (
             PermissionBehavior.ASK,
             PermissionBehavior.PASSTHROUGH,
         ):
             try:
                 tool.prepare_confirmation(
-                    call, decision, self.state.session_id, reply_id, tool_input,
+                    call,
+                    decision,
+                    self.state.session_id,
+                    reply_id,
+                    tool_input,
                 )
             except Exception as error:
                 await self._report_tool(reply_id, call, str(error))

@@ -1,4 +1,6 @@
-"""Discover scoped business tools without sending their schemas to the model."""
+# -*- coding: utf-8 -*-
+"""Discover scoped business tools without sending their schemas to the
+model."""
 
 import re
 import unicodedata
@@ -54,11 +56,12 @@ _ACTION_LABELS = {"query": "查询", "save": "新增草稿", "readback": "回查
 _SAVE_VERBS = "|".join(re.escape(word) for word in _ACTIONS["save"])
 _EXCLUDED_ACTION = re.compile(
     rf"(?:已(?:经)?|不要|不用|无需|不必|别|请勿)\s*(?:再\s*)?(?:{_SAVE_VERBS}|回查|恢复)"
-    rf"|\b(?:do not|don['’]t|never|no need to)\s+(?:{_SAVE_VERBS}|recover|readback)\b"
+    rf"|\b(?:do not|don['’]t|never|no need to)\s+(?:{_SAVE_VERBS}|recover|"
+    r"readback)\b",
 )
 _QUERY_ONLY = re.compile(
     r"(?:只|仅)(?:需要|需|要|想)?\s*(?:查询|查看|查找|查|看|列出|检索|搜索)"
-    r"|\b(?:only|just)\s+(?:list|find|search|query|show|view)\b"
+    r"|\b(?:only|just)\s+(?:list|find|search|query|show|view)\b",
 )
 _STOP = {
     "erp",
@@ -126,7 +129,8 @@ def _requested_action(query: str) -> tuple[str, str]:
 
 
 def _parameter_names(schema: dict) -> Iterator[str]:
-    """Index names in object, array and composed schemas, never sample values."""
+    """Index names in object, array and composed schemas, never sample
+    values."""
     for name, child in schema.get("properties", {}).items():
         yield name
         if isinstance(child, dict):
@@ -151,7 +155,8 @@ async def _permitted(tool: FunctionTool, state: AgentState) -> bool:
 
 
 class PublishedBusinessTool(FunctionTool):
-    """A published operation whose original callable and permissions are retained."""
+    """A published operation whose original callable and permissions are
+    retained."""
 
     def __init__(
         self,
@@ -169,11 +174,12 @@ class PublishedBusinessTool(FunctionTool):
         self._normalized_name = _normalize(self.name)
         self._name_terms = _terms(self._normalized_name)
         self._parameters = _terms(
-            _normalize(" ".join(_parameter_names(self.input_schema)))
+            _normalize(" ".join(_parameter_names(self.input_schema))),
         )
         self._description_terms = _terms(_normalize(self.description))
 
     async def show_schema(self, state: AgentState | None) -> bool:
+        """Decide whether to expose this tool in the current session."""
         return state is None or (
             bool(self.business)
             and self.name in state.tool_context.selected_business_tools
@@ -199,7 +205,7 @@ class PublishedBusinessTool(FunctionTool):
         elif title_hits:
             score = 30 * title_hits // len(self._title_terms)
         score += 8 * len(terms & self._name_terms) + 6 * len(
-            terms & self._parameters
+            terms & self._parameters,
         )
         description_hits = len(terms & self._description_terms)
         if score or description_hits >= 2:
@@ -212,7 +218,9 @@ class BusinessToolSearch(FunctionTool):
     """Search the toolkit's current group and publication snapshot."""
 
     def __init__(
-        self, name: str, catalog: list[PublishedBusinessTool]
+        self,
+        name: str,
+        catalog: list[PublishedBusinessTool],
     ) -> None:
         self.catalog = catalog
         super().__init__(
@@ -241,6 +249,7 @@ class BusinessToolSearch(FunctionTool):
         )
 
     async def show_schema(self, state: AgentState | None) -> bool:
+        """Decide whether to expose this tool in the current session."""
         if state is not None and await _permitted(self, state):
             for tool in self.catalog:
                 if await _permitted(tool, state):
@@ -255,11 +264,16 @@ class BusinessToolSearch(FunctionTool):
         terms = _terms(subject) - _ACTION_TERMS
         catalog = self.catalog
         if action == "query_only" and not terms:
-            # A correction such as “不要新建，只查” can omit the previous business name.
+            # A correction such as “不要新建，只查” can omit the previous business
+            # name.
             selected = _agent_state.tool_context.selected_business_tools
-            previous = {tool.business for tool in catalog if tool.name in selected}
+            previous = {
+                tool.business for tool in catalog if tool.name in selected
+            }
             if previous:
-                catalog = [tool for tool in catalog if tool.business in previous]
+                catalog = [
+                    tool for tool in catalog if tool.business in previous
+                ]
         ranked = sorted(
             [
                 (tool.score(query, terms, action), tool)
@@ -268,7 +282,8 @@ class BusinessToolSearch(FunctionTool):
             ],
             key=lambda item: (-item[0], item[1].name),
         )
-        # Leave out weak alternatives, particularly when a tool is named exactly.
+        # Leave out weak alternatives, particularly when a tool is named
+        # exactly.
         best_score = ranked[0][0] if ranked else 0
         matches = [
             tool
@@ -287,7 +302,5 @@ class BusinessToolSearch(FunctionTool):
                 }
                 for t in matches
             ],
-            "message": "下一轮可调用匹配的工具。"
-            if matches
-            else "未找到匹配工具，请补充业务名称或参数。",
+            "message": "下一轮可调用匹配的工具。" if matches else "未找到匹配工具，请补充业务名称或参数。",
         }

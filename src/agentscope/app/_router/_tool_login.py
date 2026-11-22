@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Private form transport for service authentication."""
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -15,7 +16,8 @@ from ..tool_login import (
 )
 
 tool_login_router = APIRouter(
-    prefix="/sessions/{session_id}/tool-login", tags=["tool-login"],
+    prefix="/sessions/{session_id}/tool-login",
+    tags=["tool-login"],
 )
 
 
@@ -84,7 +86,10 @@ async def submit_tool_login(
         raise HTTPException(404, str(exc)) from None
     except Exception:
         # Adapter exceptions may contain upstream request or response data.
-        raise HTTPException(502, "The service could not complete login.") from None
+        raise HTTPException(
+            502,
+            "The service could not complete login.",
+        ) from None
     return Response(status_code=204)
 
 

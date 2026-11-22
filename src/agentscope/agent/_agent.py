@@ -986,7 +986,8 @@ class Agent:
                     self._receive_reply_end = True
                 elif (
                     isinstance(item, Msg)
-                    and item.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS
+                    and item.finished_reason
+                    == ReplyFinishedReason.EXCEED_MAX_ITERS
                     and not self._receive_reply_end
                     and self.remaining_total_iters == 0
                 ):
@@ -1093,8 +1094,7 @@ class Agent:
                     ExternalExecutionResultEvent,
                 ),
             ):
-                event = inputs
-                msgs = None
+                event, msgs = inputs, None
             else:
                 event = None
                 msgs = inputs
@@ -1199,7 +1199,10 @@ class Agent:
 
                         # Exit unless a middleware swallowed the ReplyEndEvent
                         # to force another reasoning-acting round
-                        if self._receive_reply_end or self.remaining_total_iters == 0:
+                        if (
+                            self._receive_reply_end
+                            or self.remaining_total_iters == 0
+                        ):
                             yield exit_msg
                             return
 
@@ -1255,11 +1258,15 @@ class Agent:
 
                         if final_total_round:
                             # Even a provider that ignores tool_choice="none"
-                            # must not start a tool or park on the summary round.
-                            for call in self.state.get_unfinished_tool_calls(self.name):
+                            # must not start a tool or park on the summary
+                            # round.
+                            for call in self.state.get_unfinished_tool_calls(
+                                self.name,
+                            ):
                                 async for evt in self._handle_error_tool_call(
                                     call,
-                                    "The final iteration is reserved for a text summary.",
+                                    "The final iteration is reserved for a "
+                                    "text summary.",
                                     state=ToolResultState.DENIED,
                                 ):
                                     yield evt
@@ -1788,10 +1795,14 @@ class Agent:
             # keeps the delivery flag, without replaying a stale countdown.
             hint = HintBlock(
                 hint=(
-                    "<system-reminder>3 rounds remain in this reply, including "
-                    "this round. The last is reserved for a text-only summary. "
-                    "Use at most two rounds for tools and prioritize verifying "
-                    "outstanding results. Finish sooner if ready.</system-reminder>"
+                    "<system-reminder>3 rounds remain in this reply, "
+                    "including "
+                    "this round. The last is reserved for a text-only "
+                    "summary. "
+                    "Use at most two rounds for tools and prioritize "
+                    "verifying "
+                    "outstanding results. Finish sooner if "
+                    "ready.</system-reminder>"
                 ),
             )
             kwargs["messages"].append(AssistantMsg(self.name, [hint]))
@@ -2609,7 +2620,8 @@ class Agent:
         )
         if tool.needs_bound_confirmation(decision, tool_call):
             decision = PermissionDecision(
-                behavior=PermissionBehavior.ASK, bypass_immune=True,
+                behavior=PermissionBehavior.ASK,
+                bypass_immune=True,
                 message="Confirm this operation.",
             )
 
@@ -2654,12 +2666,17 @@ class Agent:
 
             try:
                 tool.prepare_confirmation(
-                    tool_call, decision, self.state.session_id, self.state.reply_id,
+                    tool_call,
+                    decision,
+                    self.state.session_id,
+                    self.state.reply_id,
                     parsed_input,
                 )
             except Exception as error:
                 async for evt in self._handle_error_tool_call(
-                    tool_call, str(error), state=ToolResultState.ERROR,
+                    tool_call,
+                    str(error),
+                    state=ToolResultState.ERROR,
                 ):
                     yield evt
                 return
@@ -3928,7 +3945,8 @@ class Agent:
             if exceeded_max_iters:
                 logger.warning(
                     "Agent %s reached its iteration limit (%d).",
-                    self.name, stop_limit,
+                    self.name,
+                    stop_limit,
                 )
                 final_msg.finished_reason = finished_reason
                 # Deprecated but still emitted for backward compatibility;
@@ -3960,10 +3978,12 @@ class Agent:
             remaining != 0 and self.state.cur_iter == max_iters
         ):
             limit_notice = (
-                f"This is the final round of the {self.react_config.max_total_iters} "
+                "This is the final round of the "
+                f"{self.react_config.max_total_iters} "
                 "total iterations allowed for this reply."
                 if remaining == 1
-                else f"You have reached the maximum of {max_iters} reasoning-acting iterations."
+                else f"You have reached the maximum of {max_iters} "
+                "reasoning-acting iterations."
             )
             return Reasoning(
                 hint=HintBlock(
@@ -3984,7 +4004,8 @@ class Agent:
         if remaining == 0 or self.state.cur_iter >= max_iters:
             logger.warning(
                 "Agent %s reached its iteration limit (%d).",
-                self.name, stop_limit,
+                self.name,
+                stop_limit,
             )
 
             # Deprecated but still emitted for backward compatibility;
@@ -4011,7 +4032,8 @@ class Agent:
                         "The reply reached its total iteration limit before "
                         "the model produced a final answer."
                         if remaining == 0
-                        else "The maximum reasoning-acting iterations are exceeded."
+                        else "The maximum reasoning-acting iterations are "
+                        "exceeded."
                     ),
                     usage=self._get_reply_usage(),
                     finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
