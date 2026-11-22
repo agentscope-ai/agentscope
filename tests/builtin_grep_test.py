@@ -431,3 +431,22 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         expected_pattern = os.path.abspath(cwd).rstrip("/") + "/**"
         suggestion_contents = [s.rule_content for s in suggestions]
         self.assertIn(expected_pattern, suggestion_contents)
+
+    async def test_missing_ripgrep_reads_as_a_missing_install(self) -> None:
+        """A host without `rg` gets an actionable message, not an OS error."""
+        from agentscope.tool._builtin._backend import ExecResult
+
+        async def missing_rg(*_args, **_kwargs):
+            return ExecResult(
+                exit_code=127,
+                stdout=b"",
+                stderr=b"[WinError 2] \xe7\xb3\xbb\xe7\xbb\x9f\xe6\x89\xbe\xe4\xb8\x8d\xe5\x88\xb0",
+            )
+
+        self.grep_tool._backend.exec_shell = missing_rg
+
+        chunk = await self.grep_tool(pattern="Hello", path=self.temp_dir)
+
+        self.assertEqual(chunk.state, ToolResultState.ERROR)
+        self.assertIn("ripgrep (rg) is not installed", chunk.content[0].text)
+        self.assertNotIn("code 127", chunk.content[0].text)

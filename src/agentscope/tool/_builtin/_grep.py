@@ -306,6 +306,18 @@ class Grep(ToolBase):
                 [],
             )
 
+        if result.exit_code == 127:
+            # A shell reports a program it could not find as 127, and the local
+            # backend maps the spawn's own ENOENT to the same code. Say what is
+            # missing: the raw stderr is an OS message ("[WinError 2] ..."),
+            # which reads as an internal failure rather than a missing install.
+            raise RuntimeError(
+                "ripgrep (rg) is not installed, or not on PATH. The Grep tool "
+                "runs `rg`, so install ripgrep for this host "
+                "(https://github.com/BurntSushi/ripgrep#installation) and "
+                "check that `rg --version` works.",
+            )
+
         # returncode 0 = matches found, 1 = no matches
         if result.exit_code not in (0, 1):
             error_msg = result.stderr.decode(
