@@ -61,7 +61,7 @@ class SourceRules:
                     "kind": "missing",
                     "statement": "需要唯一匹配的服务端路由声明。",
                     "evidence": request["evidence"],
-                }
+                },
             ]
         file, func, dec = matches[0]
         citation = _citation(file, func.name, dec, self.sources[file])
@@ -70,7 +70,7 @@ class SourceRules:
                 "kind": "route",
                 "statement": f"匹配源码中的路由声明 {ast.unparse(dec)}。",
                 "evidence": citation,
-            }
+            },
         ]
         if len(func.decorator_list) != 1 or dec.keywords:
             rules.append(
@@ -78,7 +78,7 @@ class SourceRules:
                     "kind": "missing",
                     "statement": "还需核对路由装饰器和依赖的策略。",
                     "evidence": citation,
-                }
+                },
             )
         return rules + self._guards(file, func, set())
 
@@ -110,14 +110,14 @@ class SourceRules:
                         "kind": "rejection",
                         "statement": f"在 {func.name} 中，若 {test}，执行 {reason}。",
                         "evidence": citation,
-                    }
+                    },
                 )
                 values = sorted(
                     {
                         ast.unparse(item)
                         for item in ast.walk(node.test)
                         if isinstance(item, (ast.Subscript, ast.Call))
-                    }
+                    },
                 )
                 if values:
                     rules.append(
@@ -125,7 +125,7 @@ class SourceRules:
                             "kind": "runtime",
                             "statement": "判断具体记录还缺运行时值：" + "、".join(values),
                             "evidence": citation,
-                        }
+                        },
                     )
                 continue
             if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
@@ -146,7 +146,7 @@ class SourceRules:
                                 "kind": "policy_call",
                                 "statement": f"调用本地策略 {invocation}。",
                                 "evidence": citation,
-                            }
+                            },
                         )
                         rules.extend(self._guards(target[0], defs[0], seen))
                         continue
@@ -155,7 +155,7 @@ class SourceRules:
                         "kind": "missing",
                         "statement": f"缺少可静态追踪的策略实现或调用关系：{callee}。",
                         "evidence": citation,
-                    }
+                    },
                 )
                 break
             # A write or return ends the supported guard prefix. Do not
@@ -173,7 +173,7 @@ class SourceRules:
                         "kind": "assignment",
                         "statement": f"源码随后赋值 {ast.unparse(node)}。",
                         "evidence": citation,
-                    }
+                    },
                 )
                 if node is func.body[-1]:
                     break
@@ -186,7 +186,7 @@ class SourceRules:
                     "kind": "missing",
                     "statement": "需要核对以下语句的控制流或依赖才能继续解释。",
                     "evidence": citation,
-                }
+                },
             )
             break
         return rules

@@ -80,7 +80,7 @@ class SourceCatalog:
                     "kind": "entry",
                     "statement": f"页面提供「{name}」入口。",
                     "evidence": button["binding"],
-                }
+                },
             ]
             for guard in button["conditions"]:
                 rules.append(
@@ -88,7 +88,7 @@ class SourceCatalog:
                         "kind": "visibility",
                         "statement": "界面条件：" + guard["expression"],
                         "evidence": guard["evidence"],
-                    }
+                    },
                 )
             request = button["request"]
             if request:
@@ -98,7 +98,7 @@ class SourceCatalog:
                         "kind": "request",
                         "statement": f"客户端声明 {endpoint}。",
                         "evidence": request["evidence"],
-                    }
+                    },
                 )
                 rules.extend(backend.describe(request))
             else:
@@ -107,12 +107,13 @@ class SourceCatalog:
                         "kind": "missing",
                         "statement": "缺少可从按钮追踪到的客户端请求和服务端入口。",
                         "evidence": button["binding"],
-                    }
+                    },
                 )
             for rule in rules:
                 citation = rule["evidence"]
                 citation.update(
-                    revision=revision, sha256=hashes[citation["file"]]
+                    revision=revision,
+                    sha256=hashes[citation["file"]],
                 )
             entries[key] = {"id": key, "name": name, "rules": rules}
         return revision, list(entries.values())
@@ -150,7 +151,10 @@ class SourceCatalog:
         }
 
     def explain(
-        self, principal: str, capability_id: str, revision: str
+        self,
+        principal: str,
+        capability_id: str,
+        revision: str,
     ) -> dict:
         """Resolve an opaque catalog entry in the selected source version."""
         current, entries = self._entries(principal)
@@ -185,7 +189,8 @@ class SourceCatalog:
             return found
 
         def explain_source_capability(
-            capability_id: str, revision: str
+            capability_id: str,
+            revision: str,
         ) -> dict:
             """按目录返回的能力 ID 和版本读取规则、缺失信息和逐条源码引文。"""
             entry = self.explain(principal, capability_id, revision)
@@ -252,7 +257,7 @@ class SourceCatalog:
             return _format_listing(result)
         return "\n\n".join(
             format_source_entry(
-                self.explain(principal, item["id"], result["revision"])
+                self.explain(principal, item["id"], result["revision"]),
             )
             for item in result["matches"]
         )

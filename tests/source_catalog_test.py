@@ -47,21 +47,27 @@ class SourceCatalogTest(IsolatedAsyncioTestCase):
         shutil.copytree(EXAMPLE, self.root)
         self.readers = {"alice"}
         self.catalog = SourceCatalog(
-            "expenses", self.root, FILES, self.readers.__contains__
+            "expenses",
+            self.root,
+            FILES,
+            self.readers.__contains__,
         )
 
     def entry(self, action: str) -> dict:
         """Resolve one action from the currently authorized revision."""
         match = self.catalog.search("alice", action)
         return self.catalog.explain(
-            "alice", match["matches"][0]["id"], match["revision"]
+            "alice",
+            match["matches"][0]["id"],
+            match["revision"],
         )
 
     def test_source_only_catalog_and_verifiable_citations(self) -> None:
         """Resolve every rule to the lines and bytes from which it was read."""
         found = self.catalog.search("alice")
         self.assertEqual(
-            {m["name"] for m in found["matches"]}, {"提交", "审批", "撤回"}
+            {m["name"] for m in found["matches"]},
+            {"提交", "审批", "撤回"},
         )
         for name in ("提交", "审批", "撤回"):
             entry = self.entry(name)
@@ -72,7 +78,8 @@ class SourceCatalogTest(IsolatedAsyncioTestCase):
                 span = "".join(lines[ref["start"] - 1 : ref["end"]])
                 self.assertIn(ref["text"], span)
                 self.assertEqual(
-                    ref["sha256"], hashlib.sha256(raw).hexdigest()
+                    ref["sha256"],
+                    hashlib.sha256(raw).hexdigest(),
                 )
                 self.assertEqual(ref["revision"], found["revision"])
         rules = self.entry("撤回")["rules"]
@@ -81,14 +88,14 @@ class SourceCatalogTest(IsolatedAsyncioTestCase):
                 "pending" in r["statement"]
                 for r in rules
                 if r["kind"] == "visibility"
-            )
+            ),
         )
         self.assertTrue(
             any(
                 "仅申请人" in r["statement"]
                 for r in rules
                 if r["kind"] == "rejection"
-            )
+            ),
         )
 
     def test_runtime_and_unresolved_policy_are_reported(self) -> None:
@@ -109,7 +116,7 @@ class SourceCatalogTest(IsolatedAsyncioTestCase):
             any(
                 r["kind"] == "missing" and "external_policy" in r["statement"]
                 for r in rules
-            )
+            ),
         )
         self.assertFalse(any("仅申请人" in r["statement"] for r in rules))
 
@@ -161,13 +168,38 @@ class SourceCatalogTest(IsolatedAsyncioTestCase):
                 check=True,
             )
         linked = SourceCatalog(
-            "expenses", self.root, ["linked/private.py"], lambda _: True
+            "expenses",
+            self.root,
+            ["linked/private.py"],
+            lambda _: True,
         )
         with self.assertRaises(ValueError):
             linked.search("alice")
         with (self.root / "routes.py").open("a", encoding="utf-8") as out:
             out.write('\nraise RuntimeError("source was executed")\n')
         self.assertEqual(len(self.catalog.search("alice")["matches"]), 3)
+
+    def test_catalog_export_and_ambiguous_backend(self) -> None:
+        """Export an atomic catalog; ambiguous endpoints supply no rules."""
+        path = self.root / "routes.py"
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(
+                '\n@router.post("/expenses/withdraw")\n'
+                "def alternate():\n    pass\n",
+            )
+        dest = self.temp / "catalog.json"
+        with self.assertRaises(PermissionError):
+            self.catalog.export("bob", dest)
+        self.assertFalse(dest.exists())
+        self.catalog.export("alice", dest)
+        archive = json.loads(dest.read_text(encoding="utf-8"))
+        self.assertEqual(len(archive["entries"]), 3)
+        entry = self.entry("撤回")
+        stored = next(e for e in archive["entries"] if e["id"] == entry["id"])
+        self.assertEqual(stored["rules"], entry["rules"])
+        self.assertEqual(archive["revision"], entry["revision"])
+        self.assertTrue(any(r["kind"] == "missing" for r in entry["rules"]))
+        self.assertFalse(any(r["kind"] == "rejection" for r in entry["rules"]))
 
     async def test_chat_exposes_only_two_read_tools_and_renders_evidence(
         self,
@@ -184,9 +216,10 @@ class SourceCatalogTest(IsolatedAsyncioTestCase):
                     revision=entry["revision"],
                 ),
                 ChatResponse(
-                    content=[TextBlock(text="已为你撤回 BX-1007")], is_last=True
+                    content=[TextBlock(text="已为你撤回 BX-1007")],
+                    is_last=True,
                 ),
-            ]
+            ],
         )
         with (
             patch.object(
@@ -201,7 +234,9 @@ class SourceCatalogTest(IsolatedAsyncioTestCase):
             ) as http,
         ):
             answer = await self.catalog.ask(
-                "alice", "能替同事撤回吗？帮我撤回 BX-1007", model
+                "alice",
+                "能替同事撤回吗？帮我撤回 BX-1007",
+                model,
             )
         for attempt in api.await_args_list:
             self.assertEqual(
