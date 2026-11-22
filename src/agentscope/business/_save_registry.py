@@ -277,7 +277,11 @@ class SaveBusinessRegistry:
     def _published_tools(self, path):
         record = json.loads(path.read_bytes())
         save, read = self._runtime(record["plan"], path)
-        return [save, read] if self._current(record) else [read]
+        if self._current(record):
+            return [save, read]
+        if record["plan"].get("targetLabel") == self.target_label:
+            read.confirmation_denials = save.confirmation_denials
+        return [read]
 
     def _runtime(self, plan, path):
         operations = SaveOperations(path.parent)
@@ -351,6 +355,7 @@ class SaveBusinessRegistry:
             ),
         )
         save_tool.bind_confirmation = bind_confirmation
+        save_tool.confirmation_denials = {save_tool.name: lambda op: operations.deny(op, plan)}
         return [
             save_tool,
             PublishedBusinessTool(

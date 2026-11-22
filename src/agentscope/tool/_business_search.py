@@ -51,6 +51,15 @@ _ACTIONS = {
     ),
 }
 _ACTION_LABELS = {"query": "查询", "save": "新增草稿", "readback": "回查"}
+_SAVE_VERBS = "|".join(re.escape(word) for word in _ACTIONS["save"])
+_EXCLUDED_ACTION = re.compile(
+    rf"(?:已(?:经)?|不要|不用|无需|不必|别|请勿)\s*(?:再\s*)?(?:{_SAVE_VERBS}|回查|恢复)"
+    rf"|\b(?:do not|don['’]t|never|no need to)\s+(?:{_SAVE_VERBS}|recover|readback)\b"
+)
+_QUERY_ONLY = re.compile(
+    r"(?:只|仅)(?:需要|需|要|想)?\s*(?:查询|查看|查找|查|看|列出|检索|搜索)"
+    r"|\b(?:only|just)\s+(?:list|find|search|query|show|view)\b"
+)
 _STOP = {
     "erp",
     "get",
@@ -96,22 +105,24 @@ _ACTION_TERMS = {
 }
 
 
-def _requested_action(query: str) -> str:
+def _requested_action(query: str) -> tuple[str, str]:
+    """Return the intent and the text used for matching business fields."""
+    request, excluded = _EXCLUDED_ACTION.subn(" ", query)
     # A user checking a previous save can mention both actions.
-    compact = re.sub(r"\s+", "", query)
+    compact = re.sub(r"\s+", "", request)
     for key in _ACTIONS["readback"]:
         if key.replace(" ", "") in compact:
-            return "readback"
-    request = re.sub(
-        r"(已(?:经)?|不要|无需|不必|别)(保存|新增|创建|建单)", "", query
-    )
+            return "readback", request
+    subject, only = _QUERY_ONLY.subn(" ", request)
+    if only:
+        return "query_only", subject
     words = set(re.findall(r"[a-z]+", request))
     if any(
         key in words or (not key.isascii() and key in request)
         for key in _ACTIONS["save"]
     ):
-        return "save"
-    return "query"
+        return "save", request
+    return ("query_only" if excluded else "query"), request
 
 
 def _parameter_names(schema: dict) -> Iterator[str]:
@@ -171,6 +182,12 @@ class PublishedBusinessTool(FunctionTool):
 
     def score(self, query: str, terms: set[str], action: str) -> int:
         """Prefer the exact operation, then its business title and intent."""
+        if action == "query_only":
+            if self.action != "query":
+                return 0
+            if not terms:
+                return 1
+            action = "query"
         if query == self._normalized_name:
             return 1000
         if self.action == "save" and action != "save":
@@ -234,12 +251,19 @@ class BusinessToolSearch(FunctionTool):
         if not isinstance(query, str) or not query.strip() or len(query) > 256:
             raise ValueError("请输入 1 至 256 个字符的业务问法。")
         query = _normalize(query.strip())
-        action = _requested_action(query)
-        terms = _terms(query) - _ACTION_TERMS
+        action, subject = _requested_action(query)
+        terms = _terms(subject) - _ACTION_TERMS
+        catalog = self.catalog
+        if action == "query_only" and not terms:
+            # A correction such as “不要新建，只查” can omit the previous business name.
+            selected = _agent_state.tool_context.selected_business_tools
+            previous = {tool.business for tool in catalog if tool.name in selected}
+            if previous:
+                catalog = [tool for tool in catalog if tool.business in previous]
         ranked = sorted(
             [
                 (tool.score(query, terms, action), tool)
-                for tool in self.catalog
+                for tool in catalog
                 if await _permitted(tool, _agent_state)
             ],
             key=lambda item: (-item[0], item[1].name),

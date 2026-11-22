@@ -22,6 +22,7 @@ registry = SaveBusinessRegistry(
 
 | 员工保存结果 | 含义 |
 | --- | --- |
+| `denied` | 员工已拒绝本次确认。可以用原操作 ID 查询决定，再次提交需要发起新的确认。 |
 | `saved` | 记录 ID 与回执一致，且所有确认字段均核对通过。 |
 | `saved_needs_review` | 已取得回执，字段缺失、内容不同或历史操作缺少可核对的草稿。存在字段差异时，`differing_fields` 列出对应名称。 |
 | `saved_needs_readback` | 已取得回执，尚未读到可验证的对应记录。可用原操作 ID 再次回查。 |

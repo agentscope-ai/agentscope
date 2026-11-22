@@ -9,6 +9,10 @@ from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock
 
 from agentscope.business import SaveBusinessRegistry, write_save_receipt
+from agentscope.message import ToolCallBlock
+from agentscope.state import AgentState
+from agentscope.tool import Toolkit
+from agentscope.tool._business_search import PublishedBusinessTool
 
 
 async def invoke(tool, **kwargs):
@@ -97,6 +101,64 @@ class ConnectedSaveTest(unittest.IsolatedAsyncioTestCase):
         await invoke(self.tools("different target")[0], **self.request)
         self.assertEqual(self.detail.await_count, 2)
         self.assertEqual(len(self.records), 1)
+
+    async def test_ticket_denial_survives_restart_and_late_decisions(self):
+        save, _ = await self.publish()
+        inputs = {"title": "中文工单"}
+        op, _ = save.bind_confirmation("s", "r", "c", inputs)
+        call = ToolCallBlock(id="c", name=save.name, input=json.dumps(inputs), confirmation_id=op)
+        toolkit = Toolkit(tools=self.tools())
+        toolkit.deny_confirmation(call)
+        _, save, read = self.tools()
+        self.assertEqual((await invoke(read, operation_id=op))["status"], "denied")
+        self.assertEqual((await invoke(save, _confirmation_id=op, _confirmed_inputs=inputs))["status"], "denied")
+        self.assertEqual(len(self.records), 2)  # The two publication fixtures only.
+        self.detail.assert_not_awaited()
+
+        # The opposite ordering preserves a committed write and its receipt.
+        next_op, _ = save.bind_confirmation("s", "r2", "c2", inputs)
+        self.reply = "receipt_only"
+        self.detail.side_effect = TimeoutError()
+        pending = await invoke(save, _confirmation_id=next_op, _confirmed_inputs=inputs)
+        self.assertEqual(pending["status"], "saved_needs_readback")
+        toolkit.deny_confirmation(call.model_copy(update={"id": "c2", "confirmation_id": next_op}))
+        self.detail.side_effect = lambda route, key: self.records[key]
+        verified = await invoke(read, operation_id=next_op)
+        self.assertEqual((verified["status"], verified["id"]), ("saved", pending["id"]))
+        self.assertEqual(len(self.records), 3)
+
+    async def test_ticket_can_be_declined_after_its_write_tool_is_suspended(self):
+        save, _ = await self.publish()
+        op, _ = save.bind_confirmation("s", "r", "c", {"title": "old form"})
+        self.spec.write_text("{}", encoding="utf-8")
+        register, read = self.tools()
+        self.assertEqual(read.name, "support_read_retrieve")
+        Toolkit(tools=[register, read]).deny_confirmation(
+            ToolCallBlock(id="c", name=save.name, input="{}", confirmation_id=op),
+        )
+        self.assertEqual((await invoke(read, operation_id=op))["status"], "denied")
+        self.assertEqual(len(self.records), 2)
+        self.detail.assert_not_awaited()
+
+    async def test_ticket_query_only_excludes_both_save_and_recovery(self):
+        save, read = await self.publish()
+
+        def list_tickets():
+            """列出现有工单。"""
+            return list(self.records.values())
+
+        query = PublishedBusinessTool(list_tickets, name="support_list_tickets", business="工单",
+                                      action="query", is_read_only=True)
+        kit = Toolkit(tools=[query, save, read])
+        search = await kit.check_tool_available("search_business_tools", [])
+        state = AgentState()
+        for phrase in ("不要新建工单，只查现有工单", "don't create, just list tickets"):
+            with self.subTest(phrase=phrase):
+                result = await invoke(search, query=phrase, _agent_state=state)
+                self.assertEqual([match["name"] for match in result["matches"]], [query.name])
+                self.assertEqual(state.tool_context.selected_business_tools, [query.name])
+        self.assertEqual(len(self.records), 2)
+        self.detail.assert_not_awaited()
 
     async def test_acceptance_requires_explicit_evidence_to_retry_a_write(self):
         self.reply = "blocked"

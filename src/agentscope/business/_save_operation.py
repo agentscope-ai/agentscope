@@ -108,6 +108,18 @@ class SaveOperations:
             raise ValueError("当前用户、目标系统和工具没有这笔保存记录。")
         return row
 
+    def deny(self, op, plan):
+        # Compete with claim() on the same prepared row. A delayed rejection
+        # must never overwrite a write already in progress (or its receipt).
+        with self._transaction() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._row(db, op, plan)
+            db.execute(
+                """UPDATE saves SET state='finished', result=?
+                   WHERE operation_id=? AND state='prepared'""",
+                (json.dumps({"status": "denied", "message": "用户已拒绝本次操作。"}, ensure_ascii=False), op),
+            )
+
     def claim(self, op, plan, inputs):
         if not op or not self.database.exists():
             raise ValueError("请在当前系统重新确认这次保存。")

@@ -206,10 +206,14 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
     async def test_draft_is_bound_to_confirmation_and_denial_cannot_submit(self):
         self.assertEqual((await self.read())["status"], "awaiting_confirmation")
         self.assertEqual((await resume(self.root, approved=False)).state, "denied")
+        self.assertEqual((await self.read())["status"], "denied")
+        self.assertEqual((await self.save())["status"], "denied")  # Stale approval on another worker.
+        self.assertEqual((await resume(self.root, approved=False)).state, "denied")
         self.assertEqual((await resume(self.root, draft={"purpose": "changed"})).state, "error")
         self.assertFalse((self.root / "requests").exists())
-        first = await self.save()
         self.assertNotEqual(await self.park(), self.op)
+        first = await self.save()
+        self.assertNotEqual(await self.park(), first["operation_id"])
         second = await self.save()
         self.assertNotEqual(first["operation_id"], second["operation_id"])
         self.assertEqual(self.counts()[:2], (2, 2))

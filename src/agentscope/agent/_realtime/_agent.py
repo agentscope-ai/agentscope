@@ -2594,6 +2594,9 @@ class RealtimeAgent:
             self._confirmations.pop(call.id, None)
             self._confirmation_replies.pop(call.id, None)
 
+        if not result.confirmed:
+            assert self.toolkit is not None
+            self.toolkit.deny_confirmation(call)
         if self._reply_id != reply_id:
             return False
         for rule in result.rules or []:
