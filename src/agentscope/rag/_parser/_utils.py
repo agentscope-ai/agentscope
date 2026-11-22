@@ -87,15 +87,11 @@ def _table_to_markdown(table_data: list[list[str]]) -> str:
     if not table_data:
         return ""
 
-    # Ragged input: a later row may be longer than the header (e.g. a
-    # hand-built table whose first row omits trailing empty cells).
-    # Size the table by its widest row so no column is silently lost.
-    num_cols = max(len(row) for row in table_data)
+    num_cols = len(table_data[0])
     if num_cols == 0:
         return ""
 
     header = [_format_markdown_table_cell(cell) for cell in table_data[0]]
-    header += [""] * (num_cols - len(table_data[0]))
     lines = [
         "| " + " | ".join(header) + " |",
         "| " + " | ".join(["---"] * num_cols) + " |",
