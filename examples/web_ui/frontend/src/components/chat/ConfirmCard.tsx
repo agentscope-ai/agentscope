@@ -18,7 +18,7 @@ export function ConfirmCard({
 	toolCall,
 	onUserConfirm,
 }: {
-	toolCall: ToolCallBlock;
+	toolCall: ToolCallBlock & { confirmation_message?: string };
 	onUserConfirm: (confirm: boolean, rules?: ToolCallBlock['suggested_rules']) => Promise<void>;
 }) {
 	const { t } = useTranslation();
@@ -76,6 +76,7 @@ export function ConfirmCard({
 		<div className="bg-muted ring ring-border rounded-[28px] w-full px-6 py-5 space-y-4 text-sm overflow-hidden">
 			<div className="flex flex-col gap-y-2 max-w-full">
 				<strong className="text-secondary-foreground">{getDisplayName(toolCall, t)}</strong>
+				{toolCall.confirmation_message && <p>{toolCall.confirmation_message}</p>}
 				{/* Capped so a long tool input (raw JSON for MCP tools) cannot
 				    grow the card past the viewport — it floats above the
 				    composer and is out of flow, so nothing else clips it. */}

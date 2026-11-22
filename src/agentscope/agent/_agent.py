@@ -2612,6 +2612,8 @@ class Agent:
             )
 
             tool_call.suggested_rules = decision.suggested_rules or []
+            if is_safety_ask:
+                tool_call.confirmation_message = decision.message
             yield RequireUserConfirmEvent(
                 reply_id=self.state.reply_id,
                 tool_calls=[tool_call],

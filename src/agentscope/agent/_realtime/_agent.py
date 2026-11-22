@@ -2572,6 +2572,8 @@ class RealtimeAgent:
     ) -> bool:
         """Ask the user to confirm *call* and wait for the answer."""
         call.suggested_rules = decision.suggested_rules or []
+        if decision.bypass_immune:
+            call.confirmation_message = decision.message
         call.state = ToolCallState.ASKING
         self._emit(
             RequireUserConfirmEvent(reply_id=reply_id, tool_calls=[call]),

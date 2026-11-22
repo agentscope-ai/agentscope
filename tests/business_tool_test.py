@@ -13,6 +13,9 @@ import httpx
 
 from agentscope.business import BusinessRegistry, as_tool, build, discover, preview
 from agentscope.business._business import bind_operation
+from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.tool_login import ToolLogin, tool_login_scope
+from agentscope.business._password_auth import PasswordConnection, PasswordProfile
 from agentscope.tool import Toolkit
 
 HERE = Path(__file__).parent
@@ -154,6 +157,90 @@ class BusinessToolTest(unittest.TestCase):
 
         with TemporaryDirectory() as directory:
             asyncio.run(run(Path(directory)))
+
+    def test_registered_query_resumes_exact_request_after_private_login(self):
+        async def run(status, service_code):
+            tmp = TemporaryDirectory()
+            self.addCleanup(tmp.cleanup)
+            source = Path(tmp.name)
+            (source / "report.js").write_text(
+                "import axios from 'axios';\nexport const report = params => "
+                "axios({url:'/report', method:'get', params});"
+            )
+            spec = source / "api.json"
+            spec.write_text(json.dumps({"openapi": "3.1.0", "paths": {"/report": {"get": {
+                "operationId": "report", "parameters": [{"name": "id", "in": "query",
+                "schema": {"type": "integer"}}], "responses": {"200": {"content": {
+                "application/json": {"schema": {"type": "object"}}}}}}}}}))
+            artifact = build(source, "report.js#report", spec)
+            scope = ("owner", "agent", "chat")
+            broker = ToolLogin(InMemoryMessageBus(), timeout=5)
+            profile = PasswordProfile.model_validate({
+                "login_path": "/auth", "request_fields": {"password": "password"},
+                "accepted": {"status": 200}, "rejected": [{"status": 401}],
+                "expired": [{"status": 401}, {"fields": {"code": 401}}],
+                "token_path": "session.token", "session_path": "session",
+                "client_route": "/query", "query_path": "/default",
+                "evidence": [{"path": "login.ts", "start": 1, "end": 1}] * 3,
+            })
+            logins, queries = [], []
+            async def login(req):
+                self.assertEqual((req.method, req.url.path), ("POST", "/auth"))
+                supplied = json.loads(req.content)["password"]
+                logins.append(supplied)
+                return httpx.Response(200, json={"session": {"token": supplied}})
+
+            challenge = asyncio.Event()
+            async def upstream(client, request):
+                queries.append((request.method, str(request.url), request.headers["authorization"]))
+                if len(queries) == 1:
+                    challenge.set()
+                    return httpx.Response(status, request=request, json={"code": service_code})
+                return httpx.Response(200, request=request, json={"id": 42})
+
+            async def dispatch(client, request):
+                if request.url.path == "/auth":
+                    return await login(request)
+                return await upstream(client, request)
+
+            connection = PasswordConnection(broker=broker, service="ERP", title="ERP",
+                base_url="https://erp.test", context={}, previous_password=lambda: "old",
+                transport=httpx.MockTransport(login))
+            async def no_token():
+                self.fail("Unexpected fallback to a static token")
+            with TemporaryDirectory() as root:
+                registry = BusinessRegistry(self.source, spec, Path(root), "https://erp.test",
+                    no_token, None, get_read_auth=lambda: connection.read_auth(profile))
+                directory = registry._directory(*scope[:2])
+                directory.mkdir(parents=True)
+                (directory / "detail.json").write_text(json.dumps({"artifact": artifact}))
+                query = registry.tools(*scope[:2])[1]
+                with tool_login_scope(*scope), patch.object(httpx.AsyncClient, "_send_single_request", new=dispatch):
+                    result = asyncio.create_task(query(params={"id": 42}))
+                    await asyncio.wait_for(challenge.wait(), 3)
+                    if service_code == 403:
+                        with self.assertRaises(httpx.HTTPStatusError):
+                            await result
+                        self.assertIsNone(broker.pending(scope))
+                        self.assertEqual(len(queries), 1)
+                        return
+                    for _ in range(100):
+                        if broker.pending(scope):
+                            break
+                        await asyncio.sleep(.01)
+                    view = broker.pending(scope)
+                    self.assertEqual(view.step.fields[0].kind, "secret")
+                    await broker.submit(scope, view.id, view.revision, {"password": "new"})
+                    report = json.loads((await result).content[0].text)
+                    self.assertEqual(report["authentication"]["status"], "resumed_after_login")
+                self.assertEqual(logins, ["old", "new"])
+                self.assertEqual(queries[0][:2], queries[1][:2])
+                self.assertEqual(len(queries), 2)
+                self.assertEqual(queries[1], ("GET", "https://erp.test/report?id=42", "Bearer new"))
+
+        for status, service_code in ((401, 401), (200, 401), (403, 403)):
+            with self.subTest(status=status):
+                asyncio.run(run(status, service_code))
 
     def test_guard_default_and_body_contract(self):
         req = preview(self.artifact, self.inputs)

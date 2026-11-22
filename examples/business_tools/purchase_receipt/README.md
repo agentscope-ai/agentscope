@@ -97,3 +97,9 @@ node "$CASE/capture.cjs" --client "$ERP/frontend-user" --chromium "$CHROMIUM" \
 ```
 
 接入 Agent 时将 `discovery_tool(source, openapi, output)` 注册到 Toolkit，模型只需提供 `business="采购入库单"`。用 `as_tool(bundle["tools"]["save"], base_url, token)` 和 `as_tool(bundle["tools"]["detail"], base_url, token)` 注册生成的两个业务工具。
+
+已有的离线工作流内含生成时的行计算代码。用同一份源码和 OpenAPI 重新执行上面的 `generate` 命令，即可采用原客户端的保存分支和调用顺序。
+
+使用已发布的 ERP 密码登录适配器时，创建通用查询注册器的宿主应传入 `get_read_auth=purchase_auth.registered_read_auth`。已注册查询会沿用当前会话的私密登录弹窗，并在登录成功后按原参数重试一次 GET。
+
+接入 `SaveBusinessRegistry` 时，由宿主传入与保存连接对应的 `target_label`。默认权限模式会在验收前向用户显示该账套名称和将创建的两张草稿。省略账套名称时只执行预览。旧版验收记录可继续回查，重新验收通过后恢复保存。多 worker 部署应共用注册目录，并为私密登录配置共享消息总线。

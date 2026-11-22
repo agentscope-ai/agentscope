@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from ._business import validate_api_base_url
 from ..app.tool_login import (
     LoginFailed, LoginField, LoginRejected, LoginStep, LoginSuccess, ToolLogin,
 )
@@ -107,6 +108,7 @@ class PasswordConnection:
         previous_password: Callable[[], str],
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        validate_api_base_url(base_url, authenticated=True)
         self.broker = broker
         self.service = service
         self.title = title
@@ -146,6 +148,7 @@ class PasswordConnection:
         profile: PasswordProfile,
         *,
         expired_token: str | None = None,
+        interactive: bool = False,
         on_bad_password: Callable[[], None] | None = None,
     ) -> dict:
         """Reuse a chat's session or suspend until the user has signed in."""
@@ -155,38 +158,72 @@ class PasswordConnection:
             self._tokens.move_to_end(key)
             return saved
         self._tokens.pop(key, None)
-        try:
-            auth = await self._login(profile, self.previous_password())
-            if auth["token"] == expired_token:
-                raise ValueError("服务重复返回已失效的会话令牌。")
-        except PasswordRejected:
-            if on_bad_password:
-                on_bad_password()
+        if interactive:
+            auth = await self._prompt(profile, on_bad_password)
+        else:
+            try:
+                auth = await self._login(profile, self.previous_password())
+                if auth["token"] == expired_token:
+                    raise ValueError("服务重复返回已失效的会话令牌。")
+            except PasswordRejected:
+                if on_bad_password:
+                    on_bad_password()
 
-            async def complete(_step: LoginStep, values: Mapping[str, str]) -> LoginSuccess:
-                try:
-                    auth = await self._login(profile, values["password"])
-                except PasswordRejected:
-                    if on_bad_password:
-                        on_bad_password()
-                    raise
-                return LoginSuccess(auth)
-
-            auth = await self.broker.request(
-                self.service,
-                LoginStep(
-                    title=f"{self.title} 需要重新登录",
-                    description="请输入当前密码，登录成功后会继续刚才的操作。",
-                    submit_label="登录并继续",
-                    fields=[LoginField(name="password", label="密码", kind="secret")],
-                ),
-                complete,
-            )
+                auth = await self._prompt(profile, on_bad_password)
         self._tokens[key] = auth
         self._tokens.move_to_end(key)
         if len(self._tokens) > 256:
             self._tokens.popitem(last=False)
         return auth
+
+    async def _prompt(self, profile, on_bad_password):
+        async def complete(_step: LoginStep, values: Mapping[str, str]) -> LoginSuccess:
+            try:
+                auth = await self._login(profile, values["password"])
+            except PasswordRejected:
+                if on_bad_password:
+                    on_bad_password()
+                raise
+            return LoginSuccess(auth)
+
+        return await self.broker.request(
+            self.service,
+            LoginStep(
+                title=f"{self.title} 需要重新登录",
+                description="请输入当前密码，登录成功后会继续刚才的操作。",
+                submit_label="登录并继续",
+                fields=[LoginField(name="password", label="密码", kind="secret")],
+            ),
+            complete,
+        )
+
+    def read_auth(self, profile: PasswordProfile) -> httpx.Auth:
+        """Authenticate a registered GET and resume that request after private login."""
+        connection = self
+
+        class ReadAuth(httpx.Auth):
+            async def async_auth_flow(self, request):
+                base = httpx.URL(connection.base_url)
+                if request.method != "GET" or (
+                    request.url.scheme, request.url.host, request.url.port
+                ) != (base.scheme, base.host, base.port):
+                    raise ValueError("服务登录适配器只支持已绑定地址的查询。")
+                session = await connection.connect(profile)
+                request.headers["Authorization"] = "Bearer " + session["token"]
+                response = yield request
+                await response.aread()
+                if profile.session_expired(response):
+                    session = await connection.connect(
+                        profile, expired_token=session["token"], interactive=True,
+                    )
+                    request.headers["Authorization"] = "Bearer " + session["token"]
+                    retried = yield request
+                    await retried.aread()
+                    if profile.session_expired(retried):
+                        raise LoginFailed("重新登录后服务仍报告会话失效。")
+                    retried.extensions["agentscope_resumed_after_login"] = True
+
+        return ReadAuth()
 
     async def read(
         self,

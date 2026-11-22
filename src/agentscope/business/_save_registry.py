@@ -4,7 +4,9 @@ import asyncio
 import hashlib
 import json
 import re
+import sqlite3
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager, closing
 from pathlib import Path
 
 from agentscope.permission import PermissionBehavior, PermissionDecision
@@ -13,19 +15,70 @@ from agentscope.tool import FunctionTool
 from ._business import bind_operation, write_definition
 
 
-def _without_generated_identity(value):
-    if isinstance(value, list):
-        return [_without_generated_identity(row) for row in value]
-    if isinstance(value, dict):
-        return {
-            key: _without_generated_identity(item)
-            for key, item in value.items()
-            if key not in {
-                "id", "orderId", "detailId", "billNo", "createdTime", "updatedTime",
-                "detailBillNo", "batchBillNo",
-            }
-        }
-    return value
+def _readback_business_fields(saved):
+    """Verify parent links before comparing independently generated identities."""
+    document = saved["detail"]
+    order_id = saved["id"]
+    if not isinstance(document, dict):
+        raise ValueError("回查单据格式无效")
+    header = document.get("order", document)
+    if not isinstance(header, dict) or order_id is None or header.get("id") != order_id:
+        raise ValueError("回查单据 ID 与保存结果不符")
+    detail_positions = {}
+    for position, row in enumerate(document.get("details", [])):
+        if not isinstance(row, dict):
+            raise ValueError("回查明细格式无效")
+        if "id" in row:
+            detail_id = row["id"]
+            if detail_id is None or detail_id in detail_positions:
+                raise ValueError("回查明细 ID 为空或重复")
+            detail_positions[detail_id] = position
+
+    flat = object()
+
+    def normalize(value, parent_id=flat, *, detail_row=False):
+        if isinstance(value, list):
+            return [normalize(row, parent_id) for row in value]
+        if not isinstance(value, dict):
+            return value
+        result = {}
+        for key, item in value.items():
+            if key == "orderId":
+                if item != order_id:
+                    raise ValueError("回查行属于其他单据")
+                result[key] = "<order>"
+            elif key == "detailId":
+                # Nested rows must reference their enclosing row. A flat list
+                # may reference a sibling detail by its generated identifier.
+                if parent_id is not flat:
+                    if parent_id is None or item != parent_id:
+                        raise ValueError("回查子行不属于所在明细")
+                    result[key] = "<parent>"
+                elif item in detail_positions:
+                    result[key] = detail_positions[item]
+                else:
+                    raise ValueError("回查子行没有对应明细")
+            elif value is document and key == "details":
+                result[key] = [normalize(row, detail_row=True) for row in item]
+            elif key not in {
+                "id", "billNo", "createdTime", "updatedTime", "detailBillNo", "batchBillNo",
+            }:
+                result[key] = normalize(item, value.get("id") if detail_row else parent_id)
+        return result
+
+    return normalize(document)
+
+
+def _same_saved_draft(original, generated):
+    if not generated.get("detail") or original["id"] == generated.get("id"):
+        return False
+    try:
+        return (
+            original["request"] == generated["request"]
+            and _readback_business_fields(original) == _readback_business_fields(generated)
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def _actions_for(plan, inputs):
@@ -45,6 +98,29 @@ def _actions_for(plan, inputs):
     return actions
 
 
+@asynccontextmanager
+async def _publication_lock(path: Path):
+    """Serialize publication and use across workers sharing this directory.
+
+    SQLite releases the write lock if the process exits. The separate pending
+    checkpoint survives a crash after the first ERP write.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(path.with_suffix(".lock"), timeout=0)) as lock:
+        while True:
+            try:
+                lock.execute("BEGIN IMMEDIATE")
+                break
+            except sqlite3.OperationalError as error:
+                if error.sqlite_errorcode != sqlite3.SQLITE_BUSY:
+                    raise
+                await asyncio.sleep(0.05)
+        yield
+
+
+_ACCEPTANCE_VERSION = 3
+
+
 class SaveBusinessRegistry:
     """Compile a scoped client action plan and require both save outcomes."""
 
@@ -55,13 +131,15 @@ class SaveBusinessRegistry:
         storage: Path,
         capture: Callable[[dict, list[dict], bool], Awaitable[dict]],
         read_detail: Callable[[str, int], Awaitable[dict]],
+        *,
+        target_label: str | None = None,
     ):
         self.source = source.resolve()
         self.openapi = openapi
         self.storage = storage
         self.capture = capture
         self.read_detail = read_detail
-        self.lock = asyncio.Lock()
+        self.target_label = (target_label or "").strip()
 
     def tools(self, user_id, agent_id):
         key = json.dumps([user_id, agent_id]).encode()
@@ -79,7 +157,7 @@ class SaveBusinessRegistry:
             complete: dict,
             counterexamples: list[dict] | None = None,
         ) -> dict:
-            """生成并验收 ERP 新增草稿及回查，成功后注册到原会话。
+            """生成并验收 ERP 新增草稿及回查。验收会在绑定账套新增两张草稿。
 
             Args:
                 business: 用户提供的业务名称。
@@ -99,6 +177,7 @@ class SaveBusinessRegistry:
                 counterexamples: Agent 从源码和 API 自行提出的 1 至 5 个拒绝样本。
                     各含 name、rule、evidence、inputs 和 actions。evidence 包含
                     源码相对 path 与行号 line。以补齐样本为基线，改变须被拒绝的输入。
+                    至少一组须独立于普通缺填样本，覆盖不同的实际输入和操作。
                     原客户端或生成工具尝试写入都会阻止注册，反例不发送到 ERP。
             """
             return await self.register(
@@ -112,20 +191,60 @@ class SaveBusinessRegistry:
                 register_save_business_tool,
                 is_concurrency_safe=False,
                 permission=PermissionDecision(
-                    behavior=PermissionBehavior.ALLOW,
-                    message="Run the requested draft acceptance on the bound test ERP.",
+                    behavior=PermissionBehavior.ASK,
+                    bypass_immune=True,
+                    message=(
+                        f"在账套「{self.target_label}」中执行保存验收？"
+                        "原客户端和生成工具将各创建一张草稿，共两张。"
+                        if self.target_label else "当前尚未配置目标账套，仅可预览。"
+                    ),
                 ),
             ),
             *(
                 tool
                 for path in sorted(directory.glob("*.json"))
-                for tool in self._runtime(json.loads(path.read_text())["plan"])
+                for tool in self._published_tools(path)
             ),
         ]
 
-    def _runtime(self, plan):
+    def _current(self, record):
+        report = record["verification"]
+        plan = record["plan"]
+        if report.get("version") != _ACCEPTANCE_VERSION or not report.get("registered"):
+            return False
+        return (
+            bool(self.target_label)
+            and plan.get("targetLabel") == self.target_label
+            and self._sources_current(plan)
+        )
+
+    def _sources_current(self, plan):
+        try:
+            return (
+                plan["apiSha256"] == hashlib.sha256(self.openapi.read_bytes()).hexdigest()
+                and all(self._source_hash(name) == digest for name, digest in plan["ruleHashes"].items())
+            )
+        except (OSError, ValueError):
+            return False
+
+    def _source_hash(self, name):
+        source = (self.source / name).resolve()
+        if not source.is_relative_to(self.source):
+            raise ValueError("规则来源超出绑定源码目录")
+        return hashlib.sha256(source.read_bytes()).hexdigest()
+
+    def _published_tools(self, path):
+        record = json.loads(path.read_bytes())
+        save, read = self._runtime(record["plan"], path)
+        return [save, read] if self._current(record) else [read]
+
+    def _runtime(self, plan, path):
         async def save(**inputs):
-            saved = await self.capture(plan, _actions_for(plan, inputs), True)
+            async with _publication_lock(path):
+                record = json.loads(path.read_bytes())
+                if record["plan"] != plan or not self._current(record):
+                    raise ValueError("保存工具已停用，请重新验收。")
+                saved = await self.capture(plan, _actions_for(plan, inputs), True)
             # Preserve a successful POST's identifier even if readback failed.
             if saved.get("id") and not saved.get("detail"):
                 return {**saved, "status": "saved_needs_readback"}
@@ -163,9 +282,16 @@ class SaveBusinessRegistry:
             ),
         ]
 
-    def _validate_counterexamples(self, cases, fields, complete):
+    def _validate_counterexamples(self, cases, fields, complete, missing, actions):
         if not isinstance(cases, list) or not 1 <= len(cases) <= 5:
             raise ValueError("注册前请从源码和 API 提交 1 至 5 个应被拒绝的反例。")
+        independent = False
+        missing_inputs = missing["inputs"]
+        repaired_fields = {
+            key for key, value in complete["inputs"].items()
+            if missing_inputs.get(key) != value
+        }
+        baseline = _actions_for({"actions": actions}, missing_inputs)
         names = set()
         variants = set()
         for case in cases:
@@ -193,14 +319,25 @@ class SaveBusinessRegistry:
                 or inputs == complete["inputs"]
             ):
                 raise ValueError("反例必须改变补齐样本的已绑定业务输入。")
-            actions = case.get("actions")
-            if not isinstance(actions, list) or not actions or actions[-1].get("action") != "click":
+            steps = case.get("actions")
+            if not isinstance(steps, list) or not steps or steps[-1].get("action") != "click":
                 raise ValueError("反例必须在原客户端实际点击保存。")
             variant = json.dumps(inputs, sort_keys=True)
             if variant in variants:
                 raise ValueError("反例须使用不同的输入。")
+            if (
+                steps != missing["actions"]
+                and _actions_for({"actions": actions}, inputs) != baseline
+                and any(
+                    inputs.get(key) not in (missing_inputs.get(key), None, "")
+                    for key in repaired_fields
+                )
+            ):
+                independent = True
             names.add(name)
             variants.add(variant)
+        if not independent:
+            raise ValueError("至少一个反例须区别于普通缺填用例并实际改变操作。")
 
     async def _check_counterexamples(self, plan, cases):
         observations = []
@@ -271,9 +408,9 @@ class SaveBusinessRegistry:
             if value not in (None, "")
         ):
             raise ValueError("补齐组应保留缺填组已有的业务数据")
-        self._validate_counterexamples(counterexamples, fields, complete)
         plan = {
             "business": business,
+            "targetLabel": self.target_label,
             "clientRoute": client_route,
             "saveRoute": save_route,
             "detailRoute": detail_route,
@@ -292,7 +429,19 @@ class SaveBusinessRegistry:
         acceptance = hashlib.sha256(json.dumps(
             [missing, complete, counterexamples], ensure_ascii=False, sort_keys=True,
         ).encode()).hexdigest()
-        async with self.lock:
+        async with _publication_lock(path):
+            current = json.loads(path.read_bytes()) if path.exists() else None
+            try:
+                self._validate_counterexamples(counterexamples, fields, complete, missing, actions)
+                plan["ruleHashes"] = {
+                    name: self._source_hash(name)
+                    for name in {source_file, *(case["evidence"]["path"] for case in counterexamples)}
+                }
+            except (ValueError, OSError):
+                if current:
+                    current["verification"]["registered"] = False
+                    write_definition(path, current)
+                raise
             if checkpoint.exists():
                 return {
                     "registered": False,
@@ -300,12 +449,14 @@ class SaveBusinessRegistry:
                     "message": "此前已开始写入验收。请回查已知单号，避免重复保存。",
                     "checkpoint": json.loads(checkpoint.read_text()),
                 }
-            if path.exists():
-                current = json.loads(path.read_text())
-                if current["plan"] == plan and current["verification"].get(
+            if current:
+                if self._current(current) and current["plan"] == plan and current["verification"].get(
                     "acceptanceSha256",
                 ) == acceptance:
                     return current["verification"]
+                # Persist suspension before the first capture, including exceptions or cancellation.
+                current["verification"]["registered"] = False
+                write_definition(path, current)
 
             observations = await self._check_counterexamples(plan, counterexamples)
             if not all(case["passed"] for case in observations):
@@ -335,6 +486,13 @@ class SaveBusinessRegistry:
                     "generatedIssue": generated_preview.get("issue"),
                     "erpWrites": 0,
                 }
+            if not self._sources_current(plan):
+                raise ValueError("验收期间规则已变化，请重新验收。")
+            if not self.target_label:
+                return {
+                    "registered": False, "stage": "target_required", "erpWrites": 0,
+                    "message": "预览已完成。请由宿主配置 target_label 标明目标账套后再申请写入验收。",
+                }
             directory.mkdir(parents=True, exist_ok=True)
             write_definition(checkpoint, {"stage": "original_save"})
             original_saved = await self.capture(plan, complete["actions"], True)
@@ -354,15 +512,7 @@ class SaveBusinessRegistry:
                 "stage": "compare_saved", "originalId": original_saved["id"],
                 "generatedId": generated_saved.get("id"),
             })
-            keys = ("request", "detail")
-            if not generated_saved.get("detail") or any(
-                (
-                    original_saved[key] != generated_saved[key] if key == "request"
-                    else _without_generated_identity(original_saved[key])
-                    != _without_generated_identity(generated_saved[key])
-                )
-                for key in keys
-            ) or original_saved["id"] == generated_saved["id"]:
+            if not _same_saved_draft(original_saved, generated_saved):
                 return {
                     "registered": False,
                     "stage": "compare_saved",
@@ -373,6 +523,7 @@ class SaveBusinessRegistry:
                 }
             report = {
                 "registered": True,
+                "version": _ACCEPTANCE_VERSION,
                 "business": business,
                 "acceptanceSha256": acceptance,
                 "counterexamples": observations,
@@ -386,6 +537,8 @@ class SaveBusinessRegistry:
                 "tools": [plan["saveTool"], plan["readTool"]],
                 "available": "原会话下一条消息",
             }
+            if not self._sources_current(plan):
+                raise ValueError("保存回查期间规则已变化，请核对写入检查点。")
             write_definition(path, {"plan": plan, "verification": report})
             checkpoint.unlink()
         return report

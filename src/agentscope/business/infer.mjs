@@ -185,10 +185,14 @@ function rowSource(expression) {
 }
 
 function rowCalculators(editor, collection) {
-  const calculators = new Map(), visited = new Set();
+  const calculators = new Map(), visiting = new Set();
+  function remember(name, calls, loop) {
+    if (!calculators.has(name)) calculators.set(name, []);
+    calculators.get(name).push({calls, loop});
+  }
   function search(name, path) {
-    if (visited.has(name)) return;
-    visited.add(name);
+    if (visiting.has(name)) return;
+    visiting.add(name);
     const fn = editor.page.defs.get(name);
     walk(fn.body, node => {
       if (!ts.isCallExpression(node)) return;
@@ -197,12 +201,12 @@ function rowCalculators(editor, collection) {
       if (ts.isPropertyAccessExpression(member) && member.expression.getText() === collection &&
           ['map', 'forEach'].includes(member.name.text)) {
         const callback = node.arguments[0];
-        if (callback && ts.isIdentifier(callback)) calculators.set(callback.text, [...path, node]);
+        if (callback && ts.isIdentifier(callback)) remember(callback.text, [...path, node], node);
         if (callback && ts.isArrowFunction(callback) && callback.parameters.length) {
           const row = callback.parameters[0].name.getText();
           walk(callback.body, c => {
             if (ts.isCallExpression(c) && c.arguments.length === 1 && c.arguments[0].getText() === row) {
-              calculators.set(c.expression.getText(), [...path, c]);
+              remember(c.expression.getText(), [...path, c], node);
             }
           });
         }
@@ -210,6 +214,7 @@ function rowCalculators(editor, collection) {
       // Only follow local invocations which precede the create in its handler.
       if (ts.isIdentifier(member) && editor.page.defs.has(member.text)) search(member.text, [...path, node]);
     });
+    visiting.delete(name);
   }
   search(editor.name, []);
   return calculators;
@@ -234,7 +239,8 @@ function inferredRules(editor, contract, payload, api) {
     const collection = rowSource(binding.expression);
     if (!collection) continue;
     const claimed = new Set();
-    for (const [name, callPath] of rowCalculators(editor, collection)) {
+    for (const [name, sites] of rowCalculators(editor, collection)) {
+      const callPath = sites[0].calls;
       const fn = editor.page.defs.get(name);
       if (!fn || fn.parameters.length !== 1 || !ts.isBlock(fn.body)) continue;
       const row = fn.parameters[0].name.getText();
@@ -247,7 +253,10 @@ function inferredRules(editor, contract, payload, api) {
         // Constants and clears are initialization, not calculations.
         if (!ts.isCallExpression(right) && !ts.isBinaryExpression(right) &&
             !ts.isConditionalExpression(right) && !ts.isPropertyAccessExpression(right)) continue;
-        calculations.set(key + ':' + name, {key, name, callPath});
+        if (!calculations.has(key + ':' + name)) {
+          calculations.set(key + ':' + name, {key, name, sites, outputs: []});
+        }
+        calculations.get(key + ':' + name).outputs.push(left.name.text);
         const field = left.name.text;
         const reads = new Set();
         try {
@@ -350,6 +359,30 @@ function nullableRelations(page, payload, api) {
   return fields;
 }
 
+// A raw draft may also need the calculation that an actual value edit triggers.
+// Recognize v-model="row.field" and @change="v => handler(v, row)" only when
+// the handler ends in a direct calculator(row) call. Save-time calls stay separate.
+function editedFields(page, calculator) {
+  const fields = new Set();
+  function visit(node) {
+    const model = node.props?.find(p => p.name === 'model')?.exp?.loc.source;
+    const change = node.props?.find(p => p.name === 'on' && p.arg?.content === 'change')?.exp?.loc.source;
+    const binding = /^(\w+)\.(\w+)$/.exec(model ?? '');
+    const handler = /^\(?\s*(\w+)\s*\)?\s*=>\s*(\w+)\(\s*\1\s*,\s*(\w+)\s*\)$/.exec(change ?? '');
+    if (binding && handler && binding[1] === handler[3]) {
+      const fn = page.defs.get(handler[2]);
+      const last = fn?.body?.statements?.at(-1)?.expression;
+      if (last && ts.isCallExpression(last) && last.expression.getText() === calculator &&
+          last.arguments.length === 1 && last.arguments[0].getText() === fn.parameters[1]?.name.getText()) {
+        fields.add(binding[2]);
+      }
+    }
+    for (const child of node.children ?? []) if (typeof child === 'object') visit(child);
+  }
+  if (page.template) visit(page.template);
+  return [...fields];
+}
+
 function editorProgram(editor, payload, calculations, api, contract) {
   const bindings = new Map();
   for (const [key, {expression}] of payload) {
@@ -360,12 +393,25 @@ function editorProgram(editor, payload, calculations, api, contract) {
       bindings.set(name.split('.')[0], {key, ref: name.endsWith('.value')});
     }
   }
-  const hooks = new Map();
-  for (const {callPath} of calculations) {
-    if (callPath.length > 1) {
-      const call = callPath[0];
-      if (!ts.isIdentifier(call.expression) || call.arguments.length) throw new Error('Pre-save callback needs external parameters');
-      hooks.set(call.expression.text,call.pos);
+  const hooks = new Set();
+  const operations = new Set();
+  const fn = editor.fn.body.statements.find(ts.isTryStatement)?.tryBlock ?? editor.fn.body;
+  for (const {sites} of calculations) {
+    for (const {calls, loop} of sites) {
+      const outer = calls.length > 1 ? calls[0] : loop;
+      let statement = outer;
+      while (statement.parent && statement.parent !== fn) statement = statement.parent;
+      if (!(ts.isIfStatement(statement) || ts.isExpressionStatement(statement)) ||
+          statement.end > editor.save.node.pos) {
+        throw new Error('Cannot isolate row iteration from the save request');
+      }
+      if (calls.length > 1) {
+        if (!ts.isIdentifier(outer.expression) || outer.arguments.length) {
+          throw new Error('Pre-save callback needs external parameters');
+        }
+        hooks.add(outer.expression.text);
+      }
+      operations.add(statement);
     }
   }
   const raw = resolve(editor.save.node.arguments[0]);
@@ -373,9 +419,9 @@ function editorProgram(editor, payload, calculations, api, contract) {
   const argument = editor.save.adapter.req.arguments[1].getText();
   const guards = [], remaining = [], after = [];
   let configured, headerGuard;
-  const fn = editor.fn.body.statements.find(ts.isTryStatement)?.tryBlock ?? editor.fn.body;
   for (const stmt of fn.statements) {
     if (stmt.end >= editor.save.node.pos) break;
+    if (operations.has(stmt)) continue;
     if (ts.isIfStatement(stmt) || ts.isForStatement(stmt)) {
       const predicate = ts.isIfStatement(stmt) && stmt.expression;
       const call = predicate && ts.isPrefixUnaryExpression(predicate) && predicate.operand;
@@ -401,8 +447,9 @@ function editorProgram(editor, payload, calculations, api, contract) {
     } else if (ts.isExpressionStatement(stmt) && ts.isAwaitExpression(stmt.expression)) {
       const call = stmt.expression.expression;
       if (ts.isCallExpression(call) && !call.arguments.length && editor.page.defs.has(call.expression.getText()) &&
-          [...hooks.values()].some(pos => pos < stmt.pos)) {
+          [...operations].some(operation => operation.pos < stmt.pos)) {
         after.push(call.expression.getText());
+        operations.add(stmt);
       } else if (ts.isCallExpression(call) && ts.isPropertyAccessExpression(call.expression) &&
           call.expression.name.text === 'validate' && !call.arguments.length) {
         headerGuard = stmt;
@@ -410,15 +457,18 @@ function editorProgram(editor, payload, calculations, api, contract) {
     }
   }
   if (headerGuard) {
-    if (configured?.header) configured.header.index = guards.filter(g => g.end <= headerGuard.pos).length;
+    if (configured?.header) configured.header.position = headerGuard.pos;
     else remaining.push(api.evidence(headerGuard));
   }
   let program;
   try {
     program = linkEditor(editor.page, api, {
       bindings,
-      calculators: calculations.map(({key, name}) => ({key, name})),
-      hooks: [...hooks.keys()], guards, body, argument, after, configured,
+      calculators: calculations.map(({key, name, sites, outputs}) => ({
+        key, name, outputs,
+        editFields: sites.every(site => site.calls.length > 1) ? editedFields(editor.page, name) : [],
+      })),
+      hooks: [...hooks], operations: [...operations], guards, body, argument, after, configured,
     });
   } catch (error) {
     if (configured) error.configurationRequired = true;
@@ -429,6 +479,26 @@ function editorProgram(editor, payload, calculations, api, contract) {
   program.lookups = referenceLookups(editor.page, api, bindings, program.state, contract.reads);
   Object.assign(program.lookups, configured?.lookups);
   return program;
+}
+
+// Field-by-field projection has no representation for conditions or repeated calls.
+function canProjectRows(editor, calculations) {
+  if (editor.fn.body.statements.some(stmt =>
+    stmt.pos < editor.save.node.pos && !(ts.isVariableStatement(stmt) || ts.isExpressionStatement(stmt)))) return false;
+  return calculations.every(({name, sites}) => {
+    if (sites.length !== 1) return false;
+    const fn = editor.page.defs.get(name);
+    if (fn.body.statements.some(stmt => !ts.isExpressionStatement(stmt) && !ts.isVariableStatement(stmt))) return false;
+    const {loop, calls} = sites[0];
+    if (calls.length !== 1 || !ts.isExpressionStatement(loop.parent) ||
+        loop.parent.parent !== editor.fn.body) return false;
+    const callback = loop.arguments[0];
+    if (ts.isIdentifier(callback)) return callback.text === name;
+    if (!ts.isArrowFunction(callback)) return false;
+    const expr = ts.isBlock(callback.body) && callback.body.statements.length === 1
+      ? callback.body.statements[0].expression : callback.body;
+    return expr === calls[0];
+  });
 }
 
 export function inferWorkflow(root, contract, api) {
@@ -442,7 +512,7 @@ export function inferWorkflow(root, contract, api) {
   let program, programError;
   try { program = editorProgram(editor, payload, calculations, api, contract); }
   catch (error) {
-    if (error.configurationRequired) throw error;
+    if (error.configurationRequired || !canProjectRows(editor, calculations)) throw error;
     programError = error.message;
   }
   if (!program && !rules.length) throw new Error(programError || 'No executable row calculations');

@@ -46,7 +46,7 @@ async def get_tool_login(
     """Get the current form after an event or page reload."""
     response.headers["Cache-Control"] = "no-store"
     manager = request.app.state.tool_login
-    return manager.pending(scope) if manager is not None else None
+    return await manager.pending_view(scope) if manager is not None else None
 
 
 @tool_login_router.post("/{login_id}", status_code=204)

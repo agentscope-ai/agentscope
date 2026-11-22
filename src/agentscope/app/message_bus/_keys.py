@@ -23,6 +23,18 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     business key, so the public-method count is expected to be high.
     """
 
+    @staticmethod
+    def tool_login_forms(scope_digest: str) -> str:
+        return f"tool-login:forms:{scope_digest}"
+
+    @staticmethod
+    def tool_login_command(login_id: str) -> str:
+        return f"tool-login:command:{login_id}"
+
+    @staticmethod
+    def tool_login_reply(request_id: str) -> str:
+        return f"tool-login:reply:{request_id}"
+
     # ------------------------------------------------------------------
     # Run-trigger queue — the discriminator carried by each entry on the
     # shared trigger queue, telling the dispatcher how to spawn the run.

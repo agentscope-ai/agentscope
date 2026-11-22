@@ -88,6 +88,11 @@ class PurchaseAuthentication:
             return profile
         return None
 
+    def registered_read_auth(self) -> httpx.Auth | None:
+        """Use the published service login profile for registered queries."""
+        profile = self.published()
+        return self.connection.read_auth(profile) if profile else None
+
     async def query(self, limit: int = 5) -> dict:
         """Read recent receipts and complete pending adapter acceptance."""
         if limit < 1:

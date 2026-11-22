@@ -31,7 +31,7 @@ function reference(node) {
     !(ts.isBindingElement(p) && p.propertyName === node);
 }
 
-export function linkEditor(page, api, {bindings, calculators, hooks, guards, body, argument, after = [], configured}) {
+export function linkEditor(page, api, {bindings, calculators, hooks, operations, guards, body, argument, after = [], configured}) {
   const units = new Map();
   function unit(module) {
     if (!units.has(module.real)) units.set(module.real, index(module));
@@ -292,6 +292,24 @@ export function linkEditor(page, api, {bindings, calculators, hooks, guards, bod
     if (!match) throw new Error('Cannot locate editor guard');
     return match;
   }
+  for (const operation of operations) {
+    const node = matchingNode(operation);
+    // Locals from the handler are not in scope in the linked editor program.
+    function checkScope(n) {
+      if (ts.isIdentifier(n) && reference(n)) {
+        const symbol = ts.isShorthandPropertyAssignment(n.parent)
+          ? main.checker.getShorthandAssignmentValueSymbol(n.parent) : main.checker.getSymbolAtLocation(n);
+        const decl = symbol?.valueDeclaration;
+        if (decl && decl.getSourceFile() === main.ast && (decl.pos < node.pos || decl.end > node.end)
+            && decl.parent !== main.ast && main.definitions.get(n.text) !== decl) {
+          throw new Error('Cannot replay row iteration with handler-local ' + n.text);
+        }
+      }
+      ts.forEachChild(n, checkScope);
+    }
+    checkScope(node);
+    scan(main, node);
+  }
   for (const g of guards) scan(main, matchingNode(g));
   const header = configured?.header;
   if (header) {
@@ -332,15 +350,21 @@ export function linkEditor(page, api, {bindings, calculators, hooks, guards, bod
     const decls = [...u.used].sort(([a], [b]) => u.definitions.get(a).pos - u.definitions.get(b).pos).map(([,code]) => code);
     let result = 'return {' + [...u.used.keys()].join(',') + '}';
     if (u === main) {
-      const statements = calculators.map(({name, key}) => '__body[' + JSON.stringify(key) + '].forEach(row => ' + name + '(row))');
+      const statements = [];
+      for (const {key, name, editFields, outputs} of calculators) {
+        if (!editFields.length) continue;
+        statements.push('for (const row of __body[' + JSON.stringify(key) + ']) {' +
+          'if (' + JSON.stringify(editFields) + '.some(k => Object.hasOwn(row,k)) && ' +
+          JSON.stringify(outputs) + '.every(k => !Object.hasOwn(row,k))) ' + name + '(row); }');
+      }
       watches.forEach(({name, values}, i) => {
         statements.unshift('const __before' + i + ' = ' + values);
         statements.push('if (' + values + '.some((v,i) => !Object.is(v,__before' + i + '[i]))) ' + name + '()');
       });
       if (initialize.length) statements.push('await Promise.all([' + initialize.join(',') + '])');
-      if (guards.length) {
-        const checks = guards.map(g => g.getText());
-        if (header) checks.splice(header.index,0,
+      if (guards.length || operations.length || header) {
+        const steps = [...guards, ...operations].map(node => ({pos: node.pos, code: node.getText()}));
+        if (header) steps.push({pos: header.position, code:
           'for (const cfg of ' + header.fields + '.value) {\n' +
           'const props = {cfg, form:' + header.form + ', module:' + header.module + ', formEditable:true};\n' +
           'const {resolvedDisabled} = __headerHook0(props);\n' +
@@ -348,11 +372,10 @@ export function linkEditor(page, api, {bindings, calculators, hooks, guards, bod
           'const value = props.form[cfg.key];\n' +
           'for (const rule of rules.value) {\n' +
           'if (rule.required && (value == null || value === "" || (Array.isArray(value) && !value.length))) throw new Error(rule.message);\n' +
-          '}\n}');
-        statements.push('if ((() => {' + checks.join('\n') + '\nreturn true})() !== true) throw new Error("Client rejected the document")');
+          '}\n}'});
+        const sequence = steps.sort((a, b) => a.pos - b.pos).map(step => step.code).join(';\n');
+        statements.push('if ((await (async () => {' + sequence + '\nreturn true})()) !== true) throw new Error("Client rejected the document")');
       }
-      statements.push(...hooks.map(name => name + '()'));
-      statements.push(...after.map(name => 'await ' + name + '()'));
       result = statements.join(';\n') + ';\nreturn ' + (body.name ? body.name + '()' : body.expression.getText());
     }
     const id = '__unit' + blocks.length;

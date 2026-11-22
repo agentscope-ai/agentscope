@@ -505,10 +505,8 @@ async def load_editor_lists(artifact, inputs, client, base_url, headers):
     return {**inputs, "editorState": {**state, **dict(resolved)}}
 
 
-def as_tool(
-    artifact: dict, base_url: str, token: str | None = None
-) -> FunctionTool:
-    """Load a built definition for use in Toolkit(tools=[...])."""
+def validate_api_base_url(base_url: str, *, authenticated: bool) -> None:
+    """Require HTTPS for credentials sent beyond the loopback interface."""
     url = urlsplit(base_url)
     if (
         url.scheme not in ("http", "https")
@@ -520,17 +518,24 @@ def as_tool(
     ):
         raise ValueError("Expected an HTTP(S) API base URL")
     if (
-        token
+        authenticated
         and url.scheme != "https"
         and url.hostname not in ("localhost", "127.0.0.1", "::1")
     ):
-        raise ValueError("Use HTTPS when passing a bearer token")
+        raise ValueError("Use HTTPS when sending service credentials")
+
+
+def as_tool(
+    artifact: dict, base_url: str, token: str | None = None, *, auth: httpx.Auth | None = None
+) -> FunctionTool:
+    """Load a built definition for use in Toolkit(tools=[...])."""
+    validate_api_base_url(base_url, authenticated=bool(token or auth))
     op = artifact["operation"]
 
     async def invoke(**inputs):
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         async with httpx.AsyncClient(
-            timeout=15, follow_redirects=False, trust_env=False
+            timeout=15, follow_redirects=False, trust_env=False, auth=auth
         ) as client:
             inputs = await load_editor_lists(
                 artifact, inputs, client, base_url, headers
@@ -577,7 +582,10 @@ def as_tool(
                     f"Business request failed: {payload.get('message', '') if isinstance(payload, dict) else 'invalid envelope'}"
                 )
             validate(contract[key], payload, "Response")
-        return {"status": response.status_code, "result": payload}
+        result = {"status": response.status_code, "result": payload}
+        if response.extensions.get("agentscope_resumed_after_login"):
+            result["authentication"] = {"status": "resumed_after_login"}
+        return result
 
     read_only = artifact["plan"]["endpoint"]["method"] == "GET"
     return FunctionTool(

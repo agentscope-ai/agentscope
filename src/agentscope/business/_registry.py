@@ -66,6 +66,7 @@ class BusinessRegistry:
         get_token: Callable[[], Awaitable[str]],
         capture: Callable[[str, str, list[dict]], Awaitable[dict]],
         *,
+        get_read_auth: Callable[[], httpx.Auth | None] | None = None,
         http_client: str | None = None,
         success: dict | None = None,
         openapi_java_object_maps: bool = False,
@@ -75,6 +76,7 @@ class BusinessRegistry:
         self.openapi = openapi
         self.storage = storage
         self.base_url = base_url
+        self.get_read_auth = get_read_auth
         self.get_token = get_token
         self.capture = capture
         self.profile = {"httpClient": http_client}
@@ -131,7 +133,9 @@ class BusinessRegistry:
 
     def _runtime(self, artifact: dict) -> FunctionTool:
         async def invoke(**inputs):
-            return await as_tool(artifact, self.base_url, await self.get_token())(**inputs)
+            auth = self.get_read_auth() if self.get_read_auth else None
+            token = await self.get_token() if auth is None else None
+            return await as_tool(artifact, self.base_url, token, auth=auth)(**inputs)
 
         operation = artifact["operation"]
         return FunctionTool(

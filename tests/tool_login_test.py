@@ -2,9 +2,13 @@
 
 import asyncio
 import unittest
+from unittest.mock import AsyncMock, patch
 
 import httpx
+from fastapi import FastAPI
 
+from agentscope.app._router._tool_login import tool_login_router
+from agentscope.app.deps import get_storage
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.tool_login import (
     LoginConflict, LoginEnded, LoginFailed, LoginField, LoginRejected, LoginStep,
@@ -14,6 +18,80 @@ from agentscope.business._password_auth import PasswordConnection, PasswordProfi
 
 
 class ToolLoginTest(unittest.IsolatedAsyncioTestCase):
+    def test_password_connection_requires_https_off_loopback(self):
+        settings = dict(broker=ToolLogin(InMemoryMessageBus()), service="test",
+                        title="Test", previous_password=lambda: "", context={})
+        for url in ("http://localhost:8080", "http://[::1]/api", "https://erp.example/api"):
+            PasswordConnection(base_url=url, **settings)
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            PasswordConnection(base_url="http://erp.example/api", **settings)
+
+    async def test_another_worker_serves_the_private_login_routes(self):
+        bus = InMemoryMessageBus()
+        owner, gateway = ToolLogin(bus, timeout=3), ToolLogin(bus, timeout=3)
+        app = FastAPI()
+        app.include_router(tool_login_router)
+        app.state.tool_login = gateway
+        app.dependency_overrides[get_storage] = lambda: AsyncMock()
+        scope = ("user", "agent", "session")
+        path = "/sessions/session/tool-login"
+        step = LoginStep(title="Login", description="", submit_label="Continue",
+                         fields=[LoginField(name="password", label="Password", kind="secret")])
+        started = asyncio.Event()
+
+        async def complete(_, values):
+            if values["password"] == "step-one":
+                return step
+            if values["password"] == "wait":
+                started.set()
+                await asyncio.Future()
+            if values["password"] == "mistyped":
+                raise LoginRejected("Try again")
+            return LoginSuccess("private-session")
+
+        async def wait_for_form(client):
+            async with asyncio.timeout(2):
+                while True:
+                    form = (await client.get(path)).json()
+                    if form:
+                        return form["id"]
+                    await asyncio.sleep(0)
+
+        with tool_login_scope(*scope), patch.object(
+            bus, "registry_set", wraps=bus.registry_set,
+        ) as stored, patch.object(bus, "log_append", wraps=bus.log_append) as replayed:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                         base_url="http://test", params={"agent_id": "agent"},
+                                         headers={"X-User-ID": "user"}) as client:
+                run = asyncio.create_task(owner.request("erp", step, complete))
+                form = path + "/" + await wait_for_form(client)
+
+                async def submit(value, revision=0):
+                    return await client.post(form, json={"revision": revision, "values": {"password": value}})
+
+                self.assertIsNone((await client.get(path, headers={"X-User-ID": "other"})).json())
+                self.assertEqual((await client.delete(form, headers={"X-User-ID": "other"})).status_code, 404)
+                self.assertEqual((await submit("step-one")).status_code, 204)
+                self.assertEqual((await client.get(path)).json()["revision"], 1)
+                self.assertEqual((await submit("old-step")).status_code, 409)
+                self.assertEqual((await submit("mistyped", 1)).status_code, 400)
+                self.assertEqual((await submit("secret-fixture", 1)).status_code, 204)
+                self.assertEqual(await run, "private-session")
+                self.assertIsNone((await client.get(path)).json())
+
+                run = asyncio.create_task(owner.request("erp", step, complete))
+                form = path + "/" + await wait_for_form(client)
+                slow = asyncio.create_task(submit("wait"))
+                await asyncio.wait_for(started.wait(), 1)
+                self.assertEqual((await submit("duplicate")).status_code, 409)
+                self.assertEqual((await client.delete(form)).status_code, 204)
+                with self.assertRaises(LoginEnded):
+                    await run
+                self.assertEqual((await slow).status_code, 404)
+        for private in ("secret-fixture", "private-session"):
+            self.assertNotIn(private, str(stored.await_args_list))
+            self.assertNotIn(private, str(replayed.await_args_list))
+
     async def test_steps_and_session_isolation(self):
         broker = ToolLogin(InMemoryMessageBus())
         scope = ("user", "agent", "session")
