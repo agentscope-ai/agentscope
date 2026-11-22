@@ -355,7 +355,7 @@ class SaveBusinessRegistry:
                 not source.is_relative_to(self.source)
                 or source.suffix not in {".vue", ".js", ".ts", ".mjs", ".java", ".json"}
                 or not source.is_file()
-                or line > len(source.read_text().splitlines())
+                or line > len(source.read_text(encoding="utf-8").splitlines())
             ):
                 raise ValueError("反例的源码依据无法复核。")
             inputs = case.get("inputs")
@@ -495,7 +495,7 @@ class SaveBusinessRegistry:
                     "registered": False,
                     "stage": "verify_prior_save",
                     "message": "此前已开始写入验收。请回查已知单号，避免重复保存。",
-                    "checkpoint": json.loads(checkpoint.read_text()),
+                    "checkpoint": json.loads(checkpoint.read_bytes()),
                 }
             if current:
                 if self._current(current) and current["plan"] == plan and current["verification"].get(

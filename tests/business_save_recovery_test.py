@@ -50,7 +50,7 @@ def registry(root, *, mode="ok", target="offline ledger"):
         if mode == "timeout":
             raise TimeoutError
         assert str(receipt_id) in (root / "drafts").read_text().splitlines()
-        return {"order": {"id": receipt_id}, "purpose": "test"}
+        return {"order": {"id": receipt_id}, "purpose": "test", "label": "离线验收"}
 
     return SaveBusinessRegistry(root, root / "spec", root / "registry", capture,
                                 detail, target_label=target)
@@ -81,7 +81,7 @@ def call():
 
 async def resume(root, mode="ok", approved=True, draft=None):
     agent = worker(root, mode)
-    agent.state = AgentState.model_validate_json((root / "parked").read_text())
+    agent.state = AgentState.model_validate_json((root / "parked").read_bytes())
     agent.model.set_responses([ChatResponse(content=[TextBlock(text="done")], is_last=True)])
     approval = call()
     if draft is not None:
@@ -123,7 +123,7 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
         request, = prompt.tool_calls
         self.assertIn(request.confirmation_id, request.confirmation_message)
         self.assertIn("offline ledger", request.confirmation_message)
-        (self.root / "parked").write_text(agent.state.model_dump_json())
+        (self.root / "parked").write_text(agent.state.model_dump_json(), encoding="utf-8")
         return request.confirmation_id
 
     async def save(self, mode="ok"):
@@ -163,6 +163,7 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
                 results.append(json.loads(out))
             self.assertEqual(results[0], results[1])
             self.assertEqual(results[0]["status"], "saved")
+            self.assertEqual(results[0]["detail"]["label"], "离线验收")
             self.assertEqual(results[0]["operation_id"], self.op)
             self.assertEqual(self.counts()[:2], (1, 1))
         finally:
@@ -219,7 +220,7 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((self.root / "requests").exists())
 
     async def test_older_parked_save_without_receipt_needs_reconciliation(self):
-        snapshot = json.loads((self.root / "parked").read_text())
+        snapshot = json.loads((self.root / "parked").read_bytes())
         for msg in snapshot["context"]:
             for block in msg["content"]:
                 block.pop("confirmation_id", None)
@@ -230,4 +231,4 @@ class SaveRecoveryTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__" and sys.argv[1:2] == ["--resume"]:
     result = asyncio.run(resume(Path(sys.argv[2]), "concurrent"))
-    print(result.output[0].text)
+    sys.stdout.buffer.write(result.output[0].text.encode("utf-8"))

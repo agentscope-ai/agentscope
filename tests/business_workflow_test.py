@@ -63,20 +63,25 @@ class PublicationLockTest(unittest.IsolatedAsyncioTestCase):
 
             asyncio.run(run())
         """)
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "published.json"
-            async with _publication_lock(path):
-                child = await asyncio.create_subprocess_exec(
-                    sys.executable, "-c", worker, str(path), stdout=asyncio.subprocess.PIPE,
-                )
-                async def clean_up():
-                    if child.returncode is None:
-                        child.kill()
-                    await child.wait()
-                self.addAsyncCleanup(clean_up)
-                self.assertEqual(await asyncio.wait_for(child.stdout.readline(), 15), b"waiting\n")
-            stdout, _ = await asyncio.wait_for(child.communicate(), 10)
-            self.assertEqual((child.returncode, stdout), (0, b"acquired\n"))
+        # Register directory cleanup first so the child releases its SQLite
+        # handle before the temporary directory is removed, even on failure.
+        directory = self.enterContext(TemporaryDirectory())
+        path = Path(directory) / "published.json"
+        async with _publication_lock(path):
+            child = await asyncio.create_subprocess_exec(
+                sys.executable, "-c", worker, str(path), stdout=asyncio.subprocess.PIPE,
+            )
+
+            async def clean_up():
+                if child.returncode is None:
+                    child.kill()
+                await child.wait()
+
+            self.addAsyncCleanup(clean_up)
+            waiting = await asyncio.wait_for(child.stdout.readline(), 15)
+            self.assertEqual(waiting.splitlines(), [b"waiting"])
+        stdout, _ = await asyncio.wait_for(child.communicate(), 10)
+        self.assertEqual((child.returncode, stdout.splitlines()), (0, [b"acquired"]))
 
 
 @unittest.skipUnless(
@@ -129,7 +134,8 @@ class WorkflowTest(unittest.TestCase):
     def test_save_registry_previews_both_cases_before_real_writes(self):
         async def run():
             self.page.write_text(
-                VIEW + "\n<!-- /v3/cards is saved here; .save-issue shows validation -->\n"
+                VIEW + "\n<!-- /v3/cards is saved here; .save-issue shows validation -->\n",
+                encoding="utf-8",
             )
             cases = [
                 {"action": "fill", "selector": "#purpose", "field": "purpose"},
@@ -180,7 +186,7 @@ class WorkflowTest(unittest.TestCase):
             self.assertIn("两张", decision.message)
             missing = {"inputs": {}, "actions": cases[1:]}
             evidence = self.source / "validation.ts"
-            evidence.write_text("export const rejectInvalid = true")
+            evidence.write_text("export const rejectInvalid = true // 用途校验", encoding="utf-8")
             counterexamples = [{
                 "name": "Unknown purpose",
                 "rule": "Unknown purposes are rejected",
@@ -261,7 +267,7 @@ class WorkflowTest(unittest.TestCase):
             )).content[0].text)["registered"])
             self.assertEqual(captures.count(True), 2)
             path = next(registry.storage.rglob("*.json"))
-            legacy = json.loads(path.read_text())
+            legacy = json.loads(path.read_bytes())
             del legacy["verification"]["version"]
             path.write_text(json.dumps(legacy))
             self.assertEqual(len(registry.tools("owner", "agent")), 2)
@@ -316,7 +322,7 @@ export const endpoints = {
 }
 """)
         self.page = self.source / "Card.vue"
-        self.page.write_text(VIEW)
+        self.page.write_text(VIEW, encoding="utf-8")
         numeric = {
             k: {"type": "number"}
             for k in (
@@ -387,15 +393,21 @@ export const endpoints = {
         self.openapi.write_text(json.dumps(self.doc))
 
     def test_save_preserves_conditional_row_calculation(self):
-        self.page.write_text(VIEW.replace("missingHelper(piece.rate)", "piece.rate + 1")
-                             .replace("p => price(p)", "p => { if (p.ordered > 0) price(p) }"))
+        self.page.write_text(
+            VIEW.replace("missingHelper(piece.rate)", "piece.rate + 1")
+            .replace("p => price(p)", "p => { if (p.ordered > 0) price(p) }"),
+            encoding="utf-8",
+        )
         save = generate(self.source, self.openapi, "Receiving")["tools"]["save"]
         skipped = {"ordered": 0, "rate": 2, "balance": 10, "ledger": 11}
         result = preview(save, {"packet": {"entries": [skipped, {"ordered": 4, "rate": 2}]}})
         self.assertEqual(result["body"]["entries"][0], skipped)
         self.assertEqual(result["body"]["entries"][1]["ledger"], 9)
 
-        self.page.write_text(self.page.read_text().replace("piece.rate + 1", "unknown(piece.rate)"))
+        self.page.write_text(
+            self.page.read_text(encoding="utf-8").replace("piece.rate + 1", "unknown(piece.rate)"),
+            encoding="utf-8",
+        )
         with self.assertRaisesRegex(ValueError, "unknown"):
             generate(self.source, self.openapi, "Receiving")
 
@@ -411,7 +423,8 @@ export const endpoints = {
             .replace("  basket.value.forEach(p => price(p))", """
                 if (basket.value.length > 1) updateTotals()
                 basket.value.forEach(p => { if (p.balance === 2) price(p) })
-                updateTotals()""")
+                updateTotals()"""),
+            encoding="utf-8",
         )
         tool = generate(self.source, self.openapi, "Receiving")["tools"]["save"]
         rows = [{"ordered": 1, "rate": 2}, {"ordered": 0, "rate": 2, "balance": 7}]
@@ -471,7 +484,8 @@ export const endpoints = {
         self.page.write_text(
             VIEW.replace(
                 "piece.ordered * piece.rate", "piece.ordered + piece.rate"
-            )
+            ),
+            encoding="utf-8",
         )
         self.assertEqual(
             amounts(generate(self.source, self.openapi, "Receiving")), [8, 8]
@@ -487,7 +501,8 @@ export const endpoints = {
                 "return { entries: basket.value }",
                 "return { entries: basket.value.map(row => ({ ...row, label: 'saved' })) }",
             )
-            .replace("forEach(p => price(p))", "forEach(price)")
+            .replace("forEach(p => price(p))", "forEach(price)"),
+            encoding="utf-8",
         )
         result = generate(self.source, self.openapi, "Receiving")
         report = result["discovery"]
@@ -517,12 +532,13 @@ export const endpoints = {
 
     def test_unlinked_result_or_ambiguous_editor_is_rejected(self):
         self.page.write_text(
-            VIEW.replace("await wire.read(key)", "await wire.read(42)")
+            VIEW.replace("await wire.read(key)", "await wire.read(42)"),
+            encoding="utf-8",
         )
         with self.assertRaisesRegex(ValueError, "found 0"):
             generate(self.source, self.openapi, "Receiving")
-        self.page.write_text(VIEW)
-        (self.source / "Duplicate.vue").write_text(VIEW)
+        self.page.write_text(VIEW, encoding="utf-8")
+        (self.source / "Duplicate.vue").write_text(VIEW, encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "found 2"):
             generate(self.source, self.openapi, "Receiving")
 
