@@ -2607,6 +2607,11 @@ class Agent:
             tool,
             parsed_input,
         )
+        if tool.needs_bound_confirmation(decision, tool_call):
+            decision = PermissionDecision(
+                behavior=PermissionBehavior.ASK, bypass_immune=True,
+                message="Confirm this operation.",
+            )
 
         # ===================================================================
         # Step 3: Handle the permission and execute the tool call if allowed
@@ -2647,6 +2652,17 @@ class Agent:
                 # batch can be de-duplicated against them.
                 kept_rules.extend(decision.suggested_rules or [])
 
+            try:
+                tool.prepare_confirmation(
+                    tool_call, decision, self.state.session_id, self.state.reply_id,
+                    parsed_input,
+                )
+            except Exception as error:
+                async for evt in self._handle_error_tool_call(
+                    tool_call, str(error), state=ToolResultState.ERROR,
+                ):
+                    yield evt
+                return
             # Set the state of the tool call to "ask"
             # **Note** the update must be done before yielding the event
             self._update_tool_call_state(
@@ -2654,9 +2670,6 @@ class Agent:
                 ToolCallState.ASKING,
             )
 
-            tool_call.suggested_rules = decision.suggested_rules or []
-            if is_safety_ask:
-                tool_call.confirmation_message = decision.message
             yield RequireUserConfirmEvent(
                 reply_id=self.state.reply_id,
                 tool_calls=[tool_call],

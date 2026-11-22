@@ -1,6 +1,32 @@
 // Capture a single business request made by the original ERP client.
 const fs = require('node:fs');
+const path = require('node:path');
 const { chromium } = require(process.env.BUSINESS_PLAYWRIGHT_MODULE);
+
+function openSaveReceipt(slot) {
+  // Only update an existing private receipt provisioned by the registry.
+  // A page recipe or model-supplied path alone grants no file access.
+  if (!/^[a-f0-9]{64}$/.test(slot.token) ||
+      !/^[a-f0-9]{64}\.receipt$/.test(path.basename(slot.path)) ||
+      path.basename(path.dirname(slot.path)) !== 'save-receipts') {
+    throw new Error('Invalid save receipt slot');
+  }
+  const fd = fs.openSync(slot.path, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const stat = fs.fstatSync(fd);
+    const header = Buffer.from('agentscope-save-v1 ' + slot.token + '\n');
+    const actual = Buffer.alloc(header.length);
+    if (!stat.isFile() || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) ||
+        stat.size !== header.length ||
+        fs.readSync(fd, actual, 0, actual.length, 0) !== header.length || !header.equals(actual)) {
+      throw new Error('Invalid save receipt slot');
+    }
+    return fd;
+  } catch (error) {
+    fs.closeSync(fd);
+    throw error;
+  }
+}
 
 function comparableDraftRequest(value) {
   if (Array.isArray(value)) return value.map(comparableDraftRequest);
@@ -18,6 +44,7 @@ async function capture({ origin, clientRoute, apiPattern, actions, storage, save
     executablePath: process.env.BUSINESS_CHROMIUM,
     headless: true,
   });
+  let receiptFd;
   try {
     const context = await browser.newContext({
       serviceWorkers: 'block', viewport: { width: 1680, height: 1050 },
@@ -34,6 +61,10 @@ async function capture({ origin, clientRoute, apiPattern, actions, storage, save
     let responseId;
     let onPreview;
     const preview = new Promise(resolve => { onPreview = resolve; });
+    const slot = save?.live && actions.at(-1)?.saveReceipt;
+    if (slot) receiptFd = openSaveReceipt(slot);
+    let onReceipt;
+    const receipt = new Promise(resolve => { onReceipt = resolve; });
     const detailPattern = save && new RegExp(
       '^/api' + save.detailRoute.replace(/\{\w+\}/, '\\d+') + '$'
     );
@@ -41,23 +72,38 @@ async function capture({ origin, clientRoute, apiPattern, actions, storage, save
       const request = route.request();
       const url = new URL(request.url());
       if (url.origin !== origin) return route.abort();
-      if (request.method() === 'GET') return route.continue();
+      if (request.method() === 'GET') {
+        // The registry owns readback after a confirmed save.
+        if (slot && responseId && detailPattern.test(url.pathname) &&
+            url.pathname.endsWith('/' + responseId)) return route.abort();
+        return route.continue();
+      }
       if (!save || request.method() !== 'POST' ||
           url.pathname !== '/api' + save.saveRoute || !submit || attempted) return route.abort();
       attempted = true;
-      requestBody = request.postDataJSON();
-      if (!save.live) {
-        onPreview({ preview: true });
-        return route.abort();
-      }
       try {
+        requestBody = request.postDataJSON();
+        if (!save.live) {
+          onPreview({ preview: true });
+          return route.abort();
+        }
         const response = await route.fetch({ maxRedirects: 0 });
         write = await response.json();
         if (write.code === 200 && Number.isSafeInteger(write.data) && write.data > 0) {
           responseId = write.data;
+          if (slot) {
+            const line = Buffer.from(String(responseId) + '\n');
+            const offset = fs.fstatSync(receiptFd).size;
+            if (fs.writeSync(receiptFd, line, 0, line.length, offset) !== line.length) {
+              throw new Error('Incomplete save receipt');
+            }
+            fs.fsyncSync(receiptFd);
+          }
         }
+        if (slot) onReceipt({ received: Boolean(responseId) });
         return route.fulfill({ response });
       } catch {
+        if (slot) onReceipt({ received: false });
         return route.abort();
       }
     });
@@ -108,7 +154,7 @@ async function capture({ origin, clientRoute, apiPattern, actions, storage, save
     if (save) {
       await navigate();
       for (const action of actions.slice(0, -1)) await perform(action);
-      const detail = page.waitForResponse(response => {
+      const detail = !slot && page.waitForResponse(response => {
         const url = new URL(response.url());
         return responseId && url.origin === origin &&
           detailPattern.test(url.pathname) && url.pathname.endsWith('/' + responseId) &&
@@ -120,11 +166,14 @@ async function capture({ origin, clientRoute, apiPattern, actions, storage, save
       submit = true;
       await perform(actions.at(-1));
       const outcome = await Promise.race([
-        detail.then(value => ({ result: value })),
+        slot ? receipt : detail.then(value => ({ result: value })),
         issue.then(value => ({ issue: value.trim() })),
         preview,
       ]);
-      if (outcome.issue === '' && responseId) outcome.result = await detail;
+      // The validation-message timeout can expire while the POST is in
+      // flight. Keep its receipt handler alive until the request settles.
+      if (slot && attempted) await receipt;
+      if (!slot && outcome.issue === '' && responseId) outcome.result = await detail;
       return {
         status: outcome.preview ? 'preview' : outcome.result?.code === 200 ? 'saved'
           : responseId ? 'saved_needs_readback'
@@ -203,7 +252,11 @@ async function capture({ origin, clientRoute, apiPattern, actions, storage, save
       ...(loginAcceptance ? { authCases } : {}),
     };
   } finally {
-    await browser.close();
+    try {
+      await browser.close();
+    } finally {
+      if (receiptFd !== undefined) fs.closeSync(receiptFd);
+    }
   }
 }
 

@@ -13,6 +13,7 @@ from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import FunctionTool
 
 from ._business import bind_operation, write_definition
+from ._save_operation import SaveOperations
 
 
 def _readback_business_fields(saved):
@@ -239,41 +240,79 @@ class SaveBusinessRegistry:
         return [save, read] if self._current(record) else [read]
 
     def _runtime(self, plan, path):
-        async def save(**inputs):
+        operations = SaveOperations(path.parent)
+
+        def bind_confirmation(session_id, reply_id, call_id, inputs):
+            op = operations.prepare(plan, inputs, session_id, reply_id, call_id)
+            return op, f"在账套「{plan['targetLabel']}」新增一张{plan['business']}草稿？操作 ID：{op}"
+
+        async def save(*, _confirmation_id=None, _confirmed_inputs=None, **inputs):
             async with _publication_lock(path):
                 record = json.loads(path.read_bytes())
                 if record["plan"] != plan or not self._current(record):
                     raise ValueError("保存工具已停用，请重新验收。")
-                saved = await self.capture(plan, _actions_for(plan, inputs), True)
-            # Preserve a successful POST's identifier even if readback failed.
-            if saved.get("id") and not saved.get("detail"):
-                return {**saved, "status": "saved_needs_readback"}
-            return saved
+                op = _confirmation_id
+                if not op:
+                    # Pre-upgrade approvals have no durable evidence that
+                    # another worker did or did not already submit the POST.
+                    return {"status": "needs_reconciliation",
+                            "message": "缺少原保存操作 ID，请在原账套核对是否已经建单。"}
+                draft = _confirmed_inputs if _confirmed_inputs is not None else inputs
+                if operations.claim(op, plan, draft):
+                    actions = _actions_for(plan, draft)
+                    actions[-1]["saveReceipt"] = operations.receipt_slot(op)
+                    try:
+                        saved = await self.capture(plan, actions, True)
+                    except Exception:
+                        # The adapter may have sent the POST before failing.
+                        saved = {}
+                    receipt_id = saved.get("id")
+                    if type(receipt_id) is int and receipt_id > 0:
+                        operations.record_receipt(op, receipt_id, saved)
+                        detail = saved.get("detail")
+                        header = detail.get("order", detail) if isinstance(detail, dict) else None
+                        if isinstance(header, dict) and header.get("id") == receipt_id:
+                            operations.finish(op, {**saved, "status": "saved"})
+                    elif saved.get("attempted") is False:
+                        operations.finish(op, {**saved, "status": "blocked"})
+            return await operations.recover(op, plan, self.read_detail)
 
-        async def read(receipt_id: int):
-            """根据保存返回的内部 ID 从 ERP 回查已保存草稿。"""
+        async def read(receipt_id: int | None = None, operation_id: str | None = None):
+            """按保存操作 ID 恢复，或根据 ERP 内部 ID 回查单据。"""
+            if (operation_id is None) == (receipt_id is None):
+                raise ValueError("请提供操作 ID 或单据 ID 中的一项。")
+            if operation_id is not None:
+                if plan.get("targetLabel") != self.target_label:
+                    raise ValueError("账套已变更，请在原账套核对。")
+                return await operations.recover(operation_id, plan, self.read_detail)
             return await self.read_detail(plan["detailRoute"], receipt_id)
 
-        return [
-            FunctionTool(
-                save,
-                name=plan["saveTool"],
-                description=f"新增{plan['business']}草稿并回查。保留原客户端的字段校验。"
-                "只有用户要求保存时才调用；保存成功后只重试回查。",
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        field: {"type": ["string", "number"]}
-                        for field in plan["fields"]
-                    },
-                    "additionalProperties": False,
+        save_tool = FunctionTool(
+            save,
+            name=plan["saveTool"],
+            description=f"新增{plan['business']}草稿并回查。保留原客户端的字段校验。"
+            "每次调用都会申请新增一张，仅在用户要求新增时使用。恢复或重试请用回查工具和原操作 ID。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    field: {"type": ["string", "number"]}
+                    for field in plan["fields"]
                 },
-                is_concurrency_safe=False,
+                "additionalProperties": False,
+            },
+            is_concurrency_safe=False,
+            permission=PermissionDecision(
+                behavior=PermissionBehavior.ASK, bypass_immune=True,
+                message=f"在账套「{self.target_label}」新增草稿？",
             ),
+        )
+        save_tool.bind_confirmation = bind_confirmation
+        return [
+            save_tool,
             FunctionTool(
                 read,
                 name=plan["readTool"],
-                description=f"按{plan['business']}保存返回的内部 ID 回查。",
+                description=f"按 operation_id 恢复{plan['business']}保存结果，或按 receipt_id 回查单据。只读。",
                 is_read_only=True,
                 permission=PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
@@ -402,6 +441,8 @@ class SaveBusinessRegistry:
         for recipe in (actions, missing["actions"], complete["actions"]):
             if not recipe or recipe[-1].get("action") != "click":
                 raise ValueError("每组页面步骤最后一步必须点击保存")
+            if any("saveReceipt" in step for step in recipe):
+                raise ValueError("saveReceipt 是宿主分配的回执，不能出现在验收步骤中。")
         if missing["inputs"] == complete["inputs"] or any(
             complete["inputs"].get(key) != value
             for key, value in missing["inputs"].items()

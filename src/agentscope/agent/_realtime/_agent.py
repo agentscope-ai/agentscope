@@ -2488,11 +2488,18 @@ class RealtimeAgent:
                 state=ToolResultState.DENIED,
             )
             return
-        if decision.behavior in (
+        if tool.needs_bound_confirmation(decision, call) or decision.behavior in (
             PermissionBehavior.ASK,
             PermissionBehavior.PASSTHROUGH,
         ):
-            confirmed = await self._ask_user(reply_id, call, decision)
+            try:
+                tool.prepare_confirmation(
+                    call, decision, self.state.session_id, reply_id, tool_input,
+                )
+            except Exception as error:
+                await self._report_tool(reply_id, call, str(error))
+                return
+            confirmed = await self._ask_user(reply_id, call)
             if not confirmed:
                 await self._report_tool(
                     reply_id,
@@ -2568,12 +2575,8 @@ class RealtimeAgent:
         self,
         reply_id: str,
         call: ToolCallBlock,
-        decision: Any,
     ) -> bool:
         """Ask the user to confirm *call* and wait for the answer."""
-        call.suggested_rules = decision.suggested_rules or []
-        if decision.bypass_immune:
-            call.confirmation_message = decision.message
         call.state = ToolCallState.ASKING
         self._emit(
             RequireUserConfirmEvent(reply_id=reply_id, tool_calls=[call]),

@@ -11,7 +11,7 @@ import jsonschema
 
 from pydantic import BaseModel
 
-from ..message import ToolResultState
+from ..message import ToolCallState, ToolResultState
 from ._constants import DEFAULT_DANGEROUS_FILES, DEFAULT_DANGEROUS_DIRECTORIES
 from ..permission import (
     PermissionContext,
@@ -23,7 +23,7 @@ from ._response import ToolChunk
 from ._utils import _remove_title_field
 
 if TYPE_CHECKING:
-    from ..message import ToolResultBlock
+    from ..message import ToolCallBlock, ToolResultBlock
 
 
 class ParamsBase(BaseModel):
@@ -99,6 +99,35 @@ class ToolMiddlewareBase(ABC):
 
 class ToolBase(ABC):
     """The tool protocol."""
+
+    bind_confirmation: Callable[
+        [str, str, str, dict], tuple[str, str]
+    ] | None = None
+    """Optional host hook binding session, reply, call and inputs to an
+    operation ID and prompt. The toolkit injects that ID at execution."""
+
+    def needs_bound_confirmation(
+        self, decision: PermissionDecision, call: "ToolCallBlock",
+    ) -> bool:
+        """Require a bound approval for each fresh invocation of this tool."""
+        return (
+            self.bind_confirmation is not None
+            and decision.behavior == PermissionBehavior.ALLOW
+            and call.state != ToolCallState.ALLOWED
+        )
+
+    def prepare_confirmation(
+        self, call: "ToolCallBlock", decision: PermissionDecision,
+        session_id: str, reply_id: str, inputs: dict,
+    ) -> None:
+        """Attach the host's approval details to the persistent tool call."""
+        call.suggested_rules = decision.suggested_rules or []
+        if decision.bypass_immune:
+            call.confirmation_message = decision.message
+        if self.bind_confirmation is not None:
+            call.confirmation_id, call.confirmation_message = self.bind_confirmation(
+                session_id, reply_id, call.id, inputs,
+            )
 
     name: str
     """The name presented to the agent."""

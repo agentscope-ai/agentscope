@@ -103,3 +103,7 @@ node "$CASE/capture.cjs" --client "$ERP/frontend-user" --chromium "$CHROMIUM" \
 使用已发布的 ERP 密码登录适配器时，创建通用查询注册器的宿主应传入 `get_read_auth=purchase_auth.registered_read_auth`。已注册查询会沿用当前会话的私密登录弹窗，并在登录成功后按原参数重试一次 GET。
 
 接入 `SaveBusinessRegistry` 时，由宿主传入与保存连接对应的 `target_label`。默认权限模式会在验收前向用户显示该账套名称和将创建的两张草稿。省略账套名称时只执行预览。旧版验收记录可继续回查，重新验收通过后恢复保存。多 worker 部署应共用注册目录，并为私密登录配置共享消息总线。
+
+已发布的草稿保存工具在确认框中显示账套和本次操作 ID。刷新、重复确认或换 worker 时沿用同一 ID。宿主须为不同账套配置唯一且稳定的 `target_label`，并将页面操作原样传给 `capture_client.cjs`。浏览器收到保存回执后，会先将单据 ID 写入共享注册目录，再由服务端回查详情。
+
+恢复时将 `operation_id` 传给该业务的回查工具。返回 `saved_needs_readback` 表示已取得单据 ID，可再次回查。返回 `needs_reconciliation` 表示保存请求可能已送达，须在原账套核对。另行确认新增草稿会产生新的操作 ID。

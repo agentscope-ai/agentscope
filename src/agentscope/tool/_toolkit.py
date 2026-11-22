@@ -310,6 +310,10 @@ class Toolkit:
             ):
                 kwargs["_agent_state"] = state
 
+            if tool_func.bind_confirmation is not None:
+                # Keep host approval metadata separate from model arguments.
+                kwargs = {"_confirmation_id": tool_call.confirmation_id, "_confirmed_inputs": kwargs}
+
             if inspect.iscoroutinefunction(tool_func.__call__):
                 res = await tool_func(**kwargs)
             else:
