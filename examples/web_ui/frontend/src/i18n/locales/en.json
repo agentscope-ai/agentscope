@@ -241,7 +241,13 @@
 			"setup": "The session could not be prepared — check the agent's model, tools and knowledge bases.",
 			"unknown": "The reply failed with an unknown error."
 		},
-		"copy": "Copy"
+		"copy": "Copy",
+		"downloadFile": "Download file",
+		"wrapLines": "Wrap lines",
+		"enableWrap": "Enable line wrapping",
+		"disableWrap": "Disable line wrapping",
+		"downloadMarkdown": "Download Markdown file",
+		"copyMarkdown": "Copy Markdown source"
 	},
 	"chat": {
 		"ttsFailed": "Speech generation failed. Text replies will continue.",

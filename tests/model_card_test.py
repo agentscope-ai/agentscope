@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Tests for chat, TTS, and realtime model cards."""
+"""Tests for model cards and their parameter schemas."""
+
 import os
 import tempfile
 from datetime import date
@@ -11,8 +12,9 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 from agentscope.app._router._schema._tts_model import ListTTSModelsResponse
-from agentscope.asr import ASRModelCard
+from agentscope.asr import ASRModelCard, DashScopeASRModel
 from agentscope.credential import OpenAICredential
+from agentscope.embedding import EmbeddingModelCard
 from agentscope.model import (
     AnthropicChatModel,
     ModelCard,
@@ -335,6 +337,52 @@ class ModelCardTest(TestCase):
                 )
 
 
+class EmbeddingModelCardTest(TestCase):
+    """Verify embedding parameter filtering."""
+
+    def test_overrides_remove_only_matching_required_parameters(self) -> None:
+        """Keep visible required fields and preserve the raw overrides."""
+
+        class Parameters(BaseModel):
+            """Embedding parameters required by the provider."""
+
+            internal: str
+            batch_size: int
+
+        for override in (None, {"hidden": True}):
+            with self.subTest(override=override):
+                overrides = {"internal": override}
+                config = {
+                    "name": "custom",
+                    "label": "Custom",
+                    "dimensions": 8,
+                    "parameter_overrides": overrides,
+                }
+                with patch(
+                    "builtins.open",
+                    mock_open(read_data=yaml.safe_dump(config)),
+                ):
+                    card = EmbeddingModelCard.from_yaml(
+                        "model.yaml",
+                        Parameters,
+                    )
+
+                self.assertEqual(
+                    card.parameter_schema,
+                    {
+                        "type": "object",
+                        "properties": {
+                            "batch_size": {
+                                "title": "Batch Size",
+                                "type": "integer",
+                            },
+                        },
+                        "required": ["batch_size"],
+                    },
+                )
+                self.assertEqual(card.parameter_overrides, overrides)
+
+
 class RealtimeModelCardTest(TestCase):
     """Verify realtime parameter filtering."""
 
@@ -503,7 +551,49 @@ class TTSModelCardTest(TestCase):
 
 
 class ASRModelCardTest(TestCase):
-    """Verify ASR model cards tolerate an empty overrides key."""
+    """Verify ASR model card overrides."""
+
+    def test_null_override_loads_and_lists_card(self) -> None:
+        """Remove null overrides and retain any sample rate override."""
+        cases: list[dict[str, dict[str, int]]] = [
+            {},
+            {"sample_rate": {"default": 16000}},
+        ]
+        for retained in cases:
+            with self.subTest(retained=retained):
+                schema = DashScopeASRModel.Parameters.model_json_schema()
+                del schema["properties"]["keep_dialect"]
+                if retained:
+                    schema["properties"]["sample_rate"]["default"] = 16000
+                expected = {
+                    "type": "asr_model",
+                    "name": "custom-asr",
+                    "label": "Custom ASR",
+                    "input_types": ["audio/wav"],
+                    "output_types": ["text/plain"],
+                    "realtime": False,
+                    "parameter_schema": schema,
+                    "parameters_overrides": retained,
+                }
+                config = {
+                    "name": "custom-asr",
+                    "label": "Custom ASR",
+                    "input_types": ["audio/wav"],
+                    "parameter_overrides": {"keep_dialect": None, **retained},
+                }
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "custom.yaml"
+                    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+                    card = ASRModelCard.from_yaml(
+                        str(path),
+                        DashScopeASRModel.Parameters,
+                    )
+                    self.assertEqual(card.model_dump(), expected)
+                    cards = DashScopeASRModel.list_models(directory)
+                    self.assertEqual(
+                        [item.model_dump() for item in cards],
+                        [expected],
+                    )
 
     def test_null_parameter_overrides_key_loads_as_empty(self) -> None:
         """An empty ``parameter_overrides:`` key must not break the card.
@@ -522,3 +612,60 @@ class ASRModelCardTest(TestCase):
             card = ASRModelCard.from_yaml(str(path), _Parameters)
 
         self.assertEqual(card.parameters_overrides, {})
+
+
+class EmptyParameterOverridesTest(TestCase):
+    """Test empty override mappings in chat and embedding cards."""
+
+    _CHAT_YAML = (
+        "name: custom-chat\n"
+        "label: Custom chat\n"
+        "context_size: 8192\n"
+        "output_size: 1024\n"
+    )
+
+    def test_empty_overrides_match_omitted_overrides(self) -> None:
+        """All three YAML forms produce the same complete card."""
+        embedding_yaml = (
+            "name: custom-embedding\n"
+            "label: Custom embedding\n"
+            "dimensions: 1024\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "card.yaml"
+            for card_type, body in (
+                (ModelCard, self._CHAT_YAML),
+                (EmbeddingModelCard, embedding_yaml),
+            ):
+                path.write_text(body, encoding="utf-8")
+                expected = card_type.from_yaml(str(path), _Params).model_dump()
+                for line in (
+                    "parameter_overrides:",
+                    "parameter_overrides: {}",
+                ):
+                    with self.subTest(card=card_type.__name__, line=line):
+                        path.write_text(f"{body}{line}\n", encoding="utf-8")
+                        card = card_type.from_yaml(str(path), _Params)
+                        self.assertEqual(card.model_dump(), expected)
+
+    def test_chat_card_is_listed_with_no_overrides(self) -> None:
+        """Model discovery includes a card with a bare overrides key."""
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "custom-chat.yaml").write_text(
+                self._CHAT_YAML + "parameter_overrides:\n",
+                encoding="utf-8",
+            )
+            cards = OpenAIChatModel.list_models(directory)
+
+        self.assertEqual([card.name for card in cards], ["custom-chat"])
+
+    def test_non_mapping_still_fails_loudly(self) -> None:
+        """Reject a boolean override mapping."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-chat.yaml"
+            path.write_text(
+                self._CHAT_YAML + "parameter_overrides: false\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AttributeError):
+                ModelCard.from_yaml(str(path), _Params)

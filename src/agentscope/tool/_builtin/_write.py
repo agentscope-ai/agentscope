@@ -268,14 +268,20 @@ Usage:
                 mtime=mtime,
             )
             if cache is None:
+                if mtime is None:
+                    message = (
+                        "Error: The backend could not report the file's "
+                        "modification time. Once it is available, read the "
+                        "file again before overwriting it."
+                    )
+                else:
+                    message = (
+                        f"Error: File {file_path} exists but has not "
+                        "been read yet. You must read the file first "
+                        "before writing to it."
+                    )
                 return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text=f"Error: File {file_path} exists but has not "
-                            f"been read yet. You must read the file first "
-                            f"before writing to it.",
-                        ),
-                    ],
+                    content=[TextBlock(text=message)],
                     state=ToolResultState.ERROR,
                     is_last=True,
                 )
