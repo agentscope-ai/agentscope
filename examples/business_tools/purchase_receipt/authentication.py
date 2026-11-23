@@ -110,7 +110,12 @@ class PurchaseAuthentication:
         profile = self.published()
         return self.connection.read_auth(profile) if profile else None
 
-    async def query(self, limit: int = 5) -> dict:
+    async def query(
+        self,
+        limit: int = 5,
+        *,
+        present: Callable[[dict], Awaitable[dict]] | None = None,
+    ) -> dict:
         """Read recent receipts and complete pending adapter acceptance."""
         if limit < 1:
             raise ValueError("单据条数必须大于零。")
@@ -147,29 +152,34 @@ class PurchaseAuthentication:
         if result.get("code") != 200:
             raise ValueError(result.get("message") or "ERP 采购单查询失败。")
         data = result["data"]
-        summary = {
-            "total": data["total"],
-            "records": [
-                {
-                    key: row.get(key)
-                    for key in (
-                        "billNo",
-                        "billDate",
-                        "createdTime",
-                        "supplierName",
-                        "goodsTotalAmount",
-                    )
-                }
-                for row in data["records"][:limit]
-            ],
-        }
-        if candidate:
-            summary["authentication"] = self._publish(
-                candidate,
-                scope,
-                reference,
-                data,
-            )
+        verified = (
+            self._publish(candidate, scope, reference, data)
+            if candidate
+            else None
+        )
+        page = {"total": data["total"], "records": data["records"][:limit]}
+        summary = (
+            await present(page)
+            if present
+            else {
+                "total": data["total"],
+                "records": [
+                    {
+                        key: row.get(key)
+                        for key in (
+                            "billNo",
+                            "billDate",
+                            "createdTime",
+                            "supplierName",
+                            "goodsTotalAmount",
+                        )
+                    }
+                    for row in page["records"]
+                ],
+            }
+        )
+        if verified:
+            summary["authentication"] = verified
         return summary
 
     def _publish(

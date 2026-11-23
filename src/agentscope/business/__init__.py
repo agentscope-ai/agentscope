@@ -6,10 +6,14 @@ from ._registry import BusinessRegistry
 from ._save_operation import write_save_receipt
 from ._save_registry import SaveBusinessRegistry
 from ._workflow import discovery_tool, generate
+from .row_references import RowActionSource, RowDetailTools, RowScope
 
 __all__ = [
     "as_tool",
     "BusinessRegistry",
+    "RowActionSource",
+    "RowDetailTools",
+    "RowScope",
     "SaveBusinessRegistry",
     "build",
     "discover",

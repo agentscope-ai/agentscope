@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import ts from 'typescript';
 import { parse as parseVue } from '@vue/compiler-sfc';
 import { inferWorkflow } from './infer.mjs';
+import { inferRowAction } from './row_action.mjs';
 
 const [rootArg, entryFile, entryName, optionsJSON] = process.argv.slice(2);
 const root = fs.realpathSync(rootArg);
@@ -397,7 +398,12 @@ function discover(dir, actions, diagnostics) {
 }
 
 try {
-  if (entryFile === '--infer') {
+  if (entryFile === '--row-action') {
+    const spec = JSON.parse(fs.readFileSync(0, 'utf8'));
+    const result = inferRowAction(load(path.resolve(root, spec.page)), spec, {localModule, evidence, transportEvidence});
+    result.hashes = Object.fromEntries(result.evidence.map(e => [e.file, hashes[e.file]]));
+    console.log(JSON.stringify(result));
+  } else if (entryFile === '--infer') {
     const contract = JSON.parse(fs.readFileSync(0, 'utf8'));
     const analyze = (module, name, field) => {
       functions = new Map();

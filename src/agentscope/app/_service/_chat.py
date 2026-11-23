@@ -32,6 +32,7 @@ from .._bus_ops import (
 )
 from ..message_bus import MessageBus, MessageBusKeys
 from ..tool_login import tool_login_scope
+from ..middleware._row_card import RowCardMiddleware
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
 from ..channel._approval import (
@@ -1119,6 +1120,13 @@ class ChatService:
                 # in-process retrigger plumbing is needed here.
                 # -------------------------------------------------------------
                 middlewares: list = [
+                    RowCardMiddleware(
+                        lambda message_id: self._storage.get_message(
+                            user_id,
+                            session_id,
+                            message_id,
+                        ),
+                    ),
                     SteeringMiddleware(self._message_bus),
                     InboxMiddleware(self._message_bus),
                     StateChangeMiddleware(

@@ -29,3 +29,33 @@ registry = SaveBusinessRegistry(
 | `needs_reconciliation` | 请求可能已送达，尚无可靠回执，需要在原系统核实。 |
 
 发布工具的验收会分别验证原客户端和生成工具的写入。遇到不完整回执后，重复验收只回查已有 ID。仅当适配器明确返回 `attempted: false` 且没有记录 ID，才允许重新发起原写入。缺少任一份验收证据时，工具保持未发布。
+
+## 在聊天中打开刚才列表的一行
+
+宿主为每个业务绑定 Vue 列表页、行点击处理函数，以及已授权的列表和详情 GET。Agent 的源码检查工具会沿着表格插槽、点击函数、本地函数调用和请求封装找到详情路径参数的来源，返回文件、行号和源码版本。字段可以嵌套，多个路径参数可以分别取自不同字段。缺少映射或详情依赖尚未支持的请求配置时，工具会给出缺失证据。
+
+采购入库单可在宿主的会话工具工厂中使用以下绑定。三个工具分别用于检查源码、查询最近记录，以及打开先前展示的一行。
+
+```python
+from agentscope.business import RowActionSource
+from agentscope.tool import Toolkit
+from examples.business_tools.purchase_receipt.recent import purchase_receipt_row_tools
+
+source = RowActionSource(
+    erp_frontend_src, openapi_file,
+    "views/purchase/PurchaseOrderView.vue", "handleEdit",
+    "/purchase/order/page", "/purchase/order/{id}",
+)
+rows = purchase_receipt_row_tools(
+    source, private_state_dir / "row-selections.sqlite",
+    scope=current_row_scope, can_read=can_read, client_for=erp_client_for,
+)
+# 在当前会话的 Toolkit 中安装这组工具，取代旧的单独列表工具。
+toolkit = Toolkit(tools=rows.tools())
+```
+
+`current_row_scope()` 从宿主登录态取得系统、账套、用户和会话，返回 `RowScope`。`can_read(scope, operation)` 检查当前的源码读取权限（`source`）或指定 GET 的权限。`erp_client_for(scope)` 打开该身份和账套对应的 HTTP 客户端，业务后端继续检查记录级权限。其他系统用 `RowDetailTools` 提供自己的列表、展示字段及详情读取函数；列表回调交付与原客户端一致的行对象。
+
+一次查询产生一个 `list_ref`，返回的记录按原顺序从 1 开始编号。详情工具接受该引用和行号。SQLite 只保留下次调用所需的参数，多个进程共用同一份私有数据库即可恢复原选择。引用有效期为 24 小时。源码或接口契约变化后，员工可以重新列出记录取得新引用。
+
+手机和桌面聊天共用列表卡。适配器可以通过 `title` 和 `field_labels` 提供标题和列名。点击旧卡的一行，或在该卡的“回复这张卡片”中输入“打开第二张”，都会在当前聊天中产生一条回复。服务端按原消息和工具调用找回已保存的列表，用当前权限读取详情。过期后需要重新查询。

@@ -1,4 +1,12 @@
 {
+	"rowCard": {
+		"count": "{{count}} 条",
+		"open": "打开第 {{row}} 行",
+		"reply": "回复这张卡片",
+		"placeholder": "例如：打开第二张",
+		"send": "发送",
+		"quoted": "回复列表卡片"
+	},
 	"common": {
 		"add": "添加",
 		"agent": "智能体",

@@ -89,6 +89,15 @@ jobs:
             if required - passed:
                 raise SystemExit(f"{suite}: missing passes for {sorted(required - passed)}")
             print(f"{suite}: {len(required)} required cases passed")
+    - name: Exercise mobile and desktop row cards with simulated systems
+      if: runner.os == 'Linux'
+      env:
+        PYTHONPATH: .
+      run: |
+        pnpm --dir examples/web_ui install --frozen-lockfile
+        pnpm --dir examples/web_ui --filter frontend build
+        pnpm --dir examples/web_ui --filter frontend exec playwright-core install --with-deps chromium
+        python tests/run_row_card_browser.py
     - name: Generate coverage report
       run: |
         coverage report -m

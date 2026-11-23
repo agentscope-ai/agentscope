@@ -577,6 +577,14 @@ async def steer_chat_input(
         )
         item_state = item.get("state", "queued")
         target_reply_id = item.get("target_reply_id")
+        inputs = item["input"]
+        if any(
+            "row_card_reply" in msg.get("metadata", {})
+            for msg in (inputs if isinstance(inputs, list) else [inputs])
+        ):
+            raise ChatSteeringUnavailableError(
+                "A quoted list must run as its own queued turn.",
+            )
         if item_state == "steering":
             if target_reply_id != reply_id:
                 raise ChatSteeringUnavailableError(

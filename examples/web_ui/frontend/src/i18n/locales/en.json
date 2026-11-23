@@ -1,4 +1,13 @@
 {
+	"rowCard": {
+		"count_one": "{{count}} row",
+		"count_other": "{{count}} rows",
+		"open": "Open row {{row}}",
+		"reply": "Reply to this list",
+		"placeholder": "For example, open row 2",
+		"send": "Send",
+		"quoted": "Reply to a list"
+	},
 	"common": {
 		"add": "Add",
 		"agent": "Agent",

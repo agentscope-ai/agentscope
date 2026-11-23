@@ -111,3 +111,7 @@ node "$CASE/capture.cjs" --client "$ERP/frontend-user" --chromium "$CHROMIUM" \
 恢复时将 `operation_id` 传给该业务的回查工具。返回 `saved_needs_readback` 表示已取得单据 ID，可再次回查。返回 `needs_reconciliation` 表示保存请求可能已送达，须在原账套核对。另行确认新增草稿会产生新的操作 ID。
 
 回查字段与确认草稿不同会返回 `saved_needs_review`。字段映射、回执格式和其他业务系统的接入示例见[通用保存与回查说明](../README.md)。
+
+### 常驻聊天服务中的行引用
+
+已使用 `PurchaseAuthentication` 的宿主，在构建聊天服务时用 `with_purchase_rows(previous_factory, purchase_auth, source, private_db, read_permission)` 包装原来的会话工具工厂。它只为原本拥有采购列表工具的会话增加详情导航。列表继续使用同一次已登录的 ERP 分页响应，保留原客户端登录验收流程。详情沿用该会话的私密登录，核对当前账套、账号和采购页面权限后按隐藏键读取。SQLite 文件应放在宿主私有目录中，并供同一服务的工作进程共享。

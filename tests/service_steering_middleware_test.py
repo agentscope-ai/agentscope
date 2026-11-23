@@ -647,6 +647,33 @@ class TestSteeringAcknowledgementFailures(IsolatedAsyncioTestCase):
 class TestSteeringQueueState(IsolatedAsyncioTestCase):
     """Queue reservations remain durable until injection or fallback."""
 
+    async def test_card_reply_keeps_its_anchor_in_the_queue(self) -> None:
+        """A text-only steering hint would discard the selected card."""
+        bus = InMemoryMessageBus()
+        quote = {"message_id": "first", "tool_call_id": "list-a"}
+        message = UserMsg("user", "打开第二张", metadata={"row_card_reply": quote})
+        item = await enqueue_chat_input(
+            bus,
+            "user",
+            "session",
+            "agent",
+            message,
+        )
+        async with bus.acquire_lock(MessageBusKeys.session_lock("session")):
+            await register_active_chat_reply(bus, "session", "reply")
+            with self.assertRaises(ChatSteeringUnavailableError):
+                await steer_chat_input(
+                    bus,
+                    "user",
+                    "session",
+                    "agent",
+                    item["id"],
+                    "reply",
+                )
+        (pending,) = await list_chat_inputs(bus, "session")
+        self.assertEqual(pending["state"], "queued")
+        self.assertEqual(pending["input"]["metadata"]["row_card_reply"], quote)
+
     async def test_steering_preserves_reference_storage(self) -> None:
         """Steer, failure and fallback keep payloads out of the FIFO."""
         bus = InMemoryMessageBus()

@@ -17,7 +17,7 @@ import { useState, useCallback, useRef, useEffect, useMemo, useLayoutEffect } fr
 import { toast } from 'sonner';
 
 import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
-import type { ChatQueueItem } from '@/api/chat';
+import type { CardQuote, ChatQueueItem } from '@/api/chat';
 import { useAudioManager } from '@/context/AudioContext';
 import {
 	getQueueMessages,
@@ -561,10 +561,14 @@ export function useMessages(
 	 * @param content - The message content blocks.
 	 */
 	const send = useCallback(
-		async (content: ContentBlock[]) => {
+		async (content: ContentBlock[], quote?: CardQuote) => {
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
-			const userMsg = UserMsg({ name: 'user', content });
+			const userMsg = UserMsg({
+				name: 'user',
+				content,
+				metadata: quote ? { row_card_reply: quote } : {},
+			});
 			const showInConversationImmediately = phase === 'idle' && pendingQueueCount === 0;
 			if (showInConversationImmediately) {
 				msgsRef.current = [...msgsRef.current, userMsg];
