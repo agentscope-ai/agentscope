@@ -21,10 +21,57 @@ from ..message import (
 )
 
 
+_MEDIA_TYPE_EXTENSIONS = {
+    "audio/aac": ".aac",
+    "audio/flac": ".flac",
+    "audio/l16": ".l16",
+    "audio/mp4": ".m4a",
+    "audio/mpeg": ".mp3",
+    "audio/opus": ".opus",
+    "audio/pcm": ".pcm",
+    "audio/wav": ".wav",
+}
+"""Extensions of the media types this framework's own adapters emit.
+
+:func:`mimetypes.guess_extension` answers from per-host tables — the
+Windows registry against a MIME database elsewhere — so it reports no
+extension at all for ``audio/wav`` and ``audio/pcm`` on Linux, and a
+different one for ``audio/l16`` depending on the host. Pinning the types
+the framework produces keeps the same block naming the same file
+everywhere.
+"""
+
+_DEFAULT_MEDIA_EXTENSION = ".bin"
+"""Extension used when neither the table above nor the host can name one."""
+
+
 def _normalize_media_type(media_type: str) -> str:
     """Lowercase the MIME type and subtype, preserving parameter values."""
     mime, separator, parameters = media_type.partition(";")
     return mime.lower() + separator + parameters
+
+
+def _media_type_extension(media_type: str) -> str:
+    """Return a file extension for a media type, deterministically.
+
+    Parameters are dropped first, so ``audio/l16;rate=24000`` resolves like
+    ``audio/l16``. Types this framework emits are pinned by
+    :data:`_MEDIA_TYPE_EXTENSIONS`; anything else is left to the host MIME
+    tables and finally to a generic extension.
+
+    Args:
+        media_type (`str`):
+            The media type carried by a data block's source.
+
+    Returns:
+        `str`:
+            A dotted extension, e.g. ``".wav"``.
+    """
+    base = media_type.partition(";")[0].strip().lower()
+    pinned = _MEDIA_TYPE_EXTENSIONS.get(base)
+    if pinned is not None:
+        return pinned
+    return mimetypes.guess_extension(base) or _DEFAULT_MEDIA_EXTENSION
 
 
 def file_url_to_path(url: str) -> str:
@@ -150,7 +197,7 @@ class FormatterBase(BaseModel):
                 f"</system-reminder>"
             )
 
-        extension = mimetypes.guess_extension(block.source.media_type)
+        extension = _media_type_extension(block.source.media_type)
         with tempfile.NamedTemporaryFile(
             suffix=extension,
             delete=False,
