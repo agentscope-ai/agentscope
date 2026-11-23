@@ -56,6 +56,7 @@ class ScheduleDelete(ToolBase):
         storage: StorageBase,
         message_bus: MessageBus,
         scheduler_manager: Any,
+        workspace_manager: Any = None,
     ) -> None:
         """Initialize the schedule delete tool.
 
@@ -74,12 +75,18 @@ class ScheduleDelete(ToolBase):
                 The scheduler manager, used to tell the timer-owning node
                 that a schedule changed. Must expose a
                 ``notify_changed(schedule_id)`` coroutine.
+            workspace_manager (`Any | None`, optional):
+                The workspace manager, so the sessions this schedule
+                spawned have their workspaces purged like ``DELETE
+                /schedules`` and the other delete paths do. When
+                ``None`` the purge is skipped.
         """
         self._user_id = user_id
         self._scheduler = scheduler
         self._storage = storage
         self._message_bus = message_bus
         self._scheduler_manager = scheduler_manager
+        self._workspace_manager = workspace_manager
 
     async def check_permissions(
         self,
@@ -128,6 +135,7 @@ class ScheduleDelete(ToolBase):
         session_service = SessionService(
             storage=self._storage,
             message_bus=self._message_bus,
+            workspace_manager=self._workspace_manager,
         )
         deleted = await session_service.delete_schedule(
             self._user_id,
