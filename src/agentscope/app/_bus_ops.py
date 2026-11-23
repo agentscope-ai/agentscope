@@ -399,6 +399,7 @@ async def enqueue_chat_input(
     client_builtin_tools: list[ClientBuiltinToolName] | None = None,
     pipeline_tts_config: TTSModelConfig | None = None,
     pipeline_chat_config: ChatModelSnapshot | None = None,
+    client_request_id: str | None = None,
     submission_id: str | None = None,
 ) -> dict:
     """Append an ordinary user turn to a session FIFO and wake its pump.
@@ -429,6 +430,8 @@ async def enqueue_chat_input(
             Server-resolved speech configuration for a pipeline voice turn.
         pipeline_chat_config:
             Server-resolved language models for the same turn.
+        client_request_id:
+            Correlates the start notification with the submitting request.
         submission_id:
             Optional client identity that fences delayed voice submissions.
 
@@ -462,6 +465,8 @@ async def enqueue_chat_input(
         item["client_external_tools"] = [
             tool.model_dump(mode="json") for tool in client_external_tools
         ]
+    if client_request_id is not None:
+        item["client_request_id"] = client_request_id
     if submission_id is not None:
         item["submission_id"] = submission_id
     if client_builtin_tools:

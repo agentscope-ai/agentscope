@@ -544,6 +544,7 @@ export interface ClientExternalToolDefinition {
 
 export interface ChatRequest {
 	mode?: 'chat' | 'pipeline_voice';
+	client_request_id?: string;
 	submission_id?: string;
 	agent_id: string;
 	session_id: string;

@@ -151,13 +151,29 @@ export function pcmToAudioBuffer(
 
 /** Live PCM playback for an in-progress WAV stream. */
 class WavStreamPlayer {
-	started = false;
+	private frameCount = 0;
+	private readonly resumeFrames: number;
+	started: boolean;
 	private ctx: AudioContext | null = null;
 	private header: WavHeader | null = null;
 	private pending: Bytes | null = null;
 	private nextStartTime = 0;
 	private failed = false;
 	private deferredCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+	constructor(resumeFrames = 0) {
+		this.resumeFrames = resumeFrames;
+		this.started = resumeFrames > 0;
+	}
+
+	/** Frames heard before this context is closed, excluding scheduled audio. */
+	get playedFrames(): number {
+		const remaining =
+			this.ctx && this.header
+				? Math.max(0, this.nextStartTime - this.ctx.currentTime) * this.header.sampleRate
+				: 0;
+		return Math.max(this.resumeFrames, this.frameCount - Math.ceil(remaining));
+	}
 
 	append(chunk: Bytes): void {
 		if (this.failed) return;
@@ -191,7 +207,10 @@ class WavStreamPlayer {
 		this.pending = playableBytes < bytes.length ? bytes.slice(playableBytes) : null;
 		if (playableBytes === 0) return;
 
-		const toPlay = bytes.subarray(0, playableBytes);
+		const skip = Math.max(0, this.resumeFrames - this.frameCount) * frameSize;
+		this.frameCount += playableBytes / frameSize;
+		if (skip >= playableBytes) return;
+		const toPlay = bytes.subarray(skip, playableBytes);
 		const audioBuffer = pcmToAudioBuffer(this.ctx, toPlay, this.header);
 		if (!audioBuffer) return;
 
@@ -223,7 +242,6 @@ class WavStreamPlayer {
 		this.deferredCloseTimer = setTimeout(() => {
 			this.dispose();
 		}, remainingMs + 200);
-		this.header = null;
 		this.pending = null;
 	}
 
@@ -280,6 +298,10 @@ function resumeWav(session: Session, player: WavStreamPlayer, data: string): boo
  */
 export class StreamingAudioManager {
 	private sessions = new Map<string, Session>();
+	private replay = new Map<
+		string,
+		{ replyId?: string; mediaType: string; frames: number | false }
+	>();
 	private listeners = new Map<string, Set<Listener>>();
 
 	private emit(blockId: string): void {
@@ -304,15 +326,30 @@ export class StreamingAudioManager {
 	}
 
 	/** Keep completed checkpoint audio playing and rebuild other blocks from replay. */
-	restoreCheckpoint(messages: Msg[], playedBlocks: Set<string>): void {
-		if (!this.sessions.size && !playedBlocks.size) return;
+	restoreCheckpoint(messages: Msg[]): void {
+		if (!this.sessions.size && !this.replay.size) return;
 		const replayed = new Set(this.sessions.keys());
 		for (const msg of messages) {
 			for (const block of msg.content) {
 				if (block.type !== 'data' || !block.finished_at) continue;
-				playedBlocks.delete(block.id);
-				if (!replayed.delete(block.id)) continue;
-				const session = this.sessions.get(block.id)!;
+				// A second reconnect may checkpoint the WAV before its replay starts.
+				const resume = this.replay.get(block.id);
+				if (resume) {
+					if (
+						typeof resume.frames === 'number' &&
+						resume.replyId === msg.id &&
+						resume.mediaType === block.source.media_type &&
+						block.source.type === 'base64' &&
+						(!msg.finished_reason ||
+							msg.finished_reason === ReplyFinishedReason.COMPLETED)
+					) {
+						this.start(block.id, resume.mediaType, true, msg.id);
+					}
+					this.replay.delete(block.id);
+				}
+				replayed.delete(block.id);
+				const session = this.sessions.get(block.id);
+				if (!session) continue;
 				if (
 					session.replyId !== msg.id ||
 					session.mediaType !== block.source.media_type ||
@@ -349,7 +386,14 @@ export class StreamingAudioManager {
 		for (const id of replayed) {
 			const session = this.sessions.get(id)!;
 			if (session.autoplay !== true || session.playedUrl || session.livePlayer?.started) {
-				playedBlocks.add(id);
+				this.replay.set(id, {
+					replyId: session.replyId,
+					mediaType: session.mediaType,
+					frames:
+						session.autoplay === true && session.livePlayer?.started
+							? session.livePlayer.playedFrames
+							: false,
+				});
 			}
 			this.dispose(id);
 		}
@@ -364,8 +408,15 @@ export class StreamingAudioManager {
 	): void {
 		if (typeof autoplay !== 'boolean') autoplay = autoplay.catch(() => false);
 		if (this.sessions.has(blockId)) return;
+		const resume = this.replay.get(blockId);
+		this.replay.delete(blockId);
+		const frames =
+			resume?.replyId === replyId && resume?.mediaType === mediaType ? resume.frames : 0;
+		if (frames === false) autoplay = false;
 		const livePlayer =
-			autoplay === true && mediaType === 'audio/wav' ? new WavStreamPlayer() : null;
+			autoplay === true && mediaType === 'audio/wav'
+				? new WavStreamPlayer(frames || 0)
+				: null;
 		this.sessions.set(blockId, {
 			replyId,
 			mediaType,
@@ -386,7 +437,7 @@ export class StreamingAudioManager {
 				if (session.state.url) {
 					this.playUrl(session, session.state.url);
 				} else if (mediaType === 'audio/wav' && session.state.status === 'streaming') {
-					session.livePlayer = new WavStreamPlayer();
+					session.livePlayer = new WavStreamPlayer(frames || 0);
 					for (const chunk of session.chunks) session.livePlayer.append(chunk);
 				}
 			});
@@ -475,6 +526,9 @@ export class StreamingAudioManager {
 
 	/** Stop this reply's playback and finalize any unfinished blocks for replay. */
 	interruptReply(replyId: string): void {
+		for (const resume of this.replay.values()) {
+			if (resume.replyId === replyId) resume.frames = false;
+		}
 		for (const [blockId, session] of this.sessions) {
 			if (session.replyId !== replyId) continue;
 			this.stopBlockPlayback(session);
@@ -502,6 +556,7 @@ export class StreamingAudioManager {
 
 	/** Give manual replay control of audio output, including buffered MP3 playback. */
 	stopAutoplay(): void {
+		for (const resume of this.replay.values()) resume.frames = false;
 		for (const session of this.sessions.values()) this.stopBlockPlayback(session, false);
 	}
 
@@ -510,7 +565,11 @@ export class StreamingAudioManager {
 	 * starts so previous audio doesn't overlap with the new one.
 	 * Blob URLs are preserved so the user can still manually replay.
 	 */
-	stopAllPlayback(): void {
+	stopAllPlayback(preserveReplayPositions = false): void {
+		// Replayed reply starts can precede the WAV's own start in the log.
+		if (!preserveReplayPositions) {
+			for (const resume of this.replay.values()) resume.frames = false;
+		}
 		for (const [blockId, session] of this.sessions) {
 			this.stopBlockPlayback(session);
 			this.emit(blockId);
@@ -530,6 +589,7 @@ export class StreamingAudioManager {
 
 	/** Release every block — call on unmount or session switch. */
 	disposeAll(): void {
+		this.replay.clear();
 		for (const id of [...this.sessions.keys()]) this.dispose(id);
 	}
 }

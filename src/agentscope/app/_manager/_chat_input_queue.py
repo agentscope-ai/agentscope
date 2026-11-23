@@ -712,6 +712,8 @@ class ChatInputQueue:
                         },
                     },
                 )
+                if request_id := payload.get("client_request_id"):
+                    started_event.value["client_request_id"] = request_id
                 await publish_session_event(
                     self._bus,
                     queued_session_id,

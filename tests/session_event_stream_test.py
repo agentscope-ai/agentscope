@@ -119,7 +119,7 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
         async with _LegacyBus() as bus:
             await self._assert_replay_then_live(bus)
 
-    async def test_replay_notice_follows_all_log_pages(self) -> None:
+    async def test_initial_replay_reads_all_log_pages(self) -> None:
         """Complete replay after the final page, including an empty log."""
         async with _LegacyBus() as bus, asyncio.timeout(3):
             read_page = bus.log_read
@@ -135,27 +135,29 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
                 for count in (0, 3):
                     for number in range(count):
                         await publish_session_event(bus, "s", {"n": number})
-                    response = await stream_session_events(
-                        session_id="s",
-                        agent_id="a",
-                        user_id="u",
-                        storage=_Storage(),  # type: ignore[arg-type]
-                        message_bus=bus,
-                        after=None,
-                        replay_notice=True,
-                    )
-                    async with aclosing(response.body_iterator) as stream:
-                        self.assertEqual(
-                            [
-                                _decode(await anext(stream))
-                                for _ in range(count)
-                            ],
-                            [{"n": n} for n in range(count)],
+                    for notice in (False, True):
+                        response = await stream_session_events(
+                            session_id="s",
+                            agent_id="a",
+                            user_id="u",
+                            storage=_Storage(),  # type: ignore[arg-type]
+                            message_bus=bus,
+                            after=None,
+                            replay_notice=notice,
                         )
-                        self.assertEqual(
-                            await anext(stream),
-                            ": replay-complete\n\n",
-                        )
+                        async with aclosing(response.body_iterator) as stream:
+                            self.assertEqual(
+                                [
+                                    _decode(await anext(stream))
+                                    for _ in range(count)
+                                ],
+                                [{"n": n} for n in range(count)],
+                            )
+                            if notice:
+                                self.assertEqual(
+                                    await anext(stream),
+                                    ": replay-complete\n\n",
+                                )
 
     async def test_legacy_snapshot_retries_its_own_marker(self) -> None:
         """Replay idle history even if the first marker is lost."""

@@ -9,6 +9,7 @@ const QUEUE_REFRESH_INTERVAL_MS = 15_000;
 const OPTIMISTIC_ITEM_PREFIX = 'optimistic:';
 
 export interface ChatInputStartedValue {
+	client_request_id?: string;
 	queue_item_id?: string;
 	message_ids?: string[];
 	queue_item?: ChatQueueItem;

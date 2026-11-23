@@ -185,13 +185,16 @@ export function useMessages(
 	const { t } = useTranslation();
 	// A new identity for each visit also rejects late responses after A -> B -> A.
 	const session = useMemo(() => ({ agentId, sessionId }), [agentId, sessionId]);
+	const pendingChatPosts = useRef(new Map<string, (queueId: string) => void>());
 	const externalSubmissionsRef = useRef(new Map<string, ExternalSubmission>());
 	const activeSessionRef = useRef<typeof session | null>(null);
 	useLayoutEffect(() => {
 		activeSessionRef.current = session;
+		const chatPosts = pendingChatPosts.current;
 		const externalSubmissions = externalSubmissionsRef.current;
 		return () => {
 			activeSessionRef.current = null;
+			chatPosts.clear();
 			for (const pending of externalSubmissions.values()) {
 				pending.reject(new Error('The session closed before the result was acknowledged.'));
 			}
@@ -283,7 +286,7 @@ export function useMessages(
 
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
-		(event: AgentEvent, suppressAutoplay = false) => {
+		(event: AgentEvent) => {
 			const voicePlayback = optionsRef.current?.onVoiceEvent?.(event) ?? false;
 			// Custom events are service-layer notifications, not agent
 			// reply content — route them to callbacks and skip appendEvent.
@@ -338,6 +341,11 @@ export function useMessages(
 					const value = custom.value as ChatInputStartedValue;
 					startingQueueRef.current = value.queue_item_id ?? null;
 					setStartingInputId(startingQueueRef.current);
+					if (value.client_request_id && value.queue_item_id) {
+						pendingChatPosts.current.get(value.client_request_id)?.(
+							value.queue_item_id,
+						);
+					}
 					const { item: startedItem, provisional } = startItem(value);
 					if (startedItem) {
 						msgsRef.current = msgsRef.current.filter((msg) => !provisional.has(msg));
@@ -431,7 +439,7 @@ export function useMessages(
 				if (existing) {
 					currentReplyRef.current = existing;
 				} else {
-					audioManager?.stopAllPlayback();
+					audioManager?.stopAllPlayback(true);
 					const msg =
 						e.role === 'user'
 							? UserMsg({ id: e.reply_id, name: e.name, content: [] })
@@ -502,12 +510,7 @@ export function useMessages(
 							typeof voicePlayback === 'object' && 'autoplay' in voicePlayback
 								? voicePlayback.autoplay
 								: !voicePlayback;
-						audioManager.start(
-							e.block_id,
-							e.media_type,
-							suppressAutoplay ? false : autoplay,
-							e.reply_id,
-						);
+						audioManager.start(e.block_id, e.media_type, autoplay, e.reply_id);
 					}
 				} else if (event.type === EventType.DATA_BLOCK_DELTA) {
 					const e = event as DataBlockDeltaEvent;
@@ -571,7 +574,6 @@ export function useMessages(
 		abortRef.current = controller;
 		let retryTimer: ReturnType<typeof setTimeout> | undefined;
 		let retryDelay = 1000;
-		const playedBlocks = new Set<string>();
 		let oldestVisible: string | null | undefined;
 		let savedHistory: Msg[] = [];
 		let savedCursor: string | null = null;
@@ -641,7 +643,7 @@ export function useMessages(
 						if (tail && !msgsRef.current.some((msg) => msg.id === tail.id)) {
 							audioManager?.stopAllPlayback();
 						}
-						audioManager?.restoreCheckpoint(messages, playedBlocks);
+						audioManager?.restoreCheckpoint(messages);
 						setSubagentHitl([]);
 					}
 					const restored = reconnecting
@@ -708,10 +710,7 @@ export function useMessages(
 				)) {
 					if (controller.signal.aborted) return;
 					retryDelay = 1000;
-					const replayed =
-						event.type === EventType.DATA_BLOCK_START &&
-						playedBlocks.delete(event.block_id);
-					processEvent(event, replayed);
+					processEvent(event);
 				}
 			} catch (e) {
 				if (controller.signal.aborted) return;
@@ -802,24 +801,32 @@ export function useMessages(
 				scheduleUpdate();
 			}
 			const optimisticId = addOptimistic(userMsg, showInConversationImmediately);
+			const requestId = observer ? undefined : crypto.randomUUID();
+			const startReceipt = requestId
+				? new Promise<string>((resolve) => pendingChatPosts.current.set(requestId, resolve))
+				: undefined;
 			try {
-				const response = await chatApi.trigger(
-					{
-						agent_id: agentId,
-						session_id: sessionId,
-						input: userMsg,
-						mode,
-						submission_id: observer?.submissionId,
-					},
-					{ ...observer?.scope, signal: observer?.signal, silent: !!observer },
-				);
+				const post = chatApi
+					.trigger(
+						{
+							agent_id: agentId,
+							session_id: sessionId,
+							input: userMsg,
+							mode,
+							submission_id: observer?.submissionId,
+							client_request_id: requestId,
+						},
+						{ ...observer?.scope, signal: observer?.signal, silent: true },
+					)
+					.then((response) => response.queue_item_id);
+				// Either channel can confirm this exact submission first.
+				const queueId = await (startReceipt ? Promise.race([post, startReceipt]) : post);
 				if (observer?.signal?.aborted || (observer?.isCurrent && !observer.isCurrent()))
 					return;
-				const queueId = response.queue_item_id;
 				if (queueId) confirmQueue(queueId);
 				observer?.accepted(queueId);
 			} catch (e) {
-				// SSE may already have committed this input and its reply.
+				// Voice cancellation tracks its own submission receipt.
 				if (
 					observer?.keepPendingOnPostError?.() ||
 					(observer?.isCurrent && !observer.isCurrent())
@@ -834,11 +841,14 @@ export function useMessages(
 				// optimistic queue row and restore the caller's draft.
 				rollbackOptimistic(optimisticId, userMsg.id);
 				if (showInConversationImmediately) {
-					msgsRef.current = msgsRef.current.filter((msg) => msg.id !== userMsg.id);
+					msgsRef.current = msgsRef.current.filter((msg) => msg !== userMsg);
 					scheduleUpdate();
 				}
 				setError(e as Error);
+				if (!observer && e instanceof ApiError) toast.error(e.message);
 				throw e;
+			} finally {
+				if (requestId) pendingChatPosts.current.delete(requestId);
 			}
 		},
 		[

@@ -591,6 +591,11 @@ async def chat(
                     if request.submission_id is not None
                     else None
                 ),
+                client_request_id=(
+                    str(request.client_request_id)
+                    if request.client_request_id is not None
+                    else None
+                ),
                 pipeline_chat_config=chat_config,
                 pipeline_tts_config=tts_config,
             )

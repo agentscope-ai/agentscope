@@ -1510,6 +1510,7 @@ class TestChatInputPayloads(IsolatedAsyncioTestCase):
                 "session_id": "s",
                 "input": UserMsg("u", "x" * 1_000_001).model_dump(mode="json"),
                 "client_external_tools": [definition.model_dump(mode="json")],
+                "client_request_id": "2b96a138-a7da-4969-9d63-f887ed0ea542",
                 "client_builtin_tools": ["AskUser"],
             }
             async with AsyncClient(
@@ -1546,6 +1547,26 @@ class TestChatInputPayloads(IsolatedAsyncioTestCase):
             queue = ChatInputQueue(bus, storage, chat)
             self.addAsyncCleanup(queue.close)
             self.assertTrue(await queue.drain_chat_inputs("u", "s", "a"))
+            events = await bus.log_read(MessageBusKeys.session_events("s"))
+            self.assertEqual(
+                [
+                    event["value"]
+                    for _, event in events
+                    if event.get("name") == "chat_input_started"
+                ],
+                [
+                    {
+                        "client_request_id": body["client_request_id"],
+                        "queue_item_id": items[0]["id"],
+                        "message_ids": [body["input"]["id"]],
+                        "queue_item": {
+                            "id": items[0]["id"],
+                            "created_at": items[0]["created_at"],
+                            "input": body["input"],
+                        },
+                    },
+                ],
+            )
             self.assertEqual(
                 chat.calls,
                 [

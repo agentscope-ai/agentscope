@@ -22,6 +22,10 @@ class ChatRequest(BaseModel):
 
     mode: Literal["chat", "pipeline_voice"] = "chat"
     submission_id: UUID | None = None
+    client_request_id: UUID | None = Field(
+        default=None,
+        description="Correlation ID echoed when the queue item starts.",
+    )
 
     @model_validator(mode="after")
     def validate_voice_input(self) -> "ChatRequest":

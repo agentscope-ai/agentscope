@@ -1148,13 +1148,15 @@ async def stream_session_events(
                 yield f"data: {data}\n\n"
 
         async def replay_snapshot(
-            notify: bool = False,
+            *,
+            initial: bool = False,
         ) -> AsyncGenerator[str, None]:
             """Merge a fixed log snapshot with pending live notifications."""
+            notify = initial and replay_notice
             rows = await replay.read()
-            # A bus may return short pages. Read through the backlog before
-            # acknowledging replay, stopping once we reach a live frame.
-            while notify and rows and rows[-1][0] not in replay.queued:
+            # A short page does not imply end of history. On connection,
+            # read until the subscription takes over or the log is empty.
+            while initial and rows and rows[-1][0] not in replay.queued:
                 rows = await replay.read()
             last_id = next(reversed(replay.pending), None)
             if last_id is None and not notify:
@@ -1233,7 +1235,7 @@ async def stream_session_events(
                 ready.wait(),
                 timeout=_SUBSCRIBE_TIMEOUT_SECS,
             )
-            async for frame in replay_snapshot(replay_notice):
+            async for frame in replay_snapshot(initial=True):
                 yield frame
 
             # Inject pending subagent HITL cards projected onto this
