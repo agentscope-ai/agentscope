@@ -167,13 +167,16 @@ class FunctionTool(ToolBase):
         # positional-only argument is given.
         skipped_defaults: list[Any] = []
         for param in self._positional_only_params:
+            is_injected_state = (
+                self.is_state_injected and param.name == "_agent_state"
+            )
             # An undeclared key can match an optional positional-only
             # parameter and still belong in **kwargs (e.g. Counter).
             if param.name in kwargs and (
                 not self._accepts_extra_keywords
                 or param.default is inspect.Parameter.empty
                 or param.name in self.input_schema.get("properties", {})
-                or (self.is_state_injected and param.name == "_agent_state")
+                or is_injected_state
             ):
                 args.extend(skipped_defaults)
                 skipped_defaults = []
