@@ -207,6 +207,8 @@ dev = [
     "matplotlib",
     # ``[lua]`` pulls in lupa so EVAL-based code paths are testable.
     "fakeredis[lua]",
+    # Remove the cap once fakeredis ships cunla/fakeredis-py#638.
+    "redis<8.2",
     # SQL backend tests — SQLite via aiosqlite so no server is needed.
     "aiosqlite",
     # S3-backend testing — moto[server] spins up an in-process S3
