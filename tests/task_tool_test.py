@@ -438,6 +438,33 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(tasks_dump, expected)
 
+    async def test_update_subject_to_empty_string(self) -> None:
+        """An explicitly empty subject is an update, not a no-op."""
+        # Create a task
+        await self.task_create(
+            subject="Original Subject",
+            description="Test description",
+            _agent_state=self.agent_state,
+        )
+        task_id = self.agent_state.tasks_context.tasks[0].id
+
+        # The subject is a plain string, so "" is a legal value and must be
+        # applied instead of being mistaken for "field not provided".
+        result = await self.task_update(
+            task_id=task_id,
+            subject="",
+            _agent_state=self.agent_state,
+        )
+
+        self.assertEqual(
+            result.content[0].text,
+            f"Update task (id={task_id}) subject.",
+        )
+        self.assertEqual(
+            self.agent_state.tasks_context.tasks[0].subject,
+            "",
+        )
+
     async def test_update_description(self) -> None:
         """Test updating task description."""
         # Create a task
