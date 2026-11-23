@@ -109,6 +109,15 @@ class GoalPipeline:
                 f"{output_name} after {self.max_retries} retries.",
             )
 
+    def _reset_verifier_context(self) -> None:
+        """Drop the verifier's conversation after one judged iteration.
+
+        Only the conversation goes; tool and task state is kept.
+        """
+        if self.verifier_reset_context:
+            self.verifier.state.context.clear()
+            self.verifier.state.summary = ""
+
     async def reply_stream(
         self,
         inputs: Msg
@@ -344,15 +353,13 @@ class GoalPipeline:
                             "The verifier judged the goal impossible: %s",
                             final_msg.structured_output.get("message"),
                         )
+                    self._reset_verifier_context()
                     # Settled either way, so the loop ends here.
                     break_loop = True
                 else:
                     self._verifier_retries = 0
                     self._iters += 1
-                    if self.verifier_reset_context:
-                        # Only the conversation, tool/task state stays
-                        self.verifier.state.context.clear()
-                        self.verifier.state.summary = ""
+                    self._reset_verifier_context()
                     if self._iters >= self.max_iters:
                         # Out of attempts; the work never passed
                         break_loop = True
