@@ -111,8 +111,10 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
 
     - ``$schema``: removed entirely.
     - ``additionalProperties``: removed entirely.
+    - ``patternProperties``: removed entirely, because Gemini's ``Schema``
+      has no equivalent for pattern-keyed objects.
     - ``exclusiveMinimum``, ``exclusiveMaximum``, ``multipleOf``,
-      ``uniqueItems`` and ``examples``: removed entirely.
+      ``uniqueItems``, ``examples`` and ``deprecated``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
     - ``oneOf``: converted to ``anyOf`` for discriminated unions.
@@ -176,16 +178,20 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     # Remove additionalProperties — not supported by Gemini
     schema.pop("additionalProperties", None)
 
+    # Gemini tool schemas do not support pattern-based property names.
+    schema.pop("patternProperties", None)
+
     # Remove validation keywords that Gemini's Schema model does not declare;
     # the SDK rejects the whole request on any of them. Pydantic emits them
-    # for e.g. `Field(gt=0)` and `set[str]`. The agent still validates tool
-    # arguments against the original schema.
+    # for e.g. `Field(gt=0)`, `set[str]` and `Field(deprecated=True)`. The
+    # agent still validates tool arguments against the original schema.
     for keyword in (
         "exclusiveMinimum",
         "exclusiveMaximum",
         "multipleOf",
         "uniqueItems",
         "examples",
+        "deprecated",
     ):
         schema.pop(keyword, None)
 

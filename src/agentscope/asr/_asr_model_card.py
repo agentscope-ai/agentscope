@@ -102,14 +102,6 @@ class ASRModelCard(BaseModel):
             schema["required"] = [
                 name for name in schema["required"] if name in properties
             ]
-        # A null override only marks the parameter for removal, which has
-        # already been applied to the schema above. Keeping it would fail the
-        # ``dict[str, dict]`` field and make ``list_models`` skip the card.
-        overrides = {
-            name: override
-            for name, override in overrides.items()
-            if override is not None
-        }
         return cls(
             name=config["name"],
             label=config["label"],
@@ -117,5 +109,9 @@ class ASRModelCard(BaseModel):
             output_types=config.get("output_types", ["text/plain"]),
             realtime=config.get("realtime", False),
             parameter_schema=schema,
-            parameters_overrides=overrides,
+            parameters_overrides={
+                name: override
+                for name, override in overrides.items()
+                if override is not None
+            },
         )

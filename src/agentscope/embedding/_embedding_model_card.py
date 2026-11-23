@@ -96,7 +96,7 @@ class EmbeddingModelCard(BaseModel):
     Empty ``properties`` means nothing to configure (e.g. fixed
     dimensions)."""
 
-    parameter_overrides: dict[str, dict] = Field(
+    parameter_overrides: dict[str, dict | None] = Field(
         default_factory=dict,
         description="Raw parameter overrides from the YAML file.",
     )
@@ -156,22 +156,18 @@ class EmbeddingModelCard(BaseModel):
                         **override,
                     }
 
+        required = [
+            name
+            for name in base_schema.get("required", [])
+            if name in properties
+        ]
         final_schema = {
             "type": "object",
             "properties": properties,
-            "required": base_schema.get("required", []),
+            "required": required,
         }
         if "$defs" in base_schema:
             final_schema["$defs"] = copy.deepcopy(base_schema["$defs"])
-
-        # A null override only marks the parameter for removal, which has
-        # already been applied to the schema above. Keeping it would fail the
-        # ``dict[str, dict]`` field and make the card fail to load.
-        overrides = {
-            name: override
-            for name, override in overrides.items()
-            if override is not None
-        }
 
         return cls(
             name=config["name"],

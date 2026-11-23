@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Tests for chat, TTS, and realtime model cards."""
+"""Tests for model cards and their parameter schemas."""
+
 import os
 import tempfile
 from datetime import date
@@ -336,6 +337,52 @@ class ModelCardTest(TestCase):
                 )
 
 
+class EmbeddingModelCardTest(TestCase):
+    """Verify embedding parameter filtering."""
+
+    def test_overrides_remove_only_matching_required_parameters(self) -> None:
+        """Keep visible required fields and preserve the raw overrides."""
+
+        class Parameters(BaseModel):
+            """Embedding parameters required by the provider."""
+
+            internal: str
+            batch_size: int
+
+        for override in (None, {"hidden": True}):
+            with self.subTest(override=override):
+                overrides = {"internal": override}
+                config = {
+                    "name": "custom",
+                    "label": "Custom",
+                    "dimensions": 8,
+                    "parameter_overrides": overrides,
+                }
+                with patch(
+                    "builtins.open",
+                    mock_open(read_data=yaml.safe_dump(config)),
+                ):
+                    card = EmbeddingModelCard.from_yaml(
+                        "model.yaml",
+                        Parameters,
+                    )
+
+                self.assertEqual(
+                    card.parameter_schema,
+                    {
+                        "type": "object",
+                        "properties": {
+                            "batch_size": {
+                                "title": "Batch Size",
+                                "type": "integer",
+                            },
+                        },
+                        "required": ["batch_size"],
+                    },
+                )
+                self.assertEqual(card.parameter_overrides, overrides)
+
+
 class RealtimeModelCardTest(TestCase):
     """Verify realtime parameter filtering."""
 
@@ -504,7 +551,45 @@ class TTSModelCardTest(TestCase):
 
 
 class ASRModelCardTest(TestCase):
-    """Verify ASR model cards tolerate an empty overrides key."""
+    """Verify ASR model card overrides."""
+
+    def test_null_override_loads_and_lists_card(self) -> None:
+        """Remove null overrides and retain any sample rate override."""
+        for retained in ({}, {"sample_rate": {"default": 16000}}):
+            with self.subTest(retained=retained):
+                schema = DashScopeASRModel.Parameters.model_json_schema()
+                del schema["properties"]["keep_dialect"]
+                if retained:
+                    schema["properties"]["sample_rate"]["default"] = 16000
+                expected = {
+                    "type": "asr_model",
+                    "name": "custom-asr",
+                    "label": "Custom ASR",
+                    "input_types": ["audio/wav"],
+                    "output_types": ["text/plain"],
+                    "realtime": False,
+                    "parameter_schema": schema,
+                    "parameters_overrides": retained,
+                }
+                config = {
+                    "name": "custom-asr",
+                    "label": "Custom ASR",
+                    "input_types": ["audio/wav"],
+                    "parameter_overrides": {"keep_dialect": None, **retained},
+                }
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "custom.yaml"
+                    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+                    card = ASRModelCard.from_yaml(
+                        str(path),
+                        DashScopeASRModel.Parameters,
+                    )
+                    self.assertEqual(card.model_dump(), expected)
+                    cards = DashScopeASRModel.list_models(directory)
+                    self.assertEqual(
+                        [item.model_dump() for item in cards],
+                        [expected],
+                    )
 
     def test_null_parameter_overrides_key_loads_as_empty(self) -> None:
         """An empty ``parameter_overrides:`` key must not break the card.
@@ -523,116 +608,3 @@ class ASRModelCardTest(TestCase):
             card = ASRModelCard.from_yaml(str(path), _Parameters)
 
         self.assertEqual(card.parameters_overrides, {})
-
-
-class _ASRParams(BaseModel):
-    """Minimal ASR parameter class for model card tests."""
-
-    keep_dialect: bool = False
-    sample_rate: int | None = None
-
-
-class _EmbeddingParams(BaseModel):
-    """Minimal embedding parameter class for model card tests."""
-
-    internal: str | None = None
-    batch_size: int | None = None
-
-
-class ASRModelCardOverrideTest(TestCase):
-    """Verify ASR cards drop the null overrides their loader documents."""
-
-    def test_null_override_removes_parameter(self) -> None:
-        """A null override removes the parameter without dropping the
-        card."""
-        path = _write_yaml(
-            "name: test-asr\n"
-            "label: Test ASR\n"
-            "input_types:\n"
-            "  - audio/wav\n"
-            "parameter_overrides:\n"
-            "  keep_dialect: null\n",
-        )
-        try:
-            card = ASRModelCard.from_yaml(path, _ASRParams)
-        finally:
-            os.unlink(path)
-
-        self.assertNotIn("keep_dialect", card.parameter_schema["properties"])
-        self.assertEqual(
-            card.parameters_overrides,
-            {},
-        )
-
-    def test_null_override_mixed_with_dict_overrides(self) -> None:
-        """Null overrides are dropped from the stored overrides while dict
-        overrides are kept."""
-        path = _write_yaml(
-            "name: test-asr\n"
-            "label: Test ASR\n"
-            "parameter_overrides:\n"
-            "  keep_dialect: null\n"
-            "  sample_rate:\n"
-            "    default: 16000\n",
-        )
-        try:
-            card = ASRModelCard.from_yaml(path, _ASRParams)
-        finally:
-            os.unlink(path)
-
-        self.assertNotIn("keep_dialect", card.parameter_schema["properties"])
-        self.assertEqual(
-            card.parameter_schema["properties"]["sample_rate"]["default"],
-            16000,
-        )
-        self.assertEqual(
-            card.parameters_overrides,
-            {"sample_rate": {"default": 16000}},
-        )
-
-    def test_null_override_keeps_the_card_listed(self) -> None:
-        """A card using a null override is still discovered, instead of
-        failing validation and being skipped by ``list_models``."""
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory, "custom.yaml")
-            path.write_text(
-                "name: test-asr\n"
-                "label: Test ASR\n"
-                "parameter_overrides:\n"
-                "  keep_dialect: null\n",
-                encoding="utf-8",
-            )
-            cards = DashScopeASRModel.list_models(directory)
-
-        self.assertEqual([card.name for card in cards], ["test-asr"])
-
-
-class EmbeddingModelCardOverrideTest(TestCase):
-    """Verify embedding cards drop the null overrides they document."""
-
-    def test_null_override_removes_parameter(self) -> None:
-        """A null override removes the parameter without dropping the
-        card."""
-        path = _write_yaml(
-            "name: test-embedding\n"
-            "label: Test Embedding\n"
-            "dimensions: 8\n"
-            "parameter_overrides:\n"
-            "  internal: null\n"
-            "  batch_size:\n"
-            "    default: 16\n",
-        )
-        try:
-            card = EmbeddingModelCard.from_yaml(path, _EmbeddingParams)
-        finally:
-            os.unlink(path)
-
-        self.assertNotIn("internal", card.parameter_schema["properties"])
-        self.assertEqual(
-            card.parameter_schema["properties"]["batch_size"]["default"],
-            16,
-        )
-        self.assertEqual(
-            card.parameter_overrides,
-            {"batch_size": {"default": 16}},
-        )
