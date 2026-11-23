@@ -217,6 +217,7 @@
 		"thinkingFor": "Thinking for {{duration}}",
 		"audioGenerating": "Generating audio…",
 		"playAudio": "Play audio",
+		"replayAfterPipelineVoice": "End pipeline voice to replay audio.",
 		"pauseAudio": "Pause audio",
 		"running": "Running...",
 		"hintSource": {

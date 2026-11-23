@@ -27,7 +27,7 @@ interface Options {
 export function usePipelineVoice(options: Options) {
 	const { t } = useTranslation();
 	const audioManager = useAudioManager();
-	const replay = useReplayController();
+	const setReplayBlocked = useReplayController()?.setBlocked;
 	const [state, setState] = useState<PipelineVoiceState>('idle');
 	const [transcript, setTranscript] = useState('');
 	const sessionRef = useRef<PipelineVoiceSession | null>(null);
@@ -44,23 +44,27 @@ export function usePipelineVoice(options: Options) {
 		optionsRef.current = options;
 		translationRef.current = t;
 	});
-	const observe = useCallback((session: PipelineVoiceSession) => {
-		unsubscribeRef.current?.();
-		sessionRef.current = session;
-		suppressedRef.current = session.suppressedReplies;
-		setState(session.snapshot.state);
-		setTranscript(session.snapshot.transcript);
-		unsubscribeRef.current = session.subscribe({
-			onState: (next, text) => {
+	const observe = useCallback(
+		(session: PipelineVoiceSession) => {
+			unsubscribeRef.current?.();
+			sessionRef.current = session;
+			suppressedRef.current = session.suppressedReplies;
+			const onState = (next: PipelineVoiceState, text: string) => {
+				setReplayBlocked?.(session.restartBlocked);
 				setState(next);
 				setTranscript(text);
-			},
-			onError: (error) =>
-				toast.error(translationRef.current('pipelineVoice.failed'), {
-					description: error instanceof Error ? error.message : String(error),
-				}),
-		});
-	}, []);
+			};
+			onState(session.snapshot.state, session.snapshot.transcript);
+			unsubscribeRef.current = session.subscribe({
+				onState,
+				onError: (error) =>
+					toast.error(translationRef.current('pipelineVoice.failed'), {
+						description: error instanceof Error ? error.message : String(error),
+					}),
+			});
+		},
+		[setReplayBlocked],
+	);
 
 	useLayoutEffect(() => {
 		const { agentId, sessionId } = optionsRef.current;
@@ -86,8 +90,9 @@ export function usePipelineVoice(options: Options) {
 					),
 				);
 			}
+			setReplayBlocked?.(false);
 		};
-	}, [scopeKey, options.agentId, options.sessionId, observe, requestScope]);
+	}, [scopeKey, options.agentId, options.sessionId, observe, requestScope, setReplayBlocked]);
 
 	const stop = useCallback(async () => {
 		await sessionRef.current?.stop();
@@ -108,7 +113,6 @@ export function usePipelineVoice(options: Options) {
 		}
 		const current = optionsRef.current;
 		if (!current.canStart || !current.asr || !current.agentId || !current.sessionId) return;
-		replay?.stop();
 		audioManager?.stopAllPlayback();
 		try {
 			const { agentId, sessionId } = current;
@@ -160,7 +164,7 @@ export function usePipelineVoice(options: Options) {
 				description: error instanceof Error ? error.message : String(error),
 			});
 		}
-	}, [audioManager, replay, busy, stop, t, observe, requestScope]);
+	}, [audioManager, busy, stop, t, observe, requestScope]);
 
 	return { state, transcript, busy, toggle, stop, onEvent };
 }

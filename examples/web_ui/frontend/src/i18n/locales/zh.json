@@ -217,6 +217,7 @@
 		"thinkingFor": "思考 {{duration}}",
 		"audioGenerating": "正在生成音频…",
 		"playAudio": "播放音频",
+		"replayAfterPipelineVoice": "退出组合语音后可重播音频。",
 		"pauseAudio": "暂停音频",
 		"running": "运行中...",
 		"hintSource": {
