@@ -431,11 +431,17 @@ async def _search_across(
         except Exception as error:
             return error
 
-    # One knowledge base must not erase the others' context.  Only
-    # ordinary exceptions are collected: ``CancelledError`` is a
-    # ``BaseException`` and stays uncaught so ``gather`` re-raises it at
-    # once instead of waiting for a slow sibling to finish.
-    per_kb = await asyncio.gather(*(_search_one(kb) for kb in knowledge_bases))
+    # Ordinary failures are collected above. When a child is cancelled,
+    # gather raises without cancelling its siblings. Request cancellation
+    # explicitly and let gather collect their outcomes during cleanup.
+    searches = [asyncio.create_task(_search_one(kb)) for kb in knowledge_bases]
+    try:
+        per_kb = await asyncio.gather(*searches)
+    except asyncio.CancelledError:
+        for search in searches:
+            if not search.done() and not search.cancelling():
+                search.cancel()
+        raise
 
     failures: list[tuple["KnowledgeBase", Exception]] = []
     successful: list[list["VectorSearchResult"]] = []

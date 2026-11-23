@@ -1304,6 +1304,8 @@ class SearchAcrossFailureIsolation(IsolatedAsyncioTestCase):
         knowledge base is released."""
         blocked_started = asyncio.Event()
         blocked_released = asyncio.Event()
+        blocked_cancelled = asyncio.Event()
+        blocked_finished = asyncio.Event()
 
         class _BlockingKnowledgeBase(_StubKnowledgeBase):
             async def search(
@@ -1313,8 +1315,16 @@ class SearchAcrossFailureIsolation(IsolatedAsyncioTestCase):
                 score_threshold: float | None = None,
             ) -> list[VectorSearchResult]:
                 blocked_started.set()
-                await blocked_released.wait()
-                return self.results
+                try:
+                    await blocked_released.wait()
+                    return self.results
+                except asyncio.CancelledError:
+                    blocked_cancelled.set()
+                    # A slow cleanup must not delay the caller's cancellation.
+                    await blocked_released.wait()
+                    raise
+                finally:
+                    blocked_finished.set()
 
         cancelled = _StubKnowledgeBase(
             [],
@@ -1333,19 +1343,18 @@ class SearchAcrossFailureIsolation(IsolatedAsyncioTestCase):
         )
         await asyncio.wait_for(blocked_started.wait(), timeout=2)
         try:
-            # The blocked search is still running, so this only returns
-            # if the sibling's own cancellation was propagated at once.
-            await asyncio.wait_for(
-                asyncio.shield(search_task),
-                timeout=2,
-            )
-            self.fail("the cancellation was swallowed")
-        except asyncio.CancelledError:
-            pass
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(
+                    asyncio.shield(search_task),
+                    timeout=2,
+                )
+            await asyncio.wait_for(blocked_cancelled.wait(), timeout=2)
+            self.assertFalse(blocked_finished.is_set())
         finally:
             # Releasing the sibling afterwards must not resurrect the
             # turn or raise an unhandled exception of its own.
             blocked_released.set()
+            await asyncio.wait_for(blocked_finished.wait(), timeout=2)
             await asyncio.gather(search_task, return_exceptions=True)
             self.assertTrue(search_task.done())
 
