@@ -3,6 +3,8 @@
 name: qwen-audio-3.1-tts-plus
 label: Qwen Audio 3.1 TTS Plus
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2026-10-21
 voice_cloning: true
 
 input_types:

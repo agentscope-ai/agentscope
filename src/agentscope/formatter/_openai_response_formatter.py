@@ -2,7 +2,6 @@
 """Formatters for the OpenAI Responses API."""
 from abc import ABC
 from copy import deepcopy
-from fnmatch import fnmatch
 from typing import Any
 
 from pydantic import Field
@@ -132,21 +131,16 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
                 )
                 continue
 
-            media_type = block.source.media_type
-            supports_native_output = (
-                media_type.split("/", 1)[0] == "image"
-                or media_type == "application/pdf"
-            ) and any(
-                fnmatch(media_type, pattern)
-                for pattern in self.supported_input_media_types
-            )
-
-            if supports_native_output:
-                formatted = self._format_response_data_block(block)
+            supported = self._get_supported_tool_result_block(block)
+            if supported is not None and (
+                supported.source.media_type.startswith("image/")
+                or supported.source.media_type == "application/pdf"
+            ):
+                formatted = self._format_response_data_block(supported)
                 if formatted is None:
                     raise RuntimeError(
                         "Supported OpenAI Responses tool-result media could "
-                        f"not be formatted: {media_type}.",
+                        f"not be formatted: {supported.source.media_type}.",
                     )
                 output_parts.append(formatted)
                 has_native_media = True

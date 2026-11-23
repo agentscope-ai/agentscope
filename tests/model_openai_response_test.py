@@ -204,6 +204,70 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
         self.mock_client = MagicMock()
         self.model.client = self.mock_client
 
+    def test_terra_model_card(self) -> None:
+        """Expose Terra's supported effort levels and output limit."""
+        cards = {card.name: card for card in OpenAIResponseModel.list_models()}
+        card = cards["gpt-6.1-terra"]
+        properties = card.parameter_schema["properties"]
+        self.assertEqual(
+            {
+                "label": card.label,
+                "status": card.status,
+                "context_size": card.context_size,
+                "output_size": card.output_size,
+                "parameters": sorted(properties),
+                "max_tokens": properties["max_tokens"]["maximum"],
+                "effort_default": properties["reasoning_effort"]["default"],
+                "effort_options": properties["reasoning_effort"]["anyOf"],
+            },
+            {
+                "label": "GPT-6.1 Terra (Responses API)",
+                "status": "active",
+                "context_size": 1_050_000,
+                "output_size": 128_000,
+                "parameters": ["max_tokens", "reasoning_effort"],
+                "max_tokens": 128_000,
+                "effort_default": "medium",
+                "effort_options": [
+                    {
+                        "enum": [
+                            "none",
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max",
+                        ],
+                        "type": "string",
+                    },
+                    {"type": "null"},
+                ],
+            },
+        )
+
+    async def test_terra_reasoning_effort(self) -> None:
+        """Forward every Terra effort level, including max, to Responses."""
+        self.model.model = "gpt-6.1-terra"
+        api = AsyncMock(return_value=_mock_completion(text="Hi"))
+        self.mock_client.responses.create = api
+        for effort in ("none", "low", "medium", "high", "xhigh", "max"):
+            with self.subTest(effort=effort):
+                self.model.parameters = OpenAIResponseModel.Parameters(
+                    reasoning_effort=effort,
+                    max_tokens=128_000,
+                )
+                await self.model([])
+                self.assertEqual(
+                    api.call_args.kwargs,
+                    {
+                        "model": "gpt-6.1-terra",
+                        "input": [],
+                        "stream": False,
+                        "max_output_tokens": 128_000,
+                        "reasoning": {"effort": effort},
+                    },
+                )
+
     async def test_thinking_enable_nullable(self) -> None:
         """False requests no reasoning, even with a stored effort value."""
         self.assertIsNone(OpenAIResponseModel.Parameters().thinking_enable)

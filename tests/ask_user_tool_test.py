@@ -109,6 +109,29 @@ class AskUserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(ValidationError):
             AskUserParams.model_validate(payload)
 
+    async def test_previews_are_rejected_for_multi_select(self) -> None:
+        """Both the field docs and the tool description state that a
+        preview is only supported for single-select questions."""
+        payload = {
+            "questions": [
+                {
+                    "question": "Which features do you want?",
+                    "header": "Features",
+                    "multi_select": True,
+                    "options": [
+                        {
+                            "label": "Auth",
+                            "description": "Login and sessions",
+                            "preview": "<auth mockup>",
+                        },
+                        {"label": "Billing", "description": "Invoices"},
+                    ],
+                },
+            ],
+        }
+        with self.assertRaises(ValidationError):
+            AskUserParams.model_validate(payload)
+
     async def test_runtime_rejects_duplicates_before_external_execution(
         self,
     ) -> None:
@@ -140,6 +163,26 @@ class AskUserTest(IsolatedAsyncioTestCase):
             (
                 {"questions": [question, {**question, "header": "Again"}]},
                 "question texts must be unique across the batch",
+            ),
+            (
+                {
+                    "questions": [
+                        {
+                            **question,
+                            "multi_select": True,
+                            "options": [
+                                {
+                                    "label": "A",
+                                    "description": "First",
+                                    "preview": "<mockup>",
+                                },
+                                {"label": "B", "description": "Second"},
+                            ],
+                        },
+                    ],
+                },
+                "option preview is only supported for single-select "
+                "questions (multi_select=false)",
             ),
         ]
         for invalid_payload, error in cases:

@@ -50,7 +50,8 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     ``mc:Fallback`` copy of a text box as a second occurrence of the same text.
     Each ``mc:AlternateContent`` containing a text box uses the first branch
     with readable Word text, retaining the fallback when its choices cannot
-    supply any text. Run-level tabs and soft line breaks are preserved in
+    supply any text. Every ``w:tab``, ``w:cr``, ``w:br`` and
+    ``w:noBreakHyphen`` run child is preserved as its rendered character in
     both the paragraph and its text boxes. Paragraph boundaries within each
     text box are retained.
 
@@ -67,19 +68,20 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     text_tag = qn("w:t")
     paragraph_tag = qn("w:p")
     text_box_tag = qn("w:txbxContent")
-    deleted_tag = qn("w:del")
+    removed_tags = {qn("w:del"), qn("w:moveFrom")}
     run_tag = qn("w:r")
     tab_tag = qn("w:tab")
     carriage_return_tag = qn("w:cr")
+    no_break_hyphen_tag = qn("w:noBreakHyphen")
     separator_tags = {tab_tag, carriage_return_tag, qn("w:br")}
     root = para._element
 
     def iter_text(element: Any) -> Iterator[Any]:
         """Visit text and inline separators in one readable branch."""
-        if element.tag == deleted_tag:
-            # Deleted runs must not contribute text or inline separators.
+        if element.tag in removed_tags:
+            # Deleted and moved-away runs do not belong to the current text.
             return
-        if element.tag == text_tag or (
+        if element.tag in (text_tag, no_break_hyphen_tag) or (
             element.tag in separator_tags
             and element.getparent().tag == run_tag
         ):
@@ -107,6 +109,10 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     for element in iter_text(root):
         if element.tag == text_tag:
             value = element.text or ""
+        elif element.tag == no_break_hyphen_tag:
+            # Word renders the non-breaking hyphen as "-", as does
+            # python-docx's ``Paragraph.text``.
+            value = "-"
         elif element.tag == tab_tag:
             value = "\t"
         elif element.tag == carriage_return_tag:
@@ -139,7 +145,7 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
         for paragraphs in text_boxes.values()
         for parts in paragraphs.values()
     ):
-        # Separator-only extraction must not hide w:noBreakHyphen, etc.
+        # Separator-only extraction must not hide other non-w:t content.
         own_text = para.text
     blocks = [
         own_text,
@@ -193,7 +199,7 @@ def _is_blank_paragraph(para: DocxParagraph) -> bool:
 
 def _extract_table_data(table: DocxTable) -> list[list[str]]:
     """Extract table data from a python-docx Table, preserving line breaks
-    within cells.
+    and run-level tabs within cells.
 
     Horizontal merges (``w:gridSpan``) are expanded with empty strings so
     that every row has the same number of columns. Omitted leading and
@@ -206,21 +212,53 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
     from docx.oxml.ns import qn
 
     text_tag = qn("w:t")
+    tab_tag = qn("w:tab")
+    run_tag = qn("w:r")
+    no_break_hyphen_tag = qn("w:noBreakHyphen")
+    deleted_tag = qn("w:del")
     break_tags = {qn("w:br"), qn("w:cr")}
+    move_source_tag = qn("w:moveFrom")
     table_data: list[list[str]] = []
-    for tr in table._element.findall(qn("w:tr")):
+    # Content controls (``w:sdt``) can wrap whole rows and cells; read
+    # through them as ``_body_elements`` does for the document body.
+    for tr in _body_elements(table._element):
+        if tr.tag != qn("w:tr"):
+            continue
         row_data: list[str] = []
         grid_before = tr.find(f"{qn('w:trPr')}/{qn('w:gridBefore')}")
         if grid_before is not None:
             row_data.extend([""] * int(grid_before.get(qn("w:val"), "0")))
-        for tc in tr.findall(qn("w:tc")):
+        for tc in _body_elements(tr):
+            if tc.tag != qn("w:tc"):
+                continue
             paragraphs: list[str] = []
-            # Include paragraphs of tables nested in this cell.
-            for p_elem in tc.xpath("./w:p | ./w:tbl//w:tc/w:p"):
+            # Include paragraphs of tables nested in this cell and those
+            # wrapped in content controls, but not text-box paragraphs.
+            for p_elem in tc.xpath(".//w:p[not(ancestor::w:p)]"):
                 text_parts: list[str] = []
                 for element in p_elem.iter():
+                    if any(
+                        ancestor.tag == move_source_tag
+                        for ancestor in element.iterancestors()
+                    ):
+                        continue
                     if element.tag == text_tag and element.text:
                         text_parts.append(element.text)
+                    elif (
+                        element.tag == tab_tag
+                        and element.getparent().tag == run_tag
+                        and not any(
+                            ancestor.tag == deleted_tag
+                            for ancestor in element.iterancestors()
+                        )
+                    ):
+                        text_parts.append("\t")
+                    elif element.tag == no_break_hyphen_tag:
+                        if not any(
+                            ancestor.tag == deleted_tag
+                            for ancestor in element.iterancestors()
+                        ):
+                            text_parts.append("-")
                     elif element.tag in break_tags:
                         text_parts.append("\n")
                 para_text = "".join(text_parts)
@@ -249,54 +287,98 @@ def _extract_image_blocks(
     filename: str,
 ) -> list[DataBlock]:
     """Extract image blocks from a paragraph (both modern ``w:drawing``
-    and legacy ``w:pict`` / VML formats)."""
+    and legacy ``w:pict`` / VML formats).
+
+    Each picture is read once. A picture inside a text box is not read
+    again through the text box's own ``w:drawing``. The branches of an
+    ``mc:AlternateContent`` are copies of the same content (Word saves a
+    text box both as DrawingML and as a VML fallback), so only the first
+    branch that holds a picture is read, the choices before the fallback.
+    DrawingML pictures come before VML ones.
+
+    Args:
+        para (`DocxParagraph`):
+            The python-docx paragraph to read.
+        filename (`str`):
+            The source filename, used as each block's name.
+
+    Returns:
+        `list[DataBlock]`:
+            One block per picture that could be read.
+    """
     from docx.oxml.ns import qn
 
+    drawing_tag = qn("w:drawing")
+    pict_tag = qn("w:pict")
+    blip_tag = qn("a:blip")
+    imagedata_tag = _VML_NS + "imagedata"
+
+    def iter_pictures(
+        element: Any,
+        in_drawing: bool = False,
+        in_pict: bool = False,
+    ) -> Iterator[Any]:
+        """Visit the pictures of one readable branch, each once."""
+        if element.tag == blip_tag:
+            if in_drawing and element.get(qn("r:embed")):
+                yield element
+        elif element.tag == imagedata_tag:
+            if in_pict and element.get(qn("r:id")):
+                yield element
+        elif element.tag == _MC_ALTERNATE_CONTENT:
+            for branch in element:
+                pictures = list(iter_pictures(branch, in_drawing, in_pict))
+                if pictures:
+                    yield from pictures
+                    break
+        else:
+            in_drawing = in_drawing or element.tag == drawing_tag
+            in_pict = in_pict or element.tag == pict_tag
+            for child in element:
+                yield from iter_pictures(child, in_drawing, in_pict)
+
+    pictures = list(iter_pictures(para._element))
     blocks: list[DataBlock] = []
 
-    for drawing in para._element.findall(".//" + qn("w:drawing")):
-        for blip in drawing.findall(".//" + qn("a:blip")):
-            embed = blip.get(qn("r:embed"))
-            if not embed:
-                continue
-            try:
-                part = para.part.related_parts[embed]
-                media_type = part.content_type or _guess_image_media_type(
-                    part.blob,
-                )
-                blocks.append(
-                    DataBlock(
-                        source=Base64Source(
-                            media_type=media_type,
-                            data=base64.b64encode(part.blob).decode("utf-8"),
-                        ),
-                        name=filename,
+    for blip in pictures:
+        if blip.tag != blip_tag:
+            continue
+        try:
+            part = para.part.related_parts[blip.get(qn("r:embed"))]
+            media_type = part.content_type or _guess_image_media_type(
+                part.blob,
+            )
+            blocks.append(
+                DataBlock(
+                    source=Base64Source(
+                        media_type=media_type,
+                        data=base64.b64encode(part.blob).decode("utf-8"),
                     ),
-                )
-            except Exception as e:
-                logger.warning("Failed to extract image: %s", e)
+                    name=filename,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to extract image: %s", e)
 
-    for pict in para._element.findall(".//" + qn("w:pict")):
-        for imagedata in pict.findall(".//" + _VML_NS + "imagedata"):
-            rel_id = imagedata.get(qn("r:id"))
-            if not rel_id:
-                continue
-            try:
-                part = para.part.related_parts[rel_id]
-                media_type = part.content_type or _guess_image_media_type(
-                    part.blob,
-                )
-                blocks.append(
-                    DataBlock(
-                        source=Base64Source(
-                            media_type=media_type,
-                            data=base64.b64encode(part.blob).decode("utf-8"),
-                        ),
-                        name=filename,
+    for imagedata in pictures:
+        if imagedata.tag != imagedata_tag:
+            continue
+        try:
+            part = para.part.related_parts[imagedata.get(qn("r:id"))]
+            media_type = part.content_type or _guess_image_media_type(
+                part.blob,
+            )
+            blocks.append(
+                DataBlock(
+                    source=Base64Source(
+                        media_type=media_type,
+                        data=base64.b64encode(part.blob).decode("utf-8"),
                     ),
-                )
-            except Exception as e:
-                logger.warning("Failed to extract VML image: %s", e)
+                    name=filename,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to extract VML image: %s", e)
 
     return blocks
 

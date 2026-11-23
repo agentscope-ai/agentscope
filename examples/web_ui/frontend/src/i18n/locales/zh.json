@@ -240,7 +240,13 @@
 			"setup": "会话准备失败 —— 请检查该智能体的模型、工具和知识库配置。",
 			"unknown": "回复因未知错误失败。"
 		},
-		"copy": "复制"
+		"copy": "复制",
+		"downloadFile": "下载文件",
+		"wrapLines": "自动换行",
+		"enableWrap": "开启自动换行",
+		"disableWrap": "关闭自动换行",
+		"downloadMarkdown": "下载 Markdown 文件",
+		"copyMarkdown": "复制 Markdown 原文"
 	},
 	"chat": {
 		"ttsFailed": "语音生成失败，文字回复继续。",
@@ -1060,6 +1066,7 @@
 		"voicePlaceholderPreset": "预设音色名",
 		"voicePlaceholderClone": "预设音色名或克隆音色 ID",
 		"cloneVoice": "声音克隆",
+		"minimaxCloneHint": "上传 10 秒至 5 分钟的 MP3、M4A 或 WAV 录音，最大 20 MiB。MiniMax 账户需完成个人或企业认证。复刻音色须在 7 天内用于语音合成，否则会失效；仅保存音色不会激活。",
 		"enrollmentModel": "音色复刻模型（自动匹配）",
 		"enrollmentModelHint": "复刻模型用于创建音色，合成模型用于生成语音。复刻模型根据所选合成模型自动匹配。",
 		"cloning": "克隆中...",

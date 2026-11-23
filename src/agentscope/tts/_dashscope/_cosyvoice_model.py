@@ -89,7 +89,8 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                 Minimum word count before the first realtime text chunk is
                 sent.
             max_retries (`int`, defaults to `3`):
-                Max retry attempts on realtime synthesis failure.
+                Maximum number of retries after the initial realtime
+                synthesis attempt. The default allows four attempts in total.
             retry_delay (`float`, defaults to `5.0`):
                 Initial retry delay in seconds (exponential backoff).
         """
@@ -110,6 +111,10 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         self._connected = False
         self._cold_start_buffer: str = ""
         self._cold_start_done: bool = False
+        # Set by ``synthesize()``: it completes the SDK synthesizer, which
+        # cannot be started again, so the next utterance has to create a new
+        # one first.
+        self._needs_reconnect = False
         self._accumulated_text: str = ""
 
     @classmethod
@@ -224,6 +229,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             callback=True,
         )
         self._connected = True
+        self._needs_reconnect = False
 
     async def close(self) -> None:
         """Close the realtime SpeechSynthesizer."""
@@ -265,6 +271,9 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
 
         if not text:
             return TTSResponse(content=None)
+
+        if self._needs_reconnect:
+            await self._reconnect()
 
         previous_text = self._accumulated_text
         self._accumulated_text += text
@@ -324,6 +333,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
 
         full_text = self._accumulated_text
         delay = self.retry_delay
+        max_attempts = max(1, self.max_retries + 1)
 
         try:
             if not full_text and not unsent:
@@ -338,8 +348,15 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                     return _empty_gen()
                 return TTSResponse(content=None)
 
-            for attempt in range(self.max_retries):
+            if self._needs_reconnect:
+                await self._reconnect()
+
+            for attempt in range(max_attempts):
                 try:
+                    # The synthesizer cannot be reused after
+                    # ``streaming_complete()``, nor after a failed attempt.
+                    self._needs_reconnect = True
+
                     if unsent:
                         self._synthesizer.streaming_call(unsent)
 
@@ -355,7 +372,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                             "CosyVoice TTS: timed out waiting for synthesis "
                             "completion (30s)",
                         )
-                        if attempt < self.max_retries - 1:
+                        if attempt < max_attempts - 1:
                             await asyncio.sleep(delay)
                             await self._reconnect()
                             unsent = full_text
@@ -366,12 +383,12 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                         )
 
                     if full_text and not self._callback.has_audio_data():
-                        if attempt < self.max_retries - 1:
+                        if attempt < max_attempts - 1:
                             logger.warning(
                                 "CosyVoice TTS: no audio received, retrying "
                                 "(%d/%d) in %.1fs...",
                                 attempt + 1,
-                                self.max_retries,
+                                max_attempts,
                                 delay,
                             )
                             await asyncio.sleep(delay)
@@ -381,19 +398,19 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                             continue
                         raise RuntimeError(
                             f"CosyVoice TTS synthesis failed: no audio after "
-                            f"{self.max_retries} attempts",
+                            f"{max_attempts} attempts",
                         )
                     break
 
                 except RuntimeError:
                     raise
                 except Exception as e:
-                    if attempt < self.max_retries - 1:
+                    if attempt < max_attempts - 1:
                         logger.warning(
                             "CosyVoice TTS error, retrying (%d/%d) in "
                             "%.1fs: %s",
                             attempt + 1,
-                            self.max_retries,
+                            max_attempts,
                             delay,
                             e,
                         )

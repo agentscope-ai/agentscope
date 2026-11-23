@@ -29,6 +29,7 @@ from typing import AsyncGenerator, TYPE_CHECKING, Literal
 
 from .._logging import logger
 from ..event import CustomEvent
+from ..middleware import SteeringAcknowledgementUncertainError
 from .message_bus._keys import MessageBusKeys
 from ._chat_input_store import (
     cleanup_session,
@@ -304,7 +305,7 @@ async def nudge_chat_inputs(
     session_id: str,
     agent_id: str,
 ) -> None:
-    """Wake pending input after releasing a run lock; recovery is fallback."""
+    """Wake pending input after releasing locks; recovery is fallback."""
     try:
         pending = await bus.queue_read(
             MessageBusKeys.chat_inputs(session_id),
@@ -654,6 +655,8 @@ async def acknowledge_steering_chat_inputs(
     Raises:
         `LookupError`:
             Any requested item is no longer reserved for this reply.
+        `SteeringAcknowledgementUncertainError`:
+            Queue removal failed and its commit outcome cannot be resolved.
     """
     requested_ids = set(item_ids)
     async with bus.acquire_lock(
@@ -680,10 +683,50 @@ async def acknowledge_steering_chat_inputs(
                 "One or more steering messages are no longer pending.",
             )
         remaining = [payload for payload in payloads if payload not in removed]
-        await bus.queue_replace(
-            MessageBusKeys.chat_inputs(session_id),
-            [queue_entry(payload) for payload in remaining],
-        )
+        matches = []
+        for payload in removed:
+            expected = {
+                "id": payload["id"],
+                "state": "steering",
+                "target_reply_id": reply_id,
+            }
+            if "input_ref" in payload:
+                expected["input_ref"] = payload["input_ref"]
+            matches.append(expected)
+        try:
+            committed = await bus.queue_remove_if(
+                MessageBusKeys.chat_inputs(session_id),
+                matches,
+            )
+        except Exception as exc:
+            # A response failure does not imply that the write failed. Read
+            # raw entries under the same mutation lock: missing payload
+            # references must not look like successfully removed entries.
+            try:
+                entries = await bus.queue_read(
+                    MessageBusKeys.chat_inputs(session_id),
+                    max_count=MessageBusKeys.CHAT_INPUT_MAX_LEN,
+                )
+            except Exception as verification_error:
+                raise SteeringAcknowledgementUncertainError(
+                    "Could not verify steering acknowledgement.",
+                ) from verification_error
+            pending = [
+                payload
+                for _, payload in entries
+                if payload.get("id") in requested_ids
+            ]
+            # A read on another connection can overtake the outstanding
+            # write. Even unchanged reservations cannot prove rejection.
+            if pending:
+                raise SteeringAcknowledgementUncertainError(
+                    "Steering removal may still commit after readback.",
+                ) from exc
+        else:
+            if not committed:
+                raise SteeringAcknowledgementUncertainError(
+                    "Steering reservations no longer match the inputs.",
+                )
         for payload in removed:
             await discard_input(bus, payload)
         await _notify_chat_queue_changed(bus, session_id, remaining)
@@ -854,7 +897,10 @@ async def update_chat_input(
             [queue_entry(payload) for payload in payloads],
         )
         await discard_input(bus, previous)
-        return await _notify_chat_queue_changed(bus, session_id, payloads)
+        items = await _notify_chat_queue_changed(bus, session_id, payloads)
+
+    await nudge_chat_inputs(bus, user_id, session_id, agent_id)
+    return items
 
 
 async def delete_chat_input(
@@ -907,7 +953,11 @@ async def delete_chat_input(
             [queue_entry(payload) for payload in payloads],
         )
         await discard_input(bus, item)
-        return await _notify_chat_queue_changed(bus, session_id, payloads)
+        items = await _notify_chat_queue_changed(bus, session_id, payloads)
+
+    if items:
+        await nudge_chat_inputs(bus, user_id, session_id, agent_id)
+    return items
 
 
 async def reorder_chat_inputs(

@@ -2,9 +2,11 @@
 """Gemini TTS model implementation using the ``generateContent`` API."""
 import base64
 import io
+import os
 import wave
 from contextlib import aclosing, asynccontextmanager
 from datetime import datetime
+from email.message import Message
 from typing import (
     Any,
     AsyncGenerator,
@@ -39,19 +41,19 @@ _STRUCTURED_SPEECH_MODELS = {
 
 def _audio_encoding(mime_type: str | None) -> str:
     """Validate the WAV or default PCM format used by this adapter."""
-    encoding, *parameters = (mime_type or "audio/l16").lower().split(";")
-    encoding = encoding.strip()
+    content_type = Message()
+    content_type["Content-Type"] = mime_type or "audio/l16"
+    encoding = content_type.get_content_type()
     if encoding == "audio/wav":
         return encoding
     if encoding == "audio/l16":
-        options = {}
-        for parameter in parameters:
-            key, _, value = parameter.strip().partition("=")
-            options[key] = value
+        options = dict((content_type.get_params() or [])[1:])
+        codec = options.get("codec", "pcm")
         if (
             options.get("rate", "24000") == "24000"
             and options.get("channels", "1") == "1"
-            and options.get("codec", "pcm") == "pcm"
+            and isinstance(codec, str)
+            and codec.lower() == "pcm"
         ):
             return encoding
     raise ValueError(f"Unsupported Gemini TTS audio format: {mime_type!r}")
@@ -105,7 +107,7 @@ class GeminiTTSModel(TTSModelBase):
     def __init__(
         self,
         credential: GeminiCredential,
-        model: str = "gemini-2.5-flash-preview-tts",
+        model: str = "gemini-3.8-flash-tts",
         parameters: "GeminiTTSModel.Parameters | None" = None,
         stream: bool = True,
         client_kwargs: dict[str, Any] | None = None,
@@ -120,11 +122,12 @@ class GeminiTTSModel(TTSModelBase):
             credential (`GeminiCredential`):
                 The Google Gemini credential used to authenticate the API
                 call.
-            model (`str`, defaults to ``"gemini-2.5-flash-preview-tts"``):
+            model (`str`, defaults to ``"gemini-3.8-flash-tts"``):
                 The TTS model name. Supported models include
                 ``gemini-3.8-flash-tts``, ``gemini-3.8-flash-lite-tts``,
                 ``gemini-2.5-flash-preview-tts``, and
-                ``gemini-2.5-pro-preview-tts``.
+                ``gemini-2.5-pro-preview-tts``. The two ``2.5`` preview
+                models are scheduled for shutdown no earlier than 2026-12-18.
             parameters (`GeminiTTSModel.Parameters | None`, defaults to \
             `None`):
                 The TTS parameters (voice, etc.). When ``None``, the default
@@ -139,7 +142,8 @@ class GeminiTTSModel(TTSModelBase):
                 Extra keyword arguments forwarded to ``google.genai.Client``
                 (e.g. ``vertexai``, ``project``, ``location``,
                 ``credentials``, ``http_options``). Developer API requests
-                default to ``v1beta`` unless an API version is supplied.
+                default to ``v1beta`` unless an API version is set in the
+                request, client, or environment.
         """
         super().__init__(
             credential=credential,
@@ -217,7 +221,11 @@ class GeminiTTSModel(TTSModelBase):
                         if isinstance(http_options, dict)
                         else http_options.api_version
                     )
-                    if not client.vertexai and not api_version:
+                    if (
+                        not client.vertexai
+                        and not api_version
+                        and not os.getenv("GOOGLE_GENAI_API_VERSION")
+                    ):
                         options = config.get("http_options") or {}
                         if isinstance(options, dict):
                             config["http_options"] = {

@@ -186,6 +186,22 @@ class EmbeddingModelBaseBatchingTest(IsolatedAsyncioTestCase):
                     [[0.0], [1.0], [2.0]],
                 )
 
+    async def test_batches_keyword_is_forwarded_to_provider(self) -> None:
+        """Internal batch dispatch must not consume provider keywords."""
+        model = _RecordingEmbedding(batch_size=1)
+        response = _resp("api", 1.0)
+
+        with patch.object(
+            model,
+            "_call_api",
+            new_callable=AsyncMock,
+            return_value=response,
+        ) as request:
+            result = await model(["1"], batches="provider-option")
+
+        request.assert_awaited_once_with(["1"], batches="provider-option")
+        self.assertIs(result, response)
+
     async def test_empty_inputs_skip_provider_call(self) -> None:
         """An empty request returns empty vectors and zero usage."""
         model = _RecordingEmbedding(batch_size=2)

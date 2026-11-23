@@ -26,3 +26,19 @@ class DictMixin(dict):
             return dict.__getitem__(self, key)
         except KeyError as error:
             raise AttributeError(key) from error
+
+    def __delattr__(self, key: str) -> None:
+        """Delete a dictionary item through attribute-style access.
+
+        Args:
+            key (`str`):
+                The attribute name to remove.
+
+        Raises:
+            `AttributeError`:
+                If the dictionary does not contain ``key``.
+        """
+        try:
+            dict.__delitem__(self, key)
+        except KeyError as error:
+            raise AttributeError(key) from error
