@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for chat, TTS, and realtime model cards."""
+"""Tests for model cards and their parameter schemas."""
 import os
 import tempfile
 from datetime import date
@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, ValidationError
 from agentscope.app._router._schema._tts_model import ListTTSModelsResponse
 from agentscope.asr import ASRModelCard
 from agentscope.credential import OpenAICredential
+from agentscope.embedding import EmbeddingModelCard
 from agentscope.model import (
     AnthropicChatModel,
     ModelCard,
@@ -333,6 +334,52 @@ class ModelCardTest(TestCase):
                     ],
                     [("custom-model", "openai_response", label)],
                 )
+
+
+class EmbeddingModelCardTest(TestCase):
+    """Verify embedding parameter filtering."""
+
+    def test_overrides_remove_only_matching_required_parameters(self) -> None:
+        """Keep visible required fields and preserve the raw overrides."""
+
+        class Parameters(BaseModel):
+            """Embedding parameters required by the provider."""
+
+            internal: str
+            batch_size: int
+
+        for override in (None, {"hidden": True}):
+            with self.subTest(override=override):
+                overrides = {"internal": override}
+                config = {
+                    "name": "custom",
+                    "label": "Custom",
+                    "dimensions": 8,
+                    "parameter_overrides": overrides,
+                }
+                with patch(
+                    "builtins.open",
+                    mock_open(read_data=yaml.safe_dump(config)),
+                ):
+                    card = EmbeddingModelCard.from_yaml(
+                        "model.yaml",
+                        Parameters,
+                    )
+
+                self.assertEqual(
+                    card.parameter_schema,
+                    {
+                        "type": "object",
+                        "properties": {
+                            "batch_size": {
+                                "title": "Batch Size",
+                                "type": "integer",
+                            },
+                        },
+                        "required": ["batch_size"],
+                    },
+                )
+                self.assertEqual(card.parameter_overrides, overrides)
 
 
 class RealtimeModelCardTest(TestCase):

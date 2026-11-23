@@ -96,7 +96,7 @@ class EmbeddingModelCard(BaseModel):
     Empty ``properties`` means nothing to configure (e.g. fixed
     dimensions)."""
 
-    parameter_overrides: dict[str, dict] = Field(
+    parameter_overrides: dict[str, dict | None] = Field(
         default_factory=dict,
         description="Raw parameter overrides from the YAML file.",
     )
