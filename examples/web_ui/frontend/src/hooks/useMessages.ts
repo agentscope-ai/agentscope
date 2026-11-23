@@ -18,7 +18,7 @@ import { toast } from 'sonner';
 
 import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
-import { ApiError, type ApiScope } from '@/api/client';
+import { ApiError } from '@/api/client';
 import { useAudioManager } from '@/context/AudioContext';
 import {
 	getQueueMessages,
@@ -31,7 +31,7 @@ import { ASK_USER_TOOL_NAME, formatAskUserOutput, parseAskUserResult } from '@/l
 import type { ClientExternalToolResult } from '@/lib/client-external-tools';
 import { appendMessageEvent, audioDeltaUrl } from '@/lib/message-events';
 import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
-import type { VoicePlayback } from '@/lib/pipelineVoiceSession';
+import type { VoicePlayback, VoiceSubmissionObserver } from '@/lib/pipelineVoiceSession';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -755,19 +755,7 @@ export function useMessages(
 	const send = useCallback(
 		async (
 			content: ContentBlock[],
-			observer?: {
-				scope: ApiScope;
-				submissionId?: string;
-				signal?: AbortSignal;
-				isCurrent?: () => boolean;
-				keepPendingOnPostError?: () => boolean;
-				submitted: (
-					id: string,
-					clearPending: (beforeClaim: boolean) => void,
-					acceptedQueue: (id: string) => void,
-				) => void;
-				accepted: (id: string | null) => void;
-			},
+			observer?: VoiceSubmissionObserver,
 			mode: 'chat' | 'pipeline_voice' = 'chat',
 		) => {
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;

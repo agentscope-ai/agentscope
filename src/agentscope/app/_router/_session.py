@@ -227,6 +227,44 @@ async def _ensure_knowledge_bases_exist(
         )
 
 
+async def _validate_session_config(
+    body: CreateSessionRequest | UpdateSessionRequest,
+    user_id: str,
+    access: ResourceAccessService,
+    storage: StorageBase,
+) -> None:
+    """Validate the model and knowledge base references in a request."""
+    await _ensure_credential_exists(access, user_id, body.chat_model_config)
+    await _ensure_credential_exists(
+        access,
+        user_id,
+        body.fallback_chat_model_config,
+    )
+    await validate_tts_model_config(
+        user_id,
+        body.tts_model_config,
+        access,
+        storage,
+    )
+    await _ensure_credential_exists(access, user_id, body.asr_model_config)
+    await _validate_pipeline_voice(
+        body.pipeline_voice_config,
+        user_id,
+        access,
+        storage,
+    )
+    await _ensure_credential_exists(
+        access,
+        user_id,
+        body.realtime_model_config,
+    )
+    await _ensure_knowledge_bases_exist(
+        access,
+        user_id,
+        body.knowledge_config,
+    )
+
+
 @session_router.get(
     "/",
     response_model=ListSessionsResponse,
@@ -365,35 +403,7 @@ async def create_session(
     # Agent must be visible to the caller (own or shared).
     await access.resolve_agent(user_id, body.agent_id)
 
-    await _ensure_credential_exists(access, user_id, body.chat_model_config)
-    await _ensure_credential_exists(
-        access,
-        user_id,
-        body.fallback_chat_model_config,
-    )
-    await validate_tts_model_config(
-        user_id,
-        body.tts_model_config,
-        access,
-        storage,
-    )
-    await _ensure_credential_exists(access, user_id, body.asr_model_config)
-    await _validate_pipeline_voice(
-        body.pipeline_voice_config,
-        user_id,
-        access,
-        storage,
-    )
-    await _ensure_credential_exists(
-        access,
-        user_id,
-        body.realtime_model_config,
-    )
-    await _ensure_knowledge_bases_exist(
-        access,
-        user_id,
-        body.knowledge_config,
-    )
+    await _validate_session_config(body, user_id, access, storage)
 
     # Resolve the workspace binding for this session. Explicit
     # ``body.workspace_id`` always wins (used by team invite / borrow
@@ -606,35 +616,7 @@ async def update_session(
             ),
         )
 
-    await _ensure_credential_exists(access, user_id, body.chat_model_config)
-    await _ensure_credential_exists(
-        access,
-        user_id,
-        body.fallback_chat_model_config,
-    )
-    await validate_tts_model_config(
-        user_id,
-        body.tts_model_config,
-        access,
-        storage,
-    )
-    await _ensure_credential_exists(access, user_id, body.asr_model_config)
-    await _validate_pipeline_voice(
-        body.pipeline_voice_config,
-        user_id,
-        access,
-        storage,
-    )
-    await _ensure_credential_exists(
-        access,
-        user_id,
-        body.realtime_model_config,
-    )
-    await _ensure_knowledge_bases_exist(
-        access,
-        user_id,
-        body.knowledge_config,
-    )
+    await _validate_session_config(body, user_id, access, storage)
 
     # ``None`` leaves the stored state untouched (see
     # ``StorageBase.upsert_session``). ``permission_mode`` is the only

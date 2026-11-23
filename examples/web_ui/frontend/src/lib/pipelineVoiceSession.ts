@@ -28,27 +28,26 @@ export type PipelineVoiceState =
 
 export type VoicePlayback = boolean | Promise<void> | { autoplay: Promise<boolean> };
 
+export interface VoiceSubmissionObserver {
+	scope: ApiScope;
+	submissionId: string;
+	signal: AbortSignal;
+	isCurrent: () => boolean;
+	keepPendingOnPostError: () => boolean;
+	submitted: (
+		id: string,
+		clearPending: (beforeClaim: boolean) => void,
+		acceptedQueue: (id: string) => void,
+	) => void;
+	accepted: (id: string | null) => void;
+}
+
 export interface PipelineVoiceOptions {
 	scope: ApiScope;
 	asr: ASRModelConfig;
 	realtimeASR: boolean;
 	suppressedReplies: Set<string>;
-	send: (
-		blocks: ContentBlock[],
-		observer: {
-			scope: ApiScope;
-			submissionId: string;
-			signal: AbortSignal;
-			isCurrent: () => boolean;
-			keepPendingOnPostError: () => boolean;
-			submitted: (
-				id: string,
-				clearPending: (beforeClaim: boolean) => void,
-				acceptedQueue: (id: string) => void,
-			) => void;
-			accepted: (id: string | null) => void;
-		},
-	) => Promise<void>;
+	send: (blocks: ContentBlock[], observer: VoiceSubmissionObserver) => Promise<void>;
 	createSubmission: (signal: AbortSignal) => Promise<{ submission_id: string }>;
 	cancelSubmission: (
 		id: string,
@@ -436,7 +435,6 @@ export class PipelineVoiceSession {
 			if (!this.stopped && this.inputStarted && !this.inputFinished && !this.replyId) {
 				this.replyId = event.reply_id;
 				this.options.suppressedReplies.add(event.reply_id);
-				if (this.cancellationPending) this.continueCancellation();
 			} else if (!this.stopped && event.reply_id !== this.replyId) {
 				this.fail(new Error('Another reply started. Restart voice mode when it finishes.'));
 			}

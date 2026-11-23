@@ -35,7 +35,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { type CredentialWithASRModels, useAvailableASRModels } from '@/hooks/useAvailableASRModels';
+import {
+	type CredentialWithASRModels,
+	findASRModelCard,
+	useAvailableASRModels,
+} from '@/hooks/useAvailableASRModels';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useAvailableTTSModels } from '@/hooks/useAvailableTTSModels';
 import { useVoiceEngines } from '@/hooks/useVoiceEngines';
@@ -499,16 +503,7 @@ export function TTSModelMenu({
 								onCheckedChange={(checked) => {
 									if (!checked || !binding) return;
 
-									const params: Record<string, unknown> = {};
-									if (binding.schema?.properties) {
-										for (const [k, p] of Object.entries(
-											binding.schema.properties,
-										)) {
-											if (p.default !== undefined) {
-												params[k] = p.default;
-											}
-										}
-									}
+									const params = extractDefaults(binding.schema);
 									if (vp.data.voice) {
 										params.voice = vp.data.voice;
 									}
@@ -786,14 +781,7 @@ export function ASRModelMenu({
 		.map(([type, items]) => [type, items.filter((item) => item.models.length > 0)] as const)
 		.filter(([, items]) => items.length > 0);
 
-	let selectedCard: ASRModelCard | undefined;
-	if (selectedASRModel) {
-		for (const item of groups[selectedASRModel.type] ?? []) {
-			if (item.credential.id !== selectedASRModel.credential_id) continue;
-			selectedCard = item.models.find((model) => model.name === selectedASRModel.model);
-			if (selectedCard) break;
-		}
-	}
+	const selectedCard = findASRModelCard(groups, selectedASRModel);
 
 	const renderModels = (type: string, credential: CredentialView, models: ASRModelCard[]) =>
 		models.map((model) => {

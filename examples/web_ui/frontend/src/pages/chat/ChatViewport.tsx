@@ -72,7 +72,7 @@ import {
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useAvailableASRModels } from '@/hooks/useAvailableASRModels';
+import { findASRModelCard, useAvailableASRModels } from '@/hooks/useAvailableASRModels';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useAvailableRealtimeModels } from '@/hooks/useAvailableRealtimeModels';
 import { useBackgroundTasks } from '@/hooks/useBackgroundTasks';
@@ -732,27 +732,18 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	const realtimeUsesSessionChat =
 		selectedRealtimeModelCard?.delegation_backend === 'session_chat';
 
-	const selectedASRModelCard = useMemo(() => {
-		if (!selectedASRModel) return null;
-		for (const item of asrGroups[selectedASRModel.type] ?? []) {
-			if (item.credential.id !== selectedASRModel.credential_id) continue;
-			const card = item.models.find((model) => model.name === selectedASRModel.model);
-			if (card) return card;
-		}
-		return null;
-	}, [asrGroups, selectedASRModel]);
+	const selectedASRModelCard = useMemo(
+		() => findASRModelCard(asrGroups, selectedASRModel),
+		[asrGroups, selectedASRModel],
+	);
 
 	const pipelineASR = pipelineConfig?.asr_model_config ?? null;
 	const pipelineTTS = pipelineConfig?.tts_model_config ?? null;
 	const pipelineLLM = pipelineConfig?.chat_model_config ?? selectedModel;
-	const pipelineASRCard = useMemo(() => {
-		if (!pipelineASR) return null;
-		return (
-			(asrGroups[pipelineASR.type] ?? [])
-				.find((item) => item.credential.id === pipelineASR.credential_id)
-				?.models.find((model) => model.name === pipelineASR.model) ?? null
-		);
-	}, [asrGroups, pipelineASR]);
+	const pipelineASRCard = useMemo(
+		() => findASRModelCard(asrGroups, pipelineASR),
+		[asrGroups, pipelineASR],
+	);
 	const pipelineConfigured =
 		!!pipelineLLM &&
 		!!pipelineTTS &&
