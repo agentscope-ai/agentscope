@@ -23,6 +23,7 @@ from agentscope.rag import (
     WordParser,
     ExcelParser,
 )
+from agentscope.rag._parser._utils import _guess_image_media_type
 
 
 # Smallest valid PNG ever — a single transparent pixel.  Used wherever
@@ -4052,4 +4053,72 @@ class WordParserContentControlTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             [(s.content.text, s.source, s.metadata) for s in wrapped],
             [(s.content.text, s.source, s.metadata) for s in plain],
+        )
+
+
+class GuessImageMediaTypeTest(IsolatedAsyncioTestCase):
+    """Sniffing must not mislabel TIFF/AVIF bytes as JPEG.
+
+    This only fixes the fallback guess used when an embedded image has
+    no content type (e.g. an Office image part); it does not add TIFF
+    or AVIF as supported upload types.
+    """
+
+    def test_tiff_and_avif_signatures(self) -> None:
+        """TIFF (both byte orders) and AVIF get their own media type."""
+        self.assertEqual(
+            _guess_image_media_type(b"II*\x00" + b"\x00" * 10),
+            "image/tiff",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"MM\x00*" + b"\x00" * 10),
+            "image/tiff",
+        )
+        self.assertEqual(
+            _guess_image_media_type(
+                b"\x00\x00\x00\x18ftypavif" + b"\x00" * 10,
+            ),
+            "image/avif",
+        )
+
+    def test_avif_file_type_brands(self) -> None:
+        """Recognize AVIF only in brand fields inside the file type box."""
+        minor_version = bytes(4)
+        ftyp20 = (20).to_bytes(4, "big") + b"ftyp"
+        ftyp24 = (24).to_bytes(4, "big") + b"ftyp"
+        extended = (1).to_bytes(4, "big") + b"ftyp" + (28).to_bytes(8, "big")
+        next_box = (12).to_bytes(4, "big") + b"mdatavif"
+        cases = [
+            (ftyp20 + b"avis" + minor_version + b"msf1", "image/avif"),
+            (ftyp24 + b"mif1" + minor_version + b"miafavif", "image/avif"),
+            (ftyp20 + b"msf1" + minor_version + b"avis", "image/avif"),
+            (extended + b"mif1" + minor_version + b"avif", "image/avif"),
+            (bytes(4) + b"ftypmif1" + minor_version + b"avif", "image/avif"),
+            (ftyp24 + b"mif1avifxavisxxx", "image/jpeg"),
+            (
+                ftyp20 + b"mif1" + minor_version + b"miaf" + next_box,
+                "image/jpeg",
+            ),
+        ]
+        for data, expected in cases:
+            with self.subTest(data=data):
+                self.assertEqual(_guess_image_media_type(data), expected)
+
+    def test_known_signatures_and_fallback_are_unchanged(self) -> None:
+        """PNG/JPEG/WebP still sniff correctly; unknown bytes stay JPEG."""
+        self.assertEqual(
+            _guess_image_media_type(b"\x89PNG\r\n\x1a\n" + b"\x00" * 4),
+            "image/png",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"\xff\xd8\xff" + b"\x00" * 4),
+            "image/jpeg",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"RIFFxxxxWEBP" + b"\x00" * 4),
+            "image/webp",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"not an image at all"),
+            "image/jpeg",
         )
