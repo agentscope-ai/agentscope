@@ -251,6 +251,35 @@ class XAIParseTest(unittest.TestCase):
             me.ResponseCreatedEvent(item_id="resp_002"),
         )
 
+    def test_failed_response_is_an_error(self) -> None:
+        """A failed ``response.done`` is an error, not a finished reply."""
+        event = self.model._parse(
+            {
+                "type": "response.done",
+                "response": {
+                    "id": "resp_001",
+                    "status": "failed",
+                    "status_details": {
+                        "error": {"code": "server_error", "message": "boom"},
+                    },
+                },
+            },
+        )
+        self.assertEqual(
+            event,
+            me.ModelErrorEvent(code="server_error", message="boom"),
+        )
+        self.assertEqual(self.model._response_id, "")
+
+    def test_failed_response_without_details_uses_a_generic_code(
+        self,
+    ) -> None:
+        """A failure without an error payload still ends as an error."""
+        event = self.model._parse(
+            {"type": "response.done", "response": {"status": "failed"}},
+        )
+        self.assertEqual(event, me.ModelErrorEvent(code="response_failed"))
+
     def test_tool_call_done_frame_is_authoritative(self) -> None:
         """Accumulated deltas are only a fallback for a done frame that
         omits ``arguments``."""

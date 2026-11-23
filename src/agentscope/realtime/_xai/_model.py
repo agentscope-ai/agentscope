@@ -297,11 +297,21 @@ class XAIRealtimeModel(RealtimeModelBase):
             case "response.done":
                 response = data.get("response", {})
                 usage = response.get("usage") or {}
-                event = me.ResponseDoneEvent(
+                event: me.ModelEvent = me.ResponseDoneEvent(
                     item_id=response.get("id") or self._response_id,
                     input_tokens=usage.get("input_tokens", 0),
                     output_tokens=usage.get("output_tokens", 0),
                 )
+                # ``cancelled`` and ``incomplete`` still delivered a reply;
+                # only ``failed`` is an error.
+                if response.get("status") == "failed":
+                    err = (response.get("status_details") or {}).get(
+                        "error",
+                    ) or {}
+                    event = me.ModelErrorEvent(
+                        code=err.get("code") or "response_failed",
+                        message=err.get("message", ""),
+                    )
                 self._response_id = ""
                 return event
 
