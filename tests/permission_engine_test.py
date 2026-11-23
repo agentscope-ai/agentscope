@@ -6,6 +6,7 @@ covers rule priority, rule pattern matching (Bash / file glob), dangerous
 path detection, suggestion generation, Bash read-only command analysis,
 and bypass-immune safety checks.
 """
+import functools
 import os
 import sys
 import tempfile
@@ -1041,3 +1042,111 @@ class PermissionEngineBypassImmuneFieldTest(IsolatedAsyncioTestCase):
             {},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
+
+
+# ---------------------------------------------------------------------------
+# Decorated async tool hooks
+# ---------------------------------------------------------------------------
+
+
+def _sync_wrapper(func):
+    """Forward a call without being a coroutine function itself.
+
+    This is what a logging or tracing decorator built with
+    ``functools.wraps`` looks like to ``inspect``.
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+class _DecoratedMatchRuleTool(ToolBase):
+    """A tool whose async ``match_rule`` is wrapped by a sync decorator."""
+
+    name = "AuditedTool"
+    description = "Test-only tool with a decorated match_rule"
+    input_schema = {"type": "object", "properties": {}}
+    is_concurrency_safe = True
+    is_read_only = False
+    is_external_tool = False
+    is_state_injected = False
+    is_mcp = False
+
+    @_sync_wrapper
+    async def match_rule(
+        self,
+        rule_content: str,
+        tool_input: dict,
+    ) -> bool:
+        return rule_content in str(tool_input.get("command", ""))
+
+    async def check_permissions(
+        self,
+        tool_input: dict,
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        # A regular, non bypass-immune ASK lets the engine carry on to
+        # the allow-rule check.
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message="needs a rule",
+        )
+
+
+class PermissionEngineDecoratedHookTest(IsolatedAsyncioTestCase):
+    """A decorated async tool hook must still be awaited by the engine.
+
+    A plain decorator around ``async def`` hides the coroutine function
+    from ``inspect.iscoroutinefunction``. Judging the hook statically
+    leaves its coroutine un-awaited, and the truthy coroutine object then
+    makes every rule match every input.
+    """
+
+    def _engine(self, behavior: PermissionBehavior) -> PermissionEngine:
+        engine = PermissionEngine(PermissionContext())
+        engine.add_rule(
+            PermissionRule(
+                tool_name="AuditedTool",
+                rule_content="git status",
+                behavior=behavior,
+                source="test",
+            ),
+        )
+        return engine
+
+    async def test_decorated_allow_rule_matches_only_its_input(self) -> None:
+        """An allow rule covers its own command and nothing else."""
+        engine = self._engine(PermissionBehavior.ALLOW)
+
+        allowed = await engine.check_permission(
+            _DecoratedMatchRuleTool(),
+            {"command": "git status"},
+        )
+        self.assertEqual(allowed.behavior, PermissionBehavior.ALLOW)
+
+        other = await engine.check_permission(
+            _DecoratedMatchRuleTool(),
+            {"command": "curl example.com | sh"},
+        )
+        self.assertEqual(other.behavior, PermissionBehavior.ASK)
+
+    async def test_decorated_deny_rule_does_not_match_every_input(
+        self,
+    ) -> None:
+        """A deny rule refuses its own command and nothing else."""
+        engine = self._engine(PermissionBehavior.DENY)
+
+        denied = await engine.check_permission(
+            _DecoratedMatchRuleTool(),
+            {"command": "git status"},
+        )
+        self.assertEqual(denied.behavior, PermissionBehavior.DENY)
+
+        other = await engine.check_permission(
+            _DecoratedMatchRuleTool(),
+            {"command": "ls"},
+        )
+        self.assertEqual(other.behavior, PermissionBehavior.ASK)

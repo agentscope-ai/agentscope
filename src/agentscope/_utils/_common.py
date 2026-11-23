@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 """The common utilities for agentscope library."""
-import asyncio
 import base64
 import copy
-import functools
 import inspect
 import json
 import os
-import types
 import uuid
 from datetime import datetime
 from typing import Any, Callable
@@ -254,28 +251,20 @@ def _get_timestamp(add_random_suffix: bool = False) -> str:
     return timestamp
 
 
-async def _is_async_func(func: Callable) -> bool:
-    """Check if the given function is an async function, including
-    coroutine functions, async generators, and coroutine objects.
-    """
-
-    return (
-        inspect.iscoroutinefunction(func)
-        or inspect.isasyncgenfunction(func)
-        or isinstance(func, types.CoroutineType)
-        or isinstance(func, types.GeneratorType)
-        and asyncio.iscoroutine(func)
-        or isinstance(func, functools.partial)
-        and await _is_async_func(func.func)
-    )
-
-
 async def _execute_async_or_sync_func(
     func: Callable,
     *args: Any,
     **kwargs: Any,
 ) -> Any:
-    """Execute an async or sync function based on its type.
+    """Execute an async or sync function and return its result.
+
+    Whether the call is asynchronous is decided from what it returns,
+    never from how ``func`` is declared. A coroutine function wrapped by
+    an ordinary decorator (a logging or tracing ``functools.wraps``
+    wrapper that just forwards the call) is not reported as a coroutine
+    function, and the coroutine it creates must still be awaited.
+    Awaiting only awaitables also keeps sync overrides working, which is
+    the backward compatibility this helper exists for.
 
     Args:
         func (`Callable`):
@@ -287,13 +276,13 @@ async def _execute_async_or_sync_func(
 
     Returns:
         `Any`:
-            The result of the function execution.
+            The result of the function execution, awaited when awaitable.
     """
 
-    if await _is_async_func(func):
-        return await func(*args, **kwargs)
-
-    return func(*args, **kwargs)
+    result = func(*args, **kwargs)
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
 def _get_bytes_from_web_url(
