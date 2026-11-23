@@ -4011,9 +4011,14 @@ class Agent:
             )
 
         # Handle the tool calls that exist in the previous chunk but not in the
-        # current chunk
-        finished_ids = set(block_ids["tools"]) - set(
-            _.id for _ in tool_call_blocks
+        # current chunk. Like the text and thinking streams, a data-only chunk
+        # does not end them: an omni-style model interleaves audio deltas
+        # between the argument deltas of one call, and ending the call here
+        # would restart it as an empty duplicate block.
+        finished_ids = (
+            set()
+            if data_blocks
+            else set(block_ids["tools"]) - set(_.id for _ in tool_call_blocks)
         )
         for finished_id in finished_ids:
             yield ToolCallEndEvent(
