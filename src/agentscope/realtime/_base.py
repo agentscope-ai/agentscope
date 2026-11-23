@@ -2,6 +2,7 @@
 """The realtime model base class."""
 import inspect
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, AsyncIterator, Sequence
 
@@ -15,6 +16,13 @@ from ..message import Msg, ToolResultBlock
 
 class ModelDisconnectedError(ConnectionError):
     """The provider closed the session; the next user audio reconnects."""
+
+
+class InteractionMode(StrEnum):
+    """How audio input and model output share the conversation timeline."""
+
+    TURN_BASED = "turn_based"
+    FULL_DUPLEX = "full_duplex"
 
 
 class RealtimeModelBase(ABC):
@@ -42,6 +50,9 @@ class RealtimeModelBase(ABC):
 
     supports_history_replay: bool = False
     """Whether completed messages can seed a newly opened session."""
+
+    interaction_mode = InteractionMode.TURN_BASED
+    """Whether the adapter uses turns or a continuous full-duplex stream."""
 
     def __init__(
         self,
@@ -121,6 +132,12 @@ class RealtimeModelBase(ABC):
         )
         cards = RealtimeModelCard.list_from_directory(yaml_dir, cls.Parameters)
         for card in cards:
+            if card.interaction_mode != cls.interaction_mode:
+                raise ValueError(
+                    f"Realtime model card {card.name!r} declares "
+                    f"{card.interaction_mode!r}, but {cls.__name__} uses "
+                    f"{cls.interaction_mode!r}.",
+                )
             card.model_type = cls.type
         return cards
 
@@ -219,10 +236,26 @@ class RealtimeModelBase(ABC):
     async def push_tool_result(self, block: ToolResultBlock) -> None:
         """Feed the result of a tool the caller executed."""
 
+    async def push_tool_result_silently(self, block: ToolResultBlock) -> None:
+        """Feed a late result without requesting another response.
+
+        The default delegates to :meth:`push_tool_result`, for adapters that
+        require a separate :meth:`request_response`. Adapters with implicit
+        generation should override this when silent delivery is supported.
+        """
+        await self.push_tool_result(block)
+
     @abstractmethod
     async def commit_turn(self) -> None:
         """Declare the user turn finished. Only called when the caller owns
         endpointing, i.e. the session was opened with turn detection off."""
+
+    async def start_turn(self) -> None:
+        """Notify the model that local VAD detected a new user turn.
+
+        Adapters may settle pending input here even without an active reply.
+        The default implementation does nothing.
+        """
 
     # ------------------------------------------------------------------
     # Response control
@@ -235,3 +268,22 @@ class RealtimeModelBase(ABC):
     @abstractmethod
     async def cancel_response(self) -> None:
         """Stop the active reply without closing the session."""
+
+    async def interrupt_speech(self) -> None:
+        """Stop speech while preserving independent backend work.
+
+        Turn-based adapters cancel their active response. Full-duplex
+        adapters should override this method when speech and backend work
+        have separate lifecycles.
+        """
+        await self.cancel_response()
+
+    async def send_delegation_result(
+        self,
+        delegation_id: str,
+        content: str,
+    ) -> None:
+        """Return an application-managed task result to the voice model."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support client delegation.",
+        )

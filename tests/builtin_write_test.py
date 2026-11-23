@@ -10,6 +10,7 @@ from agentscope.tool import Write
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
+    PermissionEngine,
     PermissionRule,
 )
 from agentscope.state import AgentState
@@ -182,6 +183,41 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         with open(file_path, "r", encoding="utf-8") as f:
             self.assertEqual(f.read(), "original")
 
+    async def test_write_failure_returns_error_chunk(self) -> None:
+        """A failed write is reported as an error chunk, not raised.
+
+        A regular file can never act as a parent directory, so the backend
+        write fails identically for every user and platform (root included).
+        """
+        blocker = os.path.join(self.temp_dir, "blocker.txt")
+        with open(blocker, "w", encoding="utf-8") as f:
+            f.write("not a directory\n")
+
+        chunk = await self.write_tool(
+            file_path=os.path.join(blocker, "report.csv"),
+            content="a,b\n",
+        )
+
+        self.assertEqual(
+            chunk.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": ToolResultState.ERROR,
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+        self.assertIn("Error writing file:", chunk.content[0].text)
+
     async def test_match_rule_glob_pattern(self) -> None:
         """Test match_rule with glob patterns."""
         # Test exact match
@@ -240,8 +276,81 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         suggestion_contents = [s.rule_content for s in suggestions]
         self.assertIn("/tmp/project/src/**", suggestion_contents)
 
-        # Test suggestion for file in root
-        suggestions = await self.write_tool.generate_suggestions(
-            {"file_path": "/test.py"},
-        )
-        self.assertGreater(len(suggestions), 0)
+        # A file with no parent directory must not suggest a
+        # catch-all: ``**`` matches every path in the repository.
+        for file_path in ("/test.py", "result.md"):
+            with self.subTest(file_path=file_path):
+                suggestions = await self.write_tool.generate_suggestions(
+                    {"file_path": file_path},
+                )
+                self.assertEqual(
+                    [s.rule_content for s in suggestions],
+                    [file_path],
+                )
+                self.assertTrue(
+                    await self.write_tool.match_rule(
+                        file_path,
+                        {"file_path": file_path},
+                    ),
+                )
+                self.assertFalse(
+                    await self.write_tool.match_rule(
+                        file_path,
+                        {"file_path": "/repo/main.py"},
+                    ),
+                )
+
+    async def test_permission_suggestions_escape_parent(self) -> None:
+        """Test approved suggestions cover only the literal parent."""
+        for parent, escaped, sibling in (
+            ("reports", "reports", "reports-other"),
+            ("reports [2024]", "reports [[]2024]", "reports 2"),
+            ("reports ?", "reports [?]", "reports x"),
+            ("reports *", "reports [*]", "reports other"),
+        ):
+            with self.subTest(parent=parent):
+                tool_input = {
+                    "file_path": f"/tmp/probe/{parent}/out.csv",
+                    "content": "x",
+                }
+                engine = PermissionEngine(PermissionContext())
+                first = await engine.check_permission(
+                    self.write_tool,
+                    tool_input,
+                )
+                self.assertEqual(
+                    first.suggested_rules,
+                    [
+                        PermissionRule(
+                            tool_name="Write",
+                            rule_content=f"/tmp/probe/{escaped}/**",
+                            behavior=PermissionBehavior.ALLOW,
+                            source="suggested",
+                        ),
+                    ],
+                )
+
+                engine.add_rule(first.suggested_rules[0])
+                approved = await engine.check_permission(
+                    self.write_tool,
+                    tool_input,
+                )
+                unrelated = await engine.check_permission(
+                    self.write_tool,
+                    {
+                        **tool_input,
+                        "file_path": f"/tmp/probe/{sibling}/out.csv",
+                    },
+                )
+                self.assertEqual(
+                    [
+                        first.behavior,
+                        approved.behavior,
+                        unrelated.behavior,
+                    ],
+                    [
+                        PermissionBehavior.ASK,
+                        PermissionBehavior.ALLOW,
+                        PermissionBehavior.ASK,
+                    ],
+                )

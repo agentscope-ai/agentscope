@@ -4,11 +4,10 @@ import asyncio
 from multiprocessing import Process
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from mcp.server import FastMCP
+from mcp.server import MCPServer
 from mcp.types import EmbeddedResource, TextResourceContents
 
 from agentscope.mcp import MCPClient, HttpMCPConfig
-from agentscope.tool import ToolChunk
 
 
 async def tool_1(arg1: str, arg2: list[int]) -> str:
@@ -32,7 +31,7 @@ async def tool_2() -> list:
             type="resource",
             resource=TextResourceContents(
                 uri="file://tmp.txt",
-                mimeType="text/plain",
+                mime_type="text/plain",
                 text="test content",
             ),
         ),
@@ -41,12 +40,12 @@ async def tool_2() -> list:
 
 def setup_server() -> None:
     """Set up the streamable HTTP MCP server."""
-    sse_server = FastMCP("StreamableHTTP", port=8002)
-    sse_server.tool(description="A test tool function.")(tool_1)
-    sse_server.tool(
+    server = MCPServer("StreamableHTTP")
+    server.tool(description="A test tool function.")(tool_1)
+    server.tool(
         description="A test tool function with embedded resource.",
     )(tool_2)
-    sse_server.run(transport="streamable-http")
+    server.run(transport="streamable-http", port=8002)
 
 
 class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
@@ -79,13 +78,13 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
         )
 
         my_tool_1 = await client.get_tool("tool_1")
-        res_1: ToolChunk = await my_tool_1(arg1="123", arg2=[1, 2, 3])
+        res_1 = await my_tool_1(arg1="123", arg2=[1, 2, 3])
         self.assertEqual(
             res_1.content[0].text,
             "arg1: 123, arg2: [1, 2, 3]",
         )
 
-        res_2: ToolChunk = await my_tool_1(arg1="345", arg2=[4, 5, 6])
+        res_2 = await my_tool_1(arg1="345", arg2=[4, 5, 6])
         self.assertEqual(
             res_2.content[0].text,
             "arg1: 345, arg2: [4, 5, 6]",
@@ -107,13 +106,13 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
         self.assertTrue(client.is_connected)
 
         my_tool_1 = await client.get_tool("tool_1")
-        res_3: ToolChunk = await my_tool_1(arg1="12", arg2=[1, 2])
+        res_3 = await my_tool_1(arg1="12", arg2=[1, 2])
         self.assertEqual(
             res_3.content[0].text,
             "arg1: 12, arg2: [1, 2]",
         )
 
-        res_4: ToolChunk = await my_tool_1(arg1="34", arg2=[4, 5])
+        res_4 = await my_tool_1(arg1="34", arg2=[4, 5])
         self.assertEqual(
             res_4.content[0].text,
             "arg1: 34, arg2: [4, 5]",
@@ -135,12 +134,12 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
         )
 
         my_tool_2 = await client.get_tool("tool_2")
-        res: ToolChunk = await my_tool_2()
+        res = await my_tool_2()
         self.assertEqual(
             res.content[0].text,
             """{
-  "uri": "file://tmp.txt/",
-  "mimeType": "text/plain",
+  "uri": "file://tmp.txt",
+  "mime_type": "text/plain",
   "meta": null,
   "text": "test content"
 }""",

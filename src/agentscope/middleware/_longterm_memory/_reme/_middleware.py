@@ -174,6 +174,7 @@ class ReMeMiddleware(MiddlewareBase):
 
         top_k: int = Field(
             default=5,
+            ge=1,
             title="Top K",
             description=(
                 "Max number of memories retrieved per search, and the "
@@ -212,6 +213,9 @@ class ReMeMiddleware(MiddlewareBase):
         # it builds, so :meth:`close` tears it down.
         self._app: Any | None = None
         self._started = False
+        # Serializes the lazy start so hooks running concurrently on a fresh
+        # middleware start the embedded app exactly once.
+        self._start_lock = asyncio.Lock()
         self._workspace_dir = workspace_dir
         self._parameters = parameters or self.Parameters()
         # In-flight background retrieval per session (started in ``on_reply``,
@@ -265,9 +269,15 @@ class ReMeMiddleware(MiddlewareBase):
         The AgentScope minimal config only creates an embedding component when
         ``embedding_model`` is provided.
         """
-        if self._app is None:
-            self._app = self._build_app()
-        if not self._started:
+        if self._started:
+            return
+        async with self._start_lock:
+            # Checked again under the lock: a concurrent caller may have
+            # finished starting the app while this one waited for it.
+            if self._started:
+                return
+            if self._app is None:
+                self._app = self._build_app()
             if self._parameters.chat_model is not None:
                 await self._app.update_component(
                     _AS_LLM_COMPONENT,

@@ -4,12 +4,22 @@ import datetime
 import enum
 import inspect
 import json
+import re
 from dataclasses import is_dataclass
 from typing import Any
 
 from pydantic import BaseModel
 
 from ...message import Msg
+
+
+# Match entire JSON strings so keys and text containing NaN stay untouched.
+_STRING_OR_NONFINITE = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|NaN|-?Infinity')
+_QUOTED_NONFINITE = {
+    "NaN": '"nan"',
+    "Infinity": '"inf"',
+    "-Infinity": '"-inf"',
+}
 
 
 def _to_serializable(
@@ -36,7 +46,16 @@ def _to_serializable(
     elif isinstance(obj, dict):
         res = {str(key): _to_serializable(val) for (key, val) in obj.items()}
 
-    elif isinstance(obj, (Msg, BaseModel)) or is_dataclass(obj):
+    elif isinstance(obj, (Msg, BaseModel)):
+        # Dump the model's fields, so the span carries readable JSON
+        # rather than a Python repr string.
+        try:
+            res = _to_serializable(obj.model_dump())
+        except Exception:
+            # Tracing must not fail because model serialization fails.
+            res = repr(obj)
+
+    elif is_dataclass(obj):
         res = repr(obj)
 
     elif inspect.isclass(obj) and issubclass(obj, BaseModel):
@@ -69,10 +88,13 @@ def _serialize_to_str(value: Any) -> str:
             JSON serialized string of the input value
     """
     try:
-        return json.dumps(value, ensure_ascii=False)
-
+        encoded = json.dumps(value, ensure_ascii=False)
     except TypeError:
-        return json.dumps(
-            _to_serializable(value),
-            ensure_ascii=False,
+        encoded = json.dumps(_to_serializable(value), ensure_ascii=False)
+
+    if "NaN" in encoded or "Infinity" in encoded:
+        return _STRING_OR_NONFINITE.sub(
+            lambda token: _QUOTED_NONFINITE.get(token[0], token[0]),
+            encoded,
         )
+    return encoded

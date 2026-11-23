@@ -194,19 +194,24 @@ class OpenAIClassifierModel(ClassifierModelBase):
             **kwargs (`Any`):
                 Options forwarded to ``client.decisions.create``, such as
                 ``safety_identifier``, ``extra_headers``, and ``extra_body``.
+                ``model`` and ``input`` may also be set here, in which case
+                they override the instance defaults for this call only.
 
         Returns:
             `ClassifierResponse`:
                 Answers and refusals keyed by question name, with usage.
         """
         start_time = perf_counter()
+        # Per-call options override defaults.
         response = await self.client.decisions.create(
-            model=self.model,
-            input=_to_sdk_input(state),
-            questions=[
-                _to_sdk_question(name, q) for name, q in questions.items()
-            ],
-            **kwargs,
+            **{
+                "model": self.model,
+                "input": _to_sdk_input(state),
+                "questions": [
+                    _to_sdk_question(name, q) for name, q in questions.items()
+                ],
+                **kwargs,
+            },
         )
         return ClassifierResponse(
             model=response.model,

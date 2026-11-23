@@ -2,9 +2,12 @@
 """File cache test case for Read/Write/Edit tools."""
 import asyncio
 import os
+from pathlib import Path
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+import aiofiles.os
 
 from agentscope.state import AgentState, ToolContext
 from agentscope.state._state import ReadCacheEntry
@@ -607,3 +610,238 @@ class FileCacheTest(  # pylint: disable=too-many-public-methods
         with open(self.test_file, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertEqual(content, "final\n")
+
+    async def test_non_utf8_read_cannot_back_edit_or_write(self) -> None:
+        """Test a lossy non-UTF-8 Read cannot back an Edit or Write."""
+        original = b"name = 'caf\xe9'\ncount = 1\n"
+        with open(self.test_file, "wb") as f:
+            f.write(original)
+
+        read_chunk = await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(
+            read_chunk.model_dump(
+                exclude={
+                    "id": True,
+                    "content": {"__all__": {"id", "created_at"}},
+                },
+            ),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "     1\tname = 'caf\ufffd'\n"
+                            "     2\tcount = 1\n\n"
+                            "Note: This file is not valid UTF-8. Invalid "
+                            "bytes are shown as U+FFFD, and the file cannot "
+                            "be modified with the Edit tool."
+                        ),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+            },
+        )
+        self.assertEqual(self.state.tool_context.read_file_cache, [])
+
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="count = 1",
+            new_string="count = 2",
+            _agent_state=self.state,
+        )
+        self.assertEqual(
+            edit_chunk.model_dump(
+                exclude={
+                    "id": True,
+                    "content": {"__all__": {"id", "created_at"}},
+                },
+            ),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Error: To edit a file, you must first read "
+                            "it using the Read tool."
+                        ),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "error",
+                "is_last": True,
+                "metadata": {},
+            },
+        )
+
+        with open(self.test_file, "rb") as f:
+            self.assertEqual(f.read(), original)
+
+        write_chunk = await self.write_tool(
+            file_path=self.test_file,
+            content="replacement\n",
+            _agent_state=self.state,
+        )
+        self.assertEqual(
+            write_chunk.model_dump(
+                exclude={
+                    "id": True,
+                    "content": {"__all__": {"id", "created_at"}},
+                },
+            ),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"Error: File {self.test_file} exists but has "
+                            "not been read yet. You must read the file "
+                            "first before writing to it."
+                        ),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "error",
+                "is_last": True,
+                "metadata": {},
+            },
+        )
+
+        with open(self.test_file, "rb") as f:
+            self.assertEqual(f.read(), original)
+
+
+class ToolContextMtimeTest(IsolatedAsyncioTestCase):
+    """Check cache validity for omitted, unknown, and explicit timestamps."""
+
+    def setUp(self) -> None:
+        directory = self.enterContext(
+            # pylint: disable-next=consider-using-with
+            tempfile.TemporaryDirectory(),
+        )
+        self.path = str(Path(directory) / "config.txt")
+        Path(self.path).touch()
+        self.host_mtime = os.stat(self.path).st_mtime
+        self.other = str(Path(directory) / "other.txt")
+        self.context = ToolContext()
+
+    async def _seed_context(self) -> None:
+        """Keep an unrelated entry to check that invalidation is local."""
+        await self.context.cache_file(self.other, ["keep\n"], mtime=5.0)
+        await self.context.cache_file(
+            self.path,
+            ["old\n"],
+            mtime=self.host_mtime,
+        )
+
+    def _assert_only_unrelated_cache(self) -> None:
+        """The unrelated path's contents and timestamp must be preserved."""
+        self.assertEqual(
+            [entry.model_dump() for entry in self.context.read_file_cache],
+            [
+                {
+                    "file_path": self.other,
+                    "lines": ["keep\n"],
+                    "updated_at": 5.0,
+                    "bytes": 5 / 1024,
+                },
+            ],
+        )
+
+    async def test_explicit_unknown_invalidates_without_host_stat(
+        self,
+    ) -> None:
+        """Neither cache operation may use host metadata for remote bytes."""
+        with patch(
+            "agentscope.state._state.aiofiles.os.path.getmtime",
+            new=AsyncMock(return_value=self.host_mtime),
+        ) as host_stat:
+            with self.subTest(operation="get"):
+                await self._seed_context()
+                self.assertIsNone(
+                    await self.context.get_cache(self.path, mtime=None),
+                )
+                self._assert_only_unrelated_cache()
+                host_stat.assert_not_awaited()
+            with self.subTest(operation="cache"):
+                await self._seed_context()
+                for _ in range(2):
+                    await self.context.cache_file(
+                        self.path,
+                        ["new\n"],
+                        mtime=None,
+                    )
+                    self._assert_only_unrelated_cache()
+                host_stat.assert_not_awaited()
+
+    async def test_omitted_timestamp_retains_host_fallback(self) -> None:
+        """Legacy calls that omit mtime still validate against local stat."""
+        with patch(
+            "agentscope.state._state.aiofiles.os.path.getmtime",
+            new=AsyncMock(wraps=aiofiles.os.path.getmtime),
+        ) as host_stat:
+            await self.context.cache_file(self.path, ["local\n"])
+            entry = await self.context.get_cache(self.path)
+            self.assertEqual(
+                entry,
+                ReadCacheEntry(
+                    file_path=self.path,
+                    lines=["local\n"],
+                    updated_at=self.host_mtime,
+                    bytes=6 / 1024,
+                ),
+            )
+            self.assertEqual(host_stat.await_count, 2)
+
+    async def test_failed_omitted_stat_drops_only_matching_entry(self) -> None:
+        """A failed legacy lookup cannot preserve previously cached bytes."""
+        for operation in ("get", "cache"):
+            with self.subTest(operation=operation):
+                await self._seed_context()
+                with patch(
+                    "agentscope.state._state.aiofiles.os.path.getmtime",
+                    new=AsyncMock(side_effect=OSError("stat unavailable")),
+                ) as host_stat:
+                    if operation == "get":
+                        self.assertIsNone(
+                            await self.context.get_cache(self.path),
+                        )
+                    else:
+                        await self.context.cache_file(self.path, ["new\n"])
+                    host_stat.assert_awaited_once_with(self.path)
+                self._assert_only_unrelated_cache()
+
+    async def test_explicit_timestamps_and_serialization_remain_supported(
+        self,
+    ) -> None:
+        """Zero and negative backend timestamps need no host filesystem."""
+        with patch(
+            "agentscope.state._state.aiofiles.os.path.getmtime",
+            new=AsyncMock(side_effect=AssertionError("unexpected host stat")),
+        ) as host_stat:
+            for mtime in (0.0, -0.125, 42.5):
+                with self.subTest(mtime=mtime):
+                    await self.context.cache_file(
+                        self.path,
+                        ["remote\n"],
+                        mtime,
+                    )
+                    restored = ToolContext.model_validate(
+                        self.context.model_dump(),
+                    )
+                    entry = await restored.get_cache(self.path, mtime)
+                    self.assertEqual(
+                        entry,
+                        ReadCacheEntry(
+                            file_path=self.path,
+                            lines=["remote\n"],
+                            updated_at=mtime,
+                            bytes=7 / 1024,
+                        ),
+                    )
+            host_stat.assert_not_awaited()

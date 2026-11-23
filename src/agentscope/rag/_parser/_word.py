@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import base64
 import io
-from typing import Literal, TYPE_CHECKING
+from collections.abc import Iterator
+from typing import Any, Literal, TYPE_CHECKING
 
 from ..._logging import logger
 from ...message import Base64Source, DataBlock, TextBlock
@@ -33,47 +34,172 @@ if TYPE_CHECKING:
     from docx.text.paragraph import Paragraph as DocxParagraph
 
 _VML_NS = "{urn:schemas-microsoft-com:vml}"
+_MATH_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
+_MC_ALTERNATE_CONTENT = (
+    "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+    "AlternateContent"
+)
 
 
 def _extract_text_from_paragraph(para: DocxParagraph) -> str:
-    """Extract text from a paragraph, including text in text boxes and
-    VML shapes.
+    """Extract text from a paragraph, including any text box anchored to it.
 
-    Tries three methods in order:
-    1. All ``w:t`` elements in the paragraph XML (covers revisions,
-       hyperlinks, etc.).
-    2. The standard ``para.text`` property.
-    3. Text inside ``w:txbxContent`` and VML ``v:textbox`` elements.
+    The paragraph's own runs come first, then each text box once, as its own
+    line. Reading every ``w:t`` under the paragraph in one pass would splice a
+    text box into the middle of the surrounding sentence, and would read the
+    ``mc:Fallback`` copy of a text box as a second occurrence of the same text.
+    Each ``mc:AlternateContent`` containing a text box uses the first branch
+    with readable Word text, retaining the fallback when its choices cannot
+    supply any text. Every ``w:tab``, ``w:cr``, ``w:br`` and
+    ``w:noBreakHyphen`` run child is preserved as its rendered character in
+    both the paragraph and its text boxes. Paragraph boundaries within each
+    text box are retained.
+
+    Args:
+        para (`DocxParagraph`):
+            The python-docx paragraph to read.
+
+    Returns:
+        `str`:
+            The paragraph's text, with each text box on its own line.
     """
     from docx.oxml.ns import qn
 
-    text = ""
-    for t_elem in para._element.findall(".//" + qn("w:t")):
-        if t_elem.text:
-            text += t_elem.text
+    text_tag = qn("w:t")
+    paragraph_tag = qn("w:p")
+    text_box_tag = qn("w:txbxContent")
+    removed_tags = {qn("w:del"), qn("w:moveFrom")}
+    run_tag = qn("w:r")
+    tab_tag = qn("w:tab")
+    carriage_return_tag = qn("w:cr")
+    no_break_hyphen_tag = qn("w:noBreakHyphen")
+    separator_tags = {tab_tag, carriage_return_tag, qn("w:br")}
+    root = para._element
 
-    if not text:
-        text = para.text.strip()
+    def iter_text(element: Any) -> Iterator[Any]:
+        """Visit text and inline separators in one readable branch."""
+        if element.tag in removed_tags:
+            # Deleted and moved-away runs do not belong to the current text.
+            return
+        if element.tag in (text_tag, no_break_hyphen_tag) or (
+            element.tag in separator_tags
+            and element.getparent().tag == run_tag
+        ):
+            yield element
+        elif (
+            element.tag == _MC_ALTERNATE_CONTENT
+            and element.find(".//" + text_box_tag) is not None
+        ):
+            texts: list[Any] = []
+            for branch in element:
+                texts = list(iter_text(branch))
+                # Separators alone must not hide a readable fallback.
+                if any(
+                    text.tag == text_tag and text.text and text.text.strip()
+                    for text in texts
+                ):
+                    break
+            yield from texts
+        else:
+            for child in element:
+                yield from iter_text(child)
 
-    if not text:
-        for txbx in para._element.findall(".//" + qn("w:txbxContent")):
-            for p_elem in txbx.findall(".//" + qn("w:p")):
-                for t_elem in p_elem.findall(".//" + qn("w:t")):
-                    if t_elem.text:
-                        text += t_elem.text
+    own_parts: list[str] = []
+    text_boxes: dict[Any, dict[Any, list[str]]] = {}
+    for element in iter_text(root):
+        if element.tag == text_tag:
+            value = element.text or ""
+        elif element.tag == no_break_hyphen_tag:
+            # Word renders the non-breaking hyphen as "-", as does
+            # python-docx's ``Paragraph.text``.
+            value = "-"
+        elif element.tag == tab_tag:
+            value = "\t"
+        elif element.tag == carriage_return_tag:
+            value = "\n"
+        elif element.get(qn("w:type"), "textWrapping") == "textWrapping":
+            value = "\n"
+        else:
+            # Page and column breaks do not contribute text.
+            value = ""
+        if not value:
+            continue
+        parts = own_parts
+        paragraph = root
+        for ancestor in element.iterancestors():
+            if ancestor is root:
+                break
+            if ancestor.tag == paragraph_tag:
+                paragraph = ancestor
+            if ancestor.tag == text_box_tag:
+                parts = text_boxes.setdefault(ancestor, {}).setdefault(
+                    paragraph,
+                    [],
+                )
+                break
+        parts.append(value)
 
-        for vml_tb in para._element.findall(".//" + _VML_NS + "textbox"):
-            for p_elem in vml_tb.findall(".//" + qn("w:p")):
-                for t_elem in p_elem.findall(".//" + qn("w:t")):
-                    if t_elem.text:
-                        text += t_elem.text
+    own_text = "".join(own_parts)
+    if not own_text.strip() and not any(
+        "".join(parts).strip()
+        for paragraphs in text_boxes.values()
+        for parts in paragraphs.values()
+    ):
+        # Separator-only extraction must not hide other non-w:t content.
+        own_text = para.text
+    blocks = [
+        own_text,
+        *(
+            "\n".join("".join(parts) for parts in paragraphs.values())
+            for paragraphs in text_boxes.values()
+        ),
+    ]
+    return "\n".join(block.strip() for block in blocks if block.strip())
 
-    return text.strip()
+
+def _is_blank_paragraph(para: DocxParagraph) -> bool:
+    """Return whether Word renders *para* as a blank line.
+
+    A blank line has no text and no picture. It may still hold a run:
+    typing a space before Enter leaves ``<w:t> </w:t>``, and Shift+Enter
+    on an empty line leaves a run holding only ``<w:br/>``. A run that
+    carries anything else (field instructions, a symbol, an equation) is
+    not blank even when the extractor finds no text in it.
+    """
+    from docx.oxml.ns import qn
+
+    root = para._element
+    for tag in ("w:drawing", "w:pict", "w:object"):
+        if root.findall(".//" + qn(tag)):
+            return False
+    if root.findall(".//" + _MATH_NS + "oMath"):
+        return False
+
+    blank_run_tags = {
+        qn(tag)
+        for tag in (
+            "w:rPr",
+            "w:br",
+            "w:cr",
+            "w:tab",
+            "w:lastRenderedPageBreak",
+            "w:softHyphen",
+        )
+    }
+    text_tag = qn("w:t")
+    for run in root.findall(".//" + qn("w:r")):
+        for child in run:
+            if child.tag == text_tag:
+                if (child.text or "").strip():
+                    return False
+            elif child.tag not in blank_run_tags:
+                return False
+    return True
 
 
 def _extract_table_data(table: DocxTable) -> list[list[str]]:
     """Extract table data from a python-docx Table, preserving line breaks
-    within cells.
+    and run-level tabs within cells.
 
     Horizontal merges (``w:gridSpan``) are expanded with empty strings so
     that every row has the same number of columns. Omitted leading and
@@ -86,21 +212,53 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
     from docx.oxml.ns import qn
 
     text_tag = qn("w:t")
+    tab_tag = qn("w:tab")
+    run_tag = qn("w:r")
+    no_break_hyphen_tag = qn("w:noBreakHyphen")
+    deleted_tag = qn("w:del")
     break_tags = {qn("w:br"), qn("w:cr")}
+    move_source_tag = qn("w:moveFrom")
     table_data: list[list[str]] = []
-    for tr in table._element.findall(qn("w:tr")):
+    # Content controls (``w:sdt``) can wrap whole rows and cells; read
+    # through them as ``_body_elements`` does for the document body.
+    for tr in _body_elements(table._element):
+        if tr.tag != qn("w:tr"):
+            continue
         row_data: list[str] = []
         grid_before = tr.find(f"{qn('w:trPr')}/{qn('w:gridBefore')}")
         if grid_before is not None:
             row_data.extend([""] * int(grid_before.get(qn("w:val"), "0")))
-        for tc in tr.findall(qn("w:tc")):
+        for tc in _body_elements(tr):
+            if tc.tag != qn("w:tc"):
+                continue
             paragraphs: list[str] = []
-            # Include paragraphs of tables nested in this cell.
-            for p_elem in tc.xpath("./w:p | ./w:tbl//w:tc/w:p"):
+            # Include paragraphs of tables nested in this cell and those
+            # wrapped in content controls, but not text-box paragraphs.
+            for p_elem in tc.xpath(".//w:p[not(ancestor::w:p)]"):
                 text_parts: list[str] = []
                 for element in p_elem.iter():
+                    if any(
+                        ancestor.tag == move_source_tag
+                        for ancestor in element.iterancestors()
+                    ):
+                        continue
                     if element.tag == text_tag and element.text:
                         text_parts.append(element.text)
+                    elif (
+                        element.tag == tab_tag
+                        and element.getparent().tag == run_tag
+                        and not any(
+                            ancestor.tag == deleted_tag
+                            for ancestor in element.iterancestors()
+                        )
+                    ):
+                        text_parts.append("\t")
+                    elif element.tag == no_break_hyphen_tag:
+                        if not any(
+                            ancestor.tag == deleted_tag
+                            for ancestor in element.iterancestors()
+                        ):
+                            text_parts.append("-")
                     elif element.tag in break_tags:
                         text_parts.append("\n")
                 para_text = "".join(text_parts)
@@ -129,56 +287,129 @@ def _extract_image_blocks(
     filename: str,
 ) -> list[DataBlock]:
     """Extract image blocks from a paragraph (both modern ``w:drawing``
-    and legacy ``w:pict`` / VML formats)."""
+    and legacy ``w:pict`` / VML formats).
+
+    Each picture is read once. A picture inside a text box is not read
+    again through the text box's own ``w:drawing``. The branches of an
+    ``mc:AlternateContent`` are copies of the same content (Word saves a
+    text box both as DrawingML and as a VML fallback), so only the first
+    branch that holds a picture is read, the choices before the fallback.
+    DrawingML pictures come before VML ones.
+
+    Args:
+        para (`DocxParagraph`):
+            The python-docx paragraph to read.
+        filename (`str`):
+            The source filename, used as each block's name.
+
+    Returns:
+        `list[DataBlock]`:
+            One block per picture that could be read.
+    """
     from docx.oxml.ns import qn
 
+    drawing_tag = qn("w:drawing")
+    pict_tag = qn("w:pict")
+    blip_tag = qn("a:blip")
+    imagedata_tag = _VML_NS + "imagedata"
+
+    def iter_pictures(
+        element: Any,
+        in_drawing: bool = False,
+        in_pict: bool = False,
+    ) -> Iterator[Any]:
+        """Visit the pictures of one readable branch, each once."""
+        if element.tag == blip_tag:
+            if in_drawing and element.get(qn("r:embed")):
+                yield element
+        elif element.tag == imagedata_tag:
+            if in_pict and element.get(qn("r:id")):
+                yield element
+        elif element.tag == _MC_ALTERNATE_CONTENT:
+            for branch in element:
+                pictures = list(iter_pictures(branch, in_drawing, in_pict))
+                if pictures:
+                    yield from pictures
+                    break
+        else:
+            in_drawing = in_drawing or element.tag == drawing_tag
+            in_pict = in_pict or element.tag == pict_tag
+            for child in element:
+                yield from iter_pictures(child, in_drawing, in_pict)
+
+    pictures = list(iter_pictures(para._element))
     blocks: list[DataBlock] = []
 
-    for drawing in para._element.findall(".//" + qn("w:drawing")):
-        for blip in drawing.findall(".//" + qn("a:blip")):
-            embed = blip.get(qn("r:embed"))
-            if not embed:
-                continue
-            try:
-                part = para.part.related_parts[embed]
-                media_type = part.content_type or _guess_image_media_type(
-                    part.blob,
-                )
-                blocks.append(
-                    DataBlock(
-                        source=Base64Source(
-                            media_type=media_type,
-                            data=base64.b64encode(part.blob).decode("utf-8"),
-                        ),
-                        name=filename,
+    for blip in pictures:
+        if blip.tag != blip_tag:
+            continue
+        try:
+            part = para.part.related_parts[blip.get(qn("r:embed"))]
+            media_type = part.content_type or _guess_image_media_type(
+                part.blob,
+            )
+            blocks.append(
+                DataBlock(
+                    source=Base64Source(
+                        media_type=media_type,
+                        data=base64.b64encode(part.blob).decode("utf-8"),
                     ),
-                )
-            except Exception as e:
-                logger.warning("Failed to extract image: %s", e)
+                    name=filename,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to extract image: %s", e)
 
-    for pict in para._element.findall(".//" + qn("w:pict")):
-        for imagedata in pict.findall(".//" + _VML_NS + "imagedata"):
-            rel_id = imagedata.get(qn("r:id"))
-            if not rel_id:
-                continue
-            try:
-                part = para.part.related_parts[rel_id]
-                media_type = part.content_type or _guess_image_media_type(
-                    part.blob,
-                )
-                blocks.append(
-                    DataBlock(
-                        source=Base64Source(
-                            media_type=media_type,
-                            data=base64.b64encode(part.blob).decode("utf-8"),
-                        ),
-                        name=filename,
+    for imagedata in pictures:
+        if imagedata.tag != imagedata_tag:
+            continue
+        try:
+            part = para.part.related_parts[imagedata.get(qn("r:id"))]
+            media_type = part.content_type or _guess_image_media_type(
+                part.blob,
+            )
+            blocks.append(
+                DataBlock(
+                    source=Base64Source(
+                        media_type=media_type,
+                        data=base64.b64encode(part.blob).decode("utf-8"),
                     ),
-                )
-            except Exception as e:
-                logger.warning("Failed to extract VML image: %s", e)
+                    name=filename,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to extract VML image: %s", e)
 
     return blocks
+
+
+def _body_elements(body: Any) -> Iterator[Any]:
+    """Yield the top-level content elements of a document body.
+
+    Block-level content controls (``w:sdt`` — how Word writes its
+    automatic table of contents and every developer-mode block control)
+    are containers, not content: their ``w:sdtContent`` children are
+    yielded in their place, recursively, so a control cannot hide a
+    paragraph or a table.  Inline ``w:sdt`` needs no handling here, as
+    its runs are already descendants of the paragraph holding it.
+
+    Args:
+        body (`Any`):
+            The ``w:body`` element of a python-docx document.
+
+    Yields:
+        `Any`:
+            Each body child, with content controls replaced by theirs.
+    """
+    from docx.oxml.ns import qn
+
+    for element in body:
+        if element.tag == qn("w:sdt"):
+            content = element.find(qn("w:sdtContent"))
+            if content is not None:
+                yield from _body_elements(content)
+        else:
+            yield element
 
 
 class WordParser(ParserBase):
@@ -308,17 +539,16 @@ class WordParser(ParserBase):
             )
             text_buffer.clear()
 
-        for element in doc.element.body:
+        for element in _body_elements(doc.element.body):
             if isinstance(element, CT_P):
                 para = Paragraph(element, doc)
 
                 text = _extract_text_from_paragraph(para)
                 if text:
                     text_buffer.append(text)
-                elif text_buffer and not para._element.findall(
-                    ".//" + qn("w:r"),
-                ):
-                    # No runs at all, i.e. a blank line in Word
+                elif text_buffer and _is_blank_paragraph(para):
+                    # A blank line in Word: an empty <w:p>, a run holding
+                    # only spaces, or a run holding only <w:br/>/<w:cr/>.
                     text_buffer.append("")
 
                 if self.include_image:

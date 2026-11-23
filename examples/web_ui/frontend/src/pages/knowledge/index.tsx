@@ -97,7 +97,10 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 			<div className="min-h-0 flex-1 overflow-y-auto p-[20px_18px_24px]">
 				<div className="flex flex-col gap-y-6">
 					<ConfigCard knowledgeBase={knowledgeBase} />
-					<KnowledgeDocumentsPanel knowledgeBaseId={knowledgeBase.id} />
+					<KnowledgeDocumentsPanel
+						key={knowledgeBase.id}
+						knowledgeBaseId={knowledgeBase.id}
+					/>
 				</div>
 			</div>
 		</div>

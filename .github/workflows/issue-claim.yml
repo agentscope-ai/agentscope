@@ -64,6 +64,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         if: steps.gate.outputs.verdict == 'maybe'
         with:
+          version: "0.13.4"
           python-version: '3.11'
 
       - name: Ask whether the comment is really a claim
