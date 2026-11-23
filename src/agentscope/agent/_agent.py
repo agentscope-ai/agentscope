@@ -70,7 +70,6 @@ from ..event import (
     ReplyFinishedReason,
     UserInterruptEvent,
     HintBlockEvent,
-    CustomEvent,
 )
 from ..exception import (
     AgentOrientedException,
@@ -499,6 +498,8 @@ class Agent:
                 ``completed``, or ``failed`` status.
         """
         cfg = self.context_config
+        if not self._compress_context_middlewares:
+            await self._limit_context_images(cfg)
         prepared_input = await self._prepare_model_input()
         estimated_tokens = await self.model.count_tokens(**prepared_input)
         compression_needed = (
@@ -572,12 +573,9 @@ class Agent:
         """
         cfg: ContextConfig = context_config or self.context_config
 
-        # Limit the number of images in the context first, so that the token
-        # counting below reflects the images that actually remain
-        await self._limit_context_images(cfg)
-
-        # Count the current tokens
         if _prepared_input is None:
+            # Count only the images that remain after applying the limit.
+            await self._limit_context_images(cfg)
             kwargs = await self._prepare_model_input()
         else:
             kwargs = _prepared_input

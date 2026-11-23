@@ -2071,6 +2071,48 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(events, [])
 
+    async def test_reply_compression_estimates_after_limiting_images(
+        self,
+    ) -> None:
+        """Images removed by the context limit do not trigger compression."""
+        model = RecordingStructuredMockModel(context_size=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="short",
+            model=model,
+            context_config=ContextConfig(
+                max_image_num=0,
+                trigger_ratio=0.7,
+            ),
+            state=AgentState(
+                session_id="session-1",
+                context=[UserMsg("User", [_image_block("old image")])],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        def estimate_tokens(*, messages: list[Msg], **_: Any) -> int:
+            for message in messages:
+                if any(
+                    isinstance(block, DataBlock) for block in message.content
+                ):
+                    return 100
+            return 10
+
+        with patch.object(
+            model,
+            "count_tokens",
+            new=AsyncMock(side_effect=estimate_tokens),
+        ) as count_tokens:
+            events = [
+                event
+                async for event in agent._compress_context_with_status_events()
+            ]
+
+        self.assertEqual(events, [])
+        count_tokens.assert_awaited_once()
+        self.assertIsInstance(agent.state.context[0].content[0], TextBlock)
+
     async def test_context_compression_emits_failed_event(self) -> None:
         """A started compression reports failure before re-raising."""
         model = RecordingStructuredMockModel(context_size=1000)
