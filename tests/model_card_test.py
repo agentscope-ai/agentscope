@@ -555,7 +555,11 @@ class ASRModelCardTest(TestCase):
 
     def test_null_override_loads_and_lists_card(self) -> None:
         """Remove null overrides and retain any sample rate override."""
-        for retained in ({}, {"sample_rate": {"default": 16000}}):
+        cases: list[dict[str, dict[str, int]]] = [
+            {},
+            {"sample_rate": {"default": 16000}},
+        ]
+        for retained in cases:
             with self.subTest(retained=retained):
                 schema = DashScopeASRModel.Parameters.model_json_schema()
                 del schema["properties"]["keep_dialect"]
