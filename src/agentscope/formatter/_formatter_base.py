@@ -21,6 +21,12 @@ from ..message import (
 )
 
 
+# Extensions of the media types this framework's own adapters emit.
+# ``mimetypes.guess_extension`` answers from per-host tables -- the Windows
+# registry against a MIME database elsewhere -- so it reports no extension
+# at all for ``audio/wav`` and ``audio/pcm`` on Linux, and a different one
+# for ``audio/l16`` depending on the host. Pinning the types the framework
+# produces keeps the same block naming the same file everywhere.
 _MEDIA_TYPE_EXTENSIONS = {
     "audio/aac": ".aac",
     "audio/flac": ".flac",
@@ -31,18 +37,9 @@ _MEDIA_TYPE_EXTENSIONS = {
     "audio/pcm": ".pcm",
     "audio/wav": ".wav",
 }
-"""Extensions of the media types this framework's own adapters emit.
 
-:func:`mimetypes.guess_extension` answers from per-host tables — the
-Windows registry against a MIME database elsewhere — so it reports no
-extension at all for ``audio/wav`` and ``audio/pcm`` on Linux, and a
-different one for ``audio/l16`` depending on the host. Pinning the types
-the framework produces keeps the same block naming the same file
-everywhere.
-"""
-
+# Used when neither the table above nor the host can name an extension.
 _DEFAULT_MEDIA_EXTENSION = ".bin"
-"""Extension used when neither the table above nor the host can name one."""
 
 
 def _normalize_media_type(media_type: str) -> str:
