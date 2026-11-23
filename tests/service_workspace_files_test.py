@@ -461,6 +461,42 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             "attachment; filename*=UTF-8''notes.txt",
         )
 
+    async def test_scriptable_type_is_forced_to_an_attachment(self) -> None:
+        """HTML may run script, so it never renders inline."""
+        await self._backend.write_file(
+            "/workspace/page.html",
+            b"<script>alert(1)</script>",
+        )
+        response = await self._read(
+            path="page.html",
+            download=False,
+            token=None,
+            x_user_id="u",
+        )
+        self.assertEqual(response.media_type, "text/html")
+        self.assertEqual(
+            response.headers["content-disposition"],
+            "attachment; filename*=UTF-8''page.html",
+        )
+        self.assertEqual(
+            response.headers["x-content-type-options"],
+            "nosniff",
+        )
+
+    async def test_previewable_type_carries_nosniff(self) -> None:
+        """A previewed file still forbids sniffing a scriptable type."""
+        response = await self._read(
+            path="notes.txt",
+            download=False,
+            token=None,
+            x_user_id="u",
+        )
+        self.assertEqual(
+            response.headers["x-content-type-options"],
+            "nosniff",
+        )
+        self.assertNotIn("content-disposition", response.headers)
+
     async def test_absolute_path_outside_workspace_is_readable(self) -> None:
         """Reading, like listing, is not confined to the workspace."""
         response = await self._read(
