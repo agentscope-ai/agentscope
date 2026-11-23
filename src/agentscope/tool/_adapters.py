@@ -117,10 +117,7 @@ class FunctionTool(ToolBase):
         self._func = func
         self._permission = permission
 
-        # The model sends every argument by name, but positional-only
-        # parameters (e.g. ``def f(a, /)`` or builtins such as
-        # ``operator.add``) reject keywords, so ``call`` passes them by
-        # position.
+        # Track positional-only parameters since the model uses named inputs.
         try:
             parameters = inspect.signature(func).parameters.values()
         except (TypeError, ValueError):
