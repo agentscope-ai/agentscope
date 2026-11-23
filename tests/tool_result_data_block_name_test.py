@@ -77,7 +77,9 @@ class ReplayToolDataBlockNameTest(IsolatedAsyncioTestCase):
                 state=ToolResultState.SUCCESS,
             ),
         )
-        output = msg.get_content_blocks("tool_result")[0].output
+        tool_results = list(msg.get_content_blocks("tool_result"))
+        self.assertEqual(len(tool_results), 1)
+        output = tool_results[0].output
         self.assertIsInstance(output, list)
         return [block for block in output if isinstance(block, DataBlock)]
 
