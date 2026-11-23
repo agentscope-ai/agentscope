@@ -13,6 +13,8 @@ from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
+from openai import NOT_GIVEN
+
 from agentscope.credential import OpenAICredential
 from agentscope.tts import OpenAITTSModel, TTSResponse
 
@@ -207,6 +209,10 @@ class TestOpenAITTSModel(IsolatedAsyncioTestCase):
                     "stream_format": "audio",
                     "extra_body": {"stream_format": "sse"},
                 },
+                {
+                    "stream_format": "sse",
+                    "extra_body": {"stream_format": NOT_GIVEN},
+                },
             ):
                 with self.subTest(stream=stream, options=options):
                     client = _make_mock_client(b"", [])
@@ -223,6 +229,26 @@ class TestOpenAITTSModel(IsolatedAsyncioTestCase):
                     speech = client.audio.speech
                     speech.create.assert_not_called()
                     speech.with_streaming_response.create.assert_not_called()
+
+    async def test_stream_uses_validated_extra_body(self) -> None:
+        """Editing call options later must not change the pending request."""
+        model = self._make_model(stream=True)
+        client = _make_mock_client(b"", [b"audio"])
+        model.client = client
+        body = {"stream_format": "audio"}
+        result = await model.synthesize(
+            "Hello",
+            stream_format="sse",
+            extra_body=body,
+        )
+        body["stream_format"] = "sse"
+        async for _ in result:
+            pass
+        create = client.audio.speech.with_streaming_response.create
+        self.assertEqual(
+            create.call_args.kwargs["extra_body"],
+            {"stream_format": "audio"},
+        )
 
     async def test_per_call_format_controls_media_type(self) -> None:
         """Both output modes label audio using the effective API format."""

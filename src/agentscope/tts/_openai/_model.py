@@ -164,6 +164,15 @@ class OpenAITTSModel(TTSModelBase):
         stream_format = request_kwargs.get("stream_format")
         extra_body = request_kwargs.get("extra_body")
         if isinstance(extra_body, Mapping):
+            from openai import NotGiven
+
+            # Snapshot the SDK overrides before returning a lazy stream.
+            extra_body = {
+                key: value
+                for key, value in extra_body.items()
+                if not isinstance(value, NotGiven)
+            }
+            request_kwargs["extra_body"] = extra_body
             stream_format = extra_body.get("stream_format", stream_format)
         if stream_format == "sse":
             raise ValueError(
