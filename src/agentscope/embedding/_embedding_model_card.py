@@ -136,8 +136,7 @@ class EmbeddingModelCard(BaseModel):
         base_schema = parameter_class.model_json_schema()
         properties = copy.deepcopy(base_schema.get("properties", {}))
 
-        # Apply parameter_overrides (same logic as ModelCard.from_yaml). A
-        # bare key parses to None, which the ``.get`` default does not cover.
+        # A bare YAML key means no overrides.
         overrides = config.get("parameter_overrides")
         if overrides is None:
             overrides = {}

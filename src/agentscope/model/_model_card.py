@@ -131,8 +131,7 @@ class ModelCard(BaseModel):
         if "max_tokens" in properties and "output_size" in config:
             properties["max_tokens"]["maximum"] = config["output_size"]
 
-        # Apply parameter_overrides with simple dict merge. A bare key parses
-        # to None, which the ``.get`` default does not cover.
+        # A bare YAML key means no overrides.
         overrides = config.get("parameter_overrides")
         if overrides is None:
             overrides = {}
