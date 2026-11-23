@@ -233,8 +233,8 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
             cold_start_words (`int | None`, defaults to `None`):
                 Minimum word count before the first text chunk is sent.
             max_retries (`int`, defaults to `3`):
-                Maximum total synthesis attempts on WebSocket failure. Set
-                to ``0`` to make one attempt without retries.
+                Maximum number of retries after the initial synthesis
+                attempt. The default allows up to four attempts in total.
             retry_delay (`float`, defaults to `5.0`):
                 Initial retry delay in seconds (exponential backoff).
         """
@@ -418,7 +418,7 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
 
         full_text = self._accumulated_text
         delay = self.retry_delay
-        max_attempts = max(1, self.max_retries)
+        max_attempts = max(1, self.max_retries + 1)
 
         for attempt in range(max_attempts):
             try:

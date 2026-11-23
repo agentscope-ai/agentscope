@@ -857,7 +857,7 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
             "credential": DashScopeCredential(api_key="test"),
             "model": "qwen3-tts-flash-realtime",
             "stream": True,
-            "max_retries": 1,
+            "max_retries": 0,
             "retry_delay": 0.0,
         }
         defaults.update(kwargs)
@@ -1057,7 +1057,7 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
         """RuntimeError after max_retries with no audio received."""
         with patch.dict("sys.modules", self.mock_modules):
             async with self._make_model(
-                max_retries=1,
+                max_retries=0,
                 retry_delay=0.0,
             ) as model:
                 model._callback.finish_event = Mock()
@@ -1213,7 +1213,7 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
         clients = self._use_session_bound_clients(ConnectionError)
 
         with patch.dict("sys.modules", self.mock_modules):
-            async with self._make_model(stream=False, max_retries=2) as model:
+            async with self._make_model(stream=False, max_retries=1) as model:
                 await model.push("Hello")
                 clients[0].closed = True
                 await model.push(" world")
@@ -1418,7 +1418,7 @@ class TestDashScopeCosyVoiceRealtimeMode(
                 realtime=True,
             ),
             "stream": True,
-            "max_retries": 1,
+            "max_retries": 0,
             "retry_delay": 0.0,
         }
         defaults.update(kwargs)
@@ -1482,7 +1482,7 @@ class TestDashScopeCosyVoiceRealtimeMode(
         with patch.dict("sys.modules", self.mock_modules):
             async with self._make_model(
                 cold_start_length=3,
-                max_retries=2,
+                max_retries=1,
                 stream=False,
             ) as model:
                 model._callback.get_audio_response = Mock(
@@ -1782,7 +1782,7 @@ class TestDashScopeCosyVoiceRealtimeMode(
         """RuntimeError after max_retries with no audio received."""
         with patch.dict("sys.modules", self.mock_modules):
             async with self._make_model(
-                max_retries=1,
+                max_retries=0,
                 retry_delay=0.0,
             ) as model:
                 model._callback.finish_event = Mock()
@@ -1796,7 +1796,7 @@ class TestDashScopeCosyVoiceRealtimeMode(
         """RuntimeError when finish_event.wait times out."""
         with patch.dict("sys.modules", self.mock_modules):
             async with self._make_model(
-                max_retries=1,
+                max_retries=0,
                 retry_delay=0.0,
             ) as model:
                 model._callback.finish_event = Mock()

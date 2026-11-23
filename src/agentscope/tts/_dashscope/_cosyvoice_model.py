@@ -89,8 +89,8 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                 Minimum word count before the first realtime text chunk is
                 sent.
             max_retries (`int`, defaults to `3`):
-                Maximum total realtime synthesis attempts. Set to ``0``
-                to make one attempt without retries.
+                Maximum number of retries after the initial realtime
+                synthesis attempt. The default allows four attempts in total.
             retry_delay (`float`, defaults to `5.0`):
                 Initial retry delay in seconds (exponential backoff).
         """
@@ -333,7 +333,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
 
         full_text = self._accumulated_text
         delay = self.retry_delay
-        max_attempts = max(1, self.max_retries)
+        max_attempts = max(1, self.max_retries + 1)
 
         try:
             if not full_text and not unsent:
