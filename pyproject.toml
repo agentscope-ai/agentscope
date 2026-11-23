@@ -92,7 +92,8 @@ channel = [
 # ------------ Workspace (sandbox backends) ------------
 workspace-docker = ["aiodocker"]
 workspace-e2b = ["e2b"]
-workspace-daytona = ["daytona"]
+# The workspace imports sandbox types from the 0.x SDK package root.
+workspace-daytona = ["daytona<1"]
 workspace-k8s = ["kubernetes-asyncio"]
 workspace-opensandbox = ["opensandbox"]
 workspace = [
