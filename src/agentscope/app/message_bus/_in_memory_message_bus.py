@@ -327,6 +327,20 @@ class InMemoryMessageBus(
             del log[: len(log) - max_len]
         return entry_id
 
+    async def log_append_with_previous(
+        self,
+        key: str,
+        payload: dict,
+        *,
+        max_len: int,
+    ) -> tuple[str, str | None]:
+        """Read the adjacent IDs from the same in-memory log."""
+        entry_id = await self.log_append(key, payload, max_len=max_len)
+        log = self._logs.get(key)
+        if log and len(log) >= 2 and log[-1][0] == entry_id:
+            return entry_id, log[-2][0]
+        return entry_id, None
+
     log_cursor_precedes = staticmethod(_stream_cursor_precedes)
 
     async def log_read(

@@ -202,6 +202,7 @@ class ClientExternalToolDefinitionTest(TestCase):
             {
                 "mode": "chat",
                 "submission_id": None,
+                "client_request_id": None,
                 "agent_id": "agent-1",
                 "session_id": "session-1",
                 "input": None,

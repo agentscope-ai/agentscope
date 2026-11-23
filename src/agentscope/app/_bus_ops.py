@@ -31,6 +31,7 @@ from typing import AsyncGenerator, TYPE_CHECKING, Literal
 from .._logging import logger
 from ..event import CustomEvent
 from ..middleware import SteeringAcknowledgementUncertainError
+from .message_bus._base import MessageBus
 from .message_bus._keys import MessageBusKeys
 from ._chat_input_store import (
     get_submission,
@@ -51,7 +52,6 @@ if TYPE_CHECKING:
         ClientBuiltinToolName,
         ClientExternalToolDefinition,
     )
-    from .message_bus._base import MessageBus
     from .storage import ChatModelSnapshot, TTSModelConfig
 
     from agentscope.event import (
@@ -217,13 +217,22 @@ async def publish_session_event(
             The replay-log entry id assigned by the backend.
     """
     key = MessageBusKeys.session_events(session_id)
-    entry_id = await bus.log_append(
+    append = getattr(
+        type(bus),
+        "log_append_with_previous",
+        MessageBus.log_append_with_previous,
+    )
+    entry_id, previous = await append(
+        bus,
         key,
         event,
         max_len=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
     )
+    notification = {**event, "_entry_id": entry_id}
+    if previous is not None:
+        notification["_previous_entry_id"] = previous
     try:
-        await bus.publish(key, {**event, "_entry_id": entry_id})
+        await bus.publish(key, notification)
     except Exception:
         if require_live_delivery:
             raise

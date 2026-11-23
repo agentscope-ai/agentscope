@@ -147,6 +147,10 @@ async def _read(
                 if str(eid) in seen:
                     continue
                 seen.add(str(eid))
+            if "_previous_entry_id" in evt:
+                evt = {
+                    k: v for k, v in evt.items() if k != "_previous_entry_id"
+                }
             yield evt
             if evt.get("type", "") in _TERMINAL_EVENTS:
                 return

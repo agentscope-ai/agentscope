@@ -31,6 +31,14 @@ end
 return entries
 """
 
+# Return only the two IDs across the wire, never the previous audio payload.
+_LOG_APPEND_WITH_PREVIOUS_LUA = """
+local tail = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
+local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[1],
+                      '*', 'payload', ARGV[2])
+return {id, tail[1] and tail[1][1] or false}
+"""
+
 
 # Validate every target before deleting, preserving concurrent appends.
 _QUEUE_REMOVE_IF_LUA = """
@@ -490,6 +498,29 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         if ttl_secs is not None:
             await self._client.expire(key, ttl_secs)
         return entry_id
+
+    async def log_append_with_previous(
+        self,
+        key: str,
+        payload: dict,
+        *,
+        max_len: int,
+    ) -> tuple[str, str | None]:
+        """Append and identify the previous entry in the same Redis call."""
+        if type(self).log_append is not RedisMessageBus.log_append:
+            return await super().log_append_with_previous(
+                key,
+                payload,
+                max_len=max_len,
+            )
+        entry_id, previous = await self._client.eval(
+            _LOG_APPEND_WITH_PREVIOUS_LUA,
+            1,
+            key,
+            max_len,
+            json.dumps(payload, ensure_ascii=False),
+        )
+        return entry_id, previous
 
     log_cursor_precedes = staticmethod(_stream_cursor_precedes)
 

@@ -335,6 +335,53 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
                     ) as bus:
                         await self._assert_replay_then_live(bus)
 
+    async def test_contiguous_live_frames_do_not_reread_the_log(self) -> None:
+        """Read only for a gap, even if publishers deliver out of order."""
+        async with (
+            FakeRedis(decode_responses=True) as redis,
+            RedisMessageBus(connection_pool=redis.connection_pool) as remote,
+            InMemoryMessageBus() as local,
+        ):
+            for bus in (local, remote):
+                with self.subTest(bus=type(bus).__name__):
+                    async with asyncio.timeout(5):
+                        await self._check_live_reads(bus)
+
+    async def _check_live_reads(self, bus: MessageBus) -> None:
+        key = MessageBusKeys.session_events("s")
+        after = await publish_session_event(bus, "s", {"n": 0})
+        response = await stream_session_events(
+            session_id="s",
+            agent_id="a",
+            user_id="u",
+            storage=_Storage(),  # type: ignore[arg-type]
+            message_bus=bus,
+            after=after,
+            replay_notice=True,
+        )
+        async with aclosing(response.body_iterator) as stream:
+            self.assertEqual(await anext(stream), ": replay-complete\n\n")
+            with patch.object(bus, "log_read", wraps=bus.log_read) as reads:
+                for number in (1, 2):
+                    await publish_session_event(bus, "s", {"n": number})
+                    self.assertEqual(
+                        _decode(await anext(stream)),
+                        {"n": number},
+                    )
+                reads.assert_not_awaited()
+                with patch.object(bus, "publish") as delayed:
+                    await publish_session_event(bus, "s", {"n": 3})
+                await publish_session_event(bus, "s", {"n": 4})
+                await bus.publish(key, delayed.await_args.args[1])
+                self.assertEqual(
+                    [_decode(await anext(stream)) for _ in range(2)],
+                    [{"n": 3}, {"n": 4}],
+                )
+                reads.assert_awaited_once()
+                await publish_session_event(bus, "s", {"n": 5})
+                self.assertEqual(_decode(await anext(stream)), {"n": 5})
+                reads.assert_awaited_once()
+
     async def test_lost_redis_pong_during_replay(self) -> None:
         """Retry one lost PONG or close without delivering past the gap."""
         for drop_all in (False, True):

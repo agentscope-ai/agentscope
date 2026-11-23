@@ -57,6 +57,15 @@ from ._keys import MessageBusKeys
 RegisterSubscriptionBarrier = Callable[[Callable[[], Awaitable[None]]], None]
 
 
+def session_event_payload(notification: dict) -> dict:
+    """Strip replay cursors before delivering a live event to a client."""
+    return {
+        k: v
+        for k, v in notification.items()
+        if k not in ("_entry_id", "_previous_entry_id")
+    }
+
+
 def _stream_cursor_precedes(left: str, right: str) -> bool | None:
     """Compare native Redis-style stream IDs, if both use that format."""
     try:
@@ -298,6 +307,20 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Transport-level entry id, useful as a cursor for
                 subsequent :meth:`log_read` calls.
         """
+
+    async def log_append_with_previous(
+        self,
+        key: str,
+        payload: dict,
+        *,
+        max_len: int,
+    ) -> tuple[str, str | None]:
+        """Append and return (entry ID, immediate predecessor if known).
+
+        A predecessor must be established atomically with the append.
+        Buses without this capability leave it unknown.
+        """
+        return await self.log_append(key, payload, max_len=max_len), None
 
     @staticmethod
     def log_cursor_precedes(left: str, right: str) -> bool | None:
@@ -834,7 +857,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         key = self._SESSION_EVENTS_KEY.format(sid=session_id)
         async for payload in self.subscribe(key, on_ready=on_ready):
             if MessageBusKeys.SESSION_BARRIER_FIELD not in payload:
-                yield {k: v for k, v in payload.items() if k != "_entry_id"}
+                yield session_event_payload(payload)
 
     # Cross-process cancel ---------------------------------------------
 

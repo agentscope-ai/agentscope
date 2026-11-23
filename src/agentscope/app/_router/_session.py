@@ -35,7 +35,10 @@ from ._schema import (
     UpdateSessionRequest,
 )
 from ..message_bus import MessageBus, MessageBusKeys
-from ..message_bus._base import RegisterSubscriptionBarrier
+from ..message_bus._base import (
+    RegisterSubscriptionBarrier,
+    session_event_payload,
+)
 from .._service import (
     AgentView,
     ResourceAccessService,
@@ -968,6 +971,14 @@ class _SessionEventReplay:
         if entry_id == self.cursor or entry_id in self.recent:
             return
 
+        if (
+            not self.pending
+            and self.cursor is not None
+            and item.get("_previous_entry_id") == self.cursor
+        ):
+            self.advance(entry_id)
+            yield session_event_payload(item)
+            return
         successor = await self._locate(entry_id)
         trimmed = entry_id not in self.pending
         if trimmed and self.cursor is not None:
@@ -997,7 +1008,7 @@ class _SessionEventReplay:
         # A checkpoint trimmed this event. Use its live payload before
         # delivering any retained successors.
         self.advance(entry_id)
-        yield {k: v for k, v in item.items() if k != "_entry_id"}
+        yield session_event_payload(item)
 
 
 async def _worker_still_asking(
