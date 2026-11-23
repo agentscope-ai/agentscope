@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the ApproxTokenChunker class."""
+import tracemalloc
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -113,6 +114,30 @@ class ApproxTokenChunkerTest(IsolatedAsyncioTestCase):
                     [chunk.content.text for chunk in chunks],
                     expected,
                 )
+
+    async def test_long_text_does_not_allocate_character_offsets(self) -> None:
+        """Catch a per-character offset table without a timing assertion."""
+        if tracemalloc.is_tracing():
+            self.skipTest(
+                "This test needs its own allocation tracing session.",
+            )
+
+        text = "x" * 200_000
+        section = Section(content=TextBlock(text=text), source="long.txt")
+        chunker = ApproxTokenChunker(
+            ApproxTokenChunker.Parameters(chunk_size=512, overlap=0),
+        )
+        tracemalloc.start()
+        try:
+            chunks = await chunker.chunk([section])
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        self.assertEqual("".join(chunk.content.text for chunk in chunks), text)
+        # Leave room for the UTF-8 buffer, output chunks and runtime overhead.
+        # The old Python integer offset table alone used about 40 bytes/char.
+        self.assertLess(peak, 12 * len(text))
 
     async def test_data_block_pass_through(self) -> None:
         """DataBlock sections should pass through unchanged."""
