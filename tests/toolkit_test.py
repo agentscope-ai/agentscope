@@ -1537,9 +1537,38 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 ),
             ],
         )
-        self.assertListEqual(
-            list(toolkit.tool_groups[0].tools[0].input_schema["properties"]),
-            ["a", "b", "c", "d", "e"],
+        self.assertEqual(
+            toolkit.tool_groups[0].tools[0].input_schema,
+            {
+                "type": "object",
+                "required": ["a"],
+                "properties": {
+                    "a": {
+                        "type": "integer",
+                        "description": "The first value.",
+                    },
+                    "b": {
+                        "type": "integer",
+                        "description": "The second value.",
+                        "default": 2,
+                    },
+                    "c": {
+                        "type": "integer",
+                        "description": "The third value.",
+                        "default": 3,
+                    },
+                    "d": {
+                        "type": "integer",
+                        "description": "The fourth value.",
+                        "default": 4,
+                    },
+                    "e": {
+                        "type": "integer",
+                        "description": "The fifth value.",
+                        "default": 5,
+                    },
+                },
+            },
         )
 
         for name, arguments, expected in [
@@ -1571,8 +1600,23 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 if isinstance(result, ToolResponse):
                     response = result
 
-            self.assertEqual(response.state, "success")
-            self.assertEqual(response.content[0].text, expected)
+            self.assertEqual(
+                response.model_dump() if response is not None else None,
+                {
+                    "id": "test_positional_only",
+                    "state": "success",
+                    "metadata": {},
+                    "content": [
+                        {
+                            "type": "text",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "text": expected,
+                        },
+                    ],
+                },
+            )
 
     async def test_extra_keyword_before_positional_input(self) -> None:
         """An extra key leaves the matching positional slot at its default."""
@@ -1602,8 +1646,24 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             _agent_state=AgentState(session_id="session"),
         )
         self.assertEqual(
-            json.loads(chunk.content[0].text),
-            ["default", 7, "session", {"label": "extra"}],
+            chunk.model_dump(),
+            {
+                "id": AnyString(),
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "text": json.dumps(
+                            ["default", 7, "session", {"label": "extra"}],
+                        ),
+                    },
+                ],
+            },
         )
 
     async def test_custom_input_schema(self) -> None:
