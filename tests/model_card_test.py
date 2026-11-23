@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for model cards and their parameter schemas."""
+
 import os
 import tempfile
 from datetime import date
@@ -11,7 +12,7 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 from agentscope.app._router._schema._tts_model import ListTTSModelsResponse
-from agentscope.asr import ASRModelCard
+from agentscope.asr import ASRModelCard, DashScopeASRModel
 from agentscope.credential import OpenAICredential
 from agentscope.embedding import EmbeddingModelCard
 from agentscope.model import (
@@ -550,7 +551,49 @@ class TTSModelCardTest(TestCase):
 
 
 class ASRModelCardTest(TestCase):
-    """Verify ASR model cards tolerate an empty overrides key."""
+    """Verify ASR model card overrides."""
+
+    def test_null_override_loads_and_lists_card(self) -> None:
+        """Remove null overrides and retain any sample rate override."""
+        cases: list[dict[str, dict[str, int]]] = [
+            {},
+            {"sample_rate": {"default": 16000}},
+        ]
+        for retained in cases:
+            with self.subTest(retained=retained):
+                schema = DashScopeASRModel.Parameters.model_json_schema()
+                del schema["properties"]["keep_dialect"]
+                if retained:
+                    schema["properties"]["sample_rate"]["default"] = 16000
+                expected = {
+                    "type": "asr_model",
+                    "name": "custom-asr",
+                    "label": "Custom ASR",
+                    "input_types": ["audio/wav"],
+                    "output_types": ["text/plain"],
+                    "realtime": False,
+                    "parameter_schema": schema,
+                    "parameters_overrides": retained,
+                }
+                config = {
+                    "name": "custom-asr",
+                    "label": "Custom ASR",
+                    "input_types": ["audio/wav"],
+                    "parameter_overrides": {"keep_dialect": None, **retained},
+                }
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "custom.yaml"
+                    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+                    card = ASRModelCard.from_yaml(
+                        str(path),
+                        DashScopeASRModel.Parameters,
+                    )
+                    self.assertEqual(card.model_dump(), expected)
+                    cards = DashScopeASRModel.list_models(directory)
+                    self.assertEqual(
+                        [item.model_dump() for item in cards],
+                        [expected],
+                    )
 
     def test_null_parameter_overrides_key_loads_as_empty(self) -> None:
         """An empty ``parameter_overrides:`` key must not break the card.
