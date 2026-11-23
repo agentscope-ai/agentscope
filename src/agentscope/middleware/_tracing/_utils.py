@@ -4,13 +4,22 @@ import datetime
 import enum
 import inspect
 import json
-import math
+import re
 from dataclasses import is_dataclass
 from typing import Any
 
 from pydantic import BaseModel
 
 from ...message import Msg
+
+
+# Match entire JSON strings so keys and text containing NaN stay untouched.
+_STRING_OR_NONFINITE = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|NaN|-?Infinity')
+_QUOTED_NONFINITE = {
+    "NaN": '"nan"',
+    "Infinity": '"inf"',
+    "-Infinity": '"-inf"',
+}
 
 
 def _to_serializable(
@@ -28,11 +37,7 @@ def _to_serializable(
     """
 
     # Handle primitive types first
-    if isinstance(obj, float) and not math.isfinite(obj):
-        # NaN / Infinity are not valid JSON numbers (RFC 8259).
-        # Render them as strings so spans stay parseable JSON.
-        res = str(obj)
-    elif isinstance(obj, (str, int, bool, float, type(None))):
+    if isinstance(obj, (str, int, bool, float, type(None))):
         res = obj
 
     elif isinstance(obj, (list, tuple, set, frozenset)):
@@ -83,11 +88,13 @@ def _serialize_to_str(value: Any) -> str:
             JSON serialized string of the input value
     """
     try:
-        return json.dumps(value, ensure_ascii=False, allow_nan=False)
+        encoded = json.dumps(value, ensure_ascii=False)
+    except TypeError:
+        encoded = json.dumps(_to_serializable(value), ensure_ascii=False)
 
-    except (TypeError, ValueError):
-        return json.dumps(
-            _to_serializable(value),
-            ensure_ascii=False,
-            allow_nan=False,
+    if "NaN" in encoded or "Infinity" in encoded:
+        return _STRING_OR_NONFINITE.sub(
+            lambda token: _QUOTED_NONFINITE.get(token[0], token[0]),
+            encoded,
         )
+    return encoded
