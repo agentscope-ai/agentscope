@@ -7,12 +7,13 @@ Architecture
 Mirrors :class:`agentscope.workspace.DockerWorkspace` but swaps the
 Docker engine for the Kubernetes API (``kubernetes_asyncio``):
 
-* **Lifecycle.** ``initialize()`` looks up an existing Pod by label,
+* **Lifecycle.** ``initialize()`` looks up an existing Pod by name,
+  verifies its workspace identity,
   reuses it if Running, deletes-and-recreates if Failed/Unknown, or
   creates a new one. PVCs survive Pod deletion for data persistence.
   ``close()`` deletes the Pod but keeps the PVC (unless
   ``delete_pvc_on_close=True`` was passed at construction).
-* **Persistence.** A PVC (``as-ws-{workspace_id}``) mounted at
+* **Persistence.** A PVC sharing the resolved Pod name mounted at
   ``/workspace`` provides cross-Pod-restart persistence. Skills,
   ``.mcp``, sessions, and data survive restarts.
 * **Bootstrap.** First-time provisioning installs system deps +
@@ -45,6 +46,7 @@ from ._constants import (
     GATEWAY_HOME,
     POD_WORKDIR,
     SYSTEM_DEPS,
+    _k8s_legacy_name,
     _k8s_safe_name,
 )
 
@@ -189,9 +191,8 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         self._api_client = k8s_client.ApiClient()
         self._v1 = k8s_client.CoreV1Api(self._api_client)
 
-        self._pod_name = _k8s_safe_name(self.workspace_id)
-
         await self._ensure_namespace()
+        self._pod_name = await self._resolve_pod_name()
         await self._ensure_pvc()
         await self._ensure_pod()
         await self._wait_pod_running()
@@ -210,18 +211,32 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         """
         if self._v1 is not None and self._pod_name:
             try:
+                pod = await self._v1.read_namespaced_pod(
+                    self._pod_name,
+                    self._namespace,
+                )
+                self._check_resource_owner(pod)
                 await self._v1.delete_namespaced_pod(
                     self._pod_name,
                     self._namespace,
+                    body=self._delete_options(pod),
                 )
             except Exception as e:
                 logger.warning("K8sWorkspace: Pod delete failed: %s", e)
 
             if self._delete_pvc_on_close:
                 try:
+                    pvc = (
+                        await self._v1.read_namespaced_persistent_volume_claim(
+                            self._pod_name,
+                            self._namespace,
+                        )
+                    )
+                    self._check_resource_owner(pvc)
                     await self._v1.delete_namespaced_persistent_volume_claim(
                         self._pod_name,
                         self._namespace,
+                        body=self._delete_options(pvc),
                     )
                 except Exception as e:
                     logger.warning(
@@ -244,6 +259,72 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         return self.instructions
 
     # ── internals: K8s resource management ─────────────────────
+
+    @staticmethod
+    def _resource_owner(resource: Any) -> str | None:
+        """Read the exact workspace ID, including its original case."""
+        if resource.metadata is None:
+            return None
+        annotations = resource.metadata.annotations or {}
+        labels = resource.metadata.labels or {}
+        return annotations.get(
+            "agentscope.workspace.id",
+            labels.get("agentscope.workspace.id"),
+        )
+
+    @staticmethod
+    def _delete_options(resource: Any) -> Any:
+        """Prevent deletion of a replacement with the same resource name."""
+        from kubernetes_asyncio import client as k8s_client
+
+        return k8s_client.V1DeleteOptions(
+            preconditions=k8s_client.V1Preconditions(
+                uid=resource.metadata.uid,
+            ),
+        )
+
+    def _check_resource_owner(self, resource: Any) -> None:
+        """Reject resources with foreign or missing workspace identities."""
+        if self._resource_owner(resource) != self.workspace_id:
+            name = resource.metadata.name if resource.metadata else None
+            raise RuntimeError(
+                f"K8s resource {name!r} is not owned by workspace "
+                f"{self.workspace_id!r}",
+            )
+
+    async def _resolve_pod_name(self) -> str:
+        """Keep owned legacy resources without silently abandoning data."""
+        from kubernetes_asyncio.client.rest import ApiException
+
+        name = _k8s_safe_name(self.workspace_id)
+        legacy_name = _k8s_legacy_name(self.workspace_id)
+        matches = []
+        for candidate in dict.fromkeys((name, legacy_name)):
+            resources = []
+            for read in (
+                self._v1.read_namespaced_persistent_volume_claim,
+                self._v1.read_namespaced_pod,
+            ):
+                try:
+                    resources.append(await read(candidate, self._namespace))
+                except ApiException as e:
+                    if e.status != 404:
+                        raise
+            if candidate == name or any(
+                self._resource_owner(resource) in (None, self.workspace_id)
+                for resource in resources
+            ):
+                for resource in resources:
+                    self._check_resource_owner(resource)
+                if resources:
+                    matches.append(candidate)
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Workspace {self.workspace_id!r} has both current and "
+                f"legacy K8s resources: {matches!r}. Resolve the duplicate "
+                "resources before initializing the workspace.",
+            )
+        return matches[0] if matches else name
 
     async def _ensure_namespace(self) -> None:
         """Create the namespace if it doesn't exist."""
@@ -281,6 +362,7 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                 pvc_name,
                 self._namespace,
             )
+            self._check_resource_owner(pvc)
             if pvc.metadata and pvc.metadata.deletion_timestamp is not None:
                 logger.info(
                     "K8sWorkspace: PVC %r is being deleted, waiting...",
@@ -313,6 +395,8 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                 namespace=self._namespace,
                 labels={
                     "app.kubernetes.io/managed-by": "agentscope",
+                },
+                annotations={
                     "agentscope.workspace.id": self.workspace_id,
                 },
             ),
@@ -369,6 +453,7 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                 self._pod_name,
                 self._namespace,
             )
+            self._check_resource_owner(pod)
             phase = pod.status.phase if pod.status else None
             deletion_ts = (
                 pod.metadata.deletion_timestamp
@@ -396,9 +481,11 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                     await self._v1.delete_namespaced_pod(
                         self._pod_name,
                         self._namespace,
+                        body=self._delete_options(pod),
                     )
-                except ApiException:
-                    pass
+                except ApiException as e:
+                    if e.status != 404:
+                        raise
                 await self._wait_pod_deleted()
                 await self._create_pod()
             else:
@@ -412,9 +499,11 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                     await self._v1.delete_namespaced_pod(
                         self._pod_name,
                         self._namespace,
+                        body=self._delete_options(pod),
                     )
-                except ApiException:
-                    pass
+                except ApiException as e:
+                    if e.status != 404:
+                        raise
                 await self._wait_pod_deleted()
                 await self._create_pod()
         except ApiException as e:
@@ -496,6 +585,8 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                 labels={
                     "app.kubernetes.io/managed-by": "agentscope",
                     "agentscope.workspace": "true",
+                },
+                annotations={
                     "agentscope.workspace.id": self.workspace_id,
                 },
             ),
@@ -530,6 +621,7 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                 self._pod_name,
                 self._namespace,
             )
+            self._check_resource_owner(pod)
             phase = pod.status.phase if pod.status else None
             if phase == "Running":
                 return

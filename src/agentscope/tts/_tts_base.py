@@ -71,7 +71,17 @@ class TTSModelBase(ABC):
         self.credential = credential
         self.model = model
         self.parameters = parameters or self.Parameters()
+        self.validate_parameters(model, self.parameters)
         self.stream = stream
+
+    @classmethod
+    def validate_parameters(cls, model: str, parameters: BaseModel) -> None:
+        """Validate model-specific constraints before saving or construction.
+
+        Subclasses may raise ``ValueError`` for unsupported model/parameter
+        combinations. This hook must not create clients or perform I/O.
+        The default implementation imposes no additional constraints.
+        """
 
     async def __aenter__(self) -> "TTSModelBase":
         """Enter the async context manager and initialize resources if

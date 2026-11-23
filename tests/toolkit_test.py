@@ -3,9 +3,11 @@
 """Toolkit test case."""
 import base64
 import json
+from functools import partial
 from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 
 from pydantic import BaseModel, Field
@@ -141,6 +143,48 @@ class Tool2(ToolBase):
                 ),
             ],
         )
+
+
+class NamedMCPTool(ToolBase):
+    """A mock MCP tool with a configurable name."""
+
+    description: str = "A tool listed by an MCP server."
+    input_schema: dict = {
+        "type": "object",
+        "properties": {},
+    }
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+    is_mcp: bool = True
+
+    def __init__(self, name: str) -> None:
+        """Initialize the tool with the given name.
+
+        Args:
+            name (`str`):
+                The tool name presented to the agent.
+        """
+        self.name = name
+
+    async def check_permissions(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> PermissionDecision:
+        """Check permissions for the tool."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="The MCP tool is allowed.",
+        )
+
+    async def call(self, **kwargs: Any) -> ToolChunk:
+        """Run the tool."""
+        return ToolChunk(content=[TextBlock(text=self.name)])
+
+
+def _tool_names(schemas: list[dict]) -> list[str]:
+    """Extract tool names in schema order."""
+    return [schema["function"]["name"] for schema in schemas]
 
 
 class ToolkitTest(IsolatedAsyncioTestCase):
@@ -453,6 +497,56 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_tool_error_text(self) -> None:
+        """Test error text for bare, ordinary, and grouped exceptions."""
+
+        def raise_bare_timeout() -> None:
+            """Raise an exception without a message."""
+            raise TimeoutError()
+
+        def raise_with_message() -> None:
+            """Raise an exception with a message."""
+            raise ValueError("boom")
+
+        def raise_group() -> None:
+            """Raise an exception group with a leaf cause."""
+            raise ExceptionGroup("unhandled errors", [KeyError("missing")])
+
+        for func, expected_text in (
+            (raise_bare_timeout, "TimeoutError"),
+            (raise_with_message, "boom"),
+            (raise_group, "'missing'"),
+        ):
+            with self.subTest(tool=func.__name__):
+                toolkit = Toolkit(tools=[FunctionTool(func)])
+                responses = [
+                    chunk.model_dump()
+                    async for chunk in toolkit.call_tool(
+                        ToolCallBlock(id="1", name=func.__name__, input="{}"),
+                        AgentState(),
+                    )
+                    if isinstance(chunk, ToolResponse)
+                ]
+                self.assertEqual(
+                    responses,
+                    [
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                    "id": AnyString(),
+                                    "text": expected_text,
+                                },
+                            ],
+                            "state": "error",
+                            "metadata": {},
+                            "id": "1",
+                        },
+                    ],
+                )
+
     async def test_tool_response_merges_base64_chunks_by_bytes(self) -> None:
         """Base64 chunks with padding should merge as bytes, not strings."""
         response = ToolResponse(id="tool")
@@ -597,6 +691,27 @@ class ToolkitTest(IsolatedAsyncioTestCase):
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):
     """Test registering different functions in the toolkit."""
+
+    def test_callable_object_default_name(self) -> None:
+        """Infer callable names while preserving explicit names."""
+
+        class Echo:
+            """Echo a value asynchronously."""
+
+            async def __call__(self, value: str) -> str:
+                return value
+
+        renamed = partial(Echo())
+        renamed.__name__ = "renamed_echo"
+        for func, name, expected in (
+            (Echo(), None, "Echo"),
+            (partial(Echo()), None, "Echo"),
+            (renamed, None, "renamed_echo"),
+            (Echo(), "custom_echo", "custom_echo"),
+        ):
+            with self.subTest(expected=expected):
+                tool = FunctionTool(func, name=name)
+                self.assertEqual(tool.name, expected)
 
     async def test_sync_function_returning_awaitable(self) -> None:
         """Await the coroutine returned by a sync function."""
@@ -1796,6 +1911,81 @@ The tool instructions are a collection of suggestions, rules and notifications a
         )
 
         self.assertEqual(await toolkit.get_tool_schemas(), [])
+
+    async def test_mcp_tool_order_is_deterministic(self) -> None:
+        """Reordered MCP listings produce identical tool schemas."""
+        listings = iter(
+            [
+                ["gamma", "alpha", "beta"],
+                ["beta", "gamma", "alpha"],
+            ],
+        )
+
+        async def _list_tools(_: MCPClient) -> list[ToolBase]:
+            """Return the next listing of the server."""
+            return [NamedMCPTool(name) for name in next(listings)]
+
+        toolkit = Toolkit(
+            tools=[Tool1()],
+            mcps=[
+                MCPClient(
+                    name="server",
+                    is_stateful=False,
+                    mcp_config=HttpMCPConfig(url="http://127.0.0.1:1/mcp"),
+                ),
+            ],
+        )
+
+        with patch.object(
+            MCPClient,
+            "list_tools",
+            autospec=True,
+            side_effect=_list_tools,
+        ):
+            first = await toolkit.get_tool_schemas()
+            second = await toolkit.get_tool_schemas()
+
+        self.assertEqual(second, first)
+        self.assertListEqual(
+            _tool_names(first),
+            ["tool_1", "alpha", "beta", "gamma"],
+        )
+
+    async def test_mcp_tool_sorting_preserves_client_order(self) -> None:
+        """Sorting preserves MCP client and Python tool order."""
+        listings = {
+            "server_b": ["zeta", "eta"],
+            "server_a": ["delta", "beta"],
+        }
+
+        async def _list_tools(client: MCPClient) -> list[ToolBase]:
+            """Return the listing of the given server."""
+            return [NamedMCPTool(name) for name in listings[client.name]]
+
+        toolkit = Toolkit(
+            tools=[Tool2(), Tool1()],
+            mcps=[
+                MCPClient(
+                    name=name,
+                    is_stateful=False,
+                    mcp_config=HttpMCPConfig(url="http://127.0.0.1:1/mcp"),
+                )
+                for name in listings
+            ],
+        )
+
+        with patch.object(
+            MCPClient,
+            "list_tools",
+            autospec=True,
+            side_effect=_list_tools,
+        ):
+            names = _tool_names(await toolkit.get_tool_schemas())
+
+        self.assertListEqual(
+            names,
+            ["tool_2", "tool_1", "eta", "zeta", "beta", "delta"],
+        )
 
     async def test_check_tool_available_distinguishes_inactive_group(
         self,

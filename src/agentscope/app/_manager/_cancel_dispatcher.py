@@ -13,13 +13,21 @@ Subscribes to two bus channels:
 Processes whose registry / BG-manager do not hold the targeted session
 or task simply do no work — the publisher does not need to know which
 worker holds what; it broadcasts and lets each holder self-select.
+
+Each subscription is retried with bounded backoff if the bus drops the
+pub/sub, so one disconnect does not stop cancel delivery on this
+process.
 """
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Self
 
 from ..._logging import logger
 from ..message_bus import MessageBusKeys
+
+# Same curve as the channel and schedule listeners.
+_SUBSCRIBE_BACKOFF_INITIAL_SECS = 1.0
+_SUBSCRIBE_BACKOFF_MAX_SECS = 30.0
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -137,22 +145,18 @@ class CancelDispatcher:
             ready (`asyncio.Event`):
                 Signalled after the underlying SUBSCRIBE completes.
         """
-        try:
-            async for payload in self._bus.subscribe(
-                MessageBusKeys.session_cancel_channel(),
-                on_ready=ready.set,
-            ):
-                sid = payload.get("session_id")
-                if isinstance(sid, str):
-                    self._cancel_session(sid)
-        except Exception:
-            logger.exception(
-                "CancelDispatcher session-cancel loop crashed.",
-            )
-        finally:
-            # Unblock ``__aenter__`` even if subscribe failed before
-            # ``on_ready`` ran, so startup cannot deadlock.
-            ready.set()
+
+        def _on_payload(payload: dict) -> None:
+            sid = payload.get("session_id")
+            if isinstance(sid, str):
+                self._cancel_session(sid)
+
+        await self._consume_subscription(
+            MessageBusKeys.session_cancel_channel(),
+            ready,
+            _on_payload,
+            name="session-cancel",
+        )
 
     def _cancel_session(self, session_id: str) -> None:
         """Cancel every locally-tracked task for a session.
@@ -205,29 +209,25 @@ class CancelDispatcher:
             ready (`asyncio.Event`):
                 Signalled after the underlying SUBSCRIBE completes.
         """
-        try:
-            async for payload in self._bus.subscribe(
-                MessageBusKeys.task_cancel_channel(),
-                on_ready=ready.set,
-            ):
-                task_id = payload.get("task_id")
-                if not isinstance(task_id, str):
-                    continue
-                cancelled = self._bg_manager.cancel_task(task_id)
-                if cancelled:
-                    logger.info(
-                        "CancelDispatcher: cancelled local BG task %s "
-                        "via task-level broadcast.",
-                        task_id,
-                    )
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "CancelDispatcher task-cancel loop crashed.",
-            )
-        finally:
-            # Unblock ``__aenter__`` even if subscribe failed before
-            # ``on_ready`` ran, so startup cannot deadlock.
-            ready.set()
+
+        def _on_payload(payload: dict) -> None:
+            task_id = payload.get("task_id")
+            if not isinstance(task_id, str):
+                return
+            cancelled = self._bg_manager.cancel_task(task_id)
+            if cancelled:
+                logger.info(
+                    "CancelDispatcher: cancelled local BG task %s "
+                    "via task-level broadcast.",
+                    task_id,
+                )
+
+        await self._consume_subscription(
+            MessageBusKeys.task_cancel_channel(),
+            ready,
+            _on_payload,
+            name="task-cancel",
+        )
 
     # ------------------------------------------------------------------
     # Session-level interrupt loop
@@ -241,20 +241,75 @@ class CancelDispatcher:
             ready (`asyncio.Event`):
                 Signalled after the underlying SUBSCRIBE completes.
         """
-        try:
-            async for payload in self._bus.subscribe(
-                MessageBusKeys.session_interrupt_channel(),
-                on_ready=ready.set,
-            ):
-                sid = payload.get("session_id")
-                if isinstance(sid, str):
-                    self._interrupt_session(sid)
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "CancelDispatcher interrupt loop crashed.",
-            )
-        finally:
-            ready.set()
+
+        def _on_payload(payload: dict) -> None:
+            sid = payload.get("session_id")
+            if isinstance(sid, str):
+                self._interrupt_session(sid)
+
+        await self._consume_subscription(
+            MessageBusKeys.session_interrupt_channel(),
+            ready,
+            _on_payload,
+            name="interrupt",
+        )
+
+    async def _consume_subscription(
+        self,
+        channel: str,
+        ready: asyncio.Event,
+        on_payload: Callable[[dict], None],
+        *,
+        name: str,
+    ) -> None:
+        """Subscribe until cancelled, reconnecting when the pub/sub drops.
+
+        A generator that returns or raises is logged and retried with
+        bounded exponential backoff. ``asyncio.CancelledError`` exits
+        without sleeping so :meth:`__aexit__` stays prompt. ``ready`` is
+        set from ``on_ready`` and again in ``finally``, including when
+        the first subscribe fails before ``on_ready``.
+
+        Args:
+            channel (`str`):
+                Bus channel name.
+            ready (`asyncio.Event`):
+                Signalled after the underlying SUBSCRIBE completes.
+            on_payload (`Callable[[dict], None]`):
+                Invoked for each delivered payload.
+            name (`str`):
+                Short loop name used in log lines.
+        """
+        backoff = _SUBSCRIBE_BACKOFF_INITIAL_SECS
+        while True:
+            try:
+                async for payload in self._bus.subscribe(
+                    channel,
+                    on_ready=ready.set,
+                ):
+                    # A delivered payload means the subscription is
+                    # healthy, so the next drop starts again at the
+                    # initial delay. Same rule as the schedule listener.
+                    backoff = _SUBSCRIBE_BACKOFF_INITIAL_SECS
+                    on_payload(payload)
+            except asyncio.CancelledError:  # pylint: disable=try-except-raise
+                raise
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "CancelDispatcher %s loop crashed.",
+                    name,
+                )
+            else:
+                logger.warning(
+                    "CancelDispatcher %s subscription ended.",
+                    name,
+                )
+            finally:
+                # Unblock ``__aenter__`` even if subscribe failed before
+                # ``on_ready`` ran, so startup cannot deadlock.
+                ready.set()
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, _SUBSCRIBE_BACKOFF_MAX_SECS)
 
     def _interrupt_session(self, session_id: str) -> None:
         """Cancel the local chat-run task for a session.

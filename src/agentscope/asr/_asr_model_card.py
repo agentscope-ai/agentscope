@@ -86,7 +86,9 @@ class ASRModelCard(BaseModel):
 
         schema = copy.deepcopy(parameter_class.model_json_schema())
         properties = schema.get("properties", {})
-        overrides = config.get("parameter_overrides", {})
+        overrides = config.get("parameter_overrides")
+        if overrides is None:
+            overrides = {}
         for parameter_name, override in overrides.items():
             if override is None or override.get("hidden"):
                 properties.pop(parameter_name, None)

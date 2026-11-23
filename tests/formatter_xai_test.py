@@ -290,8 +290,8 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
-    async def test_chat_formatter_assistant_media(self) -> None:
-        """Assistant images follow their text and precede the next user."""
+    async def test_chat_formatter_assistant_media_skipped(self) -> None:
+        """Skip assistant images without adding user turns."""
         picture = DataBlock(
             source=Base64Source(
                 data="SU1HX0RBVEE=",
@@ -314,17 +314,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                 expected = [user("Draw a chart.")]
                 if text:
                     expected.append(assistant(text))
-                expected.extend(
-                    [
-                        user(
-                            image(
-                                "data:image/png;base64,SU1HX0RBVEE=",
-                                detail="high",
-                            ),
-                        ),
-                        user("Explain the chart."),
-                    ],
-                )
+                expected.append(user("Explain the chart."))
                 self.assertListEqual(expected, res)
 
     async def test_chat_formatter_system_message(self) -> None:
@@ -556,7 +546,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
     async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
         self,
     ) -> None:
-        """Assistant media precedes tools; result media follows all results."""
+        """Skip assistant media; keep result media after all tool results."""
         fmt = XAIChatFormatter()
         picture = DataBlock(
             id="image_1",
@@ -629,11 +619,9 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
         self.assertListEqual(
             normalized_res,
             [
-                assistant("Original chart."),
-                user(image("https://example.com/original.png")),
                 (
                     2,
-                    [],
+                    ["Original chart."],
                     [
                         (
                             "call_shot",
@@ -671,10 +659,10 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             ],
         )
 
-    async def test_chat_formatter_media_before_separate_tool_result(
+    async def test_chat_formatter_media_skipped_before_tool_result(
         self,
     ) -> None:
-        """Media must not separate a tool call from a later result message."""
+        """Skipping media preserves calls paired with separate results."""
         res = await XAIChatFormatter().format(
             [
                 AssistantMsg(
@@ -723,7 +711,6 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
         self.assertListEqual(
             normalized_res,
             [
-                user(image("https://example.com/original.png")),
                 (2, [], [("call_1", 1, "edit", "{}")]),
                 tool_result("Done.", tool_call_id="call_1"),
             ],
@@ -1139,7 +1126,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
         )
 
     async def test_chat_formatter_assistant_media_around_hint(self) -> None:
-        """Assistant images stay with their segment on either side of hints."""
+        """Skip assistant images while preserving text and hint order."""
         before = DataBlock(
             source=URLSource(
                 url="https://example.com/before.png",
@@ -1176,10 +1163,8 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                     expected = [assistant(text)] if text else []
                     expected.extend(
                         [
-                            user(image("https://example.com/before.png")),
                             user("Revise the chart."),
                             assistant("Revised chart."),
-                            user(image("https://example.com/after.png")),
                         ],
                     )
                     self.assertListEqual(expected, res)

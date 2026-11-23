@@ -2,6 +2,10 @@ import type { Msg } from '@agentscope-ai/agentscope/message';
 
 import { client } from './client';
 import type { ChatRequest } from './types';
+import {
+	getEnabledClientBuiltinTools,
+	getEnabledClientExternalToolDefinitions,
+} from '@/lib/client-external-tool-store';
 
 export interface ChatQueueItem {
 	/** Stable business id used by queue mutation endpoints. */
@@ -45,7 +49,15 @@ export const chatApi = {
 			status: 'started' | 'queued';
 			session_id: string;
 			queue_item_id: string | null;
-		}>('/chat/', body),
+		}>('/chat/', {
+			...body,
+			client_builtin_tools:
+				body.client_builtin_tools ??
+				getEnabledClientBuiltinTools(body.agent_id, body.session_id),
+			client_external_tools:
+				body.client_external_tools ??
+				getEnabledClientExternalToolDefinitions(body.agent_id, body.session_id),
+		}),
 
 	/**
 	 * Read the complete editable pending queue.

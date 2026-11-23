@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """Schema models for the voice profile router."""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic_core import PydanticCustomError
 
 from ...storage._model import VoiceProfileData, VoiceProfileRecord
 from ....tts import TTSModelCard
+from ....tts._minimax._voice_cloning_client import MAX_CLONE_AUDIO_SIZE_BYTES
 
 MAX_AUDIO_SIZE_BYTES = 10 * 1024 * 1024
 MAX_AUDIO_BASE64_LENGTH = 4 * ((MAX_AUDIO_SIZE_BYTES + 2) // 3)
+MAX_MINIMAX_BASE64_LENGTH = 4 * ((MAX_CLONE_AUDIO_SIZE_BYTES + 2) // 3)
 
 
 class CreateVoiceProfileRequest(BaseModel):
@@ -97,9 +100,9 @@ class CloneVoiceRequest(BaseModel):
 
     audio_base64: str | None = Field(
         default=None,
-        max_length=MAX_AUDIO_BASE64_LENGTH,
+        max_length=MAX_MINIMAX_BASE64_LENGTH,
     )
-    """Base64-encoded audio (for Qwen-TTS/OpenAI upload)."""
+    """Base64-encoded audio for providers supporting file uploads."""
 
     audio_filename: str = "voice.wav"
     """Original filename (used for MIME detection)."""
@@ -115,6 +118,26 @@ class CloneVoiceRequest(BaseModel):
 
     consent: str | None = None
     """OpenAI consent token (required for OpenAI cloning)."""
+
+    @field_validator("audio_base64")
+    @classmethod
+    def validate_audio_size(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        """Keep the smaller upload limit for other providers."""
+        if (
+            info.data.get("engine") != "minimax_tts"
+            and value is not None
+            and len(value) > MAX_AUDIO_BASE64_LENGTH
+        ):
+            raise PydanticCustomError(
+                "string_too_long",
+                "String should have at most {max_length} characters",
+                {"max_length": MAX_AUDIO_BASE64_LENGTH},
+            )
+        return value
 
 
 class CloneVoiceResponse(BaseModel):
