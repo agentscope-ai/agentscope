@@ -2200,5 +2200,45 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
             ],
         )
 
+    async def test_event_data_block_name_matches_source(self) -> None:
+        """Base64 and URL DataBlocks keep their name on the emitted event."""
+        agent = Agent(
+            name="test",
+            system_prompt="",
+            model=MockModel(),
+            toolkit=Toolkit(),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        chunks = [
+            DataBlock(
+                id="b64-block",
+                source=Base64Source(
+                    data=base64.b64encode(b"hello").decode("ascii"),
+                    media_type="application/pdf",
+                ),
+                name="report.pdf",
+            ),
+            DataBlock(
+                id="url-block",
+                source=URLSource(
+                    url="https://example.com/photo.png",
+                    media_type="image/png",
+                ),
+                name="photo.png",
+            ),
+        ]
+        # pylint: disable=protected-access
+        events = [
+            event
+            async for event in agent._convert_tool_chunk_to_event(
+                "tc-1",
+                chunks,
+            )
+        ]
+        self.assertListEqual(
+            [event.name for event in events],
+            ["report.pdf", "photo.png"],
+        )
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

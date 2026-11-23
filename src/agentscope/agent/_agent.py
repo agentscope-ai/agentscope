@@ -4076,6 +4076,7 @@ class Agent:
                         block_id=block.id,
                         media_type=block.source.media_type,
                         data=block.source.data,
+                        name=block.name,
                     )
                 elif isinstance(block.source, URLSource):
                     yield ToolResultDataDeltaEvent(
@@ -4084,4 +4085,5 @@ class Agent:
                         block_id=block.id,
                         media_type=block.source.media_type,
                         url=str(block.source.url),
+                        name=block.name,
                     )

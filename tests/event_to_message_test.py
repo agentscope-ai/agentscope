@@ -1197,6 +1197,92 @@ class ToolResultDataDeltaMergeTest(TestCase):
             ],
         )
 
+    def test_data_block_name_survives_replay(self) -> None:
+        """A Base64 DataBlock keeps its name when rebuilt from events."""
+        msg = AssistantMsg(name="assistant", content=[])
+        msg.append_event(
+            ToolResultStartEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                tool_call_name="Read",
+            ),
+        )
+        msg.append_event(
+            ToolResultDataDeltaEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                block_id="pdf-1",
+                media_type="application/pdf",
+                data=base64.b64encode(b"%PDF").decode("ascii"),
+                name="report.pdf",
+            ),
+        )
+        msg.append_event(
+            ToolResultEndEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                state="success",
+            ),
+        )
+
+        output = msg.content[0].output
+        self.assertEqual(output[0].name, "report.pdf")
+
+    def test_same_block_id_keeps_the_latest_name(self) -> None:
+        """A later named delta updates the merged block's name; a delta
+        without a name keeps the existing one."""
+        msg = AssistantMsg(name="assistant", content=[])
+        msg.append_event(
+            ToolResultStartEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                tool_call_name="Read",
+            ),
+        )
+        for payload, name in (
+            (b"hello", "draft.pdf"),
+            (b"world", "final.pdf"),
+            (b"!", None),
+        ):
+            msg.append_event(
+                ToolResultDataDeltaEvent(
+                    reply_id=msg.id,
+                    tool_call_id="tc-1",
+                    block_id="pdf-1",
+                    media_type="application/pdf",
+                    data=base64.b64encode(payload).decode("ascii"),
+                    name=name,
+                ),
+            )
+
+        output = msg.content[0].output
+        self.assertEqual(len(output), 1)
+        self.assertEqual(output[0].name, "final.pdf")
+
+    def test_url_data_block_name_survives_replay(self) -> None:
+        """A URL DataBlock keeps its name when rebuilt from events."""
+        msg = AssistantMsg(name="assistant", content=[])
+        msg.append_event(
+            ToolResultStartEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                tool_call_name="Read",
+            ),
+        )
+        msg.append_event(
+            ToolResultDataDeltaEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                block_id="image-1",
+                media_type="image/png",
+                url="https://example.com/photo.png",
+                name="photo.png",
+            ),
+        )
+
+        output = msg.content[0].output
+        self.assertEqual(output[0].name, "photo.png")
+
     def test_empty_media_type_does_not_clear_existing_type(self) -> None:
         """An empty media type does not replace a prior non-empty type."""
         msg = AssistantMsg(name="assistant", content=[])

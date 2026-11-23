@@ -394,6 +394,8 @@ class ToolResultDataDeltaEvent(EventBase):
     """Base64-encoded binary data, mutually exclusive with `url`."""
     url: str | None = None
     """URL pointing to the binary content, mutually exclusive with `data`."""
+    name: str | None = None
+    """Optional name of the data, e.g. the source file name."""
 
     @model_validator(mode="after")
     def validate_data_source(self) -> Self:

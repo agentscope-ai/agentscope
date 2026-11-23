@@ -479,9 +479,14 @@ class Msg(BaseModel):
                         merge_target.source.media_type = (
                             src.media_type or merge_target.source.media_type
                         )
+                        merge_target.name = event.name or merge_target.name
                     else:
                         block.output.append(
-                            DataBlock(id=event.block_id, source=src),
+                            DataBlock(
+                                id=event.block_id,
+                                source=src,
+                                name=event.name,
+                            ),
                         )
                 else:
                     assert isinstance(block, ToolResultBlock)
