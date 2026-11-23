@@ -121,6 +121,7 @@ from ..workspace import Offloader, WorkspaceBase
 
 # The name of the tool that the agent uses to compress its own context
 _COMPRESSION_TOOL_NAME = "CompressContext"
+_EXTERNAL_REQUEST_ID = "_agentscope_external_request_id"
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
@@ -2010,6 +2011,17 @@ class Agent:
                 tool = await self.toolkit.get_tool(tool_result.name)
                 if tool is not None:
                     await tool.check_external_result(tool_result)
+
+                # Correlate requested receipts after validating tool metadata.
+                if event.metadata.get(_EXTERNAL_REQUEST_ID) == event.id:
+                    tool_result = tool_result.model_copy(
+                        update={
+                            "metadata": {
+                                **tool_result.metadata,
+                                _EXTERNAL_REQUEST_ID: event.id,
+                            },
+                        },
+                    )
 
                 async for evt in self._convert_tool_chunk_to_event(
                     tool_result.id,

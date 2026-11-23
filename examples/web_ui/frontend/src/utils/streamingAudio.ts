@@ -16,9 +16,9 @@
  *      accumulate bytes and, on DATA_BLOCK_END, build a Blob URL that backs
  *      autoplay + an ``<audio controls>`` element for replay/scrubbing.
  *
- * For wav, the controls element built on DATA_BLOCK_END is replay-only —
- * we intentionally skip the second autoplay there to avoid colliding with
- * the live player. ``WavStreamPlayer.finalize`` defers AudioContext
+ * Once live WAV playback starts, the controls element is replay-only.
+ * A checkpoint can supply the full WAV before the first playable frame.
+ * ``WavStreamPlayer.finalize`` defers AudioContext
  * teardown until queued PCM has finished playing, so live audio is never
  * cut short by the end event arriving mid-playback.
  */
@@ -238,8 +238,6 @@ interface Session {
 	chunks: Bytes[];
 	totalBytes: number;
 	livePlayer: WavStreamPlayer | null;
-	/** True if a live player was created — survives dispose. */
-	hadLivePlayer: boolean;
 	playedUrl: boolean;
 	autoplayElement: HTMLAudioElement | null;
 	state: StreamingAudioState;
@@ -284,15 +282,31 @@ export class StreamingAudioManager {
 				if (block.type !== 'data' || !block.finished_at) continue;
 				playedBlocks.delete(block.id);
 				if (!replayed.delete(block.id)) continue;
-				const session = this.sessions.get(block.id);
+				const session = this.sessions.get(block.id)!;
 				if (
-					session?.state.status !== 'ready' ||
 					session.replyId !== msg.id ||
 					session.mediaType !== block.source.media_type ||
-					session.sourceUrl !==
-						(block.source.type === 'url' ? block.source.url : undefined) ||
 					(msg.finished_reason && msg.finished_reason !== ReplyFinishedReason.COMPLETED)
 				) {
+					this.dispose(block.id);
+					continue;
+				}
+				const { source } = block;
+				const url = source.type === 'url' ? source.url : undefined;
+				if (
+					session.state.status === 'streaming' &&
+					session.autoplay !== false &&
+					!session.livePlayer?.started
+				) {
+					// The checkpoint includes the prefix we buffered before disconnecting.
+					session.livePlayer?.dispose();
+					session.livePlayer = null;
+					session.chunks = [];
+					session.totalBytes = 0;
+					session.sourceUrl = undefined;
+					this.append(block.id, source.type === 'base64' ? source.data : null, url);
+					void this.end(block.id);
+				} else if (session.state.status !== 'ready' || session.sourceUrl !== url) {
 					this.dispose(block.id);
 				}
 			}
@@ -324,7 +338,6 @@ export class StreamingAudioManager {
 			chunks: [],
 			totalBytes: 0,
 			livePlayer,
-			hadLivePlayer: livePlayer !== null,
 			playedUrl: false,
 			autoplayElement: null,
 			state: { status: 'streaming', mediaType, url: null, interruptCount: 0 },
@@ -339,7 +352,6 @@ export class StreamingAudioManager {
 					this.playUrl(session, session.state.url);
 				} else if (mediaType === 'audio/wav' && session.state.status === 'streaming') {
 					session.livePlayer = new WavStreamPlayer();
-					session.hadLivePlayer = true;
 					for (const chunk of session.chunks) session.livePlayer.append(chunk);
 				}
 			});
@@ -369,12 +381,8 @@ export class StreamingAudioManager {
 	}
 
 	/**
-	 * Called on DATA_BLOCK_END. Builds the replay URL and (for non-wav)
-	 * autoplays. For wav we skip autoplay because ``WavStreamPlayer`` has
-	 * already been playing the bytes as they arrived; a second ``Audio``
-	 * playback here would either double up or — given ``end`` fires only
-	 * after the whole model stream (text included) finishes — make the
-	 * user perceive audio as starting only after text streaming completes.
+	 * Build the replay URL on DATA_BLOCK_END. Autoplay the completed block
+	 * when the live player hasn't scheduled any audio frames.
 	 */
 	async end(blockId: string, playbackDone?: Promise<void>): Promise<void> {
 		const session = this.sessions.get(blockId);
@@ -388,7 +396,7 @@ export class StreamingAudioManager {
 		}
 		if (!session || session.state.status !== 'streaming') return;
 
-		const hadLivePlayback = session.hadLivePlayer;
+		const hadLivePlayback = session.livePlayer?.started;
 		if (session.livePlayer) {
 			// Let queued PCM finish playing; AudioContext closes via a
 			// deferred timer. The livePlayer reference is kept so that
@@ -414,7 +422,7 @@ export class StreamingAudioManager {
 		};
 		this.emit(blockId);
 
-		if (url && session.autoplay === true && (!hadLivePlayback || session.sourceUrl)) {
+		if (url && session.autoplay === true && !hadLivePlayback) {
 			this.playUrl(session, url);
 		}
 	}
@@ -434,7 +442,6 @@ export class StreamingAudioManager {
 	interruptReply(replyId: string): void {
 		for (const [blockId, session] of this.sessions) {
 			if (session.replyId !== replyId) continue;
-			session.autoplay = false;
 			this.stopBlockPlayback(session);
 			if (session.state.status === 'streaming') {
 				if (session.totalBytes || session.sourceUrl) {
@@ -447,30 +454,20 @@ export class StreamingAudioManager {
 		}
 	}
 
-	private stopBlockPlayback(session: Session): void {
+	private stopBlockPlayback(session: Session, interruptReplay = true): void {
+		session.autoplay = false;
 		session.autoplayElement?.pause();
 		session.autoplayElement = null;
 		session.livePlayer?.dispose();
 		session.livePlayer = null;
-		session.state = { ...session.state, interruptCount: session.state.interruptCount + 1 };
+		if (interruptReplay) {
+			session.state = { ...session.state, interruptCount: session.state.interruptCount + 1 };
+		}
 	}
 
-	/**
-	 * Stop live streaming playback only (WavStreamPlayers). Does not
-	 * touch replay ``<audio>`` elements or bump ``interruptCount``.
-	 * Called by the replay controller so that clicking play on a past
-	 * audio block silences any in-progress streaming audio without
-	 * interfering with the element that's about to start playing.
-	 */
-	stopLivePlayback(): void {
-		for (const session of this.sessions.values()) {
-			if (typeof session.autoplay !== 'boolean') session.autoplay = false;
-			if (session.livePlayer) {
-				session.autoplay = false;
-				session.livePlayer.dispose();
-				session.livePlayer = null;
-			}
-		}
+	/** Give manual replay control of audio output, including buffered MP3 playback. */
+	stopAutoplay(): void {
+		for (const session of this.sessions.values()) this.stopBlockPlayback(session, false);
 	}
 
 	/**
@@ -480,7 +477,6 @@ export class StreamingAudioManager {
 	 */
 	stopAllPlayback(): void {
 		for (const [blockId, session] of this.sessions) {
-			session.autoplay = false;
 			this.stopBlockPlayback(session);
 			this.emit(blockId);
 		}

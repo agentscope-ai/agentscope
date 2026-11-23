@@ -28,7 +28,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 	const replay: ReplayController = useMemo(
 		() => ({
 			play(el: HTMLAudioElement) {
-				manager.stopLivePlayback();
+				manager.stopAutoplay();
 				if (currentRef.current && currentRef.current !== el) {
 					currentRef.current.pause();
 					currentRef.current.currentTime = 0;

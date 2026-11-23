@@ -258,6 +258,7 @@
 			"title": "{{name}} is waiting for an external executor",
 			"rejected": "The result was not accepted. Please check your answer and submit again.",
 			"unconfirmed": "The connection closed before your result was confirmed. If the tool is still waiting, you can submit again.",
+			"unknownAnswer": "The tool call finished. The server did not identify which answer it accepted.",
 			"reconnecting": "Wait for the chat to reconnect, then submit the tool result again.",
 			"description": "This tool must be completed by an integration provided by the host application."
 		},

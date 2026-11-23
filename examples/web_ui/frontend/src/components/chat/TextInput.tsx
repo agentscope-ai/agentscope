@@ -58,7 +58,7 @@ interface ProcessedFile {
 }
 
 interface TextInputProps {
-	onSend: (blocks: ContentBlock[]) => Promise<void> | void;
+	onSend: (blocks: ContentBlock[], allowRetry?: () => void) => Promise<void> | void;
 	placeholder?: string;
 	autoComplete?: (input: string) => string | null;
 	disabled?: boolean;
@@ -189,6 +189,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		const [files, setFiles] = useState<ProcessedFile[]>([]);
 		const [isFocused, setIsFocused] = useState(false);
 		const [submitting, setSubmitting] = useState(false);
+		const submissionRef = useRef(0);
 		const mountedRef = useRef(false);
 		useLayoutEffect(() => {
 			mountedRef.current = true;
@@ -411,21 +412,26 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 
 			const submittedValue = value;
 			const submittedFiles = files;
+			const submission = ++submissionRef.current;
+			const isCurrent = () => mountedRef.current && submissionRef.current === submission;
+			const release = () => {
+				if (isCurrent()) setSubmitting(false);
+			};
 			setSubmitting(true);
 			// Start a fresh draft immediately. If the request fails, merge the
 			// submitted draft back without erasing anything typed meanwhile.
 			setValue('');
 			setFiles([]);
 			try {
-				await onSend(blocks);
+				await onSend(blocks, release);
 			} catch {
-				if (!mountedRef.current) return;
+				if (!isCurrent()) return;
 				// The API layer reports the error; restore both the failed turn
 				// and any new draft content so neither is silently lost.
 				setValue((current) => (current ? `${submittedValue}\n${current}` : submittedValue));
 				setFiles((current) => [...submittedFiles, ...current]);
 			} finally {
-				if (mountedRef.current) setSubmitting(false);
+				release();
 			}
 		};
 

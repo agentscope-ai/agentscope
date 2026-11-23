@@ -73,6 +73,46 @@ export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
 /** Safety fallback: force phase back to idle if REPLY_END is not seen. */
 const INTERRUPT_TIMEOUT_MS = 10_000;
 
+const EXTERNAL_REQUEST_ID = '_agentscope_external_request_id';
+
+type ToolSubmissionIssue = 'superseded' | 'unconfirmed';
+
+/** The tool call has finished, but this submission has no success receipt. */
+export class UnacknowledgedToolSubmission extends Error {
+	constructor(reason: ToolSubmissionIssue) {
+		super(reason);
+	}
+}
+
+interface ExternalSubmission {
+	replyId: string;
+	toolCallIds: Set<string>;
+	ambiguousCalls: Set<string>;
+	issue?: ToolSubmissionIssue;
+	allowRetry: () => void;
+	finish: (issue?: ToolSubmissionIssue) => void;
+	reject: (error: Error) => void;
+}
+
+function settleToolResult(
+	submission: ExternalSubmission,
+	requestId: string,
+	callId: string,
+	metadata?: Record<string, unknown>,
+): boolean {
+	const owner = metadata?.[EXTERNAL_REQUEST_ID];
+	if (owner !== undefined && typeof owner !== 'string') return false;
+	if (!submission.toolCallIds.delete(callId)) return false;
+	if (owner === undefined && submission.ambiguousCalls.has(callId)) {
+		submission.issue ??= 'unconfirmed';
+	} else if (owner !== undefined && owner !== requestId) {
+		submission.issue = 'superseded';
+	}
+	if (submission.toolCallIds.size) return false;
+	submission.finish(submission.issue);
+	return true;
+}
+
 /**
  * Manages messages for a single ``(agentId, sessionId)`` pair.
  *
@@ -145,17 +185,7 @@ export function useMessages(
 	const { t } = useTranslation();
 	// A new identity for each visit also rejects late responses after A -> B -> A.
 	const session = useMemo(() => ({ agentId, sessionId }), [agentId, sessionId]);
-	const externalSubmissionsRef = useRef(
-		new Map<
-			string,
-			{
-				replyId: string;
-				toolCallIds: Set<string>;
-				resolve: () => void;
-				reject: (error: Error) => void;
-			}
-		>(),
-	);
+	const externalSubmissionsRef = useRef(new Map<string, ExternalSubmission>());
 	const activeSessionRef = useRef<typeof session | null>(null);
 	useLayoutEffect(() => {
 		activeSessionRef.current = session;
@@ -365,12 +395,12 @@ export function useMessages(
 			}
 			if (event.type === EventType.TOOL_RESULT_END) {
 				const result = event as ToolResultEndEvent;
-				for (const [requestId, pending] of externalSubmissionsRef.current) {
-					if (pending.replyId !== result.reply_id) continue;
-					pending.toolCallIds.delete(result.tool_call_id);
-					if (pending.toolCallIds.size === 0) {
-						externalSubmissionsRef.current.delete(requestId);
-						pending.resolve();
+				for (const [id, request] of externalSubmissionsRef.current) {
+					if (
+						request.replyId === result.reply_id &&
+						settleToolResult(request, id, result.tool_call_id, result.metadata)
+					) {
+						externalSubmissionsRef.current.delete(id);
 					}
 				}
 			} else if (event.type === EventType.REPLY_END) {
@@ -623,14 +653,15 @@ export function useMessages(
 						if (externalSubmissionsRef.current.get(id) !== request) continue;
 						const reply = messages.find((msg) => msg.id === request.replyId);
 						for (const block of reply?.content ?? []) {
-							if (block.type === 'tool_result' && block.state !== 'running') {
-								request.toolCallIds.delete(block.id);
+							if (
+								block.type === 'tool_result' &&
+								block.state !== 'running' &&
+								settleToolResult(request, id, block.id, block.metadata)
+							) {
+								externalSubmissionsRef.current.delete(id);
+								requests.delete(id);
+								break;
 							}
-						}
-						if (!request.toolCallIds.size) {
-							externalSubmissionsRef.current.delete(id);
-							requests.delete(id);
-							request.resolve();
 						}
 					}
 					msgsRef.current = restored;
@@ -655,8 +686,7 @@ export function useMessages(
 					if (controller.signal.aborted) return;
 					for (const [id, request] of requests) {
 						if (externalSubmissionsRef.current.get(id) !== request) continue;
-						externalSubmissionsRef.current.delete(id);
-						request.reject(new Error(t('chat.externalExecution.unconfirmed')));
+						request.allowRetry();
 					}
 					requests.clear();
 				};
@@ -882,7 +912,7 @@ export function useMessages(
 	);
 
 	const onExternalExecutionResult = useCallback(
-		async (event: ExternalExecutionResultEvent) => {
+		async (event: ExternalExecutionResultEvent, onUnconfirmed?: (error: Error) => void) => {
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 			try {
 				if (
@@ -893,18 +923,56 @@ export function useMessages(
 					// Sending a DataChannel frame does not acknowledge its result.
 					// Register first so even an immediate SSE response is matched.
 					const receipt = new Promise<void>((resolve, reject) => {
+						let notice: Error | undefined;
+						const toolCallIds = new Set(
+							event.execution_results.map((result) => result.id),
+						);
+						const ambiguousCalls = new Set<string>();
+						// An untagged legacy result stays ambiguous even after one attempt settles.
+						for (const previous of externalSubmissionsRef.current.values()) {
+							if (previous.replyId !== event.reply_id) continue;
+							for (const callId of toolCallIds) {
+								if (previous.toolCallIds.has(callId)) {
+									previous.ambiguousCalls.add(callId);
+									ambiguousCalls.add(callId);
+								}
+							}
+						}
 						externalSubmissionsRef.current.set(event.id, {
 							replyId: event.reply_id,
-							toolCallIds: new Set(
-								event.execution_results.map((result) => result.id),
-							),
-							resolve,
+							toolCallIds,
+							ambiguousCalls,
+							allowRetry: () => {
+								if (notice) return;
+								notice = new Error(t('chat.externalExecution.unconfirmed'));
+								setError(notice);
+								onUnconfirmed?.(notice);
+							},
+							finish: (issue) => {
+								if (notice)
+									setError((current) => (current === notice ? null : current));
+								if (issue === 'unconfirmed') {
+									toast.info(t('chat.externalExecution.unknownAnswer'), {
+										id: JSON.stringify([
+											'unknown-answer',
+											agentId,
+											sessionId,
+											event.reply_id,
+										]),
+									});
+								}
+								if (issue) reject(new UnacknowledgedToolSubmission(issue));
+								else resolve();
+							},
 							reject,
 						});
 					});
 					await Promise.all([
 						receipt,
-						optionsRef.current.sendRealtimeExternalExecutionResult(event),
+						optionsRef.current.sendRealtimeExternalExecutionResult({
+							...event,
+							metadata: { ...event.metadata, [EXTERNAL_REQUEST_ID]: event.id },
+						}),
 					]);
 				} else {
 					await chatApi.trigger({
@@ -914,10 +982,15 @@ export function useMessages(
 					});
 				}
 			} catch (e) {
-				if (activeSessionRef.current === session) setError(e as Error);
+				if (
+					activeSessionRef.current === session &&
+					!(e instanceof UnacknowledgedToolSubmission)
+				)
+					setError(e as Error);
 				throw e;
 			} finally {
-				externalSubmissionsRef.current.delete(event.id);
+				if (activeSessionRef.current === session)
+					externalSubmissionsRef.current.delete(event.id);
 			}
 		},
 		[agentId, sessionId, session, streamConnected, t],
@@ -925,7 +998,12 @@ export function useMessages(
 
 	/** Return a client-executed tool result and resume the parked reply. */
 	const onClientExternalToolResult = useCallback(
-		async (toolCall: ToolCallBlock, result: ClientExternalToolResult, replyId: string) => {
+		async (
+			toolCall: ToolCallBlock,
+			result: ClientExternalToolResult,
+			replyId: string,
+			onUnconfirmed?: (error: Error) => void,
+		) => {
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
 			currentReplyRef.current = msgsRef.current.find((msg) => msg.id === replyId) ?? null;
@@ -965,7 +1043,7 @@ export function useMessages(
 				execution_results: [toolResult],
 			};
 
-			await onExternalExecutionResult(event);
+			await onExternalExecutionResult(event, onUnconfirmed);
 		},
 		[agentId, sessionId, session, onExternalExecutionResult],
 	);
