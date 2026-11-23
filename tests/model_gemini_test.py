@@ -1991,9 +1991,22 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         result = _sanitize_schema_for_gemini(
             _flatten_json_schema(Args.model_json_schema()),
         )
-        self.assertNotIn("deprecated", result["properties"]["old"])
-        self.assertNotIn("patternProperties", result["properties"]["headers"])
-        self.assertEqual(result["properties"]["headers"]["type"], "object")
+        self.assertEqual(
+            result,
+            {
+                "title": "Args",
+                "description": (
+                    "Tool parameters using a deprecated field and a patterned "
+                    "map."
+                ),
+                "type": "object",
+                "properties": {
+                    "old": {"default": 0, "title": "Old", "type": "integer"},
+                    "headers": {"title": "Headers", "type": "object"},
+                },
+                "required": ["headers"],
+            },
+        )
         FunctionDeclaration(name="args", parameters=result)
 
     def test_sanitize_converts_const_to_enum(self) -> None:

@@ -178,10 +178,7 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     # Remove additionalProperties — not supported by Gemini
     schema.pop("additionalProperties", None)
 
-    # `patternProperties` has no Gemini Schema equivalent; the object keeps
-    # its shape and the tool arguments are still validated against the
-    # original schema. Drop the applicator instead of letting the SDK
-    # reject the whole request.
+    # Gemini tool schemas do not support pattern-based property names.
     schema.pop("patternProperties", None)
 
     # Remove validation keywords that Gemini's Schema model does not declare;
