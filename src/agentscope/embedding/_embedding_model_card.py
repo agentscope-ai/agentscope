@@ -96,7 +96,7 @@ class EmbeddingModelCard(BaseModel):
     Empty ``properties`` means nothing to configure (e.g. fixed
     dimensions)."""
 
-    parameter_overrides: dict[str, dict] = Field(
+    parameter_overrides: dict[str, dict | None] = Field(
         default_factory=dict,
         description="Raw parameter overrides from the YAML file.",
     )
@@ -156,10 +156,15 @@ class EmbeddingModelCard(BaseModel):
                         **override,
                     }
 
+        required = [
+            name
+            for name in base_schema.get("required", [])
+            if name in properties
+        ]
         final_schema = {
             "type": "object",
             "properties": properties,
-            "required": base_schema.get("required", []),
+            "required": required,
         }
         if "$defs" in base_schema:
             final_schema["$defs"] = copy.deepcopy(base_schema["$defs"])
