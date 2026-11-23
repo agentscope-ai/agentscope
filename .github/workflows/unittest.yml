@@ -1,12 +1,21 @@
 name: Python Unittest Coverage
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      test_ref:
+        description: Commit to check out and test
+        required: true
+        type: string
 
 jobs:
   test:
     if: false == contains(github.event.pull_request.title, 'WIP')
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-26]
         python-version: ['3.11']
@@ -14,6 +23,9 @@ jobs:
       OS: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.test_ref || github.sha }}
+        persist-credentials: false
     - name: Install uv
       uses: astral-sh/setup-uv@v5
       with:
