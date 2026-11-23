@@ -92,6 +92,28 @@ class ApproxTokenChunkerTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_utf8_boundaries_and_overlap(self) -> None:
+        """Keep complete characters and make progress with a large overlap."""
+        text = "a汉🙂zé中🙂"
+        section = Section(content=TextBlock(text=text), source="mixed.txt")
+        cases = (
+            (0, ["a汉🙂", "zé中", "🙂"]),
+            (1, ["a汉🙂", "🙂zé", "zé中", "é中", "中🙂"]),
+        )
+        for overlap, expected in cases:
+            with self.subTest(overlap=overlap):
+                chunker = ApproxTokenChunker(
+                    ApproxTokenChunker.Parameters(
+                        chunk_size=2,
+                        overlap=overlap,
+                    ),
+                )
+                chunks = await chunker.chunk([section])
+                self.assertEqual(
+                    [chunk.content.text for chunk in chunks],
+                    expected,
+                )
+
     async def test_data_block_pass_through(self) -> None:
         """DataBlock sections should pass through unchanged."""
         chunker = ApproxTokenChunker(chunk_size=10, overlap=2)
