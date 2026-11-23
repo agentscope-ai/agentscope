@@ -130,6 +130,9 @@ class FunctionTool(ToolBase):
             for param in parameters
             if param.kind == inspect.Parameter.POSITIONAL_ONLY
         ]
+        self._accepts_extra_keywords = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters
+        )
 
     async def check_permissions(
         self,
@@ -167,7 +170,14 @@ class FunctionTool(ToolBase):
         # positional-only argument is given.
         skipped_defaults: list[Any] = []
         for param in self._positional_only_params:
-            if param.name in kwargs:
+            # An undeclared key can match an optional positional-only
+            # parameter and still belong in **kwargs (e.g. Counter).
+            if param.name in kwargs and (
+                not self._accepts_extra_keywords
+                or param.default is inspect.Parameter.empty
+                or param.name in self.input_schema.get("properties", {})
+                or (self.is_state_injected and param.name == "_agent_state")
+            ):
                 args.extend(skipped_defaults)
                 skipped_defaults = []
                 args.append(kwargs.pop(param.name))

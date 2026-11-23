@@ -4,6 +4,7 @@
 import base64
 import json
 import operator
+from collections import Counter
 from functools import partial
 from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
 from unittest import TestCase
@@ -1525,6 +1526,15 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 FunctionTool(describe),
                 # A builtin whose parameters are all positional-only
                 FunctionTool(operator.mul, name="mul"),
+                FunctionTool(
+                    Counter,
+                    name="count",
+                    input_schema={
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": {"type": "integer"},
+                    },
+                ),
             ],
         )
         self.assertListEqual(
@@ -1542,6 +1552,12 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             # The omitted ``b`` still takes its default before ``c``
             ("describe", {"a": 1, "c": 7, "e": 9}, "1 2 7 4 9"),
             ("mul", {"a": 6, "b": 7}, "42"),
+            # "iterable" is a counter key accepted through **kwds.
+            (
+                "count",
+                {"iterable": 2, "apple": 1},
+                json.dumps({"iterable": 2, "apple": 1}),
+            ),
         ]:
             response = None
             async for result in toolkit.call_tool(
@@ -1557,6 +1573,38 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
 
             self.assertEqual(response.state, "success")
             self.assertEqual(response.content[0].text, expected)
+
+    async def test_extra_keyword_before_positional_input(self) -> None:
+        """An extra key leaves the matching positional slot at its default."""
+
+        def collect(
+            label: str = "default",
+            value: int = 0,
+            _agent_state: AgentState | None = None,
+            /,
+            **fields: str,
+        ) -> list:
+            assert _agent_state is not None
+            return [label, value, _agent_state.session_id, fields]
+
+        tool = FunctionTool(
+            collect,
+            input_schema={
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+                "additionalProperties": {"type": "string"},
+            },
+            is_state_injected=True,
+        )
+        chunk = await tool.call(
+            label="extra",
+            value=7,
+            _agent_state=AgentState(session_id="session"),
+        )
+        self.assertEqual(
+            json.loads(chunk.content[0].text),
+            ["default", 7, "session", {"label": "extra"}],
+        )
 
     async def test_custom_input_schema(self) -> None:
         """Test overriding the auto-extracted schema with a custom one."""
