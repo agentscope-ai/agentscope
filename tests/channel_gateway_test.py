@@ -670,6 +670,34 @@ class FeishuPostParseTest(IsolatedAsyncioTestCase):
             any(isinstance(b, TextBlock) and "link" in b.text for b in blocks),
         )
 
+    async def test_code_block_is_kept(self) -> None:
+        """A rich-text code block survives the flattening."""
+        from agentscope.app.channel._feishu._channel import FeishuChannel
+
+        channel = FeishuChannel(
+            "c",
+            FeishuChannel.Credentials(app_id="a", app_secret="s"),
+            FeishuChannel.Config(),
+        )
+        post = {
+            "title": "",
+            "content": [
+                [
+                    {
+                        "tag": "code_block",
+                        "language": "python",
+                        "text": "print(1)",
+                    },
+                ],
+            ],
+        }
+
+        blocks = await channel._parse_post(post, "m1")
+
+        self.assertEqual(len(blocks), 1)
+        self.assertIsInstance(blocks[0], TextBlock)
+        self.assertIn("print(1)", blocks[0].text)
+
 
 class _AwaitingStorage:
     """Storage stub whose one session is parked on a tool call."""
