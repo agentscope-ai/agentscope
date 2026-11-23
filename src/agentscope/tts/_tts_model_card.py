@@ -107,8 +107,9 @@ class TTSModelCard(BaseModel):
                 "enum": voices,
             }
 
-        # Apply parameter_overrides
-        overrides = config.get("parameter_overrides", {})
+        overrides = config.get("parameter_overrides")
+        if overrides is None:
+            overrides = {}
         for param_name, override in overrides.items():
             if override is None:
                 properties.pop(param_name, None)
@@ -148,8 +149,6 @@ class TTSModelCard(BaseModel):
             voice_cloning=config.get("voice_cloning", False),
             parameter_schema=final_schema,
             parameters_overrides={
-                k: v
-                for k, v in config.get("parameter_overrides", {}).items()
-                if v is not None
+                k: v for k, v in overrides.items() if v is not None
             },
         )

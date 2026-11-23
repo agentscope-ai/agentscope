@@ -478,6 +478,8 @@ class MCPClient(BaseModel):
         """Close the MCP connection (for stateful connections only).
 
         For stateless connections, this method does nothing.
+        Overlapping closes only clear the connection they started closing,
+        even if another caller reconnects after its close returns.
 
         Args:
             ignore_errors: Whether to ignore errors during cleanup.
@@ -517,13 +519,16 @@ class MCPClient(BaseModel):
                 str(e),
             )
         finally:
-            self._client = None
-            self._lifecycle_task = None
-            self._close_requested = None
-            self._is_connected = False
-            # Rediscover tools after reconnecting.
-            self._cached_tools = None
-            logger.info("MCP closed: %s", self.name)
+            # Another waiter may have closed this lifecycle and started a
+            # replacement while this close was waiting for the same task.
+            if self._lifecycle_task is lifecycle_task:
+                self._client = None
+                self._lifecycle_task = None
+                self._close_requested = None
+                self._is_connected = False
+                # Rediscover tools after reconnecting.
+                self._cached_tools = None
+                logger.info("MCP closed: %s", self.name)
 
     def _get_client_gen(self) -> AbstractAsyncContextManager[Any]:
         """Build a fresh MCP SDK client for a stateless operation."""

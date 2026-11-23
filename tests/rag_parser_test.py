@@ -32,6 +32,11 @@ _PNG_PIXEL: bytes = base64.b64decode(
     "AarVyFEAAAAASUVORK5CYII=",
 )
 _PNG_PIXEL_B64: str = base64.b64encode(_PNG_PIXEL).decode("utf-8")
+# A single-pixel GIF, for tests that need a second, different image.
+_GIF_PIXEL: bytes = base64.b64decode(
+    "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+)
+_GIF_PIXEL_B64: str = base64.b64encode(_GIF_PIXEL).decode("utf-8")
 
 
 def _make_pdf(pages: list[str]) -> bytes:
@@ -89,8 +94,8 @@ def _make_pptx_rich() -> bytes:
     ).table
     table.cell(0, 0).text = "A"
     table.cell(0, 1).text = "B"
-    table.cell(1, 0).text = "1"
-    table.cell(1, 1).text = "2"
+    table.cell(1, 0).text = " 1 "
+    table.cell(1, 1).text = " 2 "
     trailing = slide2.shapes.add_textbox(
         Inches(1),
         Inches(4),
@@ -523,6 +528,158 @@ def _make_docx_with_image_in_table_text_box() -> bytes:
     buffer = io.BytesIO()
     doc.save(buffer)
     return buffer.getvalue()
+
+
+_DOCX_PICTURE_NS = (
+    f"{_DOCX_TEXT_BOX_NS} "
+    'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" '
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/'
+    'relationships" '
+    'xmlns:wpg="http://schemas.microsoft.com/office/word/2010/'
+    'wordprocessingGroup"'
+)
+
+# An inline DrawingML picture of the image related as ``{rid}``.
+_DOCX_PICTURE = """
+<w:drawing {ns}><wp:inline distT="0" distB="0" distL="0" distR="0">
+  <wp:extent cx="9525" cy="9525"/>
+  <wp:docPr id="{shape_id}" name="Picture {shape_id}"/>
+  <a:graphic><a:graphicData
+      uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+    <pic:pic><pic:blipFill><a:blip r:embed="{rid}"/></pic:blipFill></pic:pic>
+  </a:graphicData></a:graphic>
+</wp:inline></w:drawing>
+"""
+
+
+def _make_docx_with_text_box_pictures(
+    template: str,
+    pictures: tuple[bytes, ...] = (_PNG_PIXEL,),
+    *,
+    in_table: bool = False,
+    inside: str = "Caption",
+) -> bytes:
+    """Build a DOCX whose text box holds *pictures* after its text.
+
+    *template* is one of the text-box paragraphs above. Every copy of the
+    box gets the pictures, the ``mc:Fallback`` one included, as in a file
+    saved by Word. With *in_table*, the paragraph is in a table cell.
+    """
+    import docx
+    from docx.oxml.ns import qn
+    from lxml import etree
+
+    document = docx.Document()
+    document.add_paragraph("Before")
+    rel_ids = [
+        document.part.get_or_add_image(io.BytesIO(picture))[0]
+        for picture in pictures
+    ]
+    paragraph = etree.fromstring(
+        template.format(
+            ns=_DOCX_TEXT_BOX_NS,
+            before="Figure 1",
+            inside=inside,
+        ).strip(),
+    )
+    for box in paragraph.iter(qn("w:txbxContent")):
+        box_paragraph = box.find(qn("w:p"))
+        for shape_id, rel_id in enumerate(rel_ids, start=100):
+            run = etree.SubElement(box_paragraph, qn("w:r"))
+            run.append(
+                etree.fromstring(
+                    _DOCX_PICTURE.format(
+                        ns=_DOCX_PICTURE_NS,
+                        shape_id=shape_id,
+                        rid=rel_id,
+                    ).strip(),
+                ),
+            )
+
+    body = document.element.body
+    if in_table:
+        table = etree.fromstring(
+            f"<w:tbl {_DOCX_TEXT_BOX_NS}><w:tblGrid><w:gridCol/></w:tblGrid>"
+            "<w:tr><w:tc/></w:tr></w:tbl>",
+        )
+        table.find(f"{qn('w:tr')}/{qn('w:tc')}").append(paragraph)
+        body.insert(len(body) - 1, table)
+    else:
+        body.insert(len(body) - 1, paragraph)
+    document.add_paragraph("After")
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_docx_with_alternate_picture(
+    requires: str,
+    choice: str,
+    fallback: str,
+) -> bytes:
+    """Build a DOCX whose paragraph holds one ``mc:AlternateContent``.
+
+    In *choice* and *fallback*, ``{rid}`` is replaced by the relationship
+    id of an embedded PNG and ``{gif_rid}`` by that of an embedded GIF.
+    """
+    import docx
+    from lxml import etree
+
+    document = docx.Document()
+    document.add_paragraph("Before")
+    rel_id = document.part.get_or_add_image(io.BytesIO(_PNG_PIXEL))[0]
+    gif_rel_id = document.part.get_or_add_image(io.BytesIO(_GIF_PIXEL))[0]
+    paragraph = etree.fromstring(
+        (
+            f"<w:p {_DOCX_PICTURE_NS}><w:r><w:t>Figure 1</w:t></w:r>"
+            f'<w:r><mc:AlternateContent><mc:Choice Requires="{requires}">'
+            f"{choice}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback>"
+            "</mc:AlternateContent></w:r></w:p>"
+        )
+        .replace("{rid}", rel_id)
+        .replace("{gif_rid}", gif_rel_id),
+    )
+    body = document.element.body
+    body.insert(len(body) - 1, paragraph)
+    document.add_paragraph("After")
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _expected_word_picture_sections(
+    text: str,
+    images: list[tuple[str, str]],
+) -> list[dict]:
+    """Return the expected output: *text*, the images, then "After".
+
+    Each image is a ``(base64 data, media type)`` pair.
+    """
+    return [
+        *_expected_word_sections(text),
+        *(
+            {
+                "content": {
+                    "type": "data",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "source": {
+                        "type": "base64",
+                        "data": data,
+                        "media_type": media_type,
+                    },
+                    "name": "demo.docx",
+                },
+                "source": "demo.docx",
+                "metadata": {"media_type": media_type},
+            }
+            for data, media_type in images
+        ),
+        *_expected_word_sections("After"),
+    ]
 
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -1617,7 +1774,7 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "text": (
                             "<system-info>A table loaded as a JSON "
                             "array:</system-info>\n"
-                            '[["A", "B"], ["1", "2"]]'
+                            '[["A", "B"], [" 1 ", " 2 "]]'
                         ),
                         "id": AnyString(),
                         "created_at": AnyString(),
@@ -3590,6 +3747,152 @@ class WordParserParagraphTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             [section.model_dump() for section in sections],
             _expected_word_sections("ChoiceFallback\nAfter"),
+        )
+
+
+class WordParserTextBoxPictureTest(IsolatedAsyncioTestCase):
+    """Regression coverage for pictures inside Word text boxes."""
+
+    async def test_picture_in_text_box_is_emitted_once(self) -> None:
+        """A picture in a text box is read once, with or without the VML
+        copy of the box that Word saves in ``mc:Fallback``."""
+        for name, template in (
+            ("drawing only", _DOCX_MODERN_TEXT_BOX),
+            ("with VML fallback", _DOCX_TEXT_BOX_WITH_VML_FALLBACK),
+        ):
+            with self.subTest(name):
+                sections = await WordParser().parse(
+                    _make_docx_with_text_box_pictures(template),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_picture_sections(
+                        "Before\nFigure 1\nCaption",
+                        [(_PNG_PIXEL_B64, "image/png")],
+                    ),
+                )
+
+    async def test_picture_in_table_text_box_is_emitted_once(self) -> None:
+        """A picture-only text box in a table cell is read once too."""
+        for name, template in (
+            ("drawing only", _DOCX_MODERN_TEXT_BOX),
+            ("with VML fallback", _DOCX_TEXT_BOX_WITH_VML_FALLBACK),
+        ):
+            with self.subTest(name):
+                sections = await WordParser().parse(
+                    _make_docx_with_text_box_pictures(
+                        template,
+                        in_table=True,
+                        inside="",
+                    ),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_picture_sections(
+                        "Before\n| Figure 1 |\n| --- |\n",
+                        [(_PNG_PIXEL_B64, "image/png")],
+                    ),
+                )
+
+    async def test_each_picture_in_a_text_box_is_kept(self) -> None:
+        """Different pictures, and a repeated one, each come out once per
+        place, in order."""
+        sections = await WordParser().parse(
+            _make_docx_with_text_box_pictures(
+                _DOCX_TEXT_BOX_WITH_VML_FALLBACK,
+                (_PNG_PIXEL, _GIF_PIXEL, _PNG_PIXEL),
+            ),
+            "demo.docx",
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_picture_sections(
+                "Before\nFigure 1\nCaption",
+                [
+                    (_PNG_PIXEL_B64, "image/png"),
+                    (_GIF_PIXEL_B64, "image/gif"),
+                    (_PNG_PIXEL_B64, "image/png"),
+                ],
+            ),
+        )
+
+    async def test_vml_copy_of_a_picture_group_is_skipped(self) -> None:
+        """A picture group's VML fallback does not repeat its picture."""
+        sections = await WordParser().parse(
+            _make_docx_with_alternate_picture(
+                "wpg",
+                '<w:drawing><wp:inline><wp:extent cx="9525" cy="9525"/>'
+                '<wp:docPr id="300" name="Group 300"/><a:graphic>'
+                "<a:graphicData uri="
+                '"http://schemas.microsoft.com/office/word/2010/'
+                'wordprocessingGroup"><wpg:wgp><pic:pic><pic:blipFill>'
+                '<a:blip r:embed="{rid}"/></pic:blipFill></pic:pic>'
+                "</wpg:wgp></a:graphicData></a:graphic></wp:inline>"
+                "</w:drawing>",
+                '<w:pict><v:group><v:shape><v:imagedata r:id="{rid}"/>'
+                "</v:shape></v:group></w:pict>",
+            ),
+            "demo.docx",
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_picture_sections(
+                "Before\nFigure 1",
+                [(_PNG_PIXEL_B64, "image/png")],
+            ),
+        )
+
+    async def test_choice_picture_is_read_before_fallback(self) -> None:
+        """When both branches hold a picture, only the choice's is read."""
+        sections = await WordParser().parse(
+            _make_docx_with_alternate_picture(
+                "wps",
+                '<w:drawing><wp:inline><wp:extent cx="9525" cy="9525"/>'
+                '<wp:docPr id="302" name="Picture 302"/><a:graphic>'
+                "<a:graphicData uri="
+                '"http://schemas.openxmlformats.org/drawingml/2006/picture">'
+                '<pic:pic><pic:blipFill><a:blip r:embed="{rid}"/>'
+                "</pic:blipFill></pic:pic></a:graphicData></a:graphic>"
+                "</wp:inline></w:drawing>",
+                '<w:pict><v:shape><v:imagedata r:id="{gif_rid}"/>'
+                "</v:shape></w:pict>",
+            ),
+            "demo.docx",
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_picture_sections(
+                "Before\nFigure 1",
+                [(_PNG_PIXEL_B64, "image/png")],
+            ),
+        )
+
+    async def test_fallback_picture_is_read_without_choice_picture(
+        self,
+    ) -> None:
+        """A fallback picture is still read when no choice has one."""
+        sections = await WordParser().parse(
+            _make_docx_with_alternate_picture(
+                "wps",
+                '<w:drawing><wp:inline><wp:extent cx="9525" cy="9525"/>'
+                '<wp:docPr id="301" name="Shape 301"/><a:graphic>'
+                "<a:graphicData uri="
+                '"http://schemas.microsoft.com/office/word/2010/'
+                'wordprocessingShape"><wps:wsp/></a:graphicData>'
+                "</a:graphic></wp:inline></w:drawing>",
+                '<w:pict><v:shape><v:imagedata r:id="{rid}"/></v:shape>'
+                "</w:pict>",
+            ),
+            "demo.docx",
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_picture_sections(
+                "Before\nFigure 1",
+                [(_PNG_PIXEL_B64, "image/png")],
+            ),
         )
 
 

@@ -178,6 +178,25 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
         wav_bytes = base64.b64decode(result.content.source.data)
         self.assertEqual(_parse_wav_payload(wav_bytes), b"AAAA")
 
+    def test_accepts_quoted_pcm_parameters(self) -> None:
+        """Quoted MIME values still describe the expected PCM format."""
+        response = _make_api_response(
+            [b"AAAA"],
+            mime_type='audio/L16; rate="24000"; channels="1"; codec="PCM"',
+        )
+        result = GeminiTTSModel._parse_response(response, elapsed=0.0)
+        payload = base64.b64decode(result.content.source.data)
+        self.assertEqual(_parse_wav_payload(payload), b"AAAA")
+
+    def test_rejects_unsupported_pcm_rate_with_spaced_parameter(self) -> None:
+        """Whitespace around the separator cannot hide a sample rate."""
+        response = _make_api_response(
+            [b"AAAA"],
+            mime_type="audio/L16; rate = 16000",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsupported Gemini TTS"):
+            GeminiTTSModel._parse_response(response, elapsed=0.0)
+
     def test_rejects_multiple_wav_parts(self) -> None:
         """Reject separate WAV files instead of silently truncating audio."""
         response = _make_api_response(
