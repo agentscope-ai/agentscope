@@ -193,8 +193,12 @@ class AskUserUI(Vertical):
         self,
         pending: list[tuple[str, str, ToolCallBlock]],
     ) -> None:
-        previous_id = self._pending[0][2].id if self._pending else None
-        current_id = pending[0][2].id if pending else None
+        previous_id = (
+            (self._pending[0][0], self._pending[0][2].id)
+            if self._pending
+            else None
+        )
+        current_id = (pending[0][0], pending[0][2].id) if pending else None
         self._pending = pending
         self.display = bool(pending)
         if previous_id != current_id:
@@ -474,7 +478,9 @@ class AskUserUI(Vertical):
             self._editing_other = True
             self._render_form()
             self.call_later(self.focus_action)
-        elif option_id == "continue" and answer.selected:
+        elif option_id == "continue" and (
+            answer.selected or answer.other is not None
+        ):
             self._complete_question()
 
     @on(OptionList.OptionHighlighted, ".as-ask-user-options")

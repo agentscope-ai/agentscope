@@ -1,11 +1,19 @@
 # -*- coding: utf-8 -*-
 """Unit tests for batch and realtime ASR model behavior."""
 
+from enum import Enum
 from typing import Any
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
-from agentscope.asr import ASRModelBase, ASRResponse, OpenAIASRModel
+from pydantic import BaseModel, ConfigDict
+
+from agentscope.asr import (
+    ASRModelBase,
+    ASRModelCard,
+    ASRResponse,
+    OpenAIASRModel,
+)
 from agentscope.credential import OpenAICredential
 from agentscope.message import TextBlock
 
@@ -486,6 +494,7 @@ class TestOpenAIASRModel(IsolatedAsyncioTestCase):
                     "output_types": ["text/plain"],
                     "realtime": False,
                     "parameter_schema": parameter_schema,
+                    "parameters_overrides": {},
                 },
                 {
                     "type": "asr_model",
@@ -502,6 +511,92 @@ class TestOpenAIASRModel(IsolatedAsyncioTestCase):
                     "output_types": ["text/plain"],
                     "realtime": False,
                     "parameter_schema": parameter_schema,
+                    "parameters_overrides": {},
                 },
             ],
         )
+
+
+class _Language(str, Enum):
+    """Languages advertised by the custom ASR model."""
+
+    EN = "en"
+    ZH = "zh"
+
+
+class _Options(BaseModel):
+    """Nested recognition settings."""
+
+    language: _Language
+
+
+class _Parameters(BaseModel):
+    """Custom parameters with references and strict field validation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    options: _Options
+    language: _Language
+    internal: str
+
+
+class ASRModelCardTest(TestCase):
+    """Preserve complete schemas when applying model-specific overrides."""
+
+    def test_preserves_full_schema_without_overrides(self) -> None:
+        """Keep nested and enum definitions plus root-level constraints."""
+        with patch(
+            "builtins.open",
+            mock_open(read_data="name: custom\nlabel: Custom\n"),
+        ):
+            card = ASRModelCard.from_yaml("model.yaml", _Parameters)
+
+        self.assertEqual(
+            card.parameter_schema,
+            _Parameters.model_json_schema(),
+        )
+
+    def test_overrides_preserve_schema_and_do_not_mutate_source(self) -> None:
+        """Hide required fields and override labels without losing metadata."""
+        original = _Parameters.model_json_schema()
+        expected = _Parameters.model_json_schema()
+        del expected["properties"]["internal"]
+        expected["properties"]["language"]["title"] = "Language choice"
+        expected["required"] = ["options", "language"]
+        yaml_text = (
+            "name: custom\n"
+            "label: Custom\n"
+            "parameter_overrides:\n"
+            "  internal:\n"
+            "    hidden: true\n"
+            "  language:\n"
+            "    title: Language choice\n"
+        )
+        with (
+            patch("builtins.open", mock_open(read_data=yaml_text)),
+            patch.object(
+                _Parameters,
+                "model_json_schema",
+                return_value=original,
+            ),
+        ):
+            card = ASRModelCard.from_yaml("model.yaml", _Parameters)
+
+        self.assertEqual(card.parameter_schema, expected)
+        self.assertEqual(original, _Parameters.model_json_schema())
+
+    def test_preserves_schema_without_required_fields(self) -> None:
+        """Do not introduce fields absent from the original schema."""
+
+        class Parameters(BaseModel):
+            """Recognition settings with only optional parameters."""
+
+            language: _Language = _Language.EN
+
+        with patch(
+            "builtins.open",
+            mock_open(read_data="name: custom\nlabel: Custom\n"),
+        ):
+            card = ASRModelCard.from_yaml("model.yaml", Parameters)
+
+        self.assertEqual(card.parameter_schema, Parameters.model_json_schema())

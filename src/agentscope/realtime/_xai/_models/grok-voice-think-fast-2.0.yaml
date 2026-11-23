@@ -2,6 +2,8 @@ type: realtime_model
 name: grok-voice-think-fast-2.0
 label: Grok Voice Think Fast 2.0
 status: active
+# Release date: https://x.ai/news/grok-voice-think-fast-2
+release_date: 2026-07-29
 
 input_types:
   - audio/pcm

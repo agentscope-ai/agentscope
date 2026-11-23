@@ -67,7 +67,12 @@ class RoutingConfig(BaseModel):
     match_value)`` pairs.
     """
 
-    bindings: list[ChannelBinding] = Field(default_factory=list)
+    bindings: list[ChannelBinding] = Field(
+        description=(
+            "Ordered routing rules; the last one must be a catch-all "
+            "(match_value='*')."
+        ),
+    )
 
     @field_validator("bindings")
     @classmethod

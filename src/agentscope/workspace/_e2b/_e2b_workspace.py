@@ -44,7 +44,11 @@ from typing import Any
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
+from .._utils import (
+    UV_VERSION,
+    _GATEWAY_BASE_REQUIREMENTS,
+    DEFAULT_WORKSPACE_INSTRUCTIONS,
+)
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TEMPLATE,
@@ -333,7 +337,7 @@ class E2BWorkspace(SandboxedWorkspaceBase):
 
         ``--no-deps`` on agentscope is mandatory: the gateway only
         imports :class:`agentscope.mcp.MCPClient` whose transitive
-        needs (``mcp / pydantic / httpx``) are already installed via
+        needs (``mcp / pydantic / httpx / httpx2``) are installed via
         the gateway base requirements. Pulling the full dep tree
         drags in heavy / Rust-built packages the E2B image cannot
         compile.
@@ -349,9 +353,11 @@ class E2BWorkspace(SandboxedWorkspaceBase):
             # at /usr/local/bin (on PATH — no absolute-path plumbing
             # needed downstream).
             "sudo apt-get update -qq "
-            "&& sudo apt-get install -y --no-install-recommends ripgrep "
+            "&& sudo apt-get install -y --no-install-recommends "
+            "curl ca-certificates ripgrep "
+            "&& sudo update-ca-certificates "
             "&& sudo rm -rf /var/lib/apt/lists/*",
-            "curl -LsSf https://astral.sh/uv/install.sh "
+            f"curl -LsSf https://astral.sh/uv/{UV_VERSION}/install.sh "
             "| sudo env UV_INSTALL_DIR=/usr/local/bin "
             "INSTALLER_NO_MODIFY_PATH=1 sh",
             # 2. Gateway venv + base requirements + agentscope.

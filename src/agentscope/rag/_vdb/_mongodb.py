@@ -21,6 +21,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _reject_none_metadata_values,
 )
 from .._document import Chunk
 
@@ -293,6 +294,7 @@ class MongoDBStore(VectorStoreBase):
         self,
         collection: str,
         document_id: str,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Delete all records belonging to one source document.
 
@@ -305,8 +307,13 @@ class MongoDBStore(VectorStoreBase):
             document_id (`str`):
                 The source document ID whose records should be
                 removed.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Restrict deletion to records matching every metadata pair
+                in addition to the document ID. ``None`` disables filtering.
         """
-        await self._col(collection).delete_many({"document_id": document_id})
+        query = {"document_id": document_id}
+        query.update(self._build_metadata_filter(metadata_filter) or {})
+        await self._col(collection).delete_many(query)
 
     # ------------------------------------------------------------------
     # Search
@@ -321,13 +328,16 @@ class MongoDBStore(VectorStoreBase):
     ) -> list[VectorSearchResult]:
         """Find the most similar records to a query vector.
 
+        The search considers at least 100 candidates and targets 20 times
+        ``top_k``, capped at MongoDB's 10,000-candidate limit.
+
         Args:
             collection (`str`):
                 The collection to search.
             query_vector (`list[float]`):
                 The query embedding vector.
             top_k (`int`, defaults to ``5``):
-                Maximum number of results to return.
+                Maximum number of results to return. Cannot exceed 10,000.
             metadata_filter (`dict[str, Any] | None`, optional):
                 If provided, restrict the search to records whose
                 ``chunk.metadata`` matches every ``key == value`` pair
@@ -338,7 +348,14 @@ class MongoDBStore(VectorStoreBase):
         Returns:
             `list[VectorSearchResult]`:
                 Results ordered by descending similarity score.
+
+        Raises:
+            `ValueError`:
+                If ``top_k`` exceeds MongoDB's 10,000-candidate ANN limit.
         """
+        if top_k > 10_000:
+            raise ValueError("top_k cannot exceed MongoDB's 10000 ANN limit")
+        filter_expr = self._build_metadata_filter(metadata_filter)
         await self._ensure_index_ready(collection)
         col = self._col(collection)
 
@@ -346,10 +363,9 @@ class MongoDBStore(VectorStoreBase):
             "index": self._index_name,
             "path": "vector",
             "queryVector": query_vector,
-            "numCandidates": max(100, top_k * 20),
+            "numCandidates": min(10_000, max(100, top_k * 20)),
             "limit": top_k,
         }
-        filter_expr = self._build_metadata_filter(metadata_filter)
         if filter_expr is not None:
             vector_search["filter"] = filter_expr
 
@@ -396,6 +412,7 @@ class MongoDBStore(VectorStoreBase):
         """
         if not metadata_filter:
             return None
+        _reject_none_metadata_values("MongoDBStore", metadata_filter)
 
         return {
             "$and": [
@@ -425,17 +442,19 @@ class MongoDBStore(VectorStoreBase):
             metadata_filter (`dict[str, Any] | None`, optional):
                 If provided, restrict aggregation to records whose
                 ``chunk.metadata`` matches every ``key == value`` pair.
+                Values are matched literally, including dictionaries.
 
         Returns:
             `list[DocumentSummary]`:
                 One summary per distinct ``document_id``.
         """
+        _reject_none_metadata_values("MongoDBStore", metadata_filter)
         pipeline: list[dict[str, Any]] = []
         if metadata_filter:
             pipeline.append(
                 {
                     "$match": {
-                        f"chunk.metadata.{key}": value
+                        f"chunk.metadata.{key}": {"$eq": value}
                         for key, value in metadata_filter.items()
                     },
                 },
@@ -493,16 +512,18 @@ class MongoDBStore(VectorStoreBase):
                 Maximum number of chunks to return.
             metadata_filter (`dict[str, Any] | None`, optional):
                 Extra ``chunk.metadata`` equality constraints.
+                Values are matched literally, including dictionaries.
 
         Returns:
             `list[Chunk]`:
                 At most ``limit`` chunks, ``chunk_index`` ascending.
         """
+        _reject_none_metadata_values("MongoDBStore", metadata_filter)
         if limit <= 0:
             return []
         query: dict[str, Any] = {"document_id": document_id}
         for key, value in (metadata_filter or {}).items():
-            query[f"chunk.metadata.{key}"] = value
+            query[f"chunk.metadata.{key}"] = {"$eq": value}
 
         cursor = (
             self._col(collection)

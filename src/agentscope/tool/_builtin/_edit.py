@@ -2,6 +2,7 @@
 """The edit tool in agentscope."""
 import difflib
 import fnmatch
+import glob
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -240,7 +241,13 @@ Usage:
         parent = self._backend.dirname(file_path)
         # Glob patterns are POSIX-style strings (matched by fnmatch),
         # not real filesystem paths — do NOT use backend.join_path here.
-        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
+        # ``parent`` is a literal path, so its fnmatch metacharacters must be
+        # escaped, otherwise the suggested rule matches sibling directories.
+        stem = glob.escape(parent).rstrip("/\\")
+        # A file at the filesystem root (or given by a bare relative name)
+        # has no directory component left. ``**`` would match every path in
+        # the repository, so suggest the file itself instead.
+        pattern = f"{stem}/**" if stem else glob.escape(file_path)
 
         return [
             PermissionRule(
@@ -322,14 +329,19 @@ Usage:
                 mtime=mtime,
             )
             if cache is None:
-                # Haven't read this file before
+                if mtime is None:
+                    message = (
+                        "Error: The backend could not report the file's "
+                        "modification time. Once it is available, read the "
+                        "file again before editing it."
+                    )
+                else:
+                    message = (
+                        "Error: To edit a file, you must first read "
+                        "it using the Read tool."
+                    )
                 return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text="Error: To edit a file, you must first read "
-                            "it using the Read tool.",
-                        ),
-                    ],
+                    content=[TextBlock(text=message)],
                     state=ToolResultState.ERROR,
                     is_last=True,
                 )
@@ -340,9 +352,7 @@ Usage:
                 raw = await self._backend.read_file(file_path)
                 # Normalize CRLF/CR to match the cached-content path and
                 # the LF-based old_string the caller supplies.
-                content = _normalize_newlines(
-                    raw.decode("utf-8", errors="replace"),
-                )
+                content = _normalize_newlines(raw.decode("utf-8"))
             except Exception as e:
                 return ToolChunk(
                     content=[TextBlock(text=f"Error reading file: {str(e)}")],

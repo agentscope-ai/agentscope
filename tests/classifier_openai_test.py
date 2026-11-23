@@ -283,3 +283,45 @@ class OpenAIClassifierModelTest(IsolatedAsyncioTestCase):
         self.client_cls.return_value = MagicMock(spec=[])
         with self.assertRaisesRegex(ImportError, "openai>=3.26.0"):
             classifier.OpenAIClassifierModel(self.credential)
+
+    async def test_per_call_model_replaces_the_default(self) -> None:
+        """``model=`` is forwarded once, with the caller's value."""
+        model = classifier.OpenAIClassifierModel(self.credential)
+        questions = {"urgent": BinaryQuestion(instructions="Urgent?")}
+        await model("I was charged twice.", questions, model="x")
+
+        self.assertDictEqual(
+            self.client.decisions.create.await_args.kwargs,
+            {
+                "model": "x",
+                "input": "I was charged twice.",
+                "questions": [
+                    {
+                        "type": "predicate",
+                        "name": "urgent",
+                        "instructions": "Urgent?",
+                    },
+                ],
+            },
+        )
+
+    async def test_per_call_input_replaces_the_state(self) -> None:
+        """``input=`` is forwarded once, with the caller's value."""
+        model = classifier.OpenAIClassifierModel(self.credential)
+        questions = {"urgent": BinaryQuestion(instructions="Urgent?")}
+        await model("I was charged twice.", questions, input="raw")
+
+        self.assertDictEqual(
+            self.client.decisions.create.await_args.kwargs,
+            {
+                "model": "gpt-6-luna",
+                "input": "raw",
+                "questions": [
+                    {
+                        "type": "predicate",
+                        "name": "urgent",
+                        "instructions": "Urgent?",
+                    },
+                ],
+            },
+        )

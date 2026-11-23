@@ -2,6 +2,7 @@ type: realtime_model
 name: qwen-omni-turbo-realtime
 label: Qwen-Omni-Turbo Realtime
 status: active
+release_date: 2025-05-08
 
 input_types:
   - audio/pcm

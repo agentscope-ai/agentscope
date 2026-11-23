@@ -165,7 +165,13 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The Pod may already be running, but this workspace never
+            # entered the cache, so nothing else would ever delete it.
+            await self._dispose_uninitialized(ws)
+            raise
         return ws
 
     # ── public API ────────────────────────────────────────────────

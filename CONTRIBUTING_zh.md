@@ -263,8 +263,8 @@ Workspace 提供 agent 运行所需的运行时上下文（skills、scheduled ta
 1. **Workspace 类**——位于 `agentscope.workspace`，继承 `WorkspaceBase`。实现该后端的存储与生命周期语义。
    _参考：`agentscope/workspace/_local_workspace.py`(`LocalWorkspace`)_
 
-2. **Workspace manager 类**——位于 `agentscope/app/_manager/_workspace_manager.py`，继承 `WorkspaceManagerBase`。把 workspace 接入应用生命周期。
-   _参考：同文件中的 `LocalWorkspaceManager`_
+2. **Workspace manager 类**——位于 `agentscope/app/workspace_manager/`，继承 `WorkspaceManagerBase`。把 workspace 接入应用生命周期。
+   _参考：`agentscope/app/workspace_manager/_local_workspace_manager.py` 中的 `LocalWorkspaceManager`_
 
 3. **文档**——在 [agentscope-ai/docs](https://github.com/agentscope-ai/docs) 配套发起 PR，说明该 workspace 的配置与使用方式。
 
