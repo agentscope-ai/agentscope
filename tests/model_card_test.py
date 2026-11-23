@@ -612,3 +612,60 @@ class ASRModelCardTest(TestCase):
             card = ASRModelCard.from_yaml(str(path), _Parameters)
 
         self.assertEqual(card.parameters_overrides, {})
+
+
+class EmptyParameterOverridesTest(TestCase):
+    """Test empty override mappings in chat and embedding cards."""
+
+    _CHAT_YAML = (
+        "name: custom-chat\n"
+        "label: Custom chat\n"
+        "context_size: 8192\n"
+        "output_size: 1024\n"
+    )
+
+    def test_empty_overrides_match_omitted_overrides(self) -> None:
+        """All three YAML forms produce the same complete card."""
+        embedding_yaml = (
+            "name: custom-embedding\n"
+            "label: Custom embedding\n"
+            "dimensions: 1024\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "card.yaml"
+            for card_type, body in (
+                (ModelCard, self._CHAT_YAML),
+                (EmbeddingModelCard, embedding_yaml),
+            ):
+                path.write_text(body, encoding="utf-8")
+                expected = card_type.from_yaml(str(path), _Params).model_dump()
+                for line in (
+                    "parameter_overrides:",
+                    "parameter_overrides: {}",
+                ):
+                    with self.subTest(card=card_type.__name__, line=line):
+                        path.write_text(f"{body}{line}\n", encoding="utf-8")
+                        card = card_type.from_yaml(str(path), _Params)
+                        self.assertEqual(card.model_dump(), expected)
+
+    def test_chat_card_is_listed_with_no_overrides(self) -> None:
+        """Model discovery includes a card with a bare overrides key."""
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "custom-chat.yaml").write_text(
+                self._CHAT_YAML + "parameter_overrides:\n",
+                encoding="utf-8",
+            )
+            cards = OpenAIChatModel.list_models(directory)
+
+        self.assertEqual([card.name for card in cards], ["custom-chat"])
+
+    def test_non_mapping_still_fails_loudly(self) -> None:
+        """Reject a boolean override mapping."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-chat.yaml"
+            path.write_text(
+                self._CHAT_YAML + "parameter_overrides: false\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AttributeError):
+                ModelCard.from_yaml(str(path), _Params)
