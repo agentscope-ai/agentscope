@@ -359,6 +359,34 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_non_string_reasoning_is_ignored(
+        self,
+    ) -> None:
+        """A non-string reasoning_content must not reach ThinkingBlock.
+
+        OpenAI-compatible gateways may answer with a structured
+        ``reasoning_content`` (a list of content parts) instead of a
+        string. The other adapters only accept a string; passing it to
+        ``ThinkingBlock`` would fail validation and drop the whole reply.
+        """
+        mock_create = AsyncMock(
+            return_value=_mock_completion(
+                text="42",
+                reasoning=[{"type": "thinking", "text": "Step"}],
+            ),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="42")],
+            ),
+        )
+
 
 class TestKimiModelParameters(unittest.TestCase):
     """Tests for MoonshotChatModel.Parameters."""
