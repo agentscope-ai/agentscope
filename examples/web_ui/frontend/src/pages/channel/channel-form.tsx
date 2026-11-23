@@ -201,15 +201,25 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
 	}, [t, typeSchema]);
 
 	const selectedModelCard = React.useMemo(() => {
-		if (!value.chatModelConfig) return null;
-		const items = groups[value.chatModelConfig.type];
+		const config = value.chatModelConfig;
+		if (!config) return null;
+		const items = groups[config.type];
 		if (!items) return null;
 		for (const { models } of items) {
-			const card = models.find((m) => m.name === value.chatModelConfig!.model);
+			const card = models.find(
+				(m) =>
+					m.name === config.model &&
+					(!config.model_class || m.model_class === config.model_class),
+			);
 			if (card) return card;
 		}
 		return null;
-	}, [groups, value.chatModelConfig?.type, value.chatModelConfig?.model]);
+	}, [
+		groups,
+		value.chatModelConfig?.type,
+		value.chatModelConfig?.model,
+		value.chatModelConfig?.model_class,
+	]);
 
 	return (
 		<FieldGroup className="[&>[data-orientation=horizontal]>:last-child]:w-48">

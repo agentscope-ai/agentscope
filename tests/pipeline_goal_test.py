@@ -377,6 +377,46 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
                     (1, 3),
                 )
 
+    async def test_executor_can_retry_in_each_round(self) -> None:
+        """Each report can use the full retry budget."""
+        missing = _no_output("executor")
+        first, second = _report("v1"), _report("v2")
+        executor = StubAgent(
+            "executor",
+            [[missing], [first], [missing], [second]],
+        )
+        verifier = StubAgent(
+            "verifier",
+            [[_verdict("fail", "fix it")], [_verdict("pass")]],
+        )
+        pipe = GoalPipeline(executor, verifier, max_retries=1)
+
+        yielded = await self._run(pipe, self.query)
+
+        self.assertEqual(yielded, [missing, first, missing, second])
+        self.assertEqual(
+            (len(executor.received), len(verifier.received)),
+            (4, 2),
+        )
+
+    async def test_verifier_can_retry_in_each_round(self) -> None:
+        """Each verdict can use the full retry budget."""
+        first, second = _report("v1"), _report("v2")
+        executor = StubAgent("executor", [[first], [second]])
+        verifier = StubAgent(
+            "verifier",
+            [[], [_verdict("fail", "fix it")], [], [_verdict("pass")]],
+        )
+        pipe = GoalPipeline(executor, verifier, max_retries=1)
+
+        yielded = await self._run(pipe, self.query)
+
+        self.assertEqual(yielded, [first, second])
+        self.assertEqual(
+            (len(executor.received), len(verifier.received)),
+            (2, 4),
+        )
+
     async def test_a_fresh_run_restarts_the_retry_budget(self) -> None:
         """Each participant can retry again after a previous run failed."""
         for participant in ("executor", "verifier"):

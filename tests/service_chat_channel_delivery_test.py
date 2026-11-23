@@ -9,10 +9,11 @@ starts reading — which is the normal case, a platform call being slower
 than the agent's last event.
 """
 import asyncio
+import json
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from pydantic import BaseModel
 
@@ -25,11 +26,34 @@ from agentscope.app.channel import (
     ChannelStatus,
     ChannelTypeRegistry,
     ChatKind,
+    FeishuChannel,
 )
-from agentscope.app.message_bus import InMemoryMessageBus
-from agentscope.event import ReplyEndEvent, ReplyStartEvent
+from agentscope.app.channel._approval import (
+    CHANNEL_APPROVAL_UNAVAILABLE,
+    load_approval,
+    load_reply_requester,
+    remember_reply_requester,
+)
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
+from agentscope.event import (
+    ConfirmResult,
+    ReplyEndEvent,
+    ReplyStartEvent,
+    RequireUserConfirmEvent,
+    RequireExternalExecutionEvent,
+    TextBlockStartEvent,
+    TextBlockDeltaEvent,
+    UserConfirmResultEvent,
+)
 from agentscope.types import ReplyFinishedReason
-from agentscope.message import TextBlock, UserMsg
+from agentscope.message import (
+    AssistantMsg,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    UserMsg,
+)
+from agentscope.state import AgentState
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -131,6 +155,7 @@ class _Storage:
         self.session = session
         self.agent = agent
         self.channel = channel
+        self.messages: dict[str, Msg] = {}
 
     async def get_session(self, *_: object, **__: object) -> SessionRecord:
         """Return a detached copy."""
@@ -144,11 +169,35 @@ class _Storage:
         """Return the one channel this stub serves."""
         return self.channel
 
-    async def update_session_state(self, *_: object, **__: object) -> None:
-        """Accept the post-run state persistence."""
+    async def update_session_state(
+        self,
+        *,
+        state: AgentState,
+        **_: object,
+    ) -> None:
+        """Persist an independent snapshot for the next run."""
+        self.session.state = state.model_copy(deep=True)
 
-    async def upsert_message(self, *_: object, **__: object) -> None:
-        """Accept persisted reply messages."""
+    async def upsert_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message: Msg,
+    ) -> None:
+        """Keep the reply so Web UI decisions can resume it."""
+        del user_id, session_id
+        self.messages[message.id] = message.model_copy(deep=True)
+
+    async def get_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> Msg | None:
+        """Load the reply accumulated by earlier runs."""
+        del user_id, session_id
+        message = self.messages.get(message_id)
+        return message.model_copy(deep=True) if message else None
 
 
 class _WorkspaceManager:
@@ -157,6 +206,59 @@ class _WorkspaceManager:
     async def get_workspace(self, *_: object, **__: object) -> object:
         """Return an inert workspace."""
         return SimpleNamespace(workdir="/tmp/agentscope-delivery-test")
+
+
+class _TwoApprovalAgent:
+    """Pause on two successive tools without calling a model."""
+
+    pause_event = RequireUserConfirmEvent
+
+    def __init__(self, *, name: str, state: AgentState, **_: object) -> None:
+        self.name = name
+        self.state = state
+
+    async def reply_stream(
+        self,
+        inputs: Msg | UserConfirmResultEvent,
+    ) -> AsyncGenerator[object, None]:
+        """A Web approval advances to the next tool, then completion."""
+        self.state.reply_id = "r-1"
+        if isinstance(inputs, Msg):
+            tool_id = "tool-1"
+            yield ReplyStartEvent(
+                session_id=self.state.session_id,
+                reply_id="r-1",
+                name=self.name,
+            )
+            yield TextBlockStartEvent(reply_id="r-1", block_id="text-1")
+            yield TextBlockDeltaEvent(
+                reply_id="r-1",
+                block_id="text-1",
+                delta="Preparing the first tool.",
+            )
+        elif inputs.confirm_results[0].tool_call.id == "tool-1":
+            tool_id = "tool-2"
+        else:
+            self.state.context = []
+            yield ReplyEndEvent(
+                session_id=self.state.session_id,
+                reply_id="r-1",
+                name=self.name,
+                finished_reason=ReplyFinishedReason.COMPLETED,
+            )
+            return
+        tool = ToolCallBlock(
+            id=tool_id,
+            name="Bash",
+            input="{}",
+            state="submitted"
+            if self.pause_event is RequireExternalExecutionEvent
+            else "asking",
+        )
+        self.state.context = [
+            AssistantMsg(id="r-1", name=self.name, content=[tool]),
+        ]
+        yield self.pause_event(reply_id="r-1", tool_calls=[tool])
 
 
 class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
@@ -206,11 +308,357 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         )
         return user_id, agent, session, channel
 
-    async def _run(self, source: SessionOrigin) -> ChannelClients:
-        """Drive one run to completion and return the channel runtime."""
-        user_id, agent, session, channel = self._fixture(source)
+    def _approval_fixture(self) -> tuple:
+        """Use the real Feishu delivery path with platform I/O stubbed."""
+        _, agent, session, channel = self._fixture(
+            ChannelOrigin(channel_id="chan-1", chat_id="chat-1"),
+        )
+        channel.channel_type = "feishu"
+        channel.credentials = {"app_id": "app", "app_secret": "secret"}
         storage = _Storage(session, agent, channel)
         bus = InMemoryMessageBus()
+        clients = ChannelClients(
+            storage,
+            bus,
+            ChannelTypeRegistry([FeishuChannel]),
+        )
+        self.addAsyncCleanup(clients.__aexit__, None, None, None)
+        service = ChatService(
+            storage=storage,
+            workspace_manager=_WorkspaceManager(),
+            scheduler_manager=object(),
+            background_task_manager=object(),
+            message_bus=bus,
+            resource_access_service=SimpleNamespace(
+                resolve_agent=AsyncMock(return_value=agent),
+            ),
+            custom_agent_cls=_TwoApprovalAgent,
+            channel_clients=clients,
+        )
+        for target in ("get_toolkit", "get_model"):
+            self.enterContext(
+                patch(
+                    f"agentscope.app._service._chat.{target}",
+                    new=AsyncMock(return_value=object()),
+                ),
+            )
+        for target, value in (
+            ("chat_kind", ChatKind.GROUP),
+            ("chat_name", "Test chat"),
+            ("list_tools", []),
+            ("_card_push", None),
+            ("_close_stream", None),
+        ):
+            self.enterContext(
+                patch.object(
+                    FeishuChannel,
+                    target,
+                    new=AsyncMock(return_value=value),
+                ),
+            )
+        return service, clients, storage, bus
+
+    async def test_delayed_feishu_delivery_keeps_requester_after_web_approval(
+        self,
+    ) -> None:
+        """An early Web decision must preserve the next card's buttons."""
+        service, clients, storage, bus = self._approval_fixture()
+        sending = asyncio.Event()
+        release_send = asyncio.Event()
+
+        async def delayed_card_open(_: ChannelEvent) -> str:
+            if not sending.is_set():
+                sending.set()
+                await release_send.wait()
+            return "stream-card"
+
+        self.enterContext(
+            patch.object(
+                FeishuChannel,
+                "_card_open",
+                new=AsyncMock(side_effect=delayed_card_open),
+            ),
+        )
+        send = self.enterContext(
+            patch.object(FeishuChannel, "_send", new_callable=AsyncMock),
+        )
+
+        async def run(inputs: Msg | UserConfirmResultEvent) -> None:
+            await asyncio.wait_for(
+                service._run_impl("user-1", "session-1", "agent-1", inputs),
+                timeout=2,
+            )
+
+        await run(UserMsg(name="requester-1", content="Run both tools"))
+        await asyncio.wait_for(sending.wait(), timeout=2)
+        first_deliveries = set(clients._deliveries)
+        self.assertFalse(release_send.is_set())
+        self.assertFalse(
+            await bus.is_locked(MessageBusKeys.session_lock("session-1")),
+        )
+        self.assertDictEqual(
+            await bus.registry_getall(
+                MessageBusKeys.channel_session_approvals("session-1"),
+            ),
+            {},
+        )
+
+        # Submit the Web decision before any channel approval card exists.
+        pending = storage.session.state.get_awaiting_tool_calls("a")
+        await run(
+            UserConfirmResultEvent(
+                reply_id="r-1",
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=pending[0],
+                    ),
+                ],
+            ),
+        )
+        await asyncio.wait_for(
+            asyncio.gather(*(clients._deliveries - first_deliveries)),
+            timeout=2,
+        )
+        self.assertEqual(send.await_count, 1)
+        self.assertEqual(send.await_args.args[2], "interactive")
+        card = json.loads(send.await_args.args[3])
+        actions = card["elements"][-1]["actions"]
+        approval_id = actions[0]["value"]["approval_id"]
+        record = await load_approval(bus, approval_id)
+        self.assertDictEqual(
+            record.model_dump(),
+            {
+                "channel_id": "chan-1",
+                "chat_id": "chat-1",
+                "agent_id": "agent-1",
+                "session_id": "session-1",
+                "reply_id": "r-1",
+                "tool_call_id": "tool-2",
+                "requester_id": "requester-1",
+            },
+        )
+        self.assertListEqual(
+            [action["value"]["action"] for action in actions],
+            ["approve", "deny"],
+        )
+
+        pending = storage.session.state.get_awaiting_tool_calls("a")
+        await run(
+            UserConfirmResultEvent(
+                reply_id="r-1",
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=pending[0],
+                    ),
+                ],
+            ),
+        )
+        # A late first delivery must not resurrect completed requester state.
+        release_send.set()
+        await asyncio.wait_for(asyncio.gather(*clients._deliveries), timeout=2)
+        self.assertDictEqual(
+            {
+                kind: await bus.registry_getall(namespace("session-1"))
+                for kind, namespace in (
+                    ("requesters", MessageBusKeys.channel_session_requesters),
+                    ("approvals", MessageBusKeys.channel_session_approvals),
+                )
+            },
+            {"requesters": {}, "approvals": {}},
+        )
+
+    async def test_paused_requester_is_saved_under_lock_without_delivery(
+        self,
+    ) -> None:
+        """Both pause kinds persist identity even without a channel runtime."""
+        for pause_event in (
+            RequireUserConfirmEvent,
+            RequireExternalExecutionEvent,
+        ):
+            with self.subTest(pause_event=pause_event.__name__):
+                await self._assert_paused_requester_saved(pause_event)
+
+    async def _assert_paused_requester_saved(
+        self,
+        pause_event: type[
+            RequireUserConfirmEvent | RequireExternalExecutionEvent
+        ],
+    ) -> None:
+        """Observe identity persistence while the session is locked."""
+        service, _, storage, bus = self._approval_fixture()
+        service._channel_clients = None
+        namespace = MessageBusKeys.channel_session_requesters(
+            "session-1",
+        )
+        observed = []
+        registry_set = bus.registry_set
+
+        async def observe_write(
+            name: str,
+            field: str,
+            value: str,
+            *,
+            ttl_secs: int | None = None,
+        ) -> None:
+            if name == namespace:
+                state = storage.session.state
+                observed.append(
+                    {
+                        "locked": await bus.is_locked(
+                            MessageBusKeys.session_lock("session-1"),
+                        ),
+                        "pending": [
+                            tool.id
+                            for tool in state.get_awaiting_tool_calls("a")
+                        ],
+                        "requester": {field: value},
+                    },
+                )
+            await registry_set(name, field, value, ttl_secs=ttl_secs)
+
+        with (
+            patch.object(_TwoApprovalAgent, "pause_event", pause_event),
+            patch.object(bus, "registry_set", side_effect=observe_write),
+        ):
+            await service._run_impl(
+                "user-1",
+                "session-1",
+                "agent-1",
+                UserMsg(name="requester-1", content="Pause"),
+            )
+        self.assertListEqual(
+            observed,
+            [
+                {
+                    "locked": True,
+                    "pending": ["tool-1"],
+                    "requester": {"r-1": "requester-1"},
+                },
+            ],
+        )
+        self.assertDictEqual(
+            await bus.registry_getall(namespace),
+            {"r-1": "requester-1"},
+        )
+
+    async def test_identity_free_pause_does_not_use_session_origin_user(
+        self,
+    ) -> None:
+        """Web and unverifiable channel inputs remain fail-closed."""
+        for message in (
+            UserMsg(name="user", content="Web request"),
+            UserMsg(
+                name="unverified-user",
+                content="Channel request without a trusted user id",
+                metadata={CHANNEL_APPROVAL_UNAVAILABLE: True},
+            ),
+        ):
+            with self.subTest(message=message.name):
+                service, _, storage, bus = self._approval_fixture()
+                service._channel_clients = None
+                storage.session.origin.channel_user_id = "another-user"
+                await service._run_impl(
+                    "user-1",
+                    "session-1",
+                    "agent-1",
+                    message,
+                )
+                self.assertTrue(
+                    storage.session.state.has_awaiting_tool_calls("a"),
+                )
+                self.assertDictEqual(
+                    await bus.registry_getall(
+                        MessageBusKeys.channel_session_requesters("session-1"),
+                    ),
+                    {},
+                )
+
+    async def test_cancellation_waits_for_requester_persistence(
+        self,
+    ) -> None:
+        """Cancellation cannot release the lock before identity is saved."""
+        service, _, storage, bus = self._approval_fixture()
+        service._channel_clients = None
+        namespace = MessageBusKeys.channel_session_requesters("session-1")
+        writing = asyncio.Event()
+        finish_write = asyncio.Event()
+        registry_set = bus.registry_set
+
+        async def delayed_write(
+            name: str,
+            field: str,
+            value: str,
+            *,
+            ttl_secs: int | None = None,
+        ) -> None:
+            if name == namespace:
+                writing.set()
+                await finish_write.wait()
+            await registry_set(name, field, value, ttl_secs=ttl_secs)
+
+        with patch.object(bus, "registry_set", side_effect=delayed_write):
+            run = asyncio.create_task(
+                service._run_impl(
+                    "user-1",
+                    "session-1",
+                    "agent-1",
+                    UserMsg(name="requester-1", content="Pause"),
+                ),
+            )
+            try:
+                await asyncio.wait_for(writing.wait(), timeout=2)
+                run.cancel()
+                await asyncio.sleep(0)
+                self.assertFalse(run.done())
+                self.assertTrue(
+                    await bus.is_locked(
+                        MessageBusKeys.session_lock("session-1"),
+                    ),
+                )
+            finally:
+                finish_write.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(run, timeout=2)
+        self.assertDictEqual(
+            {
+                "requesters": await bus.registry_getall(namespace),
+                "locked": await bus.is_locked(
+                    MessageBusKeys.session_lock("session-1"),
+                ),
+                "pending": [
+                    tool.id
+                    for tool in storage.session.state.get_awaiting_tool_calls(
+                        "a",
+                    )
+                ],
+            },
+            {
+                "requesters": {"r-1": "requester-1"},
+                "locked": False,
+                "pending": ["tool-1"],
+            },
+        )
+
+    async def _run(
+        self,
+        source: SessionOrigin,
+        *,
+        channel_enabled: bool = True,
+    ) -> ChannelClients:
+        """Drive one run to completion and return the channel runtime."""
+        user_id, agent, session, channel = self._fixture(source)
+        channel.enabled = channel_enabled
+        storage = _Storage(session, agent, channel)
+        bus = InMemoryMessageBus()
+        if isinstance(source, ChannelOrigin):
+            await remember_reply_requester(
+                bus,
+                session_id=session.id,
+                reply_id="r-1",
+                requester_id="u",
+            )
         clients = ChannelClients(
             storage=storage,
             message_bus=bus,
@@ -291,6 +739,14 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
             self.assertEqual(len(_RecordingChannel.instances), 1)
             channel = _RecordingChannel.instances[0]
             await asyncio.wait_for(channel.done.wait(), timeout=2.0)
+            self.assertEqual(
+                await load_reply_requester(
+                    clients._bus,  # pylint: disable=protected-access
+                    session_id="session-1",
+                    reply_id="r-1",
+                ),
+                "",
+            )
 
             assert channel.target is not None
             self.assertDictEqual(
@@ -309,6 +765,27 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
                     },
                     "events": ["REPLY_START", "REPLY_END"],
                 },
+            )
+        finally:
+            await clients.__aexit__(None, None, None)
+
+    async def test_completed_reply_cleans_requester_without_delivery(
+        self,
+    ) -> None:
+        """Clean completed requesters even when the channel is disabled."""
+        clients = await self._run(
+            ChannelOrigin(channel_id="chan-1", chat_id="chat-1"),
+            channel_enabled=False,
+        )
+        try:
+            self.assertListEqual(_RecordingChannel.instances, [])
+            self.assertEqual(
+                await load_reply_requester(
+                    clients._bus,
+                    session_id="session-1",
+                    reply_id="r-1",
+                ),
+                "",
             )
         finally:
             await clients.__aexit__(None, None, None)

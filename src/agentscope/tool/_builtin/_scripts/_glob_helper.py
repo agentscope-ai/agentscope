@@ -120,6 +120,10 @@ def _match_parts(
                             )
             except (PermissionError, OSError):
                 pass
+    elif part == "..":
+        # Let the filesystem resolve symlinks before '..', including at root.
+        parent = os.path.join(current_dir, os.pardir)
+        _match_parts(parts, part_index + 1, parent, results)
     else:
         regex = _glob_part_to_regex(part)
         try:
@@ -146,7 +150,8 @@ def glob_match(pattern: str, base_dir: str) -> list[str]:
 
     Splits *pattern* on path separators (``/`` or ``\\``) and
     delegates to :func:`_match_parts` for recursive directory
-    traversal, ignoring standalone current-directory (``.``) segments.
+    traversal, ignoring standalone current-directory (``.``) segments
+    and resolving ``..`` segments to the parent directory.
     Supports ``*`` (any characters within a segment),
     ``?`` (single character), and ``**`` (zero or more directories).
 
