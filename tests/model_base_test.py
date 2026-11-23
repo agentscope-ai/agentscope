@@ -7,6 +7,7 @@ import struct
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from pydantic import BaseModel, Field, field_validator
 from utils import AnyString, MockModel
 
 from agentscope.message import (
@@ -19,6 +20,7 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.model import (
+    ChatModelBase,
     ChatResponse,
     ChatUsage,
     FinishedReason,
@@ -1434,6 +1436,70 @@ class StructuredOutputStrategyTest(IsolatedAsyncioTestCase):
                 ("auto", {}),
             ],
         )
+
+
+class _CityReport(BaseModel):
+    """A structured-output schema with a default and a validator."""
+
+    city: str
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("city")
+    @classmethod
+    def _normalize_city(cls, value: str) -> str:
+        """Strip and title-case the city name."""
+        return value.strip().title()
+
+
+class _ToolCallStructuredModel(MockModel):
+    """Run the real structured-output attempt over a canned tool call."""
+
+    async def _call_api_with_structured_output(
+        self,
+        model_name: str,
+        messages: list,
+        structured_model: Any,
+        **kwargs: Any,
+    ) -> StructuredResponse:
+        """Use the base implementation instead of the mocked one."""
+        # pylint: disable-next=protected-access
+        return await ChatModelBase._call_api_with_structured_output(
+            self,
+            model_name,
+            messages,
+            structured_model,
+            **kwargs,
+        )
+
+
+class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
+    """Test the content returned for a Pydantic structured model."""
+
+    async def test_content_is_the_validated_model(self) -> None:
+        """Defaults and validators of the structured model are applied to
+        the returned content."""
+        model = _ToolCallStructuredModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="generate_structured_output",
+                            input='{"city": "  paris "}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        result = await model.generate_structured_output(
+            [UserMsg(name="user", content="hi")],
+            _CityReport,
+        )
+
+        self.assertDictEqual(result.content, {"city": "Paris", "tags": []})
 
 
 class _TrackedCleanupModel(MockModel):

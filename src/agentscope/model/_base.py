@@ -792,7 +792,9 @@ class ChatModelBase:
                 jsonschema.validate(structured_output, structured_model)
 
             elif issubclass(structured_model, BaseModel):
-                structured_model.model_validate(structured_output)
+                structured_output = structured_model.model_validate(
+                    structured_output,
+                ).model_dump(mode="json")
 
             else:
                 raise ValueError(
