@@ -137,8 +137,9 @@ async def reap_receipts(
                 if record.get("reply_id"):
                     # All inputs in this submission share one bound reply.
                     message_ids = message_ids[:1]
-                results = [
-                    await input_result(
+                all_finished = True
+                for mid in message_ids:
+                    result = await input_result(
                         user_id,
                         session_id,
                         agent_id,
@@ -149,11 +150,12 @@ async def reap_receipts(
                             else {}
                         ),
                     )
-                    for mid in message_ids
-                ]
+                    if result["state"] != "finished":
+                        all_finished = False
+                        break
         except TimeoutError:
             continue
-        if all(r["state"] == "finished" for r in results):
+        if all_finished:
             record["retire_at"] = (
                 now + MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS
             )

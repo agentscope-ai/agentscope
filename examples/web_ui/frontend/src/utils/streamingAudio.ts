@@ -23,7 +23,7 @@
  * cut short by the end event arriving mid-playback.
  */
 
-import { ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
+import { type DataBlockDeltaEvent, ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
 import type { Msg } from '@agentscope-ai/agentscope/message';
 
 /** Status of a streaming audio block. */
@@ -45,10 +45,18 @@ type Listener = () => void;
 
 type Bytes = Uint8Array<ArrayBufferLike>;
 
-export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
-	const binary = atob(b64);
+const decodedChunks = new WeakMap<DataBlockDeltaEvent, Uint8Array<ArrayBuffer>>();
+
+/** Both players consume the same SSE event, including when ownership is resolved later. */
+export function base64ToBytes(chunk: string | DataBlockDeltaEvent): Uint8Array<ArrayBuffer> {
+	if (typeof chunk !== 'string') {
+		const cached = decodedChunks.get(chunk);
+		if (cached) return cached;
+	}
+	const binary = atob(typeof chunk === 'string' ? chunk : chunk.data);
 	const bytes = new Uint8Array(binary.length);
 	for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+	if (typeof chunk !== 'string') decodedChunks.set(chunk, bytes);
 	return bytes;
 }
 
@@ -146,18 +154,21 @@ class WavStreamPlayer {
 	started = false;
 	private ctx: AudioContext | null = null;
 	private header: WavHeader | null = null;
-	private pending: Bytes = new Uint8Array(0);
+	private pending: Bytes | null = null;
 	private nextStartTime = 0;
 	private failed = false;
 	private deferredCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 	append(chunk: Bytes): void {
 		if (this.failed) return;
-		this.pending = concatBytes(this.pending, chunk);
+		let bytes = this.pending ? concatBytes(this.pending, chunk) : chunk;
 
 		if (!this.header) {
-			const header = parseWavHeader(this.pending);
-			if (!header) return;
+			const header = parseWavHeader(bytes);
+			if (!header) {
+				this.pending = bytes;
+				return;
+			}
 			this.header = header;
 			try {
 				this.ctx = new AudioContext({ sampleRate: header.sampleRate });
@@ -169,18 +180,18 @@ class WavStreamPlayer {
 				this.failed = true;
 				return;
 			}
-			this.pending = this.pending.slice(header.dataOffset);
+			bytes = bytes.subarray(header.dataOffset);
 		}
 
 		if (!this.ctx || !this.header) return;
 
 		const frameSize = (this.header.bitsPerSample / 8) * this.header.channels;
-		const playableBytes = Math.floor(this.pending.length / frameSize) * frameSize;
+		const playableBytes = Math.floor(bytes.length / frameSize) * frameSize;
+		// Keep only the incomplete frame without retaining the whole chunk.
+		this.pending = playableBytes < bytes.length ? bytes.slice(playableBytes) : null;
 		if (playableBytes === 0) return;
 
-		const toPlay = this.pending.slice(0, playableBytes);
-		this.pending = this.pending.slice(playableBytes);
-
+		const toPlay = bytes.subarray(0, playableBytes);
 		const audioBuffer = pcmToAudioBuffer(this.ctx, toPlay, this.header);
 		if (!audioBuffer) return;
 
@@ -213,7 +224,7 @@ class WavStreamPlayer {
 			this.dispose();
 		}, remainingMs + 200);
 		this.header = null;
-		this.pending = new Uint8Array(0);
+		this.pending = null;
 	}
 
 	dispose(): void {
@@ -225,7 +236,7 @@ class WavStreamPlayer {
 			void this.ctx.close().catch(() => undefined);
 			this.ctx = null;
 		}
-		this.pending = new Uint8Array(0);
+		this.pending = null;
 		this.header = null;
 	}
 }
@@ -241,6 +252,25 @@ interface Session {
 	playedUrl: boolean;
 	autoplayElement: HTMLAudioElement | null;
 	state: StreamingAudioState;
+}
+
+/** Resume only when the checkpoint starts with the exact bytes already fed to the player. */
+function resumeWav(session: Session, player: WavStreamPlayer, data: string): boolean {
+	let bytes: Uint8Array<ArrayBuffer>;
+	try {
+		bytes = base64ToBytes(data);
+	} catch {
+		return false;
+	}
+	let offset = 0;
+	for (const chunk of session.chunks) {
+		if (!chunk.every((byte, i) => byte === bytes[offset + i])) return false;
+		offset += chunk.length;
+	}
+	if (offset < bytes.length) player.append(bytes.subarray(offset));
+	session.chunks = [bytes];
+	session.totalBytes = bytes.length;
+	return true;
 }
 
 /**
@@ -293,18 +323,23 @@ export class StreamingAudioManager {
 				}
 				const { source } = block;
 				const url = source.type === 'url' ? source.url : undefined;
-				if (
-					session.state.status === 'streaming' &&
-					session.autoplay !== false &&
-					!session.livePlayer?.started
-				) {
-					// The checkpoint includes the prefix we buffered before disconnecting.
-					session.livePlayer?.dispose();
-					session.livePlayer = null;
-					session.chunks = [];
-					session.totalBytes = 0;
-					session.sourceUrl = undefined;
-					this.append(block.id, source.type === 'base64' ? source.data : null, url);
+				if (session.state.status === 'streaming' && session.autoplay !== false) {
+					if (session.livePlayer?.started) {
+						if (
+							source.type !== 'base64' ||
+							!resumeWav(session, session.livePlayer, source.data)
+						) {
+							this.dispose(block.id);
+							continue;
+						}
+					} else {
+						session.livePlayer?.dispose();
+						session.livePlayer = null;
+						session.chunks = [];
+						session.totalBytes = 0;
+						session.sourceUrl = undefined;
+						this.append(block.id, source.type === 'base64' ? source.data : null, url);
+					}
 					void this.end(block.id);
 				} else if (session.state.status !== 'ready' || session.sourceUrl !== url) {
 					this.dispose(block.id);
@@ -360,7 +395,7 @@ export class StreamingAudioManager {
 	}
 
 	/** A delta carries either base64 audio bytes or a playable URL. */
-	append(blockId: string, data: string | null, url?: string): void {
+	append(blockId: string, data: string | DataBlockDeltaEvent | null, url?: string): void {
 		const session = this.sessions.get(blockId);
 		if (!session || session.state.status !== 'streaming') return;
 		if (url) {

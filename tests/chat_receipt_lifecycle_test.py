@@ -9,7 +9,11 @@ from uuid import uuid4
 
 import fakeredis.aioredis
 from service_message_bus_test import _make_bus
-from service_wakeup_dispatcher_test import _FakeChatService, _FakeStorage
+from service_wakeup_dispatcher_test import (
+    _FakeBus,
+    _FakeChatService,
+    _FakeStorage,
+)
 
 from agentscope.app._bus_ops import (
     bind_chat_submission,
@@ -21,7 +25,12 @@ from agentscope.app._bus_ops import (
     enqueue_chat_input,
 )
 from agentscope.app._manager._chat_input_queue import ChatInputQueue
-from agentscope.app._chat_receipts import receipt_count
+from agentscope.app._chat_input_store import cleanup_session
+from agentscope.app._chat_receipts import (
+    reap_receipts,
+    receipt_count,
+    track_receipts,
+)
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.message import UserMsg
 
@@ -86,6 +95,40 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                 ],
             )
 
+    async def test_legacy_receipt_stops_at_unfinished_input(self) -> None:
+        """Only a fully finished batch starts its retention period."""
+        key = MessageBusKeys.chat_submissions("s")
+        record = {"state": "claimed", "message_ids": ["m1", "m2", "m3"]}
+        async with InMemoryMessageBus() as bus:
+            await bus.registry_set(key, "batch", json.dumps(record))
+            for states in (
+                ["reply"],
+                ["finished", "unknown"],
+                ["finished"] * 3,
+            ):
+                with self.subTest(states=states):
+                    lookup = AsyncMock(
+                        side_effect=[{"state": s} for s in states],
+                    )
+                    await reap_receipts(bus, "u", "s", "a", lookup, {}, set())
+                    self.assertEqual(
+                        [call.args for call in lookup.await_args_list],
+                        [
+                            ("u", "s", "a", mid)
+                            for mid in record["message_ids"][: len(states)]
+                        ],
+                    )
+                    expected = dict(record)
+                    if all(state == "finished" for state in states):
+                        expected["retire_at"] = (
+                            self.now
+                            + MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS
+                        )
+                    self.assertEqual(
+                        json.loads(await bus.registry_get(key, "batch")),
+                        expected,
+                    )
+
     async def test_receipt_only_sweep_reuses_locked_queue_state(self) -> None:
         """Read the FIFO once per sweep and keep leases after cleanup."""
         for bus in self.backends:
@@ -115,6 +158,39 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                         ),
                         {"s": "a"},
                     )
+
+    async def test_cleanup_preserves_indexes_until_last_receipt(self) -> None:
+        """Check both receipt registries, including on a legacy bus."""
+        legacy = _FakeBus()
+        for bus in (*self.backends, legacy):
+            with self.subTest(backend=type(bus).__name__):
+                async with bus:
+                    await track_receipts(bus, "u", "s", "a")
+                    submissions = MessageBusKeys.chat_submissions("s")
+                    cancels = MessageBusKeys.chat_input_cancellations("s")
+                    pending = MessageBusKeys.chat_input_pending_registry()
+                    sessions = MessageBusKeys.chat_input_user_sessions("u")
+                    routing = await bus.registry_get(pending, "s")
+                    with patch.object(
+                        bus,
+                        "registry_getall",
+                        wraps=bus.registry_getall,
+                    ) as read_all:
+                        for namespace in (submissions, cancels, None):
+                            if namespace:
+                                await bus.registry_set(namespace, "one", "{}")
+                            await cleanup_session(bus, "s")
+                            self.assertEqual(
+                                (
+                                    await bus.registry_get(pending, "s"),
+                                    await bus.registry_get(sessions, "s"),
+                                ),
+                                (routing, "a") if namespace else (None, None),
+                            )
+                            if namespace:
+                                await bus.registry_del(namespace, "one")
+                    if bus is not legacy:
+                        read_all.assert_not_awaited()
 
     async def test_legacy_full_session_is_adopted_for_collection(self) -> None:
         """Old unindexed receipts cannot permanently consume the quota."""

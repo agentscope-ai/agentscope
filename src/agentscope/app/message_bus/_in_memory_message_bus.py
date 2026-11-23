@@ -617,6 +617,10 @@ class InMemoryMessageBus(
         """
         return field in self._registries.get(namespace, {})
 
+    async def registry_has_entries(self, namespace: str) -> bool:
+        """Check for entries without copying the registry."""
+        return bool(self._registries.get(namespace))
+
     async def registry_getall(
         self,
         namespace: str,

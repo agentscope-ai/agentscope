@@ -512,7 +512,7 @@ export function useMessages(
 				} else if (event.type === EventType.DATA_BLOCK_DELTA) {
 					const e = event as DataBlockDeltaEvent;
 					if (e.media_type.startsWith('audio/')) {
-						audioManager.append(e.block_id, e.data, audioDeltaUrl(e));
+						audioManager.append(e.block_id, e.data ? e : null, audioDeltaUrl(e));
 					}
 				} else if (event.type === EventType.DATA_BLOCK_END) {
 					const e = event as DataBlockEndEvent;

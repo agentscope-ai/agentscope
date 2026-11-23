@@ -458,7 +458,7 @@ export class PipelineVoiceSession {
 				break;
 			case EventType.DATA_BLOCK_DELTA:
 				if (event.media_type.startsWith('audio/'))
-					this.player.append(event.block_id, event.data);
+					this.player.append(event.block_id, event);
 				break;
 			case EventType.DATA_BLOCK_END:
 				return this.player.end(event.block_id) ?? handled;

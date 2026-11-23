@@ -668,6 +668,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``True`` if the field is present.
         """
 
+    async def registry_has_entries(self, namespace: str) -> bool:
+        """Return whether the registry contains at least one field."""
+        return bool(await self.registry_getall(namespace))
+
     @abstractmethod
     async def registry_getall(
         self,

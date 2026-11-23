@@ -655,6 +655,10 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         """
         return bool(await self._client.hexists(namespace, field))
 
+    async def registry_has_entries(self, namespace: str) -> bool:
+        """Check for entries without fetching hash fields or values."""
+        return bool(await self._client.hlen(namespace))
+
     async def registry_getall(
         self,
         namespace: str,

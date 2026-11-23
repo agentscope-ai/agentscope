@@ -1,3 +1,5 @@
+import type { DataBlockDeltaEvent } from '@agentscope-ai/agentscope/event';
+
 import { base64ToBytes, parseWavHeader, pcmToAudioBuffer } from '@/utils/streamingAudio';
 
 interface AudioBlock {
@@ -10,9 +12,8 @@ interface AudioBlock {
 	decoding: boolean;
 }
 
-/** Consume queued chunks in order, reusing a single chunk for live playback. */
-function takeBytes(block: AudioBlock): Uint8Array<ArrayBuffer> {
-	if (block.chunks.length === 1) return block.chunks.pop()!;
+/** Consume queued chunks into a buffer owned by this player. */
+function joinChunks(block: AudioBlock): Uint8Array<ArrayBuffer> {
 	const bytes = new Uint8Array(block.chunks.reduce((size, chunk) => size + chunk.length, 0));
 	let offset = 0;
 	for (const chunk of block.chunks) {
@@ -67,7 +68,7 @@ export class PipelineAudioPlayer {
 		this.onChange(true);
 	}
 
-	append(id: string, data: string): void {
+	append(id: string, data: string | DataBlockDeltaEvent): void {
 		const block = this.blocks.find((item) => item.id === id);
 		if (!block || block.playbackDone) return;
 		try {
@@ -126,7 +127,7 @@ export class PipelineAudioPlayer {
 		if (!block || block.decoding) return;
 		try {
 			if (block.mediaType === 'audio/wav') {
-				let bytes = takeBytes(block);
+				let bytes = block.chunks.length === 1 ? block.chunks.pop()! : joinChunks(block);
 				if (!block.header) {
 					block.header = parseWavHeader(bytes);
 					if (!block.header) {
@@ -152,7 +153,8 @@ export class PipelineAudioPlayer {
 			} else if (block.playbackDone && block.chunks.length) {
 				block.decoding = true;
 				const generation = this.generation;
-				const bytes = takeBytes(block);
+				// decodeAudioData detaches its input. The replay buffer still owns its chunks.
+				const bytes = joinChunks(block);
 				void this.context
 					.decodeAudioData(bytes.buffer)
 					.then((buffer) => {

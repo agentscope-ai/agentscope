@@ -140,9 +140,9 @@ async def cleanup_session(bus: "MessageBus", session_id: str) -> None:
     await bus.registry_drop(MessageBusKeys.chat_input_payloads(session_id))
     await bus.registry_drop(MessageBusKeys.chat_input_claim(session_id))
     # Empty queues still need recovery while their receipts are retained.
-    if await bus.registry_getall(
+    if await bus.registry_has_entries(
         MessageBusKeys.chat_submissions(session_id),
-    ) or await bus.registry_getall(
+    ) or await bus.registry_has_entries(
         MessageBusKeys.chat_input_cancellations(session_id),
     ):
         return
