@@ -2737,8 +2737,8 @@ class WordParserTest(IsolatedAsyncioTestCase):
 
         doc = DocxDocument()
         doc.add_paragraph("first")
-        paragraph = doc.add_paragraph()
-        paragraph._p.append(
+        paragraph = doc.element.body.add_p()
+        paragraph.append(
             parse_xml(
                 f'<w:del {nsdecls("w")} w:id="1" w:author="test">'
                 "<w:r><w:delText>gone</w:delText></w:r></w:del>",
@@ -2751,7 +2751,7 @@ class WordParserTest(IsolatedAsyncioTestCase):
         ):
             with self.subTest(mark_deleted=mark_deleted):
                 if mark_deleted:
-                    paragraph._p.get_or_add_pPr().append(
+                    paragraph.get_or_add_pPr().append(
                         parse_xml(
                             f'<w:rPr {nsdecls("w")}>'
                             '<w:del w:id="2" w:author="test"/></w:rPr>',
