@@ -1,0 +1,28 @@
+name: qwen-audio-3.0-asr-flash
+label: Qwen Audio 3.0 ASR Flash
+input_types:
+  - audio/aac
+  - audio/flac
+  - audio/mpeg
+  - audio/mp4
+  - audio/ogg
+  - audio/opus
+  - audio/wav
+  - audio/webm
+output_types:
+  - text/plain
+realtime: false
+
+parameter_overrides:
+  # The 3.0 synchronous model does not support the two user-facing 3.1
+  # switches. The remaining fields are inferred or require dedicated UX.
+  language_hints:
+    hidden: true
+  keep_dialect:
+    hidden: true
+  speaker_diarization_enabled:
+    hidden: true
+  vocabulary:
+    hidden: true
+  sample_rate:
+    hidden: true

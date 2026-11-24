@@ -21,7 +21,8 @@ requires-python = ">=3.11"
 dependencies = [
     "aioitertools",
     "anthropic",
-    "dashscope",
+    "certifi>=2026.10.19",
+    "dashscope>=1.20.0",
     "docstring_parser",
     "filetype",
     "json5",
@@ -45,6 +46,7 @@ dependencies = [
     "tree_sitter",
     "tree_sitter_bash",
     "jsonschema",
+    "referencing",
     "pypdf",
     # The IANA timezone database, which is absent on Windows and slim images
     "tzdata",
@@ -52,7 +54,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # ------------ Model APIs ------------
-model-gemini = ["google-genai"]
+model-gemini = ["google-genai>=3.3.0"]
 model-ollama = ["ollama>=0.5.4"]
 model-xai = ["xai-sdk"]
 classifier-jev = ["typesafe-sdk>=0.7"]
@@ -90,7 +92,8 @@ channel = [
 # ------------ Workspace (sandbox backends) ------------
 workspace-docker = ["aiodocker"]
 workspace-e2b = ["e2b"]
-workspace-daytona = ["daytona"]
+# The workspace imports sandbox types from the 0.x SDK package root.
+workspace-daytona = ["daytona<1"]
 workspace-k8s = ["kubernetes-asyncio"]
 workspace-opensandbox = ["opensandbox"]
 workspace = [
@@ -112,7 +115,7 @@ tools = [
 ]
 # ------------ Realtime voice ------------
 realtime = [
-    "websockets>=13",
+    "websockets>=14",
 ]
 realtime-local = ["sounddevice"]
 # ------------ Terminal UI ------------
@@ -205,6 +208,8 @@ dev = [
     "matplotlib",
     # ``[lua]`` pulls in lupa so EVAL-based code paths are testable.
     "fakeredis[lua]",
+    # Remove the cap once fakeredis ships cunla/fakeredis-py#638.
+    "redis<8.2",
     # SQL backend tests — SQLite via aiosqlite so no server is needed.
     "aiosqlite",
     # S3-backend testing — moto[server] spins up an in-process S3

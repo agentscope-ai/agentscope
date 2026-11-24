@@ -2,12 +2,14 @@ import { ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
 import type {
 	ContentBlock,
 	DataBlock,
+	HintBlock,
 	Msg,
 	TextBlock,
 	ThinkingBlock,
 	ToolCallBlock,
 	ToolResultBlock,
 } from '@agentscope-ai/agentscope/message';
+import { format, isToday } from 'date-fns';
 import {
 	ArrowDown,
 	ArrowUp,
@@ -15,7 +17,9 @@ import {
 	CheckCircle,
 	ChevronRight,
 	CirclePlay,
+	CornerDownRight,
 	Copy,
+	Download,
 	FileText,
 	FileVideo2,
 	Loader2,
@@ -68,6 +72,72 @@ interface ToolCallGroupBlock {
 }
 
 type ExtendedContentBlock = ContentBlock | ToolCallGroupBlock;
+
+const STEERING_HINT_SOURCE = 'chat_input_steering';
+
+const isSteeringHint = (block: ExtendedContentBlock): block is HintBlock =>
+	block.type === 'hint' && block.source === STEERING_HINT_SOURCE;
+
+const getHintItems = (block: HintBlock): (TextBlock | DataBlock)[] =>
+	typeof block.hint === 'string'
+		? [
+				{
+					type: 'text',
+					id: `${block.id}-text`,
+					text: block.hint,
+					created_at: block.created_at,
+				},
+			]
+		: block.hint;
+
+interface SteeringMessageBubbleProps {
+	blocks: ContentBlock[];
+	createdAt: string;
+	status: 'steering' | 'steered';
+}
+
+function MessageTime({ createdAt }: { createdAt: string }) {
+	const date = new Date(createdAt);
+	if (Number.isNaN(date.getTime())) return null;
+	return (
+		<time dateTime={createdAt} className="invisible whitespace-nowrap tabular-nums">
+			{format(date, isToday(date) ? 'HH:mm' : 'yyyy-MM-dd HH:mm')}
+		</time>
+	);
+}
+
+/** User-facing projection of a prompt steering the active reply. */
+export function SteeringMessageBubble({ blocks, createdAt, status }: SteeringMessageBubbleProps) {
+	const { t } = useTranslation();
+	return (
+		<div className="flex w-full flex-col items-end gap-1" data-slot="steering-message">
+			<Bubble align="end" variant="muted">
+				<BubbleContent className="flex flex-col gap-2">
+					{blocks.map((block) => (
+						<ASBlock block={block} key={block.id} />
+					))}
+				</BubbleContent>
+			</Bubble>
+			<div
+				className="flex items-center gap-1 px-1 text-xs text-muted-foreground"
+				role="status"
+				aria-live="polite"
+			>
+				{status === 'steering' ? (
+					<Loader2 className="size-3 animate-spin" aria-hidden="true" />
+				) : (
+					<CornerDownRight className="size-3" aria-hidden="true" />
+				)}
+				<span>
+					{status === 'steering'
+						? t('chatQueue.stateSteering')
+						: t('chatQueue.stateSteered')}
+				</span>
+				<MessageTime createdAt={createdAt} />
+			</div>
+		</div>
+	);
+}
 
 /**
  * Pair every tool_call with its tool_result (by id) and collect *consecutive*
@@ -444,6 +514,9 @@ function ASMessageBubbleComponent({ message, onOpenArtifact }: MessageBubbleProp
 	);
 
 	const blocks = groupToolCalls(message.content);
+	const attachments = message.content.filter(
+		(b): b is DataBlock => b.type === 'data' && !b.source.media_type.startsWith('audio/'),
+	);
 
 	// What the copy button hands over — the prose of the message, without
 	// the tool calls and attachments around it.
@@ -459,16 +532,29 @@ function ASMessageBubbleComponent({ message, onOpenArtifact }: MessageBubbleProp
 
 	return (
 		<Message align={isUser ? 'end' : 'start'} data-role={message.role}>
-			<MessageContent>
+			<MessageContent className="gap-1">
 				{blocks
 					.filter((block) => block.type !== 'data')
-					.map((block, index) => (
-						<Bubble key={index} variant={isUser ? 'muted' : 'ghost'}>
-							<BubbleContent>
-								<ASBlock block={block} />
-							</BubbleContent>
-						</Bubble>
-					))}
+					.map((block, index) =>
+						isSteeringHint(block) ? (
+							<SteeringMessageBubble
+								blocks={getHintItems(block)}
+								createdAt={block.created_at}
+								status="steered"
+								key={block.id}
+							/>
+						) : (
+							<Bubble key={index} variant={isUser ? 'muted' : 'ghost'}>
+								<BubbleContent>
+									<ASBlock
+										block={block}
+										showCodeActions={message.role === 'assistant'}
+										messageFinished={!isRunning}
+									/>
+								</BubbleContent>
+							</Bubble>
+						),
+					)}
 				{message.finished_reason === ReplyFinishedReason.ERROR && (
 					<Alert
 						variant="destructive"
@@ -484,24 +570,18 @@ function ASMessageBubbleComponent({ message, onOpenArtifact }: MessageBubbleProp
 						</AlertDescription>
 					</Alert>
 				)}
-				<AttachmentGroup className="max-w-full">
-					{blocks
-						.filter((block) => block.type === 'data')
-						.map((block, index) => (
-							<ASBlock block={block} key={index} />
+				{attachments.length > 0 && (
+					<AttachmentGroup className="max-w-full py-0">
+						{attachments.map((block) => (
+							<ASBlock block={block} key={block.id} />
 						))}
-				</AttachmentGroup>
+					</AttachmentGroup>
+				)}
 				{!isUser && !isRunning && onOpenArtifact && (
 					<ArtifactList content={message.content} onOpen={onOpenArtifact} />
 				)}
-				{message.role === 'user' ? (
-					plainText && (
-						<MessageFooter>
-							<CopyButton text={plainText} />
-						</MessageFooter>
-					)
-				) : (
-					<MessageFooter className="gap-1 font-mono">
+				<MessageFooter className="flex-wrap gap-1 font-mono">
+					{!isUser && (
 						<Badge
 							variant="secondary"
 							aria-label={isRunning ? t('messageBubble.running') : undefined}
@@ -528,9 +608,10 @@ function ASMessageBubbleComponent({ message, onOpenArtifact }: MessageBubbleProp
 								<AudioInlineControl key={block.id} block={block} />
 							))}
 						</Badge>
-						{plainText && <CopyButton text={plainText} />}
-					</MessageFooter>
-				)}
+					)}
+					{plainText && <CopyButton text={plainText} />}
+					<MessageTime createdAt={message.created_at} />
+				</MessageFooter>
 			</MessageContent>
 		</Message>
 	);
@@ -600,15 +681,30 @@ function ThinkingBlockView({ block }: { block: ThinkingBlock }) {
 
 interface ASBlockProps {
 	block: ExtendedContentBlock;
+	showCodeActions?: boolean;
+	messageFinished?: boolean;
 }
 
-export function ASBlock({ block, ...props }: ASBlockProps) {
+const codeActions = { code: true, table: false, mermaid: false };
+const codeIcons = { CheckIcon: Check, CopyIcon: Copy, DownloadIcon: Download };
+
+export function ASBlock({ block, showCodeActions = false, messageFinished = false }: ASBlockProps) {
 	const { t } = useTranslation();
 
 	switch (block.type) {
 		case 'text':
 			return (
-				<Markdown animated isAnimating={!block.finished_at} {...props}>
+				<Markdown
+					animated
+					isAnimating={!messageFinished && !block.finished_at}
+					controls={showCodeActions && codeActions}
+					wrapControl={showCodeActions}
+					icons={codeIcons}
+					translations={{
+						copyCode: t('messageBubble.copy'),
+						downloadFile: t('messageBubble.downloadFile'),
+					}}
+				>
 					{block.text}
 				</Markdown>
 			);
@@ -703,17 +799,7 @@ export function ASBlock({ block, ...props }: ASBlockProps) {
 			} else {
 				hintLabel = t('common.message');
 			}
-			const items: (TextBlock | DataBlock)[] =
-				typeof block.hint === 'string'
-					? [
-							{
-								type: 'text',
-								id: `${block.id}-text`,
-								text: block.hint,
-								created_at: block.created_at,
-							},
-						]
-					: block.hint;
+			const items = getHintItems(block);
 			return (
 				<Collapsible>
 					<CollapsibleTrigger asChild>

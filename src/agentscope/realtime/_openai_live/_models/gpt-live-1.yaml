@@ -1,0 +1,20 @@
+type: realtime_model
+name: gpt-live-1
+label: GPT Live 1
+status: active
+interaction_mode: full_duplex
+delegation_backend: session_chat
+
+input_types:
+  - audio/pcm
+output_types:
+  - audio/pcm
+  - text/plain
+
+input_sample_rate: 24000
+output_sample_rate: 24000
+
+# Tools run through the session's configured chat agent.
+supports_tools: false
+
+max_context_tokens: 128000

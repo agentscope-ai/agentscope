@@ -336,8 +336,8 @@ class DownloadTokenTests(IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 
 
-class _WorkspaceFileFixture(IsolatedAsyncioTestCase):
-    """Shared isolated workspace for browsing and editing endpoints."""
+class _WorkspaceEndpointTestBase(IsolatedAsyncioTestCase):
+    """Set up a workspace shared by the endpoint test cases."""
 
     async def asyncSetUp(self) -> None:
         files = {
@@ -352,12 +352,8 @@ class _WorkspaceFileFixture(IsolatedAsyncioTestCase):
         self._service = WorkspaceService(self._storage, self._wm, SECRET)
 
 
-class WorkspaceFileEndpointTests(_WorkspaceFileFixture):
-    """Call the file-browsing endpoints directly, bypassing FastAPI."""
-
-    # ------------------------------------------------------------------
-    # directories
-    # ------------------------------------------------------------------
+class WorkspaceDirectoryEndpointTests(_WorkspaceEndpointTestBase):
+    """Exercise directory listings and path resolution."""
 
     async def test_list_root(self) -> None:
         """The workspace root lists its seeded files and directories."""
@@ -452,9 +448,9 @@ class WorkspaceFileEndpointTests(_WorkspaceFileFixture):
             status.HTTP_400_BAD_REQUEST,
         )
 
-    # ------------------------------------------------------------------
-    # files
-    # ------------------------------------------------------------------
+
+class WorkspaceFileEndpointTests(_WorkspaceEndpointTestBase):
+    """Exercise file streaming, preview headers, and download tokens."""
 
     async def _read(self, **kwargs: object) -> object:
         """Call the file endpoint with the shared fixtures filled in."""
@@ -502,6 +498,66 @@ class WorkspaceFileEndpointTests(_WorkspaceFileFixture):
             response.headers["content-disposition"],
             "attachment; filename*=UTF-8''notes.txt",
         )
+
+    async def test_scriptable_type_is_forced_to_an_attachment(self) -> None:
+        """HTML may run script, so it never renders inline."""
+        await self._backend.write_file(
+            "/workspace/page.html",
+            b"<script>alert(1)</script>",
+        )
+        response = await self._read(
+            path="page.html",
+            download=False,
+            token=None,
+            x_user_id="u",
+        )
+        self.assertEqual(response.media_type, "text/html")
+        self.assertEqual(
+            response.headers["content-disposition"],
+            "attachment; filename*=UTF-8''page.html",
+        )
+        self.assertEqual(
+            response.headers["x-content-type-options"],
+            "nosniff",
+        )
+
+    async def test_previewable_type_carries_nosniff(self) -> None:
+        """A previewed file still forbids sniffing a scriptable type."""
+        response = await self._read(
+            path="notes.txt",
+            download=False,
+            token=None,
+            x_user_id="u",
+        )
+        self.assertEqual(
+            response.headers["x-content-type-options"],
+            "nosniff",
+        )
+        self.assertNotIn("content-disposition", response.headers)
+
+    async def test_json_preview_and_download(self) -> None:
+        """Workspace JSON previews inline unless a download is requested."""
+        body = b'{"ok":true}'
+        await self._backend.write_file("/workspace/result.json", body)
+        headers = {
+            "content-type": "application/json",
+            "content-length": str(len(body)),
+            "x-content-type-options": "nosniff",
+        }
+        download_headers = {
+            **headers,
+            "content-disposition": "attachment; filename*=UTF-8''result.json",
+        }
+        for download, expected in ((False, headers), (True, download_headers)):
+            with self.subTest(download=download):
+                response = await self._read(
+                    path="result.json",
+                    download=download,
+                    token=None,
+                    x_user_id="u",
+                )
+                self.assertEqual(dict(response.headers), expected)
+                self.assertEqual(await _collect(response), body)
 
     async def test_absolute_path_outside_workspace_is_readable(self) -> None:
         """Reading, like listing, is not confined to the workspace."""
@@ -638,7 +694,7 @@ class WorkspaceFileEndpointTests(_WorkspaceFileFixture):
         )
 
 
-class _WorkspaceTextFixture(_WorkspaceFileFixture):
+class _WorkspaceTextFixture(_WorkspaceEndpointTestBase):
     """Shared helpers for editor endpoint tests."""
 
     async def _text(

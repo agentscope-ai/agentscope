@@ -3,6 +3,7 @@
 """Unit tests for OpenAIEmbeddingModel."""
 from dataclasses import asdict
 import json
+from tempfile import TemporaryDirectory
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from utils import AnyValue
 
 from agentscope.credential import OpenAICredential
-from agentscope.embedding import OpenAIEmbeddingModel
+from agentscope.embedding import FileEmbeddingCache, OpenAIEmbeddingModel
 
 A = AnyValue()
 
@@ -63,6 +64,99 @@ class OpenAIListModelsTest(IsolatedAsyncioTestCase):
 
 class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
     """Test OpenAI embedding API calls with mocked responses."""
+
+    @patch("openai.AsyncClient")
+    async def test_dimensions(self, mock_client_cls: Any) -> None:
+        """Per-call dimensions override the optional instance default."""
+        cases: list[tuple[bool, dict[str, int], dict[str, int]]] = [
+            (True, {}, {"dimensions": 2}),
+            (True, {"dimensions": 3}, {"dimensions": 3}),
+            (False, {}, {}),
+            (False, {"dimensions": 3}, {"dimensions": 3}),
+        ]
+        for pass_dimensions, kwargs, expected_dimensions in cases:
+            with self.subTest(pass_dimensions=pass_dimensions, kwargs=kwargs):
+                embeddings = [[0.1] * expected_dimensions.get("dimensions", 2)]
+                mock_client = mock_client_cls.return_value
+                mock_client.embeddings.create = AsyncMock(
+                    return_value=_make_response(embeddings, 1),
+                )
+                model = OpenAIEmbeddingModel(
+                    credential=OpenAICredential(api_key="k"),
+                    model="text-embedding-3-small",
+                    dimensions=2,
+                    pass_dimensions=pass_dimensions,
+                )
+
+                result = await model(["hello"], **kwargs)
+
+                mock_client.embeddings.create.assert_awaited_once_with(
+                    input=["hello"],
+                    model="text-embedding-3-small",
+                    encoding_format="float",
+                    **expected_dimensions,
+                )
+                self.assertEqual(model.dimensions, 2)
+                self.assertDictEqual(
+                    asdict(result),
+                    {
+                        "embeddings": embeddings,
+                        "id": A,
+                        "created_at": A,
+                        "type": "embedding",
+                        "usage": {"tokens": 1, "time": A, "type": "embedding"},
+                        "source": "api",
+                    },
+                )
+
+    @patch("openai.AsyncClient")
+    async def test_existing_cache_with_extra_kwargs(
+        self,
+        mock_client_cls: Any,
+    ) -> None:
+        """Requests with extra arguments hit the endpoint-specific cache."""
+        embeddings = [[0.1, 0.2]]
+        mock_client = mock_client_cls.return_value
+        mock_client.base_url = "https://api.openai.com/v1/"
+        mock_client.embeddings.create = AsyncMock(
+            return_value=_make_response(embeddings, 1),
+        )
+        with TemporaryDirectory() as cache_dir:
+            cache = FileEmbeddingCache(cache_dir=cache_dir)
+            await cache.store(
+                embeddings=embeddings,
+                identifier={
+                    "base_url": "https://api.openai.com/v1/",
+                    "api_kwargs": {
+                        "input": ["hello"],
+                        "model": "text-embedding-3-small",
+                        "encoding_format": "float",
+                        "user": "test-user",
+                        "dimensions": 2,
+                    },
+                },
+            )
+            model = OpenAIEmbeddingModel(
+                credential=OpenAICredential(api_key="k"),
+                model="text-embedding-3-small",
+                dimensions=2,
+                embedding_cache=cache,
+            )
+
+            result = await model(["hello"], user="test-user")
+
+        mock_client.embeddings.create.assert_not_awaited()
+        self.assertDictEqual(
+            asdict(result),
+            {
+                "embeddings": embeddings,
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {"tokens": 0, "time": 0, "type": "embedding"},
+                "source": "cache",
+            },
+        )
 
     async def _check_sdk_usage(
         self,
@@ -263,3 +357,77 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result["embeddings"], [[0.1]])
         self.assertEqual(mock_client.embeddings.create.await_count, 2)
+
+    async def test_cache_isolated_by_base_url(self) -> None:
+        """Different endpoints do not share cached embedding vectors."""
+        import httpx
+        import openai
+
+        requests = []
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            self.assertEqual(request.url.path, "/v1/embeddings")
+            self.assertEqual(
+                json.loads(request.content),
+                {
+                    "input": ["hello"],
+                    "model": "shared-name",
+                    "encoding_format": "float",
+                    "dimensions": 2,
+                },
+            )
+            vector = (
+                [1.0, 0.0]
+                if request.url.host == "endpoint-a.test"
+                else [0.0, 1.0]
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "object": "list",
+                    "model": "shared-name",
+                    "data": [
+                        {
+                            "object": "embedding",
+                            "index": 0,
+                            "embedding": vector,
+                        },
+                    ],
+                    "usage": {"prompt_tokens": 1, "total_tokens": 1},
+                },
+            )
+
+        def create_client(**kwargs: Any) -> openai.AsyncOpenAI:
+            return openai.AsyncOpenAI(
+                http_client=httpx.AsyncClient(
+                    transport=httpx.MockTransport(handle_request),
+                ),
+                **kwargs,
+            )
+
+        cases = [
+            ("https://endpoint-a.test/v1", [[1.0, 0.0]], "api"),
+            ("https://endpoint-b.test/v1", [[0.0, 1.0]], "api"),
+            ("https://endpoint-a.test/v1/", [[1.0, 0.0]], "cache"),
+            ("https://endpoint-b.test/v1/", [[0.0, 1.0]], "cache"),
+        ]
+        with TemporaryDirectory() as cache_dir:
+            with patch("openai.AsyncClient", side_effect=create_client):
+                for base_url, vectors, source in cases:
+                    with self.subTest(base_url=base_url):
+                        model = OpenAIEmbeddingModel(
+                            credential=OpenAICredential(
+                                api_key="local-test-key",
+                                base_url=base_url,
+                            ),
+                            model="shared-name",
+                            dimensions=2,
+                            embedding_cache=FileEmbeddingCache(cache_dir),
+                        )
+                        async with model.client:
+                            result = await model(["hello"])
+                        self.assertEqual(result.embeddings, vectors)
+                        self.assertEqual(result.source, source)
+
+        self.assertEqual(len(requests), 2)

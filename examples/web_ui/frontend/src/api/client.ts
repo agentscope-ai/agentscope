@@ -39,9 +39,9 @@ interface RequestOptions {
 /** Reported when `timeoutMs` elapses. Real 408s come from a server, so either way the request did not complete in time. */
 export const TIMEOUT_STATUS = 408;
 
-function buildHeaders(hasBody: boolean, userId?: string): Record<string, string> {
+function buildHeaders(hasJsonBody: boolean, userId?: string): Record<string, string> {
 	const headers: Record<string, string> = { 'X-User-ID': userId ?? getUserId() };
-	if (hasBody) headers['Content-Type'] = 'application/json';
+	if (hasJsonBody) headers['Content-Type'] = 'application/json';
 	return headers;
 }
 
@@ -94,10 +94,11 @@ async function streamRequest(path: string, options: RequestOptions = {}): Promis
 
 	let res: Response;
 	try {
+		const isFormData = body instanceof FormData;
 		res = await fetch(url.toString(), {
 			method,
-			headers: buildHeaders(body !== undefined, userId),
-			body: body ? JSON.stringify(body) : undefined,
+			headers: buildHeaders(body !== undefined && !isFormData, userId),
+			body: isFormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
 			signal: combined,
 		});
 	} catch (e) {
@@ -141,10 +142,10 @@ export const client = {
 		params?: Record<string, string>,
 		options?: {
 			silent?: boolean;
+			signal?: AbortSignal;
 			baseUrl?: string;
 			userId?: string;
 			timeoutMs?: number;
-			signal?: AbortSignal;
 		},
 	) => request<T>(path, { method: 'GET', params, ...options }),
 	post: <T>(

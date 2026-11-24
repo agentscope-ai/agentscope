@@ -1,24 +1,28 @@
 import type { ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
 import {
 	AudioLines,
-	Paperclip,
+	ArrowUp,
+	FileText,
+	Mic,
+	MicOff,
 	Loader2,
+	Paperclip,
 	Square,
 	type LucideIcon,
 	XIcon,
-	FileText,
-	ArrowUp,
 } from 'lucide-react';
 import mime from 'mime';
 import React, {
 	useState,
 	useRef,
+	useEffect,
 	useMemo,
 	useLayoutEffect,
 	type KeyboardEvent,
 	useImperativeHandle,
 	forwardRef,
 } from 'react';
+import { toast } from 'sonner';
 
 import { Button } from '../ui/button';
 import { Kbd } from '../ui/kbd';
@@ -33,8 +37,11 @@ import {
 	AttachmentTitle,
 } from '@/components/ui/attachment.tsx';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useAudioRecorder } from '@/hooks/useAudioRecorder';
 import type { ReplyPhase } from '@/hooks/useMessages';
+import { useRealtimeAudioRecorder } from '@/hooks/useRealtimeAudioRecorder';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
 import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
 import { cn } from '@/lib/utils';
 
@@ -51,7 +58,7 @@ interface ProcessedFile {
 }
 
 interface TextInputProps {
-	onSend: (blocks: ContentBlock[]) => void;
+	onSend: (blocks: ContentBlock[]) => Promise<void> | void;
 	placeholder?: string;
 	autoComplete?: (input: string) => string | null;
 	disabled?: boolean;
@@ -77,14 +84,12 @@ interface TextInputProps {
 	 * Runs concurrently for all selected files; the UI shows a loading state per file while processing.
 	 */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
-	/**
-	 * The current reply lifecycle phase from ``useMessages``. Drives the
-	 * primary action button when realtime voice is inactive:
-	 *   - ``idle`` — Send (enabled when there is content to send)
-	 *   - ``streaming`` — Stop (click to interrupt)
-	 *   - ``interrupting`` — Stop (disabled while the interrupt is in flight)
-	 */
+	/** A running reply can be stopped when the draft is empty. */
 	phase?: ReplyPhase;
+	/** Allow sending while a reply is parked awaiting structured input. */
+	acceptsInput?: boolean;
+	/** Number of accepted user turns that have not started a reply yet. */
+	queuedCount?: number;
 	onInterrupt?: () => void;
 	/** Current browser realtime voice connection state. */
 	voiceState?: RealtimeConnectionState;
@@ -92,6 +97,18 @@ interface TextInputProps {
 	onVoiceToggle?: () => void;
 	/** Prevents voice start when no realtime model is configured. */
 	voiceDisabled?: boolean;
+	/** Audio formats accepted by the selected ASR model. */
+	asrInputTypes?: string[];
+	/** Upload one completed recording and return its transcription. */
+	onTranscribe?: (file: File) => Promise<string>;
+	/** Whether the selected ASR model consumes live PCM audio. */
+	asrRealtime?: boolean;
+	/** Credential and model used by server-proxied realtime ASR. */
+	realtimeASRConfig?: RealtimeASRConfig | null;
+	/** Prevents recording when the active credential has no ASR model. */
+	asrDisabled?: boolean;
+	/** Restarts recorder state when its session, credential, or model changes. */
+	asrResetKey?: string;
 	/**
 	 * Content rendered directly above the input pill, inside the outer
 	 * wrapper that {@link className} styles (e.g. the working directory
@@ -134,6 +151,8 @@ const TEXTAREA_PADDING_X_PX = 12;
  * @param root0.autoComplete - Function to provide autocomplete suggestions.
  * @param root0.disabled - Whether the input is disabled.
  * @param root0.className - Additional CSS classes for styling.
+ * @param root0.queuedCount - Accepted turns waiting to start.
+ * @param root0.onInterrupt - Stops the currently active reply.
  * @returns A TextInput component.
  */
 export const TextInput = forwardRef<TextInputRef, TextInputProps>(
@@ -147,10 +166,18 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			allowedInputTypes,
 			fileProcessor,
 			phase = 'idle',
+			acceptsInput = false,
+			queuedCount = 0,
 			onInterrupt,
 			voiceState = 'idle',
 			onVoiceToggle,
 			voiceDisabled = false,
+			asrInputTypes = [],
+			onTranscribe,
+			asrRealtime = false,
+			realtimeASRConfig = null,
+			asrDisabled = false,
+			asrResetKey = '',
 			headerSlot,
 		},
 		ref,
@@ -160,12 +187,111 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		const [value, setValue] = useState('');
 		const [files, setFiles] = useState<ProcessedFile[]>([]);
 		const [isFocused, setIsFocused] = useState(false);
+		const [submitting, setSubmitting] = useState(false);
+		const mountedRef = useRef(false);
+		useLayoutEffect(() => {
+			mountedRef.current = true;
+			return () => {
+				mountedRef.current = false;
+			};
+		}, []);
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
 		const moveCaretAfterInsert = useRef(false);
 		const fileInputRef = useRef<HTMLInputElement>(null);
 		const measureRef = useRef<HTMLSpanElement>(null);
+		const ghostColumnRef = useRef<HTMLDivElement>(null);
 		/** ``true`` — textarea takes the full width, buttons drop to their own row. */
 		const [isStacked, setIsStacked] = useState(false);
+		/** Width of the column the ghost measures into; changes re-run both measurements. */
+		const [composerWidth, setComposerWidth] = useState(0);
+		const asrContextRef = useRef({ key: asrResetKey, mounted: true });
+
+		useEffect(() => {
+			asrContextRef.current = { key: asrResetKey, mounted: true };
+			return () => {
+				asrContextRef.current.mounted = false;
+			};
+		}, [asrResetKey]);
+
+		const handleRecorded = async (file: File) => {
+			if (!onTranscribe) return;
+			const requestKey = asrResetKey;
+			const transcript = (await onTranscribe(file)).trim();
+			if (!asrContextRef.current.mounted || asrContextRef.current.key !== requestKey) return;
+			if (!transcript) {
+				toast.info(t('textInput.transcriptionEmpty'));
+				return;
+			}
+			setValue((current) =>
+				current.trimEnd() ? `${current.trimEnd()} ${transcript}` : transcript,
+			);
+			requestAnimationFrame(() => textareaRef.current?.focus());
+		};
+
+		const handleRecordingError = (error: unknown) => {
+			const permissionDenied =
+				error instanceof DOMException &&
+				(error.name === 'NotAllowedError' || error.name === 'SecurityError');
+			toast.error(
+				permissionDenied
+					? t('textInput.microphonePermissionDenied')
+					: t('textInput.transcriptionFailed'),
+			);
+		};
+
+		const audioRecorder = useAudioRecorder({
+			acceptedTypes: asrInputTypes,
+			resetKey: asrResetKey,
+			onRecorded: handleRecorded,
+			onError: handleRecordingError,
+		});
+		const realtimeBaseRef = useRef('');
+		const realtimeAudioRecorder = useRealtimeAudioRecorder({
+			config: realtimeASRConfig,
+			resetKey: asrResetKey,
+			onStart: () => {
+				realtimeBaseRef.current = value.trimEnd();
+			},
+			onTranscript: (text, isLast) => {
+				const transcript = text.trim();
+				const base = realtimeBaseRef.current;
+				setValue(base && transcript ? `${base} ${transcript}` : base || transcript);
+				if (isLast) {
+					if (!transcript) toast.info(t('textInput.transcriptionEmpty'));
+					requestAnimationFrame(() => textareaRef.current?.focus());
+				}
+			},
+			onError: handleRecordingError,
+		});
+		const speechRecorder = asrRealtime ? realtimeAudioRecorder : audioRecorder;
+		const speechInputBusy = speechRecorder.state !== 'idle';
+		const speechHandlerUnavailable = asrRealtime ? !realtimeASRConfig : !onTranscribe;
+		const speechInputDisabled =
+			speechRecorder.state !== 'recording' &&
+			(disabled ||
+				phase !== 'idle' ||
+				asrDisabled ||
+				speechHandlerUnavailable ||
+				!speechRecorder.supported ||
+				speechRecorder.state !== 'idle');
+		const speechInputTooltip = (() => {
+			if (speechRecorder.state === 'requesting') {
+				return t('textInput.requestingMicrophone');
+			}
+			if (speechRecorder.state === 'recording') {
+				return t('textInput.stopRecording');
+			}
+			if (speechRecorder.state === 'transcribing') {
+				return t('textInput.transcribing');
+			}
+			if (asrDisabled || speechHandlerUnavailable) {
+				return t('textInput.asrUnavailable');
+			}
+			if (!speechRecorder.supported) {
+				return t('textInput.recordingUnsupported');
+			}
+			return t('textInput.startRecording');
+		})();
 
 		// Derive the accept attribute for the hidden file input
 		const acceptAttr =
@@ -210,7 +336,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				moveCaretAfterInsert.current = false;
 			}
 			// Stacking widens the textarea, so the line count has to be redone.
-		}, [value, isStacked]);
+		}, [value, isStacked, composerWidth]);
 
 		// Measured on the ghost, not the textarea: stacking widens the textarea, so
 		// measuring it would flip-flop (wraps → stack → fits → unstack → wraps).
@@ -218,7 +344,21 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			const ghost = measureRef.current;
 			if (!ghost) return;
 			setIsStacked(ghost.scrollHeight > LINE_HEIGHT_PX);
-		}, [value]);
+		}, [value, composerWidth]);
+
+		// Both measurements above are keyed on the draft, so a width change without an
+		// edit leaves the layout stale — the draft can wrap at one width and not the
+		// other. Track the measured column's width and re-run them when it moves.
+		useLayoutEffect(() => {
+			const column = ghostColumnRef.current;
+			if (!column) return;
+			const observer = new ResizeObserver((entries) => {
+				const entry = entries[0];
+				if (entry) setComposerWidth(entry.contentRect.width);
+			});
+			observer.observe(column);
+			return () => observer.disconnect();
+		}, []);
 
 		// Calculate autocomplete suggestion using useMemo
 		const suggestion = useMemo(() => {
@@ -244,14 +384,20 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			// Enter to send message, Shift+Enter for new line
 			if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
 				e.preventDefault();
-				handleSend();
+				void handleSend();
 			}
 		};
 
-		const handleSend = () => {
-			// ``phase`` is guarded here rather than only on the button, since Enter
-			// calls this directly and would otherwise send during a running reply.
-			if (phase !== 'idle' || !hasContent || disabled || hasProcessing) return;
+		const handleSend = async () => {
+			if (
+				!hasContent ||
+				disabled ||
+				hasProcessing ||
+				submitting ||
+				speechInputBusy ||
+				(acceptsInput && files.length > 0)
+			)
+				return;
 
 			const blocks: ContentBlock[] = [];
 
@@ -274,15 +420,28 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				}
 			});
 
-			onSend?.(blocks);
+			const submittedValue = value;
+			const submittedFiles = files;
+			setSubmitting(true);
+			// Start a fresh draft immediately. If the request fails, merge the
+			// submitted draft back without erasing anything typed meanwhile.
 			setValue('');
 			setFiles([]);
+			try {
+				await onSend(blocks);
+			} catch {
+				if (!mountedRef.current) return;
+				// The API layer reports the error; restore both the failed turn
+				// and any new draft content so neither is silently lost.
+				setValue((current) => (current ? `${submittedValue}\n${current}` : submittedValue));
+				setFiles((current) => [...submittedFiles, ...current]);
+			} finally {
+				if (mountedRef.current) setSubmitting(false);
+			}
 		};
 
-		/**
-		 * Primary action configuration derived from realtime voice, reply,
-		 * and text input state. One struct keeps the JSX branch-free.
-		 */
+		const replyActive = phase !== 'idle';
+
 		const actionButton: {
 			icon: LucideIcon;
 			tooltip: string;
@@ -308,29 +467,28 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					onClick: onVoiceToggle,
 				};
 			}
-			if (phase === 'streaming') {
+			if (replyActive && !hasContent && !hasProcessing) {
+				const stopping = phase === 'interrupting';
 				return {
 					icon: Square,
-					tooltip: t('textInput.stop'),
-					disabled: false,
+					tooltip: stopping ? t('textInput.stopping') : t('textInput.stop'),
+					disabled: stopping || !onInterrupt,
 					variant: 'default',
 					onClick: onInterrupt,
 				};
 			}
-			if (phase === 'interrupting') {
+			if (hasContent || hasProcessing || submitting) {
 				return {
-					icon: Square,
-					tooltip: t('textInput.stopping'),
-					disabled: true,
-					variant: 'default',
-					onClick: onInterrupt,
-				};
-			}
-			if (hasContent) {
-				return {
-					icon: ArrowUp,
-					tooltip: t('textInput.send'),
-					disabled: disabled || hasProcessing,
+					icon: submitting ? Loader2 : ArrowUp,
+					tooltip:
+						replyActive && !acceptsInput ? t('textInput.queue') : t('textInput.send'),
+					disabled:
+						disabled ||
+						!hasContent ||
+						hasProcessing ||
+						submitting ||
+						speechInputBusy ||
+						(acceptsInput && files.length > 0),
 					variant: 'default',
 					onClick: handleSend,
 				};
@@ -338,7 +496,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			return {
 				icon: AudioLines,
 				tooltip: voiceDisabled ? t('realtime.selectFirst') : t('realtime.start'),
-				disabled: voiceDisabled,
+				disabled: voiceDisabled || speechInputBusy,
 				variant: 'ghost',
 				onClick: onVoiceToggle,
 			};
@@ -458,7 +616,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							aria-hidden
 							className="pointer-events-none invisible absolute inset-x-0 top-0 flex h-0 items-start overflow-hidden"
 						>
-							<div className="min-w-0 flex-1">
+							<div ref={ghostColumnRef} className="min-w-0 flex-1">
 								{/* Padding-x and line-height decide where text wraps, so they
 								    match the textarea; padding-y is left off on purpose. */}
 								<span
@@ -480,6 +638,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							<div className="flex shrink-0 gap-2">
 								<div className="size-9" />
 								<div className="size-9" />
+								<div className="size-9" />
 							</div>
 						</div>
 
@@ -499,6 +658,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								onBlur={() => setIsFocused(false)}
 								placeholder={defaultPlaceholder}
 								disabled={disabled}
+								readOnly={asrRealtime && speechInputBusy}
 								rows={1}
 								className="block w-full resize-none rounded-md border-0 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
 								style={{
@@ -564,28 +724,67 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								</TooltipContent>
 							</Tooltip>
 
-							{/* Voice / Send / Stop — driven by ``actionButton`` config */}
+							{/* Speech-to-text recording */}
 							<Tooltip>
 								<TooltipTrigger asChild>
-									<Button
-										type="button"
-										variant={actionButton.variant}
-										onClick={actionButton.onClick}
-										disabled={actionButton.disabled}
-										size="icon-lg"
-										className={cn(
-											'relative shrink-0 rounded-full transition-colors',
-											voiceState === 'active' &&
-												'before:absolute before:inset-[-4px] before:rounded-full before:border before:border-primary/30 before:animate-pulse',
-										)}
+									<span
+										className="inline-flex shrink-0"
+										tabIndex={speechInputDisabled ? 0 : undefined}
 									>
-										<actionButton.icon
+										<Button
+											type="button"
+											aria-label={speechInputTooltip}
+											variant="ghost"
+											size="icon-lg"
+											onClick={speechRecorder.toggle}
+											disabled={speechInputDisabled}
 											className={cn(
-												'h-4 w-4',
-												voiceState === 'connecting' && 'animate-spin',
+												'relative shrink-0 rounded-full transition-colors',
+												speechRecorder.state === 'recording' &&
+													'bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive',
 											)}
-										/>
-									</Button>
+										>
+											{speechRecorder.state === 'requesting' ||
+											speechRecorder.state === 'transcribing' ? (
+												<Loader2 className="size-4 animate-spin" />
+											) : speechRecorder.state === 'recording' ? (
+												<MicOff className="size-4" />
+											) : (
+												<Mic className="size-4" />
+											)}
+										</Button>
+									</span>
+								</TooltipTrigger>
+								<TooltipContent>{speechInputTooltip}</TooltipContent>
+							</Tooltip>
+
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<span
+										className="inline-flex shrink-0"
+										tabIndex={actionButton.disabled ? 0 : undefined}
+									>
+										<Button
+											type="button"
+											aria-label={actionButton.tooltip}
+											variant={actionButton.variant}
+											onClick={actionButton.onClick}
+											disabled={actionButton.disabled}
+											size="icon-lg"
+											className={cn(
+												'relative shrink-0 rounded-full transition-colors',
+												voiceState === 'active' &&
+													'before:absolute before:inset-[-4px] before:rounded-full before:border before:border-primary/30 before:animate-pulse',
+											)}
+										>
+											<actionButton.icon
+												className={cn(
+													'h-4 w-4',
+													actionButton.icon === Loader2 && 'animate-spin',
+												)}
+											/>
+										</Button>
+									</span>
 								</TooltipTrigger>
 								<TooltipContent>{actionButton.tooltip}</TooltipContent>
 							</Tooltip>
@@ -602,6 +801,15 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 						</div>
 					</div>
 				</div>
+				{queuedCount > 0 && (
+					<div
+						className="px-3 text-xs text-muted-foreground"
+						role="status"
+						aria-live="polite"
+					>
+						{t('textInput.queued', { count: queuedCount })}
+					</div>
+				)}
 			</div>
 		);
 	},

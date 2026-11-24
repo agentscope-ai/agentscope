@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=too-many-public-methods
+# pylint: disable=too-many-public-methods,protected-access
 """Round-trip and semantic tests for :class:`AsyncSQLAlchemyStorage`.
 
 Runs against an in-memory SQLite database via ``sqlite+aiosqlite``
@@ -9,18 +9,31 @@ backend implements, mirroring the shape (though not always the
 literal assertions) of the Redis backend's tests so both backends
 stay behavioural equivalents.
 """
+import asyncio
 from contextlib import AsyncExitStack
 from datetime import datetime, timedelta, timezone
 from importlib import import_module
+from os import environ
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
+from alembic import command
+from alembic.config import Config
 from pydantic import SecretStr
+import sqlalchemy as sa
 from sqlalchemy.dialects import mysql
+from sqlalchemy.engine import URL
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.dml import Insert
 
 from utils import AnyString
 
 from agentscope.app.storage._sql._mappers import _to_record
+from agentscope.app.storage._sql import _storage as sql_storage
 from agentscope.app.storage._sql._tables import AgentRow, SessionRow
 from agentscope.app.storage import (
     AgentData,
@@ -55,6 +68,8 @@ from agentscope.app.storage import (
     TeamData,
     TeamMember,
     TeamRecord,
+    VoiceProfileData,
+    VoiceProfileRecord,
 )
 from agentscope.app.storage._sql._tables import ChannelRow
 from agentscope.agent import ContextConfig, ReActConfig
@@ -1922,4 +1937,295 @@ class ChannelSessionLookupTest(IsolatedAsyncioTestCase):
                 chat_id="chat-1",
                 chat_name="产品群",
             ),
+        )
+
+
+class VoiceProfileSQLTest(IsolatedAsyncioTestCase):
+    """Migration-only CRUD and ownership guarantees on a real database."""
+
+    async def asyncSetUp(self) -> None:
+        """Use a file database shared by Alembic and concurrent sessions."""
+        directory = TemporaryDirectory(prefix="agentscope-voice-%sql-")
+        self.addCleanup(directory.cleanup)
+        self.url = URL.create(
+            "sqlite+aiosqlite",
+            database=str(Path(directory.name) / "voice.db"),
+        ).render_as_string(hide_password=False)
+        alembic_dir = Path(sql_storage.__file__).parent / "_alembic"
+        self.config = Config(str(alembic_dir / "alembic.ini"))
+        self.config.set_main_option("script_location", str(alembic_dir))
+        self.config.set_main_option(
+            "sqlalchemy.url",
+            self.url.replace("%", "%%"),
+        )
+
+    async def test_migrations_accept_url_from_environment(self) -> None:
+        """Environment URLs with percent signs reach the intended database."""
+        self.config.set_main_option("sqlalchemy.url", "")
+        with patch.dict(environ, {"AGENTSCOPE_SQL_URL": self.url}):
+            await asyncio.to_thread(command.upgrade, self.config, "head")
+        self.assertEqual(
+            self.config.get_main_option("sqlalchemy.url"),
+            self.url,
+        )
+        async with AsyncSQLAlchemyStorage(
+            self.url,
+            create_tables=False,
+        ) as storage:
+            record = VoiceProfileRecord(
+                user_id="owner",
+                data=VoiceProfileData(name="Environment URL voice"),
+            )
+            await storage.upsert_voice_profile("owner", record)
+            self.assertEqual(
+                (
+                    await storage.get_voice_profile("owner", record.id)
+                ).model_dump(),
+                record.model_dump(),
+            )
+
+    async def test_migrations_alone_support_voice_profile_crud(self) -> None:
+        """The migration supplies the entire table, indexes and CRUD path."""
+        async with AsyncSQLAlchemyStorage(
+            self.url,
+            auto_migrate=True,
+            create_tables=False,
+        ) as storage:
+            async with storage._engine.connect() as connection:
+                indexes = await connection.run_sync(
+                    lambda conn: sa.inspect(conn).get_indexes(
+                        "voice_profiles",
+                    ),
+                )
+            self.assertEqual(
+                {item["name"]: item["column_names"] for item in indexes},
+                {
+                    "ix_voice_profiles_created_at": ["created_at"],
+                    "ix_voice_profiles_updated_at": ["updated_at"],
+                    "ix_voice_profiles_user_id": ["user_id"],
+                },
+            )
+            record = VoiceProfileRecord(
+                user_id="owner",
+                data=VoiceProfileData(name="Voice"),
+            )
+            self.assertEqual(
+                await storage.upsert_voice_profile("owner", record),
+                record.id,
+            )
+            self.assertEqual(
+                (
+                    await storage.get_voice_profile("owner", record.id)
+                ).model_dump(),
+                record.model_dump(),
+            )
+            self.assertEqual(
+                [
+                    item.model_dump()
+                    for item in await storage.list_voice_profiles("owner")
+                ],
+                [record.model_dump()],
+            )
+            self.assertIsNone(
+                await storage.get_voice_profile("other", record.id),
+            )
+            self.assertEqual(await storage.list_voice_profiles("other"), [])
+            self.assertFalse(
+                await storage.delete_voice_profile("other", record.id),
+            )
+            original_created = record.created_at
+            record.data.name = "Updated voice"
+            record.created_at = datetime(2000, 1, 1)
+            await storage.upsert_voice_profile("owner", record)
+            self.assertEqual(record.created_at, original_created)
+            self.assertEqual(
+                (
+                    await storage.get_voice_profile("owner", record.id)
+                ).model_dump(),
+                record.model_dump(),
+            )
+            with self.assertRaises(PermissionError):
+                await storage.upsert_voice_profile(
+                    "other",
+                    VoiceProfileRecord(
+                        id=record.id,
+                        user_id="other",
+                        data=VoiceProfileData(name="Not the owner"),
+                    ),
+                )
+            self.assertEqual(
+                (
+                    await storage.get_voice_profile("owner", record.id)
+                ).model_dump(),
+                record.model_dump(),
+            )
+            self.assertTrue(
+                await storage.delete_voice_profile("owner", record.id),
+            )
+            self.assertFalse(
+                await storage.delete_voice_profile("owner", record.id),
+            )
+            self.assertEqual(await storage.list_voice_profiles("owner"), [])
+
+    async def test_upgrade_from_0004_and_downgrade(self) -> None:
+        """Upgrade an existing schema without touching its stored records."""
+        await asyncio.to_thread(command.upgrade, self.config, "0004_sops")
+        async with AsyncSQLAlchemyStorage(
+            self.url,
+            create_tables=False,
+        ) as storage:
+            agent = _agent_record("owner")
+            await storage.upsert_agent("owner", agent)
+            before = agent.model_dump()
+        async with AsyncSQLAlchemyStorage(
+            self.url,
+            auto_migrate=True,
+            create_tables=False,
+        ) as storage:
+            profile = VoiceProfileRecord(
+                user_id="owner",
+                data=VoiceProfileData(name="Migrated voice"),
+            )
+            await storage.upsert_voice_profile("owner", profile)
+            self.assertEqual(
+                (
+                    await storage.get_voice_profile("owner", profile.id)
+                ).model_dump(),
+                profile.model_dump(),
+            )
+            self.assertEqual(
+                (await storage.get_agent("owner", agent.id)).model_dump(),
+                before,
+            )
+        await asyncio.to_thread(command.downgrade, self.config, "0004_sops")
+        async with AsyncSQLAlchemyStorage(
+            self.url,
+            create_tables=False,
+        ) as storage:
+            async with storage._engine.connect() as connection:
+                exists = await connection.run_sync(
+                    lambda conn: sa.inspect(conn).has_table("voice_profiles"),
+                )
+            self.assertFalse(exists)
+            self.assertEqual(
+                (await storage.get_agent("owner", agent.id)).model_dump(),
+                before,
+            )
+
+    async def test_concurrent_voice_profile_id_collision(self) -> None:
+        """Two completed prechecks cannot authorize an ownership overwrite."""
+        async with AsyncSQLAlchemyStorage(self.url) as storage:
+            for same_owner in (False, True):
+                with self.subTest(same_owner=same_owner):
+                    await self._assert_concurrent_collision(
+                        storage,
+                        same_owner,
+                    )
+
+    async def _assert_concurrent_collision(
+        self,
+        storage: AsyncSQLAlchemyStorage,
+        same_owner: bool,
+    ) -> None:
+        """Control insert ordering and verify the winning record in full."""
+        records = [
+            VoiceProfileRecord(
+                id="contested-profile",
+                user_id=owner,
+                data=VoiceProfileData(name=name),
+            )
+            for owner, name in (
+                ("owner-a", "First writer"),
+                (
+                    "owner-a" if same_owner else "owner-b",
+                    "Second writer",
+                ),
+            )
+        ]
+        ready = asyncio.Event()
+        first_done = asyncio.Event()
+        arrivals = 0
+        execute = AsyncSession.execute
+
+        async def gated_execute(
+            session: AsyncSession,
+            statement: Any,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            """Hold both INSERTs until any prechecks have passed."""
+            nonlocal arrivals
+            if (
+                isinstance(statement, Insert)
+                and statement.table.name == "voice_profiles"
+            ):
+                arrivals += 1
+                if arrivals == 2:
+                    ready.set()
+                await ready.wait()
+                if asyncio.current_task().get_name() == "second":
+                    await first_done.wait()
+            return await execute(
+                session,
+                statement,
+                *args,
+                **kwargs,
+            )
+
+        async def write(index: int) -> str:
+            """Commit the first writer before releasing the next."""
+            try:
+                record = records[index]
+                return await storage.upsert_voice_profile(
+                    record.user_id,
+                    record,
+                )
+            finally:
+                if index == 0:
+                    first_done.set()
+
+        with patch.object(
+            AsyncSession,
+            "execute",
+            new=gated_execute,
+        ):
+            results = await asyncio.wait_for(
+                asyncio.gather(
+                    asyncio.create_task(write(0), name="first"),
+                    asyncio.create_task(write(1), name="second"),
+                    return_exceptions=True,
+                ),
+                timeout=10,
+            )
+        self.assertEqual(results[0], "contested-profile")
+        if same_owner:
+            self.assertEqual(results, ["contested-profile"] * 2)
+            self.assertEqual(
+                records[1].created_at,
+                records[0].created_at,
+            )
+            expected = records[1]
+        else:
+            self.assertIsInstance(results[1], PermissionError)
+            self.assertEqual(
+                str(results[1]),
+                "Cannot overwrite another user's voice profile.",
+            )
+            expected = records[0]
+        self.assertEqual(
+            [
+                item.model_dump()
+                for item in await storage.list_voice_profiles(
+                    "owner-a",
+                )
+            ],
+            [expected.model_dump()],
+        )
+        self.assertEqual(
+            await storage.list_voice_profiles("owner-b"),
+            [],
+        )
+        await storage.delete_voice_profile(
+            "owner-a",
+            "contested-profile",
         )

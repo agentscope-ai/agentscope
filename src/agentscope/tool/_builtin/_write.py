@@ -2,6 +2,7 @@
 """The write tool in agentscope."""
 import difflib
 import fnmatch
+import glob
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -217,7 +218,13 @@ Usage:
         parent = self._backend.dirname(file_path)
         # Glob patterns are POSIX-style strings (matched by fnmatch),
         # not real filesystem paths — do NOT use backend.join_path here.
-        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
+        # ``parent`` is a literal path, so its fnmatch metacharacters must be
+        # escaped, otherwise the suggested rule matches sibling directories.
+        stem = glob.escape(parent).rstrip("/\\")
+        # A file at the filesystem root (or given by a bare relative name)
+        # has no directory component left. ``**`` would match every path in
+        # the repository, so suggest the file itself instead.
+        pattern = f"{stem}/**" if stem else glob.escape(file_path)
 
         return [
             PermissionRule(
@@ -261,14 +268,20 @@ Usage:
                 mtime=mtime,
             )
             if cache is None:
+                if mtime is None:
+                    message = (
+                        "Error: The backend could not report the file's "
+                        "modification time. Once it is available, read the "
+                        "file again before overwriting it."
+                    )
+                else:
+                    message = (
+                        f"Error: File {file_path} exists but has not "
+                        "been read yet. You must read the file first "
+                        "before writing to it."
+                    )
                 return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text=f"Error: File {file_path} exists but has not "
-                            f"been read yet. You must read the file first "
-                            f"before writing to it.",
-                        ),
-                    ],
+                    content=[TextBlock(text=message)],
                     state=ToolResultState.ERROR,
                     is_last=True,
                 )
@@ -292,10 +305,17 @@ Usage:
                 previous_content = ""
 
         # Write content to file (backend handles parent dir creation)
-        await self._backend.write_file(
-            file_path,
-            content.encode("utf-8"),
-        )
+        try:
+            await self._backend.write_file(
+                file_path,
+                content.encode("utf-8"),
+            )
+        except Exception as e:
+            return ToolChunk(
+                content=[TextBlock(text=f"Error writing file: {str(e)}")],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
 
         # Refresh the read cache so a later Edit doesn't require a re-read
         if _agent_state is not None:
