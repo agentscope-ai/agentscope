@@ -244,31 +244,42 @@ class KnowledgeBase:
         await self.ensure_collection()
         response = await self._embedding_model(queries)
 
-        tasks = [
-            asyncio.create_task(
-                self._vector_store.search(
-                    collection=self._collection,
-                    query_vector=vector,
-                    top_k=top_k,
-                    metadata_filter=self._metadata_filter,
-                ),
+        async def search_vector(
+            vector: list[float],
+        ) -> list[VectorSearchResult]:
+            return await self._vector_store.search(
+                collection=self._collection,
+                query_vector=vector,
+                top_k=top_k,
+                metadata_filter=self._metadata_filter,
             )
+
+        tasks = [
+            asyncio.create_task(search_vector(vector))
             for vector in response.embeddings
         ]
         try:
-            results_per_query = await asyncio.gather(*tasks)
-        except BaseException:
-            # gather propagates a query error without stopping its siblings.
-            # Finish owned coroutine cleanup before returning to the caller.
+            for completed in asyncio.as_completed(tasks):
+                await completed
+        except BaseException as search_error:
             for task in tasks:
                 if not task.done() and not task.cancelling():
                     task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            cleanup = asyncio.gather(*tasks, return_exceptions=True)
+            cancellation = None
+            # A caller may cancel again while a store is releasing resources.
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError as exc:
+                    cancellation = exc
+            if cancellation is not None:
+                raise cancellation from search_error
             raise
 
         best: dict[tuple[str, int], VectorSearchResult] = {}
-        for results in results_per_query:
-            for result in results:
+        for task in tasks:
+            for result in task.result():
                 if (
                     score_threshold is not None
                     and result.score < score_threshold

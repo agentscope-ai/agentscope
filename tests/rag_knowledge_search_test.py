@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for KnowledgeBase concurrent search task lifecycles."""
 import asyncio
-from typing import Any, Callable
+from typing import Any, Callable, Coroutine
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 
@@ -96,6 +96,76 @@ class KnowledgeSearchLifecycleTest(IsolatedAsyncioTestCase):
         for fail_idx in (0, 1):
             with self.subTest(fail_idx=fail_idx):
                 await self._check_query_failure(fail_idx)
+
+    async def test_sync_store_error_joins_started_query(self) -> None:
+        """A store may validate arguments before returning its coroutine."""
+        release = asyncio.Event()
+        finished = asyncio.Event()
+        error = ValueError("invalid vector")
+
+        async def run_query() -> list[VectorSearchResult]:
+            try:
+                await release.wait()
+                return []
+            finally:
+                finished.set()
+
+        def search(
+            *,
+            query_vector: list[float],
+            **_kwargs: Any,
+        ) -> Coroutine[Any, Any, list[VectorSearchResult]]:
+            if query_vector == [1.0]:
+                raise error
+            return run_query()
+
+        knowledge, _, _ = self._setup_knowledge([[0.0], [1.0]], search)
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                await knowledge.search(["q0", "q1"])
+            self.assertIs(ctx.exception, error)
+            self.assertTrue(finished.is_set())
+        finally:
+            release.set()
+
+    async def test_parent_cancellation_during_sibling_cleanup(self) -> None:
+        """Repeated caller cancellation must wait for async cleanup."""
+        started = asyncio.Event()
+        cleaning = asyncio.Event()
+        release = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def search(
+            *,
+            query_vector: list[float],
+            **_kwargs: Any,
+        ) -> list[VectorSearchResult]:
+            if query_vector == [1.0]:
+                await started.wait()
+                raise RuntimeError("query failed")
+            started.set()
+            try:
+                await asyncio.Event().wait()
+                return []
+            finally:
+                cleaning.set()
+                await release.wait()
+                finished.set()
+
+        knowledge, _, _ = self._setup_knowledge([[0.0], [1.0]], search)
+        parent = asyncio.create_task(knowledge.search(["q0", "q1"]))
+        try:
+            await asyncio.wait_for(cleaning.wait(), timeout=5)
+            for _ in range(2):
+                parent.cancel()
+                await asyncio.sleep(0)
+                self.assertFalse(parent.done())
+        finally:
+            release.set()
+            await asyncio.gather(parent, return_exceptions=True)
+
+        self.assertTrue(finished.is_set())
+        self.assertTrue(parent.cancelled())
 
     async def test_parent_cancellation_cancels_and_waits_for_query_tasks(
         self,
