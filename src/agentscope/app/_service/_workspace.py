@@ -80,11 +80,15 @@ class TextFileSnapshot(BaseModel):
 
 
 class TextFileSaveRequest(BaseModel):
-    """Text and the revision originally loaded by the editor."""
+    """Draft and preconditions from the editor's original snapshot."""
 
     # Pydantic limits characters; saving also checks UTF-8 byte length.
     text: str = Field(max_length=MAX_EDIT_BYTES)
     revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_path: str | None = Field(
+        default=None,
+        description="Resolved path returned in the editor snapshot.",
+    )
 
 
 class FileEditAccess(BaseModel):
@@ -427,6 +431,34 @@ class WorkspaceService:
         async with self._editor_lock(workspace, target):
             return await _read_editable_file(backend, target)
 
+    async def _save_target(
+        self,
+        workspace: WorkspaceBase,
+        record: SessionRecord,
+        path: str,
+        expected_path: str | None,
+    ) -> str:
+        """Resolve the requested path and check its snapshot precondition."""
+        try:
+            target = await self._editor_target(workspace, record, path)
+        except HTTPException as exc:
+            if (
+                expected_path is None
+                or not isinstance(exc.detail, dict)
+                or exc.detail.get("code") != "outside_edit_roots"
+            ):
+                raise
+        else:
+            if expected_path is None or target == expected_path:
+                return target
+        raise HTTPException(
+            409,
+            {
+                "code": "path_changed",
+                "message": "File path changed. Close and reopen the file.",
+            },
+        )
+
     async def save_text_file(
         self,
         user_id: str,
@@ -454,7 +486,12 @@ class WorkspaceService:
             session_id,
         )
         backend = workspace.get_backend()
-        target = await self._editor_target(workspace, record, path)
+        target = await self._save_target(
+            workspace,
+            record,
+            path,
+            request.expected_path,
+        )
         async with self._editor_lock(workspace, target):
             current = await _read_editable_file(backend, target)
             if current.revision != request.revision:
@@ -487,29 +524,7 @@ class WorkspaceService:
                         ),
                     },
                 )
-            try:
-                current_target = await self._editor_target(
-                    workspace,
-                    latest,
-                    path,
-                )
-            except HTTPException as exc:
-                if not (
-                    isinstance(exc.detail, dict)
-                    and exc.detail.get("code") == "outside_edit_roots"
-                ):
-                    raise
-                current_target = None
-            if current_target != target:
-                raise HTTPException(
-                    409,
-                    {
-                        "code": "path_changed",
-                        "message": (
-                            "File path changed. Close and reopen the file."
-                        ),
-                    },
-                )
+            await self._save_target(workspace, latest, path, target)
             async with _file_backend_errors(backend):
                 await backend.write_file(target, data)
         return TextFileSnapshot(

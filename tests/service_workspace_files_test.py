@@ -719,7 +719,11 @@ class _WorkspaceTextFixture(_WorkspaceEndpointTestBase):
     ) -> TextFileSnapshot:
         """Save through the endpoint with a required revision."""
         return await save_workspace_text(
-            body=TextFileSaveRequest(text=text, revision=revision),
+            body=TextFileSaveRequest(
+                text=text,
+                revision=revision,
+                expected_path=kwargs.get("expected_path"),
+            ),
             agent_id=kwargs.get("agent_id", "a"),
             session_id=kwargs.get("session_id", "s"),
             path=kwargs.get("path", "notes.txt"),
@@ -1451,6 +1455,46 @@ class WorkspaceEditorSafetyTests(_WorkspaceTextFixture):
             (403, b"outside the workspace"),
         )
 
+    async def test_save_rejects_different_target_with_same_content(
+        self,
+    ) -> None:
+        """Equal content revisions must not mask a different save target."""
+        first = "/workspace/notes.txt"
+        other = "/workspace/other.txt"
+        await self._backend.write_file(other, b"hello world")
+        with patch.object(
+            self._backend,
+            "realpaths",
+            AsyncMock(
+                side_effect=[["/workspace", first], ["/workspace", other]],
+            ),
+        ):
+            original = await self._text("alias.txt")
+            with self.assertRaises(HTTPException) as ctx:
+                await self._save(
+                    "draft",
+                    original.revision,
+                    path="alias.txt",
+                    expected_path=original.path,
+                )
+        self.assertEqual(
+            (
+                ctx.exception.status_code,
+                ctx.exception.detail,
+                await self._backend.read_file(first),
+                await self._backend.read_file(other),
+            ),
+            (
+                409,
+                {
+                    "code": "path_changed",
+                    "message": "File path changed. Close and reopen the file.",
+                },
+                b"hello world",
+                b"hello world",
+            ),
+        )
+
     async def test_changed_symlink_is_checked_again_before_save(self) -> None:
         """An alias changed after loading must not redirect the write."""
         original = await self._text()
@@ -1703,6 +1747,7 @@ class WorkspaceEditorLocalPathTests(_WorkspaceTextFixture):
                     "updated",
                     original.revision,
                     path="alias.txt",
+                    expected_path=original.path,
                 )
                 self.assertEqual(
                     saved.model_dump(),

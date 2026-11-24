@@ -128,13 +128,13 @@ export const workspaceApi = {
 			sessionId: string,
 			path: string,
 			text: string,
-			revision: string,
+			snapshot: Pick<TextFileSnapshot, 'path' | 'revision'>,
 			signal: AbortSignal,
 		): Promise<TextFileSnapshot> => {
 			const response = await client.stream('/workspace/files/text', {
 				method: 'PUT',
 				params: { agent_id: agentId, session_id: sessionId, path },
-				body: { text, revision },
+				body: { text, revision: snapshot.revision, expected_path: snapshot.path },
 				signal,
 				silent: true,
 			});

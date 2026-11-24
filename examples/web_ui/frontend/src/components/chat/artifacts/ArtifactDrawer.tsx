@@ -264,9 +264,9 @@ export function ArtifactPreviewContent({
 			const next = await workspaceApi.files.saveText(
 				agentId,
 				sessionId,
-				snapshot.path,
+				artifact.path,
 				text,
-				snapshot.revision,
+				snapshot,
 				controller.signal,
 			);
 			if (controller.signal.aborted) return;
