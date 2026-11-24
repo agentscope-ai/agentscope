@@ -41,7 +41,7 @@ from .._chat_input_store import (
     hydrate_input,
     queue_entry,
 )
-from .._chat_receipts import reap_receipts
+from .._chat_receipts import reap_receipts, waiting_for_receipt_expiry
 
 if TYPE_CHECKING:
     from ._chat_run_registry import ChatRunRegistry
@@ -268,6 +268,11 @@ class ChatInputQueue:
                     raise TypeError(
                         "Pending-chat routing ids must be strings.",
                     )
+                if (
+                    session_id not in inflight_sessions
+                    and waiting_for_receipt_expiry(routing)
+                ):
+                    continue
                 sessions_to_collect.append((user_id, session_id, agent_id))
                 if session_id not in inflight_sessions and not (
                     await self._bus.queue_read(

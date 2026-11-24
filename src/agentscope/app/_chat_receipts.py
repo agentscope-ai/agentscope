@@ -6,6 +6,7 @@ import json
 from time import time
 from typing import Awaitable, Callable, TYPE_CHECKING
 
+from .._logging import logger
 from .message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
@@ -18,7 +19,7 @@ async def track_receipts(
     session_id: str,
     agent_id: str,
 ) -> None:
-    """Register recovery and live quota checks before mutating receipts."""
+    """Clear any idle deadline before creating new work or receipts."""
     await bus.registry_set(
         MessageBusKeys.chat_input_pending_registry(),
         session_id,
@@ -31,16 +32,50 @@ async def track_receipts(
     )
 
 
+def waiting_for_receipt_expiry(routing: dict) -> bool:
+    """Legacy routes and receipts needing execution evidence are due now."""
+    deadline = routing.get("receipt_check_at")
+    return isinstance(deadline, (int, float)) and deadline > time()
+
+
 async def index_idle_session(
     bus: "MessageBus",
-    user_id: str,
     session_id: str,
-    slots: int,
+    records: tuple[dict[str, dict], dict[str, dict]] | None = None,
 ) -> None:
-    """Publish the idle count before retiring the live quota entry."""
+    """Publish idle quota usage before deferring recovery to its deadline."""
+    pending = MessageBusKeys.chat_input_pending_registry()
+    raw = await bus.registry_get(pending, session_id)
+    if raw is None:
+        return
+    if records is None:
+        records = (
+            await _read_records(
+                bus,
+                MessageBusKeys.chat_submissions(session_id),
+            ),
+            await _read_records(
+                bus,
+                MessageBusKeys.chat_input_cancellations(session_id),
+            ),
+        )
+    submissions, cancellations = records
+    slots = _receipt_slots(submissions, set(cancellations))
+    try:
+        routing = json.loads(raw)
+        user_id = routing["user_id"]
+        if not isinstance(user_id, str) or not user_id:
+            raise ValueError("Invalid pending-input owner.")
+    except (KeyError, TypeError, ValueError):
+        logger.warning("Invalid pending-input owner for %s.", session_id)
+        if not slots:
+            await bus.registry_del(pending, session_id)
+        return
+
     counts = MessageBusKeys.chat_idle_receipt_counts(user_id)
     if slots:
-        await bus.registry_set(counts, session_id, str(slots))
+        if await bus.registry_get(counts, session_id) != str(slots):
+            await bus.registry_set(counts, session_id, str(slots))
     else:
         await bus.registry_del(counts, session_id)
     await bus.registry_del(
@@ -48,10 +83,37 @@ async def index_idle_session(
         session_id,
     )
     if not slots:
-        await bus.registry_del(
-            MessageBusKeys.chat_input_pending_registry(),
-            session_id,
-        )
+        await bus.registry_del(pending, session_id)
+        return
+
+    # Claimed submissions without terminal proof must be polled next sweep.
+    # A partial queued POST is checked when its reservation expires.
+    check_at = min(
+        _receipt_deadline(record)
+        for registry in records
+        for record in registry.values()
+    )
+    if routing.get("receipt_check_at", 0) != check_at:
+        routing["receipt_check_at"] = check_at
+        # Session deletion can purge the route while collection is running.
+        try:
+            await bus.registry_set_if(
+                pending,
+                session_id,
+                json.dumps(routing),
+                expected=raw,
+            )
+        except NotImplementedError:
+            # Buses without compare-and-set retain their periodic sweep.
+            pass
+
+
+def _receipt_deadline(record: dict) -> float:
+    if record.get("state") == "reserved":
+        return record.get("expires_at", 0)
+    if record.get("state") == "queued" and "retire_at" not in record:
+        return record.get("expires_at", 0)
+    return record.get("retire_at", 0)
 
 
 async def _read_records(bus: "MessageBus", namespace: str) -> dict[str, dict]:
@@ -70,22 +132,6 @@ def _receipt_slots(submissions: dict[str, dict], ids: set[str]) -> int:
     return len(submissions) + len(ids) + reserved
 
 
-async def stored_receipt_slots(
-    bus: "MessageBus",
-    session_id: str,
-    active: set[str],
-) -> int:
-    """Count stored receipts and distinct pending/claimed queue identities."""
-    submissions = await _read_records(
-        bus,
-        MessageBusKeys.chat_submissions(session_id),
-    )
-    cancellations = await bus.registry_getall(
-        MessageBusKeys.chat_input_cancellations(session_id),
-    )
-    return _receipt_slots(submissions, active.union(cancellations))
-
-
 async def receipt_count(
     bus: "MessageBus",
     session_id: str,
@@ -101,7 +147,14 @@ async def receipt_count(
     )
     if raw:
         queued_ids = queued_ids | {json.loads(raw)["payload"]["id"]}
-    return await stored_receipt_slots(bus, session_id, queued_ids)
+    submissions = await _read_records(
+        bus,
+        MessageBusKeys.chat_submissions(session_id),
+    )
+    cancellations = await bus.registry_getall(
+        MessageBusKeys.chat_input_cancellations(session_id),
+    )
+    return _receipt_slots(submissions, queued_ids.union(cancellations))
 
 
 def cancellation_receipt(user_id: str, agent_id: str) -> str:
@@ -173,9 +226,8 @@ async def reap_receipts(
         await bus.registry_drop(MessageBusKeys.chat_input_payloads(session_id))
         await index_idle_session(
             bus,
-            user_id,
             session_id,
-            _receipt_slots(submissions, set(cancellations)),
+            (submissions, cancellations),
         )
     # Delete cheap expired records in both registries before querying storage.
     if not deferred:

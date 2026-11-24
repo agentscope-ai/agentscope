@@ -4,7 +4,7 @@ import json
 from typing import TYPE_CHECKING
 
 from .._logging import logger
-from ._chat_receipts import index_idle_session, stored_receipt_slots
+from ._chat_receipts import index_idle_session
 from .message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
@@ -144,23 +144,4 @@ async def cleanup_session(bus: "MessageBus", session_id: str) -> None:
         return
     await bus.registry_drop(MessageBusKeys.chat_input_payloads(session_id))
     await bus.registry_drop(MessageBusKeys.chat_input_claim(session_id))
-    raw = await bus.registry_get(
-        MessageBusKeys.chat_input_pending_registry(),
-        session_id,
-    )
-    if raw is None:
-        return
-    slots = await stored_receipt_slots(bus, session_id, set())
-    try:
-        user_id = json.loads(raw)["user_id"]
-        if not isinstance(user_id, str) or not user_id:
-            raise ValueError("Invalid pending-input owner.")
-    except (KeyError, TypeError, ValueError):
-        logger.warning("Invalid pending-input owner for %s.", session_id)
-        if not slots:
-            await bus.registry_del(
-                MessageBusKeys.chat_input_pending_registry(),
-                session_id,
-            )
-        return
-    await index_idle_session(bus, user_id, session_id, slots)
+    await index_idle_session(bus, session_id)

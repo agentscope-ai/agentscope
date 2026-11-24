@@ -131,10 +131,20 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                         expected,
                     )
 
-    async def test_cancelled_sessions_do_not_add_admission_reads(self) -> None:
-        """Sending plain text takes the same bus reads with 100 idle queues."""
+    async def test_idle_sessions_add_no_bus_round_trips(self) -> None:
+        """Idle receipts add no per-session recovery or admission calls."""
         reads = []
-        for size in (0, 100):
+        sweep_reads = [
+            call(MessageBusKeys.chat_input_pending_registry()),
+            call(MessageBusKeys.chat_input_inflight_registry()),
+        ]
+        read_methods = (
+            "registry_getall",
+            "registry_get",
+            "queue_read",
+            "registry_get_many",
+        )
+        for size in (0, 20, 100):
             async with InMemoryMessageBus() as bus:
                 for i in range(size):
                     sid = str(i)
@@ -147,17 +157,35 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     )
                     await delete_chat_input(bus, "u", sid, "a", item["id"])
                 with ExitStack() as stack:
-                    spies = [
-                        stack.enter_context(
+                    spies = {
+                        name: stack.enter_context(
                             patch.object(bus, name, wraps=getattr(bus, name)),
                         )
                         for name in (
-                            "registry_getall",
-                            "registry_get",
-                            "queue_read",
-                            "registry_get_many",
+                            *read_methods,
+                            "registry_exists",
+                            "registry_drop",
+                            "registry_set",
+                            "registry_set_if",
+                            "registry_del",
+                            "queue_push",
+                            "publish",
                         )
-                    ]
+                    }
+                    for _ in range(2):
+                        queue = self.collector(bus)
+                        recover = queue._recover_pending_chat_inputs_locked
+                        self.assertEqual(await recover(), 0)
+                        self.assertEqual(
+                            {
+                                k: s.await_args_list
+                                for k, s in spies.items()
+                                if s.await_count
+                            },
+                            {"registry_getall": sweep_reads},
+                        )
+                        for spy in spies.values():
+                            spy.reset_mock()
                     await enqueue_chat_input(
                         bus,
                         "u",
@@ -167,11 +195,11 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     )
                     reads.append(
                         [
-                            [c.args[0] for c in spy.await_args_list]
-                            for spy in spies
+                            [c.args[0] for c in spies[name].await_args_list]
+                            for name in read_methods
                         ],
                     )
-        self.assertEqual(reads[0], reads[1])
+        self.assertEqual(reads, [reads[0]] * 3)
 
     async def test_idle_receipt_quota_survives_reactivation(self) -> None:
         """Count idle and live entries once through retries and collection."""
@@ -215,6 +243,11 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                             "a",
                             UserMsg("u", "full"),
                         )
+                    self.assertEqual(
+                        await queue._recover_pending_chat_inputs_locked(),
+                        2,
+                    )
+                    self.now += 10
                     await delete_chat_input(bus, "u", "s", "a", second["id"])
                     with self.assertRaises(ChatQueueFullError):
                         await enqueue_chat_input(
@@ -224,7 +257,15 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                             "a",
                             UserMsg("u", "full"),
                         )
-                    self.now += MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS + 1
+                    self.now += MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS - 10
+                    await queue._recover_pending_chat_inputs_locked()
+                    self.assertEqual(
+                        await bus.registry_getall(
+                            MessageBusKeys.chat_idle_receipt_counts("u"),
+                        ),
+                        {"s": "1"},
+                    )
+                    self.now += 10
                     await queue._recover_pending_chat_inputs_locked()
                     lease = await create_chat_submission(bus, "u", "new", "a")
                     self.assertEqual(
@@ -233,7 +274,7 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     )
 
     async def test_receipt_only_sweep_preserves_leases(self) -> None:
-        """Probe only the head, then check the full FIFO once for cleanup."""
+        """Clean orphan payloads once and defer the lease until expiry."""
         for bus in self.backends:
             with self.subTest(backend=type(bus).__name__):
                 async with bus:
@@ -252,7 +293,7 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     key = MessageBusKeys.chat_inputs("s")
                     self.assertEqual(
                         read.await_args_list,
-                        [call(key, max_count=1), call(key)] * 2,
+                        [call(key, max_count=1), call(key)],
                     )
                     self.assertEqual(await bus.registry_getall(payloads), {})
                     self.assertEqual(
@@ -309,11 +350,17 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     cancels = MessageBusKeys.chat_input_cancellations("s")
                     pending = MessageBusKeys.chat_input_pending_registry()
                     sessions = MessageBusKeys.chat_input_user_sessions("u")
-                    routing = await bus.registry_get(pending, "s")
+                    routing = {"user_id": "u", "agent_id": "a"}
+                    if bus is not legacy:
+                        routing["receipt_check_at"] = 2000
                     counts = MessageBusKeys.chat_idle_receipt_counts("u")
                     for namespace in (submissions, cancels, None):
                         if namespace:
-                            await bus.registry_set(namespace, "one", "{}")
+                            await bus.registry_set(
+                                namespace,
+                                "one",
+                                json.dumps({"retire_at": 2000}),
+                            )
                         await cleanup_session(bus, "s")
                         self.assertEqual(
                             (
@@ -321,7 +368,7 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                                 await bus.registry_get(sessions, "s"),
                                 await bus.registry_get(counts, "s"),
                             ),
-                            (routing, None, "1")
+                            (json.dumps(routing), None, "1")
                             if namespace
                             else (None, None, None),
                         )
@@ -1004,7 +1051,22 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     self.now = 10000
                     await queue._recover_pending_chat_inputs_locked()
                     await queue._claim_chat_input("s")
-                    await queue._recover_pending_chat_inputs_locked()
+                    # An in-flight claim takes precedence over an idle route.
+                    await bus.registry_set(
+                        MessageBusKeys.chat_input_pending_registry(),
+                        "s",
+                        json.dumps(
+                            {
+                                "user_id": "u",
+                                "agent_id": "a",
+                                "receipt_check_at": self.now + 3600,
+                            },
+                        ),
+                    )
+                    self.assertEqual(
+                        await queue._recover_pending_chat_inputs_locked(),
+                        1,
+                    )
                     queue._chat_service.input_result.assert_not_awaited()
                     await queue.drain_chat_inputs("u", "s", "a")
                     await queue._recover_pending_chat_inputs_locked()
