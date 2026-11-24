@@ -243,6 +243,36 @@ class TestLogPrimitive(IsolatedAsyncioTestCase):
             [p["i"] for _id, p in r2],
         )
 
+    async def test_append_stores_a_snapshot(self) -> None:
+        """Mutating the appended dict cannot change the replay log."""
+        original = {"nested": {"value": 1}}
+        await self.bus.log_append("k", original)
+        original["nested"]["value"] = 2
+
+        entries = await self.bus.log_read("k")
+        self.assertEqual(entries[0][1]["nested"]["value"], 1)
+
+    async def test_read_returns_deep_copies(self) -> None:
+        """Mutating a read payload cannot corrupt the log or later reads."""
+        await self.bus.log_append("k", {"nested": {"value": 1}})
+
+        first = await self.bus.log_read("k", max_count=1)
+        first[0][1]["nested"]["value"] = 2
+        second = await self.bus.log_read("k", max_count=1)
+
+        self.assertEqual(second[0][1]["nested"]["value"], 1)
+
+    async def test_read_with_cursor_returns_deep_copies(self) -> None:
+        """The cursor branch isolates its payloads as well."""
+        id1 = await self.bus.log_append("k", {"nested": {"value": 1}})
+        await self.bus.log_append("k", {"nested": {"value": 2}})
+
+        first = await self.bus.log_read("k", since=id1)
+        first[0][1]["nested"]["value"] = 99
+        second = await self.bus.log_read("k", since=id1)
+
+        self.assertEqual(second[0][1]["nested"]["value"], 2)
+
     async def test_read_empty_log(self) -> None:
         """Reading a log that never had entries returns ``[]``."""
         self.assertEqual(await self.bus.log_read("nope"), [])
@@ -358,6 +388,43 @@ class TestPubSubPrimitive(IsolatedAsyncioTestCase):
         await asyncio.wait_for(t2, timeout=2.0)
         self.assertEqual(r1, [{"x": 42}])
         self.assertEqual(r2, [{"x": 42}])
+
+    async def test_subscribers_receive_independent_payloads(self) -> None:
+        """One subscriber mutating its payload leaves the others intact."""
+        ready1 = asyncio.Event()
+        ready2 = asyncio.Event()
+        r1: list[dict] = []
+        r2: list[dict] = []
+
+        async def _c1() -> None:
+            async for payload in self.bus.subscribe(
+                "ch",
+                on_ready=ready1.set,
+            ):
+                r1.append(payload)
+                break
+
+        async def _c2() -> None:
+            async for payload in self.bus.subscribe(
+                "ch",
+                on_ready=ready2.set,
+            ):
+                r2.append(payload)
+                break
+
+        t1 = asyncio.create_task(_c1())
+        t2 = asyncio.create_task(_c2())
+        await asyncio.wait_for(ready1.wait(), timeout=2.0)
+        await asyncio.wait_for(ready2.wait(), timeout=2.0)
+
+        published = {"nested": {"value": 1}}
+        await self.bus.publish("ch", published)
+        await asyncio.wait_for(t1, timeout=2.0)
+        await asyncio.wait_for(t2, timeout=2.0)
+
+        r1[0]["nested"]["value"] = 2
+        self.assertEqual(r2[0]["nested"]["value"], 1)
+        self.assertEqual(published["nested"]["value"], 1)
 
 
 class TestLockPrimitive(IsolatedAsyncioTestCase):

@@ -54,6 +54,10 @@ class InMemoryMessageBus(
     ``"2-0"``, …).  They are **not** lexicographically sortable once
     the sequence exceeds single digits; comparison must parse the
     numeric prefix (as :meth:`log_read` does internally).
+
+    Payloads are deep-copied on the way in and on the way out, so no
+    caller, reader or subscriber can mutate state another one observes.
+    This mirrors :class:`RedisMessageBus`, which serialises payloads.
     """
 
     def __init__(self) -> None:
@@ -305,7 +309,8 @@ class InMemoryMessageBus(
             key (`str`):
                 Log identifier.
             payload (`dict`):
-                JSON-serializable dict to append.
+                JSON-serializable dict to append. A snapshot is stored, so
+                later mutations of the caller's dict leave the log intact.
             ttl_secs (`int | None`, optional):
                 Ignored (no-op — in-memory does not expire keys).
             max_len (`int | None`, optional):
@@ -318,7 +323,7 @@ class InMemoryMessageBus(
         """
         entry_id = self._next_id()
         log = self._logs[key]
-        log.append((entry_id, payload))
+        log.append((entry_id, deepcopy(payload)))
         if max_len is not None and len(log) > max_len:
             del log[: len(log) - max_len]
         return entry_id
@@ -331,7 +336,8 @@ class InMemoryMessageBus(
     ) -> list[tuple[str, dict]]:
         """Read up to ``max_count`` entries newer than ``since``.
 
-        Reads are non-destructive.
+        Reads are non-destructive, and the returned payloads are snapshots:
+        mutating them cannot change the log or a later read.
 
         Args:
             key (`str`):
@@ -350,7 +356,7 @@ class InMemoryMessageBus(
         if not log:
             return []
         if since is None:
-            return log[:max_count]
+            return deepcopy(log[:max_count])
         # Find the first entry with id > since.  Entry ids are
         # "<seq>-0" strings; integer comparison on the seq prefix is
         # sufficient because our ids are monotonic.
@@ -363,7 +369,7 @@ class InMemoryMessageBus(
         else:
             # All entries are <= since.
             return []
-        return log[start : start + max_count]
+        return deepcopy(log[start : start + max_count])
 
     async def log_trim(
         self,
@@ -405,10 +411,12 @@ class InMemoryMessageBus(
             key (`str`):
                 Channel identifier.
             payload (`dict`):
-                JSON-serializable dict delivered to each subscriber.
+                JSON-serializable dict delivered to each subscriber. Each
+                subscriber receives its own copy, so one consumer cannot
+                mutate what another one sees.
         """
         for q in self._subscribers.get(key, set()):
-            q.put_nowait(payload)
+            q.put_nowait(deepcopy(payload))
 
     async def subscribe(
         self,
