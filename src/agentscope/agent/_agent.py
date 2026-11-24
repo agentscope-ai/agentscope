@@ -4037,6 +4037,11 @@ class Agent:
                     reply_id=self.state.reply_id,
                     block_id=data_block.id,
                     media_type=data_block.source.media_type,
+                    **(
+                        {"name": data_block.name}
+                        if data_block.name is not None
+                        else {}
+                    ),
                 )
             yield DataBlockDeltaEvent(
                 reply_id=self.state.reply_id,
@@ -4075,6 +4080,7 @@ class Agent:
                         # Keep the block id so replay groups one payload.
                         block_id=block.id,
                         media_type=block.source.media_type,
+                        name=block.name,
                         data=block.source.data,
                     )
                 elif isinstance(block.source, URLSource):
@@ -4083,5 +4089,6 @@ class Agent:
                         tool_call_id=tool_call_id,
                         block_id=block.id,
                         media_type=block.source.media_type,
+                        name=block.name,
                         url=str(block.source.url),
                     )
