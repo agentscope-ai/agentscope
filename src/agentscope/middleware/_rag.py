@@ -431,16 +431,18 @@ async def _search_across(
         except Exception as error:
             return error
 
-    # Ordinary failures are collected above. When a child is cancelled,
-    # gather raises without cancelling its siblings. Request cancellation
-    # explicitly and let gather collect their outcomes during cleanup.
     searches = [asyncio.create_task(_search_one(kb)) for kb in knowledge_bases]
+    group = asyncio.gather(*searches)
     try:
-        per_kb = await asyncio.gather(*searches)
-    except asyncio.CancelledError:
-        for search in searches:
-            if not search.done() and not search.cancelling():
+        per_kb = await asyncio.shield(group)
+    except asyncio.CancelledError as cancellation:
+        if group.done():
+            # A cancelled child leaves its siblings running.
+            for search in searches:
                 search.cancel()
+        else:
+            group.cancel(*cancellation.args)
+            await group
         raise
 
     failures: list[tuple["KnowledgeBase", Exception]] = []
