@@ -1596,23 +1596,26 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
         self.assertEqual(restored.report.primary.ref, "r1")
 
     async def test_model_containers_keep_input_aliases(self) -> None:
-        """Normalize values and defaults in list and dict elements."""
+        """Normalize values and defaults in model container elements."""
 
         class Report(BaseModel):
-            """Hold city reports in two container shapes."""
+            """Hold city reports in sequence and mapping fields."""
 
             cities: list[_OutputAliasReport]
             by_id: dict[str, _OutputAliasReport]
+            route: tuple[_OutputAliasReport, ...]
 
         result = await self._generate_report(
             Report,
-            '{"cities":[{"city":" paris "}],"by_id":{"L":{"city":" lyon "}}}',
+            '{"cities":[{"city":" paris "}],"by_id":{"L":{"city":" lyon "}},'
+            '"route":[{"city":" rome "}]}',
         )
         self.assertDictEqual(
             result.content,
             {
                 "cities": [{"city": "Paris", "tags": []}],
                 "by_id": {"L": {"city": "Lyon", "tags": []}},
+                "route": [{"city": "Rome", "tags": []}],
             },
         )
         Report.model_validate(result.content)
@@ -1658,11 +1661,13 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
 
             regions: dict[str, list[_OutputAliasReport]]
             batches: list[list[_ExcludedFieldReport]]
+            routes: list[tuple[_OutputAliasReport, ...]]
             primary: _OutputAliasReport
 
         arguments = {
             "regions": {"FR": [{"city": " lyon "}]},
             "batches": [[{"cityName": " paris ", "ref": " P "}]],
+            "routes": [[{"city": " nice "}]],
             "primary": {"city": " rome "},
         }
         result = await self._generate_report(Report, json.dumps(arguments))
