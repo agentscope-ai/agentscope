@@ -953,12 +953,12 @@ class ChatService:
             if config.chat_model_config is None
             else None
         )
-        for model_config in (primary, fallback):
-            if model_config is not None:
-                await self._access.resolve_credential(
-                    user_id,
-                    model_config.credential_id,
-                )
+        await self._access.resolve_credential(user_id, primary.credential_id)
+        if fallback and fallback.credential_id != primary.credential_id:
+            await self._access.resolve_credential(
+                user_id,
+                fallback.credential_id,
+            )
         return (
             ChatModelSnapshot(primary=primary, fallback=fallback).model_copy(
                 deep=True,
@@ -1462,6 +1462,7 @@ class ChatService:
                 initial_tts = pipeline_tts_config or default_tts
                 initial_is_snapshot = pipeline_tts_config is not None
                 reply_models = pipeline_chat_config
+                previous: Msg | None = None
                 if isinstance(
                     input_msg,
                     (
@@ -1785,14 +1786,12 @@ class ChatService:
                         ):
                             # Case A: new reply (user message(s), or
                             # retrigger with empty input)
-                            if isinstance(input_msg, (Msg, list)) and not (
-                                input_persisted
-                            ):
-                                input_msgs = (
-                                    [input_msg]
-                                    if isinstance(input_msg, Msg)
-                                    else input_msg
-                                )
+                            input_msgs = (
+                                [input_msg]
+                                if isinstance(input_msg, Msg)
+                                else input_msg or []
+                            )
+                            if not input_persisted:
                                 for msg in input_msgs:
                                     await self._storage.upsert_message(
                                         user_id,
@@ -1832,18 +1831,12 @@ class ChatService:
                                             ),
                                         },
                                     )
-                                    if isinstance(input_msg, (Msg, list)):
-                                        inputs = (
-                                            input_msg
-                                            if isinstance(input_msg, list)
-                                            else [input_msg]
-                                        )
-                                        for msg in inputs:
-                                            msg.metadata[INPUT_EXECUTION] = {
-                                                "reply_id": event.reply_id,
-                                                "finished": False,
-                                            }
-                                            bound_inputs.append(msg)
+                                    for msg in input_msgs:
+                                        msg.metadata[INPUT_EXECUTION] = {
+                                            "reply_id": event.reply_id,
+                                            "finished": False,
+                                        }
+                                        bound_inputs.append(msg)
                                 elif reply_msg is not None:
                                     audio.append_event(reply_msg, event)
                                 if (
@@ -1866,7 +1859,7 @@ class ChatService:
                                                 event.reply_id,
                                             )
                                             submission_id = None
-                                        for msg in bound_inputs:
+                                        for msg in input_msgs:
                                             await self._storage.upsert_message(
                                                 user_id,
                                                 session_id,
@@ -1917,11 +1910,17 @@ class ChatService:
                             # Case B: continuation (UserConfirmResult
                             #  / ExternalExecResult)
                             continuation_reply_id = agent.state.reply_id
-                            reply_msg = await self._storage.get_message(
-                                user_id,
-                                session_id,
-                                agent.state.reply_id,
-                            )
+                            if (
+                                previous is not None
+                                and previous.id == continuation_reply_id
+                            ):
+                                reply_msg = previous
+                            else:
+                                reply_msg = await self._storage.get_message(
+                                    user_id,
+                                    session_id,
+                                    continuation_reply_id,
+                                )
 
                             if reply_msg is None:
                                 logger.warning(

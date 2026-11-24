@@ -125,7 +125,6 @@ class ChatInputQueue:
         perform the O(N) sweep. Receipt collection takes a bounded mutation
         lock; busy sessions can still receive wakeups without collection.
         """
-        pushed_count = 0
         try:
             recovery_lock = MessageBusKeys.chat_input_recovery_lock()
             async with self._bus.acquire_lock_bounded(
@@ -164,23 +163,13 @@ class ChatInputQueue:
                     str(now + _MESSAGE_FALLBACK_TICK_SECS * 2),
                     ttl_secs=_MESSAGE_RECOVERY_LOCK_TTL_SECS * 2,
                 )
-                pushed_count = await self._recover_pending_chat_inputs_locked()
+                await self._recover_pending_chat_inputs_locked()
         except TimeoutError:
             return
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "WakeupDispatcher: pending chat queue recovery failed.",
             )
-        if pushed_count:
-            # Recovery only creates durable triggers. One batched signal
-            # wakes the single ``_loop`` consumer; non-leaders and empty
-            # sweeps do not generate redundant pub/sub fan-out.
-            try:
-                await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
-            except Exception:  # pylint: disable=broad-except
-                logger.exception(
-                    "WakeupDispatcher: failed to signal after recovery.",
-                )
 
     async def _receipt_input_result(
         self,
@@ -252,9 +241,7 @@ class ChatInputQueue:
 
         Returns:
             `int`:
-                Number of durable ``queued_message`` triggers pushed. The
-                caller publishes one shared signal when this value is
-                non-zero.
+                Number of durable ``queued_message`` triggers pushed.
         """
         pushed_count = 0
         pending_sessions = await self._bus.registry_getall(
@@ -263,23 +250,16 @@ class ChatInputQueue:
         inflight_sessions = await self._bus.registry_getall(
             MessageBusKeys.chat_input_inflight_registry(),
         )
-        recovery_timeout = MessageBusKeys.CHAT_INPUT_RECOVERY_LOCK_TIMEOUT_SECS
-        collection_timeout = (
-            MessageBusKeys.CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS
-        )
-        sessions = pending_sessions.keys() | inflight_sessions.keys()
+        sessions = inflight_sessions | pending_sessions
         self._receipt_cursors = {
             sid: key
             for sid, key in self._receipt_cursors.items()
             if sid in sessions
         }
-        for session_id in sessions:
+        sessions_to_collect: list[tuple[str, str, str]] = []
+        for session_id, raw_routing in sessions.items():
             try:
-                raw_routing = pending_sessions.get(session_id)
-                if raw_routing is not None:
-                    routing = json.loads(raw_routing)
-                else:
-                    routing = json.loads(inflight_sessions[session_id])
+                routing = json.loads(raw_routing)
                 user_id = routing["user_id"]
                 agent_id = routing["agent_id"]
                 if not isinstance(user_id, str) or not isinstance(
@@ -289,77 +269,18 @@ class ChatInputQueue:
                     raise TypeError(
                         "Pending-chat routing ids must be strings.",
                     )
-                pending = None
-                claimed = session_id in inflight_sessions
-                try:
-                    async with (
-                        asyncio.timeout(collection_timeout),
-                        chat_input_mutation(
-                            self._bus,
-                            session_id,
-                            timeout_secs=recovery_timeout,
-                        ),
-                    ):
-                        pending = await self._bus.queue_read(
-                            MessageBusKeys.chat_inputs(session_id),
-                        )
-                        claimed = await self._bus.registry_exists(
-                            MessageBusKeys.chat_input_inflight_registry(),
-                            session_id,
-                        )
-                        active = {item["id"] for _, item in pending}
-                        raw = await self._bus.registry_get(
-                            MessageBusKeys.chat_input_claim(session_id),
-                            "claim",
-                        )
-                        if raw is not None:
-                            # Recovery may see the durable claim before its
-                            # inflight index has been written.
-                            claimed = True
-                            active.add(json.loads(raw)["payload"]["id"])
-                        retained = await reap_receipts(
-                            self._bus,
-                            user_id,
-                            session_id,
-                            agent_id,
-                            self._receipt_input_result,
-                            self._receipt_cursors,
-                            active,
-                        )
-                        if not pending and not claimed:
-                            # A crashed enqueue may have written its payload
-                            # without ever publishing a FIFO entry.
-                            await self._bus.registry_drop(
-                                MessageBusKeys.chat_input_payloads(session_id),
-                            )
-                            if not retained:
-                                await untrack_empty_session(
-                                    self._bus,
-                                    session_id,
-                                )
-                except ChatQueueBusyError:
-                    # Collection must not delay a busy queue's wakeup.
-                    pass
-                except TimeoutError:
-                    logger.warning(
-                        "Chat receipt collection timed out for %s.",
-                        session_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Could not collect chat receipts for %s.",
-                        session_id,
-                    )
-                if pending is None and not claimed:
-                    pending = await self._bus.queue_read(
+                sessions_to_collect.append((user_id, session_id, agent_id))
+                if session_id not in inflight_sessions and not (
+                    await self._bus.queue_read(
                         MessageBusKeys.chat_inputs(session_id),
                         max_count=1,
                     )
-                if not pending and not claimed:
+                    or await self._bus.registry_exists(
+                        MessageBusKeys.chat_input_claim(session_id),
+                        "claim",
+                    )
+                ):
                     continue
-                # Reuse the canonical trigger serializer but batch the
-                # signal. The sole ``_loop`` drainer consumes it after the
-                # recovery method publishes once for the whole sweep.
                 await enqueue_run_trigger(
                     self._bus,
                     user_id=user_id,
@@ -375,7 +296,79 @@ class ChatInputQueue:
                     "for session %s.",
                     session_id,
                 )
+        # Wake the dispatcher before any receipt lookup can block.
+        if pushed_count:
+            try:
+                await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "WakeupDispatcher: failed to signal after recovery.",
+                )
+
+        for user_id, session_id, agent_id in sessions_to_collect:
+            await self._collect_chat_receipts(user_id, session_id, agent_id)
         return pushed_count
+
+    async def _collect_chat_receipts(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> None:
+        """Recheck live work under the mutation lock before collecting."""
+        lock_timeout = MessageBusKeys.CHAT_INPUT_RECOVERY_LOCK_TIMEOUT_SECS
+        try:
+            async with (
+                asyncio.timeout(
+                    MessageBusKeys.CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS,
+                ),
+                chat_input_mutation(
+                    self._bus,
+                    session_id,
+                    timeout_secs=lock_timeout,
+                ),
+            ):
+                pending = await self._bus.queue_read(
+                    MessageBusKeys.chat_inputs(session_id),
+                )
+                active = {item["id"] for _, item in pending}
+                raw = await self._bus.registry_get(
+                    MessageBusKeys.chat_input_claim(session_id),
+                    "claim",
+                )
+                if raw is not None:
+                    active.add(json.loads(raw)["payload"]["id"])
+                retained = await reap_receipts(
+                    self._bus,
+                    user_id,
+                    session_id,
+                    agent_id,
+                    self._receipt_input_result,
+                    self._receipt_cursors,
+                    active,
+                )
+                if not active and not await self._bus.registry_exists(
+                    MessageBusKeys.chat_input_inflight_registry(),
+                    session_id,
+                ):
+                    # A crashed enqueue may leave a payload without a FIFO.
+                    await self._bus.registry_drop(
+                        MessageBusKeys.chat_input_payloads(session_id),
+                    )
+                    if not retained:
+                        await untrack_empty_session(self._bus, session_id)
+        except ChatQueueBusyError:
+            pass
+        except TimeoutError:
+            logger.warning(
+                "Chat receipt collection timed out for %s.",
+                session_id,
+            )
+        except Exception:
+            logger.exception(
+                "Could not collect chat receipts for %s.",
+                session_id,
+            )
 
     async def _is_session_parked(
         self,
@@ -1052,23 +1045,28 @@ class ChatInputQueue:
                 "claim",
             )
             # Commit terminal proof before dropping its only durable claim.
+            payload = {}
             if raw is not None:
                 try:
-                    claim_payload = json.loads(raw)["payload"]
-                    if not isinstance(claim_payload, dict):
-                        claim_payload = {}
+                    payload = json.loads(raw)["payload"]
+                    if not isinstance(payload, dict):
+                        raise ValueError("Invalid terminal claim payload.")
                 except (KeyError, TypeError, ValueError):
-                    claim_payload = {}
-                if submission_id := claim_payload.get("submission_id"):
+                    logger.warning(
+                        "Skipping malformed terminal claim data for %s.",
+                        session_id,
+                    )
+                    payload = {}
+                if submission_id := payload.get("submission_id"):
                     submission = await get_submission(
                         self._bus,
                         session_id,
                         submission_id,
-                        claim_payload["user_id"],
-                        claim_payload["agent_id"],
+                        payload["user_id"],
+                        payload["agent_id"],
                     )
                     if submission is not None and (
-                        claim_payload.get("cancelled_before_reply")
+                        payload.get("cancelled_before_reply")
                         or (
                             "reply_id" in submission
                             and submission["reply_id"] is None
@@ -1087,18 +1085,7 @@ class ChatInputQueue:
                 MessageBusKeys.chat_input_inflight_registry(),
                 session_id,
             )
-            if raw is not None:
-                try:
-                    payload = json.loads(raw)["payload"]
-                    if not isinstance(payload, dict):
-                        raise ValueError("Invalid terminal claim payload.")
-                except (KeyError, TypeError, ValueError):
-                    logger.warning(
-                        "Skipping malformed terminal claim data for %s.",
-                        session_id,
-                    )
-                else:
-                    await discard_input(self._bus, payload)
+            await discard_input(self._bus, payload)
             await cleanup_session(self._bus, session_id)
 
     async def _cancel_chat_input_claim(

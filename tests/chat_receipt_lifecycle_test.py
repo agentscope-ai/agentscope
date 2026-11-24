@@ -4,7 +4,7 @@
 import asyncio
 import json
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 from uuid import uuid4
 
 import fakeredis.aioredis
@@ -23,6 +23,7 @@ from agentscope.app._bus_ops import (
     create_chat_submission,
     delete_chat_input,
     enqueue_chat_input,
+    list_chat_inputs,
 )
 from agentscope.app._manager._chat_input_queue import ChatInputQueue
 from agentscope.app._chat_input_store import cleanup_session
@@ -129,8 +130,8 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                         expected,
                     )
 
-    async def test_receipt_only_sweep_reuses_locked_queue_state(self) -> None:
-        """Read the FIFO once per sweep and keep leases after cleanup."""
+    async def test_receipt_only_sweep_preserves_leases(self) -> None:
+        """Probe only the head, then check the full FIFO once for cleanup."""
         for bus in self.backends:
             with self.subTest(backend=type(bus).__name__):
                 async with bus:
@@ -148,8 +149,8 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                             self.assertEqual(await recover(), 0)
                     key = MessageBusKeys.chat_inputs("s")
                     self.assertEqual(
-                        [c.args[0] for c in read.await_args_list],
-                        [key, key],
+                        read.await_args_list,
+                        [call(key, max_count=1), call(key)] * 2,
                     )
                     self.assertEqual(await bus.registry_getall(payloads), {})
                     self.assertEqual(
@@ -158,6 +159,42 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                         ),
                         {"s": "a"},
                     )
+
+    async def test_enqueue_between_recovery_and_collection(self) -> None:
+        """Cleanup must preserve inputs enqueued after the wakeup scan."""
+        async with InMemoryMessageBus() as bus:
+            queue = self.collector(bus)
+            await enqueue_chat_input(bus, "u", "busy", "a", UserMsg("u", "1"))
+            await track_receipts(bus, "u", "empty", "a")
+            accepted = []
+            publish = bus.publish
+
+            async def enqueue_on_signal(key: str, payload: dict) -> None:
+                await publish(key, payload)
+                if key == MessageBusKeys.wakeup_signal():
+                    with patch.object(bus, "publish", publish):
+                        item = await enqueue_chat_input(
+                            bus,
+                            "u",
+                            "empty",
+                            "a",
+                            UserMsg("u", "new input"),
+                        )
+                    accepted.append(item)
+
+            with patch.object(bus, "publish", enqueue_on_signal):
+                self.assertEqual(
+                    await queue._recover_pending_chat_inputs_locked(),
+                    1,
+                )
+            self.assertEqual(len(accepted), 1)
+            self.assertEqual(await list_chat_inputs(bus, "empty"), accepted)
+            self.assertEqual(
+                await bus.registry_getall(
+                    MessageBusKeys.chat_input_user_sessions("u"),
+                ),
+                {"busy": "a", "empty": "a"},
+            )
 
     async def test_cleanup_preserves_indexes_until_last_receipt(self) -> None:
         """Check both receipt registries, including on a legacy bus."""
@@ -326,6 +363,7 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     }
                     await bus.registry_set(key, "old", json.dumps(record))
                     cancelled = asyncio.Event()
+                    wakeups_before_lookup = []
                     timeouts: list[asyncio.Timeout] = []
                     configured_timeout = (
                         MessageBusKeys.CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS
@@ -338,6 +376,7 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                         return timeout
 
                     async def hung(*_args: object) -> dict:
+                        wakeups_before_lookup.extend(publish.await_args_list)
                         # Expire after Redis setup, without a tiny clock race.
                         timeouts[-1].reschedule(
                             asyncio.get_running_loop().time(),
@@ -355,14 +394,23 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     ), patch(
                         "agentscope.app._manager._chat_input_queue.asyncio",
                         wraps=asyncio,
-                    ) as runtime:
+                    ) as runtime, patch.object(
+                        bus,
+                        "publish",
+                        wraps=bus.publish,
+                    ) as publish:
                         runtime.timeout.side_effect = collection_timeout
+                        await asyncio.wait_for(
+                            queue._recover_pending_chat_inputs(),
+                            10,
+                        )
+                        publish.assert_awaited_once_with(
+                            MessageBusKeys.wakeup_signal(),
+                            {},
+                        )
                         self.assertEqual(
-                            await asyncio.wait_for(
-                                queue._recover_pending_chat_inputs_locked(),
-                                10,
-                            ),
-                            2,
+                            wakeups_before_lookup,
+                            publish.await_args_list,
                         )
                     self.assertEqual(len(timeouts), 2)
                     self.assertEqual(sum(t.expired() for t in timeouts), 1)

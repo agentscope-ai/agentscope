@@ -23,6 +23,7 @@ from agentscope.app._bus_ops import (
     enqueue_chat_input,
     list_chat_inputs,
 )
+from agentscope.app._chat_input_store import INPUT_EXECUTION
 from agentscope.app._manager import CancelDispatcher, ChatRunRegistry
 from agentscope.app._manager._chat_input_queue import ChatInputQueue
 from agentscope.app._router._schema import ChatRequest, UpdateSessionRequest
@@ -637,9 +638,18 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                 REPLY_CHAT_CONFIG: models.model_dump(mode="json"),
             },
         )
-        await self._run(
-            UserConfirmResultEvent(reply_id="voice-reply", confirm_results=[]),
-        )
+        with patch.object(
+            self.storage,
+            "get_message",
+            wraps=self.storage.get_message,
+        ) as get_message:
+            await self._run(
+                UserConfirmResultEvent(
+                    reply_id="voice-reply",
+                    confirm_results=[],
+                ),
+            )
+        get_message.assert_awaited_once_with("user-1", "session-1", reply.id)
         await self._run(UserMsg("user", "ordinary", id="ordinary"))
         self.assertEqual(
             [
@@ -695,6 +705,10 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         fallback = primary.model_copy(update={"model": "backup"})
         self.session.config.fallback_chat_model_config = fallback
         models, speech = await self.service.pipeline_snapshot(self.session)
+        self.service._access.resolve_credential.assert_awaited_once_with(
+            "user-1",
+            primary.credential_id,
+        )
         self.session.config.chat_model_config = primary.model_copy(
             update={"model": "changed"},
         )
@@ -713,6 +727,28 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             [agent.models_used for agent in self.agents],
             [[(primary, fallback)], [(primary, fallback)]],
+        )
+
+    async def test_inbox_followups_skip_bound_input_writes(self) -> None:
+        """Only the opening reply and final checkpoint write the binding."""
+        inputs = [UserMsg("u", mid, id=mid) for mid in ("first", "second")]
+        with patch(
+            "agentscope.app._service._chat.has_pending_inbox_or_release",
+            side_effect=[True, True, False],
+        ):
+            await self._run(inputs)
+        receipt = {"reply_id": "first-reply", "finished": False}
+        self.assertEqual(
+            [
+                (msg.id, msg.metadata.get(INPUT_EXECUTION))
+                for msg in self.storage.messages
+                if msg.role == "user"
+            ],
+            [
+                (mid, binding)
+                for binding in (None, receipt, receipt)
+                for mid in ("first", "second")
+            ],
         )
 
     async def test_same_run_restores_ordinary_models(self) -> None:
@@ -795,6 +831,22 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             await self.service.pipeline_snapshot(self.session)
         self.assertEqual(error.exception.status_code, 404)
         self.assertEqual(await list_chat_inputs(self.bus, "session-1"), [])
+
+    async def test_distinct_fallback_credential_is_checked(self) -> None:
+        """Reject a fallback whose credential is unavailable to the user."""
+        primary = self.session.config.chat_model_config
+        self.session.config.fallback_chat_model_config = primary.model_copy(
+            update={"credential_id": "other"},
+        )
+        resolve = self.service._access.resolve_credential
+        resolve.side_effect = [None, HTTPException(status_code=404)]
+        with self.assertRaises(HTTPException) as error:
+            await self.service.pipeline_snapshot(self.session)
+        self.assertEqual(error.exception.status_code, 404)
+        self.assertEqual(
+            resolve.await_args_list,
+            [call("user-1", primary.credential_id), call("user-1", "other")],
+        )
 
     async def test_ordinary_request_cannot_override_speech_in_metadata(
         self,

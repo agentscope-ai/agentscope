@@ -602,7 +602,7 @@ export class PipelineVoiceSession {
 			if (this.replyId) {
 				// 202 accepts a request; only a terminal event or result ends cancellation.
 				await this.options.interrupt(this.replyId, signal);
-			} else if (this.queueId && !this.inputStarted && !this.replyId) {
+			} else if (!this.submissionId && this.queueId && !this.inputStarted) {
 				await this.options.deleteQueued(this.queueId, signal);
 				signal.throwIfAborted();
 				this.finishCancellation(true);

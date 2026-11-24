@@ -635,14 +635,15 @@ async def cancel_chat_submission(
         item_id = record["queue_item_id"]
         if record["state"] == "finished":
             return {"state": "cancelled", "queue_item_id": item_id}
-        raw_claim = await bus.registry_get(
-            MessageBusKeys.chat_input_claim(session_id),
-            "claim",
-        )
-        claimed = raw_claim is not None and (
-            json.loads(raw_claim)["payload"]["id"] == item_id
-        )
-        started = record["state"] == "claimed" or claimed
+        started = record["state"] == "claimed"
+        if not started and item_id is not None:
+            raw_claim = await bus.registry_get(
+                MessageBusKeys.chat_input_claim(session_id),
+                "claim",
+            )
+            started = raw_claim is not None and (
+                json.loads(raw_claim)["payload"]["id"] == item_id
+            )
         if started:
             record["cancel_requested"] = True
         elif item_id is not None and not await is_input_cancelled(

@@ -298,12 +298,14 @@ class InputResultTest(IsolatedAsyncioTestCase):
                     INPUT_EXECUTION: {"reply_id": reply_id, "finished": False},
                 },
             )
-        await finish_unbound_inputs(
-            self.storage,
-            "owner",
-            "s",
-            ["failed", "parked", "missing"],
-        )
+        for _ in range(2):
+            await finish_unbound_inputs(
+                self.storage,
+                "owner",
+                "s",
+                ["failed", "parked", "missing"],
+            )
+        self.storage.upsert_message.assert_awaited_once()
         self.assertEqual(
             {mid: msg.metadata for mid, msg in self.messages.items()},
             {

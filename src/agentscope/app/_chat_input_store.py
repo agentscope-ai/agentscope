@@ -71,7 +71,11 @@ async def finish_unbound_inputs(
         if msg is None:
             continue
         result = msg.metadata.get(INPUT_EXECUTION)
-        if isinstance(result, dict) and not result.get("reply_id"):
+        if (
+            isinstance(result, dict)
+            and not result.get("reply_id")
+            and result.get("finished") is not True
+        ):
             msg.metadata[INPUT_EXECUTION] = {
                 "reply_id": None,
                 "finished": True,

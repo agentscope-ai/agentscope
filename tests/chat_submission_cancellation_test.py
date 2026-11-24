@@ -382,6 +382,50 @@ class ChatSubmissionCancellationTest(IsolatedAsyncioTestCase):
                             },
                         )
 
+    async def test_known_submissions_ignore_unrelated_claim(self) -> None:
+        """An unreadable session claim cannot block a known cancellation."""
+        async with InMemoryMessageBus() as bus:
+            await _reserve(bus, "unused")
+            await _reserve(bus, "running")
+            item = await enqueue_chat_input(
+                bus,
+                "u",
+                "s",
+                "a",
+                UserMsg("u", "voice"),
+                submission_id="running",
+            )
+            queue = ChatInputQueue(bus, _FakeStorage(), _FakeChatService())
+            await queue._claim_chat_input("s")
+            await bus.registry_set(
+                MessageBusKeys.chat_input_claim("s"),
+                "claim",
+                "{",
+            )
+            with patch.object(bus, "publish", wraps=bus.publish) as publish:
+                self.assertEqual(
+                    await cancel_chat_submission(bus, "u", "s", "a", "unused"),
+                    {
+                        "state": "cancelled",
+                        "queue_item_id": None,
+                        "before_claim": True,
+                    },
+                )
+                self.assertEqual(
+                    await cancel_chat_submission(
+                        bus,
+                        "u",
+                        "s",
+                        "a",
+                        "running",
+                    ),
+                    {"state": "started", "queue_item_id": item["id"]},
+                )
+                publish.assert_awaited_once_with(
+                    MessageBusKeys.session_interrupt_channel(),
+                    {"session_id": "s", "queue_item_id": item["id"]},
+                )
+
     async def test_durable_claim_wins_before_claim_marker(self) -> None:
         """An ambiguous claim write must not be mistaken for an unseen POST."""
         for bus in self.backends:
