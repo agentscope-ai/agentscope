@@ -885,11 +885,13 @@ class ChatModelBase:
 
             elif issubclass(structured_model, BaseModel):
                 validated = structured_model.model_validate(structured_output)
-                structured_output = _structured_content(
+                normalized = _structured_content(
                     validated,
                     structured_output,
                     validated.model_dump(mode="json", by_alias=True),
                 )
+                if normalized is not None:
+                    structured_output = normalized
 
             else:
                 raise ValueError(
