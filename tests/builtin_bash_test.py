@@ -201,6 +201,52 @@ class BashToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(chunks[0].state, "error")
         self.assertTrue(chunks[0].is_last)
 
+    async def test_success_output_truncation_states_lengths(self) -> None:
+        """State the original and omitted lengths when output is cut.
+
+        Regression test for agentscope-ai/agentscope#4191: the agent
+        must be able to tell that the output is incomplete, how long
+        it was, and how to retrieve the rest.
+        """
+        backend = AsyncMock()
+        backend.exec_shell.return_value = ExecResult(
+            0,
+            b"x" * 30001,
+            b"",
+        )
+        tool = Bash(backend=backend)
+
+        chunks = [
+            chunk async for chunk in await tool(command="printf 'x%.0s' 1")
+        ]
+
+        self.assertEqual(
+            chunks[0].content[0].text,
+            "x" * 30000
+            + "\n... (output truncated: showing the first 30000 of "
+            "30001 characters; 1 characters omitted. To inspect the "
+            "rest, re-run the command with its output redirected to "
+            "a file, or narrow the output.)",
+        )
+
+    async def test_error_output_truncation_states_lengths(self) -> None:
+        """Apply the informative truncation notice to failed commands."""
+        backend = AsyncMock()
+        backend.exec_shell.return_value = ExecResult(
+            1,
+            b"",
+            b"x" * 30001,
+        )
+        tool = Bash(backend=backend)
+
+        chunks = [chunk async for chunk in await tool(command="exit 1")]
+
+        text = chunks[0].content[0].text
+        self.assertEqual(chunks[0].state, "error")
+        self.assertIn("output truncated", text)
+        self.assertIn("characters omitted", text)
+        self.assertIn("re-run the command", text)
+
     @unittest.skipIf(
         sys.platform == "win32",
         "sleep command not available on Windows",

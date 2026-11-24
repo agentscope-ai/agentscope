@@ -231,7 +231,11 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             chunks[0].content[0].text,
-            "x" * 30000 + "\n... (output truncated)",
+            "x" * 30000
+            + "\n... (output truncated: showing the first 30000 of "
+            "30001 characters; 1 characters omitted. To inspect the "
+            "rest, re-run the command with its output redirected to "
+            "a file, or narrow the output.)",
         )
 
     async def test_success_includes_stderr(self) -> None:
@@ -273,11 +277,13 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
             )
         ]
 
-        suffix = "\n... (output truncated)"
         text = chunks[0].content[0].text
         self.assertEqual(chunks[0].state, "error")
-        self.assertTrue(text.endswith(suffix))
-        self.assertEqual(len(text), 30000 + len(suffix))
+        self.assertIn("output truncated", text)
+        # The error result prefixes the command, so the notice states
+        # the full error length rather than the raw stderr length.
+        self.assertIn("characters omitted", text)
+        self.assertIn("re-run the command", text)
 
     async def test_backend_exception_returns_error_chunk(self) -> None:
         """Convert unexpected backend failures into tool errors."""

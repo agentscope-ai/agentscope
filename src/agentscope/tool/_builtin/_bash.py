@@ -20,6 +20,7 @@ from ...permission import (
 from ...message import TextBlock, ToolResultState
 from .._response import ToolChunk
 from ._backend import BackendBase
+from ._output import truncate_output
 
 
 class Bash(ToolBase):
@@ -788,9 +789,10 @@ easier to review tool calls and give permission.
                     output += "\n"
                 output += stderr
 
-            # Truncate if exceeds 30000 characters
-            if len(output) > 30000:
-                output = output[:30000] + "\n... (output truncated)"
+            # Truncate long output, keeping the cut transparent
+            # (original length and omitted characters are stated in
+            # the notice, see agentscope-ai/agentscope#4191)
+            output = truncate_output(output)
 
             # Check exit code
             if not result.ok():
@@ -802,10 +804,7 @@ easier to review tool calls and give permission.
                     error_result += f"\nStderr:\n{stderr}"
 
                 # Truncate error message if needed
-                if len(error_result) > 30000:
-                    error_result = (
-                        error_result[:30000] + "\n... (output truncated)"
-                    )
+                error_result = truncate_output(error_result)
 
                 yield ToolChunk(
                     content=[TextBlock(text=error_result)],

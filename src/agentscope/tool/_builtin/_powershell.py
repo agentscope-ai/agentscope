@@ -6,6 +6,7 @@ import os
 from typing import AsyncGenerator, Any, List
 
 from ._backend import BackendBase, LocalBackend, _normalize_newlines
+from ._output import truncate_output
 from .._base import ToolBase, ToolMiddlewareBase
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
@@ -272,10 +273,7 @@ are easier for the user to review and authorize:
                 error_result += f"\nStdout:\n{stdout}"
             if stderr:
                 error_result += f"\nStderr:\n{stderr}"
-            if len(error_result) > 30000:
-                error_result = (
-                    error_result[:30000] + "\n... (output truncated)"
-                )
+            error_result = truncate_output(error_result)
             yield ToolChunk(
                 content=[TextBlock(text=error_result)],
                 state=ToolResultState.ERROR,
@@ -288,8 +286,7 @@ are easier for the user to review and authorize:
             if output:
                 output += "\n"
             output += stderr
-        if len(output) > 30000:
-            output = output[:30000] + "\n... (output truncated)"
+        output = truncate_output(output)
         yield ToolChunk(
             content=[TextBlock(text=output)],
             state=ToolResultState.RUNNING,
