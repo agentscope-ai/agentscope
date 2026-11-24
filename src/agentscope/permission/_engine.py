@@ -800,6 +800,10 @@ class PermissionEngine:
         Returns:
             `bool`:
                 True if the rule matches, False otherwise
+
+        Raises:
+            `TypeError`:
+                If ``match_rule`` does not return a bool.
         """
         # Empty rule_content matches everything
         if not rule.rule_content:
@@ -808,7 +812,8 @@ class PermissionEngine:
         # Try to use tool's match_rule method if available.
         # ``_execute_async_or_sync_func`` keeps backward compatibility
         # with third-party tools that still override match_rule with a
-        # sync ``def`` (the framework's signature is now ``async def``).
+        # sync ``def`` (the framework's signature is now ``async def``),
+        # and awaits a coroutine returned through a sync wrapper.
         # Restrictions apply to any operation, while allow coverage is
         # aggregated across all operations by _check_allow_rules.
         inputs = (
@@ -817,11 +822,19 @@ class PermissionEngine:
             else [input_data]
         )
         for operation in inputs:
-            if await _execute_async_or_sync_func(
+            matched = await _execute_async_or_sync_func(
                 tool.match_rule,
                 rule.rule_content,
                 operation,
-            ):
+            )
+            # A truthy non-bool (for example a coroutine that was not
+            # awaited) would match every input and fail open.
+            if not isinstance(matched, bool):
+                raise TypeError(
+                    f"{type(tool).__name__}.match_rule() must return bool, "
+                    f"got {type(matched).__name__}",
+                )
+            if matched:
                 return True
         return False
 

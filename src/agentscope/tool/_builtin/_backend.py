@@ -41,6 +41,7 @@ import shlex
 import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from types import ModuleType
 from typing import Any, AsyncIterator
 
@@ -109,6 +110,66 @@ class DirEntry:
 
 
 # ── helpers ────────────────────────────────────────────────────────────
+
+
+# Characters of command output the shell tools return by default.
+DEFAULT_MAX_OUTPUT_CHARS = 30000
+
+
+def _truncate_output(text: str, max_chars: int | None) -> str:
+    """Cut command output to ``max_chars`` characters and say so.
+
+    The notice comes first and gives the original length and how to get the
+    rest, so the agent knows the result is incomplete instead of reading the
+    cut as the whole output. It comes first because a later cut, such as the
+    agent's ``tool_result_limit``, also keeps the head.
+
+    Args:
+        text (`str`):
+            The command output.
+        max_chars (`int | None`):
+            The characters to keep. ``None`` keeps everything.
+
+    Returns:
+        `str`:
+            ``text`` unchanged, or the notice followed by the first
+            ``max_chars`` characters of ``text``.
+    """
+    if max_chars is None or len(text) <= max_chars:
+        return text
+    return (
+        f"[Output truncated: showing the first {max_chars} of {len(text)} "
+        "characters. To see the rest, write the output to a file and read "
+        "the part you need.]\n" + text[:max_chars]
+    )
+
+
+def _format_command_failure(
+    command: str,
+    stdout: str,
+    stderr: str,
+    max_chars: int | None,
+) -> str:
+    """Bound the entire failure message, including the echoed command."""
+    message = f"Command failed: {command}\n"
+    if stdout:
+        message += f"\nStdout:\n{stdout}"
+    if stderr:
+        message += f"\nStderr:\n{stderr}"
+
+    if max_chars is None or len(message) <= max_chars:
+        return message
+
+    hint = ""
+    if stdout or stderr:
+        hint = (
+            " To see the rest of the command output, write it to a file "
+            "and read the part you need."
+        )
+    return (
+        f"[Failure message truncated: showing the first {max_chars} of "
+        f"{len(message)} characters.{hint}]\n" + message[:max_chars]
+    )
 
 
 def _normalize_newlines(text: str) -> str:
@@ -669,11 +730,11 @@ class BackendBase(ABC):
     async def stat_mtime(self, path: str) -> float | None:
         """Return the modification time of ``path``, or ``None``.
 
-        Tries GNU ``stat -c %Y`` first and falls back to BSD
-        ``stat -f %m`` so the same call works across coreutils and
-        BSD/macOS userlands.  The two attempts are combined with ``||``,
-        so this default wraps a ``sh -c`` script; backends without a
-        POSIX shell (e.g. :class:`LocalBackend`) override it.
+        Preserve fractional seconds so file caches notice changes within
+        the same second, and follow symlinks like :func:`os.stat`.
+        Tries GNU-compatible ``stat`` first, then BSD/macOS ``stat``.
+        Both attempts share one ``sh -c`` call; backends without a POSIX
+        shell (e.g. :class:`LocalBackend`) override it.
 
         Args:
             path (`str`):
@@ -686,16 +747,43 @@ class BackendBase(ABC):
         """
         quoted = shlex.quote(path)
         script = (
-            f"stat -c %Y {quoted} 2>/dev/null || "
-            f"stat -f %m {quoted} 2>/dev/null"
+            f"LC_ALL=C TZ=UTC0 stat -L -c 'gnu %y' -- {quoted} 2>/dev/null || "
+            f"LC_ALL=C stat -L -f 'bsd %.9Fm %HT' -- {quoted} 2>/dev/null"
         )
         result = await self.exec_shell(["sh", "-c", script])
         if not result.ok():
             return None
         try:
-            return float(
-                result.stdout.decode("utf-8", errors="replace").strip(),
-            )
+            dialect, value = result.stdout.decode(
+                "utf-8",
+                errors="replace",
+            ).split(maxsplit=1)
+            if dialect == "gnu":
+                # %y works across GNU, BusyBox and uutils, whose %Y
+                # precision and negative-epoch formatting differ.
+                date, time_and_offset = value.strip().split(maxsplit=1)
+                clock, _, offset = time_and_offset.partition(" ")
+                # Older BusyBox omits the offset. We set TZ=UTC0 above.
+                offset = offset or "+0000"
+                whole_clock, nanoseconds = clock.split(".")
+                # datetime only retains microseconds. Parse whole seconds
+                # separately so sub-microsecond changes remain visible.
+                epoch_seconds = datetime.fromisoformat(
+                    f"{date}T{whole_clock}{offset}",
+                ).timestamp()
+            elif dialect == "bsd":
+                timestamp, file_type = value.strip().split(maxsplit=1)
+                # BSD -L falls back to lstat for an unresolvable link.
+                # Its own mtime must not validate the target's cache.
+                if file_type == "Symbolic Link":
+                    return None
+                seconds, nanoseconds = timestamp.split(".")
+                epoch_seconds = int(seconds)
+            else:
+                return None
+            # BSD exposes floor seconds and positive nanoseconds, even
+            # before the epoch: BSD -1.900000000 represents -0.1, not -1.9.
+            return epoch_seconds + int(nanoseconds) / 1_000_000_000
         except ValueError:
             return None
 

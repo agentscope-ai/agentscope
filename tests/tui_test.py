@@ -1100,6 +1100,81 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             )
             await AskUser().check_external_result(result)
 
+    async def test_multiselect_continue_accepts_existing_other_text(
+        self,
+    ) -> None:
+        """A typed answer still counts when revisiting a multiselect."""
+        observed: list[ChatUI.ExternalExecutionSubmitted] = []
+
+        def hook(message: TextualMessage) -> None:
+            if isinstance(message, ChatUI.ExternalExecutionSubmitted):
+                observed.append(message)
+
+        questions = [
+            {
+                "header": "Approach",
+                "question": "Which approach should we use?",
+                "options": [
+                    {"label": "A", "description": "First."},
+                    {"label": "B", "description": "Second."},
+                ],
+                "multi_select": True,
+            },
+            {
+                "header": "Version",
+                "question": "Which version should we install?",
+                "options": [
+                    {"label": "Latest", "description": "Upgrade."},
+                    {"label": "Current", "description": "Keep."},
+                ],
+            },
+        ]
+        tool_call = ToolCallBlock(
+            id="ask",
+            name="AskUser",
+            input=json.dumps({"questions": questions}),
+            state="submitted",
+        )
+        app = _ChatApp(
+            [AssistantMsg(name="agent", id="reply", content=[tool_call])],
+        )
+        async with app.run_test(message_hook=hook) as pilot:
+            ask_user = app.query_one(AskUserUI)
+            await pilot.press("down", "down", "enter")
+            await pilot.pause()
+            await pilot.press(*"hybrid migration", "enter")
+            await pilot.pause()
+            self.assertEqual(ask_user._question_index, 1)
+
+            await pilot.press("left")
+            await pilot.pause()
+            self.assertEqual(ask_user._question_index, 0)
+            await pilot.press("down", "down", "down", "enter")
+            await pilot.pause()
+            self.assertEqual(ask_user._question_index, 1)
+            self.assertListEqual(observed, [])
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            result = observed[0].value.execution_results[0]
+            self.assertEqual(
+                result.metadata["answers"],
+                [
+                    {
+                        "question": "Which approach should we use?",
+                        "selected": [],
+                        "other": "hybrid migration",
+                    },
+                    {
+                        "question": "Which version should we install?",
+                        "selected": ["Latest"],
+                        "other": None,
+                    },
+                ],
+            )
+            await AskUser().check_external_result(result)
+
     async def test_reused_ask_user_id_loads_the_new_reply(self) -> None:
         """AskUser state is scoped by reply as well as tool-call id."""
 

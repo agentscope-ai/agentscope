@@ -18,6 +18,7 @@ from ._channel import (
 from ._chat import (
     ChatRequest,
     ChatTriggerResponse,
+    ClientExternalToolDefinition,
     ChatQueueItem,
     ChatQueueResponse,
     ReorderChatQueueRequest,
@@ -187,6 +188,7 @@ __all__ = [
     "StartCredentialBindingRequest",
     "UpdateChannelRequest",
     # Chat
+    "ClientExternalToolDefinition",
     "ChatRequest",
     "ChatTriggerResponse",
     "ChatQueueItem",

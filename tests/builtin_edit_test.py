@@ -234,11 +234,29 @@ class EditToolTest(IsolatedAsyncioTestCase):
         suggestion_contents = [s.rule_content for s in suggestions]
         self.assertIn("/tmp/project/src/**", suggestion_contents)
 
-        # Test suggestion for file in root
-        suggestions = await self.edit_tool.generate_suggestions(
-            {"file_path": "/test.py"},
-        )
-        self.assertGreater(len(suggestions), 0)
+        # A file with no parent directory must not suggest a
+        # catch-all: ``**`` matches every path in the repository.
+        for file_path in ("/test.py", "result.md"):
+            with self.subTest(file_path=file_path):
+                suggestions = await self.edit_tool.generate_suggestions(
+                    {"file_path": file_path},
+                )
+                self.assertEqual(
+                    [s.rule_content for s in suggestions],
+                    [file_path],
+                )
+                self.assertTrue(
+                    await self.edit_tool.match_rule(
+                        file_path,
+                        {"file_path": file_path},
+                    ),
+                )
+                self.assertFalse(
+                    await self.edit_tool.match_rule(
+                        file_path,
+                        {"file_path": "/repo/main.py"},
+                    ),
+                )
 
     async def test_non_utf8_file_is_not_edited(self) -> None:
         """Test editing a non-UTF-8 file fails and keeps its bytes."""

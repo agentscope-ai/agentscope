@@ -1,6 +1,8 @@
 name: o3
 label: o3
 status: deprecated
+# Release date source: https://developers.openai.com/api/docs/changelog
+release_date: 2025-04-16
 deprecated_at: "2026-12-11T00:00:00"
 
 input_types:

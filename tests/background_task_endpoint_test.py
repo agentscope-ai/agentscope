@@ -21,6 +21,7 @@ from agentscope.app._manager import (
 )
 from agentscope.app._manager._background_task_manager import (
     _MAX_RETAINED_TASKS,
+    _SHUTDOWN_TIMEOUT_SECS,
     BackgroundTask,
     BackgroundTaskRecord,
 )
@@ -506,6 +507,18 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
         ):
             for completed in (False, True):
                 with self.subTest(namespace=namespace, completed=completed):
+                    registration_timeout = asyncio.timeout(None)
+
+                    def controlled_timeout(
+                        delay: float | None,
+                    ) -> asyncio.Timeout:
+                        """Defer the deadline until the write stalls."""
+                        # Each subtest finishes registration before advancing.
+                        # pylint: disable=cell-var-from-loop
+                        if asyncio.current_task() is registration:
+                            return registration_timeout
+                        return asyncio.timeout(delay)
+
                     started = asyncio.Event()
                     cancelled = asyncio.Event()
                     gate = asyncio.Event()
@@ -550,7 +563,11 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
                             "registry_set",
                             side_effect=stall_initial_write,
                         ),
-                        patch(f"{_MANAGER_MODULE}._IO_TIMEOUT_SECS", 0.1),
+                        patch(
+                            f"{_MANAGER_MODULE}.asyncio",
+                            wraps=asyncio,
+                            timeout=controlled_timeout,
+                        ),
                     ):
                         registration = asyncio.create_task(
                             self.owner.register_task(
@@ -569,6 +586,10 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
                             if completed:
                                 gate.set()
                                 await task
+                            # Time out the stalled write, not Redis setup.
+                            registration_timeout.reschedule(
+                                asyncio.get_running_loop().time(),
+                            )
                             done, _ = await asyncio.wait(
                                 {registration},
                                 timeout=0.5,
@@ -1123,9 +1144,55 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
                 self.assertEqual(peak, 2)
                 self.assertGreaterEqual(cancellations, 2)
                 self.assertEqual(seen, set(task_ids))
-                await asyncio.wait_for(self.owner.__aexit__(), timeout=1)
+                # Allow the shutdown budget plus CI scheduling overhead.
+                await asyncio.wait_for(
+                    self.owner.__aexit__(),
+                    timeout=_SHUTDOWN_TIMEOUT_SECS * 2,
+                )
             self.assertEqual(active, set())
             self.assertTrue(self.owner._renewal_task.done())
+
+    async def test_renewal_stops_after_io_swallows_cancellation(self) -> None:
+        """A cancelled worker must not start another queued record."""
+        for _ in range(2):
+            await self._register(self.owner)
+        task_ids = list(self.owner.tasks)
+        original_get = self.bus.registry_get
+        reading = asyncio.Event()
+        seen: list[str] = []
+
+        async def finish_cancelled_read(
+            namespace: str,
+            field: str,
+        ) -> str | None:
+            value = await original_get(namespace, field)
+            seen.append(field)
+            if field == task_ids[0]:
+                reading.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    # Model a response winning a Python 3.11 wait_for race.
+                    return value
+            return value
+
+        with (
+            patch(f"{_MANAGER_MODULE}._RENEWAL_CONCURRENCY", 1),
+            patch.object(
+                self.bus,
+                "registry_get",
+                side_effect=finish_cancelled_read,
+            ),
+        ):
+            scheduler = asyncio.create_task(self._renew_once())
+            try:
+                await asyncio.wait_for(reading.wait(), timeout=2)
+                scheduler.cancel()
+                await asyncio.wait_for(scheduler, timeout=2)
+                self.assertEqual(seen, task_ids[:1])
+            finally:
+                scheduler.cancel()
+                await asyncio.gather(scheduler, return_exceptions=True)
 
     async def test_registration_during_round_timeout_keeps_one_scheduler(
         self,

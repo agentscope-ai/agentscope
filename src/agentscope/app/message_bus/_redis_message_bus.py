@@ -28,6 +28,47 @@ return entries
 """
 
 
+# Validate every target before deleting, preserving concurrent appends.
+_QUEUE_REMOVE_IF_LUA = """
+local matches = cjson.decode(ARGV[1])
+local entries = redis.call('XRANGE', KEYS[1], '-', '+')
+local payloads = {}
+for index, entry in ipairs(entries) do
+  for field = 1, #entry[2], 2 do
+    if entry[2][field] == 'payload' then
+      payloads[index] = cjson.decode(entry[2][field + 1])
+    end
+  end
+end
+local selected = {}
+local used = {}
+for _, expected in ipairs(matches) do
+  local target = false
+  for index, entry in ipairs(entries) do
+    local payload = payloads[index]
+    local matches_entry = payload ~= nil
+    for field, value in pairs(expected) do
+      if not payload or payload[field] ~= value then
+        matches_entry = false
+        break
+      end
+    end
+    if matches_entry then
+      if target or used[entry[1]] then return 0 end
+      target = entry[1]
+    end
+  end
+  if not target then return 0 end
+  table.insert(selected, target)
+  used[target] = true
+end
+for _, entry_id in ipairs(selected) do
+  redis.call('XDEL', KEYS[1], entry_id)
+end
+return 1
+"""
+
+
 # Compare-and-set on one hash field, so a caller can write back a value
 # it decided on earlier without holding a lock across the think time.
 _REGISTRY_SET_IF_LUA = """
@@ -372,6 +413,22 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 )
             results = await pipe.execute()
         return [str(entry_id) for entry_id in results[1:]]
+
+    async def queue_remove_if(
+        self,
+        key: str,
+        matches: list[dict[str, str]],
+    ) -> bool:
+        """Check current payload fields and delete targets in one script."""
+        if not matches:
+            return True
+        removed = await self._client.eval(
+            _QUEUE_REMOVE_IF_LUA,
+            1,
+            key,
+            json.dumps(matches, ensure_ascii=False),
+        )
+        return bool(removed)
 
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key``.

@@ -459,6 +459,7 @@ class RealtimeAgent:
         """Surface a crashed downlink instead of a silently dead session."""
         if task.cancelled() or task.exception() is None:
             return
+        self._downlink = None
         self._connected = False
         self._connected_event.clear()
         logger.error(
@@ -958,22 +959,32 @@ class RealtimeAgent:
                             request_response=False,
                         )
 
-            case me.ResponseDoneEvent():
+            case (me.ResponseDoneEvent() as done) | me.ModelErrorEvent(
+                response=me.ResponseDoneEvent() as done,
+            ):
                 async with self._barge_lock:
                     reply = self._reply
-                    if reply is None or reply.item_id != event.item_id:
+                    if reply is None or reply.item_id != done.item_id:
                         return
-                    self._metrics.input_tokens = event.input_tokens
-                    self._metrics.output_tokens = event.output_tokens
+                    self._metrics.input_tokens = done.input_tokens
+                    self._metrics.output_tokens = done.output_tokens
                     message = self._find_reply_message(self._reply_id)
                     if message is not None:
                         message.append_usage(
                             Usage(
-                                input_tokens=event.input_tokens,
-                                output_tokens=event.output_tokens,
+                                input_tokens=done.input_tokens,
+                                output_tokens=done.output_tokens,
                             ),
                         )
-                    if self._pending_tools and self.toolkit is not None:
+                    if isinstance(event, me.ModelErrorEvent):
+                        logger.error(
+                            "RealtimeAgent: response %s failed (%s): %s",
+                            done.item_id,
+                            event.code,
+                            event.message,
+                        )
+                        self._finish_reply(ReplyFinishedReason.ERROR)
+                    elif self._pending_tools and self.toolkit is not None:
                         # The reply goes on: tools run, then the next
                         # response answers with their results.
                         reply_id = reply.reply_id

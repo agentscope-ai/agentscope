@@ -4,12 +4,11 @@ import base64
 import fnmatch
 from abc import ABC
 from typing import Any
-from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import FormatterBase, file_url_to_path
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..message import (
@@ -358,7 +357,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
             url = str(source.url)
             if url.startswith("file://"):
                 with open(
-                    url2pathname(url.removeprefix("file://")),
+                    file_url_to_path(url),
                     "rb",
                 ) as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
