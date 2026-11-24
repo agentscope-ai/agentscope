@@ -112,6 +112,66 @@ class DirEntry:
 # ── helpers ────────────────────────────────────────────────────────────
 
 
+# Characters of command output the shell tools return by default.
+DEFAULT_MAX_OUTPUT_CHARS = 30000
+
+
+def _truncate_output(text: str, max_chars: int | None) -> str:
+    """Cut command output to ``max_chars`` characters and say so.
+
+    The notice comes first and gives the original length and how to get the
+    rest, so the agent knows the result is incomplete instead of reading the
+    cut as the whole output. It comes first because a later cut, such as the
+    agent's ``tool_result_limit``, also keeps the head.
+
+    Args:
+        text (`str`):
+            The command output.
+        max_chars (`int | None`):
+            The characters to keep. ``None`` keeps everything.
+
+    Returns:
+        `str`:
+            ``text`` unchanged, or the notice followed by the first
+            ``max_chars`` characters of ``text``.
+    """
+    if max_chars is None or len(text) <= max_chars:
+        return text
+    return (
+        f"[Output truncated: showing the first {max_chars} of {len(text)} "
+        "characters. To see the rest, write the output to a file and read "
+        "the part you need.]\n" + text[:max_chars]
+    )
+
+
+def _format_command_failure(
+    command: str,
+    stdout: str,
+    stderr: str,
+    max_chars: int | None,
+) -> str:
+    """Bound the entire failure message, including the echoed command."""
+    message = f"Command failed: {command}\n"
+    if stdout:
+        message += f"\nStdout:\n{stdout}"
+    if stderr:
+        message += f"\nStderr:\n{stderr}"
+
+    if max_chars is None or len(message) <= max_chars:
+        return message
+
+    hint = ""
+    if stdout or stderr:
+        hint = (
+            " To see the rest of the command output, write it to a file "
+            "and read the part you need."
+        )
+    return (
+        f"[Failure message truncated: showing the first {max_chars} of "
+        f"{len(message)} characters.{hint}]\n" + message[:max_chars]
+    )
+
+
 def _normalize_newlines(text: str) -> str:
     """Normalize Windows/old-Mac line endings to ``\\n``.
 
