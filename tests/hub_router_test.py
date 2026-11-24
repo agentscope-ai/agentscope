@@ -723,6 +723,51 @@ class HubRouterTest(_WorkspaceRouterTestCase):
         ).json()
         self.assertEqual([m["name"] for m in listed], ["echo"])
 
+    def test_library_add_checks_current_stdio_allowlist(self) -> None:
+        """Reject a stored stdio entry and continue with the HTTP entry."""
+        stdio = self._install_mcp("gitlab", values={"api_key": "test"})
+        http = self._install_mcp("echo")
+        self._client.app.state.allowed_stdio_commands = frozenset()
+
+        with patch.object(LocalWorkspace, "add_mcp") as add_mcp:
+            response = self._client.post(
+                "/workspace/mcp/from-library",
+                params=self._scope,
+                json={"mcp_ids": [stdio.json()["id"], http.json()["id"]]},
+                headers=HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            response.json(),
+            {
+                "added": ["echo"],
+                "failed": {
+                    "gitlab": "Stdio MCP command 'uvx' is not in "
+                    "this service's allowed stdio commands.",
+                },
+            },
+        )
+        add_mcp.assert_awaited_once()
+        self.assertEqual(add_mcp.await_args.args[0].name, "echo")
+
+    def test_library_add_permits_listed_stdio_command(self) -> None:
+        """Add a stored stdio client whose command is still permitted."""
+        stdio = self._install_mcp("gitlab", values={"api_key": "test"})
+        self._client.app.state.allowed_stdio_commands = frozenset({"uvx"})
+
+        with patch.object(MCPClient, "connect") as connect:
+            response = self._client.post(
+                "/workspace/mcp/from-library",
+                params=self._scope,
+                json={"mcp_ids": [stdio.json()["id"]]},
+                headers=HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json(), {"added": ["gitlab"], "failed": {}})
+        connect.assert_awaited_once()
+
     def test_add_from_library_skips_what_is_already_there(self) -> None:
         """Adding twice is a no-op, not a duplicate or an error."""
         mcp_id = self._install_mcp("echo").json()["id"]

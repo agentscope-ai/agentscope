@@ -46,48 +46,26 @@ workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
 
 
 # ---------------------------------------------------------------------------
-# Stdio MCP command allowlist
-# ---------------------------------------------------------------------------
-
-
-def check_stdio_command_allowed(
-    mcp_config: object,
-    allowed: frozenset[str] | None,
-) -> str | None:
-    """Return a rejection reason for a disallowed stdio command, else ``None``.
-
-    A stdio MCP config makes the server spawn ``command`` as a local process.
-    The allowlist lives on ``app.state.allowed_stdio_commands`` (introduced by
-    the ``/workspace/mcp`` gate). Both routes that can *start* a caller-specified
-    stdio server MUST consult it — checking only ``POST /workspace/mcp`` leaves
-    ``POST /workspace/mcp/from-library`` able to replay a previously stored
-    disallowed command.
-
-    Args:
-        mcp_config (`object`): An ``MCPClient.mcp_config``; inspected
-            structurally so this helper stays importable without the MCP
-            package's full dependency set.
-        allowed (`frozenset[str] | None`): Permitted commands. ``None`` means
-            unrestricted (the allowlist was not configured).
-
-    Returns:
-        `str | None`: A human-readable reason when the command is not allowed,
-        or ``None`` when the config may proceed.
-    """
-    if allowed is None:
-        return None
-    config_type = getattr(mcp_config, "type", None)
-    if config_type != "stdio_mcp":
-        return None
-    command = getattr(mcp_config, "command", None)
-    if command in allowed:
-        return None
-    return f"Stdio MCP command {command!r} is not in this service's allowed stdio commands."
-
-
-# ---------------------------------------------------------------------------
 # MCP endpoints
 # ---------------------------------------------------------------------------
+
+
+def _stdio_rejection_reason(
+    client: MCPClient,
+    allowed: frozenset[str] | None,
+) -> str | None:
+    """Return the reason a stdio client cannot be added to the workspace."""
+    config = client.mcp_config
+    if (
+        allowed is not None
+        and config.type == "stdio_mcp"
+        and config.command not in allowed
+    ):
+        return (
+            f"Stdio MCP command {config.command!r} is not in "
+            "this service's allowed stdio commands."
+        )
+    return None
 
 
 @workspace_router.get("/mcp")
@@ -162,17 +140,11 @@ async def add_mcp(
         `HTTPException`: 403 if a stdio ``command`` is not in the
             configured allowlist, or 409 if the name is already taken.
     """
-    if (
-        allowed is not None
-        and mcp.mcp_config.type == "stdio_mcp"
-        and mcp.mcp_config.command not in allowed
-    ):
+    rejection = _stdio_rejection_reason(mcp, allowed)
+    if rejection is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                f"Stdio MCP command {mcp.mcp_config.command!r} is not in "
-                "this service's allowed stdio commands."
-            ),
+            detail=rejection,
         )
 
     workspace = await workspace_service.resolve(
@@ -215,11 +187,9 @@ async def add_mcps_from_library(
     The rendered config never leaves the server, so the client sends ids
     rather than configs — it has no way to reconstruct one.
 
-    Adding is per-MCP: one that fails to connect does not cancel the
-    rest, and the response says which ones landed. A library entry whose
-    stdio command is no longer permitted is reported in ``failed`` and
-    never started — the allowlist must hold for every route that spawns a
-    process, not only ``POST /workspace/mcp``.
+    Entries already in the workspace are skipped. For new entries, a
+    disallowed stdio command or a connection failure is reported in
+    ``failed`` and the remaining entries are processed.
     """
     workspace = await workspace_service.resolve(
         user_id,
@@ -244,13 +214,7 @@ async def add_mcps_from_library(
         if record.client.name in present:
             # Already there: not an error, just nothing to do.
             continue
-        # A stdio command can be stored in the library while unrestricted
-        # (or before the allowlist was configured). Re-check it on the way
-        # out — this route starts a process just like POST /workspace/mcp.
-        rejection = check_stdio_command_allowed(
-            record.client.mcp_config,
-            allowed,
-        )
+        rejection = _stdio_rejection_reason(record.client, allowed)
         if rejection is not None:
             failed[record.client.name] = rejection
             continue
