@@ -15,6 +15,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
+from agentscope.message import DataBlock
 from agentscope.rag import (
     ImageParser,
     PDFParser,
@@ -3865,6 +3866,77 @@ class WordParserParagraphTest(IsolatedAsyncioTestCase):
             [section.model_dump() for section in sections],
             _expected_word_sections("ChoiceFallback\nAfter"),
         )
+
+
+class WordParserPictureRevisionTest(IsolatedAsyncioTestCase):
+    """Picture visibility when Word tracks changes."""
+
+    async def test_removed_drawing_does_not_split_body_text(self) -> None:
+        """A tracked-deleted inline picture is absent from sections."""
+        from docx import Document
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        doc = Document()
+        run = doc.add_paragraph("Before").add_run()
+        run.add_picture(io.BytesIO(_PNG_PIXEL))
+        deleted = OxmlElement("w:del")
+        deleted.set(qn("w:id"), "1")
+        deleted.set(qn("w:author"), "Reviewer")
+        run_element = run._element  # pylint: disable=protected-access
+        run_element.addprevious(deleted)
+        deleted.append(run_element)
+        doc.add_paragraph("After")
+
+        sections = await WordParser().parse(_document_bytes(doc), "demo.docx")
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_sections("Before\nAfter"),
+        )
+
+    async def test_table_pictures_respect_revision_ancestry(self) -> None:
+        """Keep only the move-destination picture in a table paragraph."""
+        from docx import Document
+        from docx.oxml import parse_xml
+
+        doc = Document()
+        cell = doc.add_table(rows=1, cols=1).cell(0, 0)
+        rel_id, _ = doc.part.get_or_add_image(io.BytesIO(_GIF_PIXEL))
+        paragraph = cell.paragraphs[0]
+        element = paragraph._p  # pylint: disable=protected-access
+        moved_from = parse_xml(
+            f'<w:moveFrom {_DOCX_PICTURE_NS} w:id="1" w:author="Reviewer"/>',
+        )
+        element.append(moved_from)
+        source_run = paragraph.add_run()
+        source_run.add_picture(io.BytesIO(_GIF_PIXEL))
+        moved_from.append(source_run._r)  # pylint: disable=protected-access
+        element.append(
+            parse_xml(
+                f'<w:del {_DOCX_PICTURE_NS} w:id="2" w:author="Reviewer">'
+                "<w:r><w:pict><v:shape>"
+                f'<v:imagedata r:id="{rel_id}"/>'
+                "</v:shape></w:pict></w:r></w:del>",
+            ),
+        )
+        run = paragraph.add_run()
+        run.add_picture(io.BytesIO(_PNG_PIXEL))
+        moved_to = parse_xml(
+            f'<w:moveTo {_DOCX_PICTURE_NS} w:id="3" w:author="Reviewer"/>',
+        )
+        run_element = run._element  # pylint: disable=protected-access
+        run_element.addprevious(moved_to)
+        moved_to.append(run_element)
+
+        sections = await WordParser().parse(_document_bytes(doc), "demo.docx")
+        pictures = [
+            section.content.source.data
+            for section in sections
+            if isinstance(section.content, DataBlock)
+        ]
+
+        self.assertEqual(pictures, [_PNG_PIXEL_B64])
 
 
 class WordParserTextBoxPictureTest(IsolatedAsyncioTestCase):
