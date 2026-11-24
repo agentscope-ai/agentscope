@@ -4010,10 +4010,11 @@ class Agent:
                 delta=tool_call.input,
             )
 
-        # Handle the tool calls that exist in the previous chunk but not in the
-        # current chunk
-        finished_ids = set(block_ids["tools"]) - set(
-            _.id for _ in tool_call_blocks
+        # Audio-only deltas can arrive between tool argument deltas.
+        finished_ids = (
+            set()
+            if data_blocks and len(data_blocks) == len(chunk.content)
+            else set(block_ids["tools"]) - set(_.id for _ in tool_call_blocks)
         )
         for finished_id in finished_ids:
             yield ToolCallEndEvent(

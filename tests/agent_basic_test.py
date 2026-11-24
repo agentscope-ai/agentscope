@@ -9,6 +9,11 @@ from utils import AnyString, MockModel
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
 from agentscope.event import DataBlockStartEvent
 from agentscope.model import ChatResponse, ChatUsage, FinishedReason
+from agentscope.event import (
+    DataBlockDeltaEvent,
+    ToolCallEndEvent,
+    ToolCallStartEvent,
+)
 from agentscope.tool import (
     ToolBase,
     Toolkit,
@@ -1552,6 +1557,56 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
         self.assertEqual(self.agent.state.cur_iter, 2)
+
+    async def test_tool_call_boundaries_with_audio_chunks(self) -> None:
+        """Keep A open across audio and close it when B arrives with audio."""
+        tool = MockSequentialTool()
+        self.agent.toolkit = Toolkit(tools=[tool])
+        first = ToolCallBlock(id="a", name=tool.name, input='{"input": "abc"}')
+        first_part = first.model_copy(update={"input": '{"input": '})
+        last_part = first.model_copy(update={"input": '"abc"}'})
+        second = ToolCallBlock(id="b", name=tool.name, input='{"input": "b"}')
+        audio = DataBlock(
+            id="audio",
+            source=Base64Source(data="AAAA", media_type="audio/pcm"),
+        )
+        done = TextBlock(text="done")
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(content=[first_part], is_last=False),
+                    ChatResponse(content=[audio], is_last=False),
+                    ChatResponse(content=[last_part], is_last=False),
+                    ChatResponse(content=[second, audio], is_last=False),
+                    ChatResponse(content=[first, audio, second], is_last=True),
+                ],
+                [
+                    ChatResponse(content=[done], is_last=False),
+                    ChatResponse(content=[done], is_last=True),
+                ],
+            ],
+        )
+
+        boundaries = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            if isinstance(event, (ToolCallStartEvent, ToolCallEndEvent)):
+                boundaries.append((event.type.value, event.tool_call_id))
+            elif isinstance(event, DataBlockDeltaEvent):
+                boundaries.append((event.type.value, event.block_id))
+
+        self.assertListEqual(
+            boundaries,
+            [
+                ("TOOL_CALL_START", "a"),
+                ("DATA_BLOCK_DELTA", "audio"),
+                ("TOOL_CALL_START", "b"),
+                ("TOOL_CALL_END", "a"),
+                ("DATA_BLOCK_DELTA", "audio"),
+                ("TOOL_CALL_END", "b"),
+            ],
+        )
 
     async def test_streaming_concurrent_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.
