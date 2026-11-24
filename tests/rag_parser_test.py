@@ -3429,6 +3429,40 @@ class WordParserInlineSeparatorTest(IsolatedAsyncioTestCase):
                     _expected_word_sections(expected),
                 )
 
+    async def test_table_deleted_breaks_are_omitted(self) -> None:
+        """Deleted breaks in a cell are omitted, like in paragraphs."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        for separator in ("br", "cr"):
+            with self.subTest(separator=separator):
+                document = DocxDocument()
+                table = document.add_table(rows=1, cols=1)
+                paragraph = parse_xml(
+                    f'<w:p {nsdecls("w")}>'
+                    "<w:r><w:t>kept</w:t></w:r>"
+                    '<w:del w:id="1" w:author="test">'
+                    f"<w:r><w:{separator}/></w:r></w:del>"
+                    "<w:r><w:t>after</w:t></w:r>"
+                    "</w:p>",
+                )
+                cell = table.cell(0, 0)
+                # pylint: disable-next=protected-access
+                cell._tc.replace(cell.paragraphs[0]._p, paragraph)
+                buffer = io.BytesIO()
+                document.save(buffer)
+
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format="markdown",
+                ).parse(buffer.getvalue(), "demo.docx")
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections("| keptafter |\n| --- |\n"),
+                )
+
     async def test_table_deleted_text_is_omitted(self) -> None:
         """Tracked deletions in a cell are omitted, like in paragraphs."""
         from docx import Document as DocxDocument

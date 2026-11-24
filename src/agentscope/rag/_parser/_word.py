@@ -267,7 +267,11 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
                         ):
                             text_parts.append("-")
                     elif element.tag in break_tags:
-                        text_parts.append("\n")
+                        if not any(
+                            ancestor.tag == deleted_tag
+                            for ancestor in element.iterancestors()
+                        ):
+                            text_parts.append("\n")
                 para_text = "".join(text_parts)
                 if para_text:
                     paragraphs.append(para_text)
