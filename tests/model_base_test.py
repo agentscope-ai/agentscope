@@ -1459,6 +1459,23 @@ class _ScalarCityReport(_CityReport):
         return self.city
 
 
+class _OutputAliasReport(_CityReport):
+    """Use different city keys for input and output."""
+
+    city: str = Field(serialization_alias="cityName")
+
+
+class _ExcludedFieldReport(_CityReport):
+    """Require an input field that serialization omits."""
+
+    ref: str = Field(exclude=True)
+
+    @field_validator("ref")
+    @classmethod
+    def _normalize_ref(cls, value: str) -> str:
+        return value.strip()
+
+
 class _ToolCallStructuredModel(MockModel):
     """Run the real structured-output attempt over a canned tool call."""
 
@@ -1485,7 +1502,8 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
 
     async def _generate_report(
         self,
-        schema: type[_CityReport],
+        schema: type[BaseModel],
+        arguments: str = '{"cityName": "  paris "}',
     ) -> StructuredResponse:
         model = _ToolCallStructuredModel()
         model.set_responses(
@@ -1495,7 +1513,7 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
                         ToolCallBlock(
                             id="call_1",
                             name="generate_structured_output",
-                            input='{"cityName": "  paris "}',
+                            input=arguments,
                         ),
                     ],
                     is_last=True,
@@ -1517,6 +1535,59 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
         """Preserve the tool argument dict when serialization is scalar."""
         result = await self._generate_report(_ScalarCityReport)
         self.assertDictEqual(result.content, {"cityName": "  paris "})
+
+    async def test_serialization_alias_keeps_input_key(self) -> None:
+        """Return the key advertised to the model alongside defaults."""
+        result = await self._generate_report(
+            _OutputAliasReport,
+            '{"city": "  paris "}',
+        )
+        self.assertDictEqual(result.content, {"city": "Paris", "tags": []})
+        self.assertEqual(
+            _OutputAliasReport.model_validate(result.content).city,
+            "Paris",
+        )
+
+    async def test_required_excluded_field_keeps_input_value(self) -> None:
+        """Preserve an excluded argument while normalizing other fields."""
+        result = await self._generate_report(
+            _ExcludedFieldReport,
+            '{"cityName": "  paris ", "ref": " r1 "}',
+        )
+        self.assertDictEqual(
+            result.content,
+            {"cityName": "Paris", "tags": [], "ref": " r1 "},
+        )
+        self.assertEqual(
+            _ExcludedFieldReport.model_validate(result.content).ref,
+            "r1",
+        )
+
+    async def test_nested_input_keys(self) -> None:
+        """Keep input keys inside a list and an excluded nested field."""
+
+        class Reports(BaseModel):
+            """Group reports with different serialization shapes."""
+
+            cities: list[_OutputAliasReport]
+            primary: _ExcludedFieldReport
+
+        result = await self._generate_report(
+            Reports,
+            '{"cities":[{"city":" paris "}],'
+            '"primary":{"cityName":" lyon ","ref":" r1 "}}',
+        )
+        self.assertDictEqual(
+            result.content,
+            {
+                "cities": [{"city": "Paris", "tags": []}],
+                "primary": {"cityName": "Lyon", "tags": [], "ref": " r1 "},
+            },
+        )
+        self.assertEqual(
+            Reports.model_validate(result.content).primary.ref,
+            "r1",
+        )
 
 
 class _TrackedCleanupModel(MockModel):

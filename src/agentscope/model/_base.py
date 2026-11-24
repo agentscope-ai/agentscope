@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Type, Any, AsyncGenerator
 
 import jsonschema
-from pydantic import BaseModel, ValidationError as PydanticValidationError
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    RootModel,
+    ValidationError as PydanticValidationError,
+)
 
 from ._model_response import StructuredResponse, ChatResponse, FinishedReason
 from ._model_card import ModelCard
@@ -36,6 +41,79 @@ from ..tool import ToolChoice
 
 _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
+
+
+_MISSING = object()
+
+
+def _restore_input_fields(value: Any, dumped: Any, original: Any) -> Any:
+    """Use validation aliases and restore required fields omitted on dump."""
+    while isinstance(value, RootModel):
+        value = value.root
+    if isinstance(value, BaseModel):
+        if not isinstance(dumped, dict):
+            return original
+        inputs = original if isinstance(original, dict) else {}
+        remaining = dumped.copy()
+        result = {}
+        for name, field in type(value).model_fields.items():
+            source = field.serialization_alias
+            source = name if source is None else source
+            key = field.validation_alias
+            key = name if key is None else key
+            if isinstance(key, AliasChoices):
+                key = next(
+                    (
+                        k
+                        for k in key.choices
+                        if isinstance(k, str) and k in inputs
+                    ),
+                    key.choices[0],
+                )
+            if not isinstance(key, str):
+                # A path alias can consume part of a nested argument.
+                return original
+            if value.model_config.get("validate_by_alias") is False:
+                key = name
+            raw = inputs.get(key, inputs.get(name, _MISSING))
+            if source in dumped:
+                if source not in remaining:
+                    # A shared serialization alias loses field identity.
+                    return original
+                item = _restore_input_fields(
+                    getattr(value, name, None),
+                    remaining.pop(source),
+                    raw,
+                )
+            elif field.is_required():
+                item = raw
+            else:
+                continue
+            if item is not _MISSING:
+                result[key] = item
+            elif field.is_required():
+                return original
+        return remaining | result
+    if isinstance(value, dict) and isinstance(dumped, dict):
+        inputs = original if isinstance(original, dict) else {}
+        nested = {
+            k: _restore_input_fields(value.get(k), v, inputs.get(k, _MISSING))
+            for k, v in dumped.items()
+        }
+        if any(v is _MISSING for v in nested.values()):
+            return original
+        return nested
+    if isinstance(value, (list, tuple)) and isinstance(dumped, list):
+        if len(value) != len(dumped):
+            return original
+        # A validator can reorder items. Recover the original array if
+        # restoring its fields would require guessing their source indices.
+        items = [
+            _restore_input_fields(item, val, _MISSING)
+            for item, val in zip(value, dumped)
+        ]
+        return original if any(v is _MISSING for v in items) else items
+    return dumped
 
 
 class ChatModelBase:
@@ -796,7 +874,11 @@ class ChatModelBase:
                 content = validated.model_dump(mode="json", by_alias=True)
                 # A scalar serializer cannot supply the response dictionary.
                 if isinstance(content, dict):
-                    structured_output = content
+                    structured_output = _restore_input_fields(
+                        validated,
+                        content,
+                        structured_output,
+                    )
 
             else:
                 raise ValueError(
