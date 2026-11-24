@@ -242,7 +242,14 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
                         for ancestor in element.iterancestors()
                     ):
                         continue
-                    if element.tag == text_tag and element.text:
+                    if (
+                        element.tag == text_tag
+                        and element.text
+                        and not any(
+                            ancestor.tag == deleted_tag
+                            for ancestor in element.iterancestors()
+                        )
+                    ):
                         text_parts.append(element.text)
                     elif (
                         element.tag == tab_tag
