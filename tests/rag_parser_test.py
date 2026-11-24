@@ -2729,42 +2729,44 @@ class WordParserTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(sections), 1)
         self.assertEqual(sections[0].content.text, "Paragraph one.")
 
-    async def test_fully_deleted_paragraph_is_still_a_blank_line(self) -> None:
-        """A paragraph whose only text was tracked-deleted stays blank."""
+    async def test_deleted_text_with_and_without_paragraph_mark(self) -> None:
+        """A blank line survives only when its paragraph mark survives."""
         from docx import Document as DocxDocument
         from docx.oxml import parse_xml
         from docx.oxml.ns import nsdecls
 
         doc = DocxDocument()
         doc.add_paragraph("first")
-        deleted_only = parse_xml(
-            f'<w:p {nsdecls("w")}>'
-            '<w:del w:id="1" w:author="test">'
-            "<w:r><w:delText>gone</w:delText></w:r></w:del>"
-            "</w:p>",
+        paragraph = doc.add_paragraph()
+        paragraph._p.append(
+            parse_xml(
+                f'<w:del {nsdecls("w")} w:id="1" w:author="test">'
+                "<w:r><w:delText>gone</w:delText></w:r></w:del>",
+            ),
         )
-        # Insert before the section properties: a raw body.append would
-        # land after <w:sectPr> and read as a trailing paragraph, whose
-        # blank line is intentionally dropped.
-        from docx.oxml.ns import qn
-
-        # pylint: disable-next=protected-access
-        body = doc.element.body
-        sect_pr = body.find(qn("w:sectPr"))
-        if sect_pr is not None:
-            sect_pr.addprevious(deleted_only)
-        else:
-            body.append(deleted_only)
         doc.add_paragraph("third")
-        buffer = io.BytesIO()
-        doc.save(buffer)
-
-        sections = await WordParser(include_image=False).parse(
-            buffer.getvalue(),
-            "demo.docx",
-        )
-
-        self.assertEqual(sections[0].content.text, "first\n\nthird")
+        for mark_deleted, expected in (
+            (False, "first\n\nthird"),
+            (True, "first\nthird"),
+        ):
+            with self.subTest(mark_deleted=mark_deleted):
+                if mark_deleted:
+                    paragraph._p.get_or_add_pPr().append(
+                        parse_xml(
+                            f'<w:rPr {nsdecls("w")}>'
+                            '<w:del w:id="2" w:author="test"/></w:rPr>',
+                        ),
+                    )
+                buffer = io.BytesIO()
+                doc.save(buffer)
+                sections = await WordParser(include_image=False).parse(
+                    buffer.getvalue(),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [s.content.text for s in sections],
+                    [expected],
+                )
 
     async def test_table_merges_by_default(self) -> None:
         """``separate_table=False`` merges the table into surrounding

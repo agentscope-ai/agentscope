@@ -169,6 +169,9 @@ def _is_blank_paragraph(para: DocxParagraph) -> bool:
     from docx.oxml.ns import qn
 
     root = para._element
+    # A deleted paragraph mark joins this paragraph to the next one.
+    if root.xpath("./w:pPr/w:rPr/w:del"):
+        return False
     for tag in ("w:drawing", "w:pict", "w:object"):
         if root.findall(".//" + qn(tag)):
             return False
