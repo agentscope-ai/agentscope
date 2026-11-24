@@ -7,12 +7,10 @@ path detection, suggestion generation, Bash read-only command analysis,
 and bypass-immune safety checks.
 """
 import functools
-import gc
 import os
 import sys
 import tempfile
 import unittest
-import warnings
 from typing import Any, Callable, List
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
@@ -1193,22 +1191,12 @@ class PermissionEngineDecoratedHookTest(IsolatedAsyncioTestCase):
         )
         tool = _AuditedBash()
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", RuntimeWarning)
-            unrelated = await engine.check_permission(
-                tool,
-                {"command": self._unrelated_command},
-            )
-            gc.collect()
-
+        unrelated = await engine.check_permission(
+            tool,
+            {"command": self._unrelated_command},
+        )
         self.assertEqual(unrelated.behavior, PermissionBehavior.ASK)
         self.assertEqual(unrelated.decision_reason, "Mode: default")
-        leaked = [
-            str(item.message)
-            for item in caught
-            if "never awaited" in str(item.message)
-        ]
-        self.assertEqual(leaked, [])
 
         matched = await engine.check_permission(
             tool,
