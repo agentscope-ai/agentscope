@@ -1172,7 +1172,10 @@ class AsyncSQLAlchemyStorage(StorageBase):
             stmt = stmt.where(SOPRunRow.sop_id == sop_id)
         if phase is not None:
             stmt = stmt.where(SOPRunRow.phase == phase.value)
-        stmt = stmt.order_by(SOPRunRow.created_at.desc())
+        stmt = stmt.order_by(
+            SOPRunRow.created_at.desc(),
+            SOPRunRow.id.desc(),
+        )
 
         async with self._session() as sess:
             rows = (await sess.execute(stmt)).scalars().all()
@@ -1323,7 +1326,10 @@ class AsyncSQLAlchemyStorage(StorageBase):
                             SessionRow.user_id == user_id,
                             SessionRow.agent_id == agent_id,
                         )
-                        .order_by(SessionRow.created_at.desc()),
+                        .order_by(
+                            SessionRow.created_at.desc(),
+                            SessionRow.id.desc(),
+                        ),
                     )
                 )
                 .scalars()
@@ -1384,7 +1390,10 @@ class AsyncSQLAlchemyStorage(StorageBase):
                             SessionRow.user_id == user_id,
                             SessionRow.source_schedule_id == schedule_id,
                         )
-                        .order_by(SessionRow.created_at.desc()),
+                        .order_by(
+                            SessionRow.created_at.desc(),
+                            SessionRow.id.desc(),
+                        ),
                     )
                 )
                 .scalars()
@@ -1424,7 +1433,10 @@ class AsyncSQLAlchemyStorage(StorageBase):
                                 == channel_id,
                             ),
                         )
-                        .order_by(SessionRow.created_at.desc()),
+                        .order_by(
+                            SessionRow.created_at.desc(),
+                            SessionRow.id.desc(),
+                        ),
                     )
                 )
                 .scalars()
