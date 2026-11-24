@@ -8,7 +8,13 @@ import struct
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from pydantic import BaseModel, Field, field_validator, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+)
 from utils import AnyString, MockModel
 
 from agentscope.message import (
@@ -1674,6 +1680,38 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
         self.assertDictEqual(
             result.content,
             {**arguments, "primary": {"city": "Rome", "tags": []}},
+        )
+        Report.model_validate(result.content)
+
+    async def test_model_sets_keep_input_arrays(self) -> None:
+        """Preserve input keys and order for direct and nested model sets."""
+
+        class City(BaseModel):
+            """Use a different name for serialization."""
+
+            model_config = ConfigDict(frozen=True)
+            name: str = Field(serialization_alias="cityName")
+
+        class Report(BaseModel):
+            """Include unordered model containers and a scalar set."""
+
+            cities: set[City]
+            stops: frozenset[City]
+            batches: list[set[City]]
+            regions: dict[str, frozenset[City]]
+            labels: frozenset[str] = frozenset({"local"})
+
+        cities = [{"name": "Rome"}, {"name": "Paris"}]
+        arguments = {
+            "cities": cities,
+            "stops": cities[::-1],
+            "batches": [cities],
+            "regions": {"EU": cities[::-1]},
+        }
+        result = await self._generate_report(Report, json.dumps(arguments))
+        self.assertDictEqual(
+            result.content,
+            {**arguments, "labels": ["local"]},
         )
         Report.model_validate(result.content)
 

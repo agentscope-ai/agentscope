@@ -39,20 +39,22 @@ _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
 
 
 def _contains_model(value: Any) -> bool:
-    """Check list and tuple elements and dict values for a Pydantic model."""
+    """Check container elements and dict values for a Pydantic model."""
     if isinstance(value, dict):
         return any(_contains_model(item) for item in value.values())
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, set, frozenset)):
         return any(_contains_model(item) for item in value)
     return isinstance(value, BaseModel)
 
 
 def _container_content(
-    children: list | tuple | dict,
+    children: list | tuple | dict | set | frozenset,
     dumped: Any,
     raw: Any,
 ) -> Any:
     """Restore model elements without matching them to raw input positions."""
+    if isinstance(children, (set, frozenset)):
+        return raw if _contains_model(children) else dumped
     if isinstance(children, (list, tuple)):
         entries = enumerate(children)
         same_shape = isinstance(dumped, list) and len(children) == len(dumped)
@@ -118,7 +120,7 @@ def _structured_content(
                     if arguments is None or field.is_required():
                         return arguments
                     continue
-            elif isinstance(child, (list, tuple, dict)):
+            elif isinstance(child, (list, tuple, dict, set, frozenset)):
                 item = _container_content(child, item, raw)
                 if item is None and supplied not in inputs:
                     if arguments is None or field.is_required():
