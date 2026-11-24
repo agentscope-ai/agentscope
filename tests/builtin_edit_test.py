@@ -11,6 +11,7 @@ from agentscope.permission import (
     PermissionEngine,
     PermissionRule,
 )
+from agentscope.state import AgentState
 
 
 class EditToolTest(IsolatedAsyncioTestCase):
@@ -352,3 +353,102 @@ class EditToolTest(IsolatedAsyncioTestCase):
                         PermissionBehavior.ASK,
                     ],
                 )
+
+    async def test_edit_keeps_crlf_line_endings(self) -> None:
+        """Editing one line must not rewrite every CRLF ending in the file.
+
+        `old_string` is LF-based because Read normalizes what the caller
+        sees, so the replacement used to be written back as normalized text
+        and every ``\\r\\n`` in the file became ``\\n``.
+        """
+        with open(self.temp_file.name, "wb") as stream:
+            stream.write(b"line1\r\nHello World\r\nline3\r\n")
+
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string="Hello World",
+            new_string="Hi",
+        )
+
+        self.assertEqual(chunk.state, "running")
+        with open(self.temp_file.name, "rb") as stream:
+            self.assertEqual(stream.read(), b"line1\r\nHi\r\nline3\r\n")
+
+    async def test_replace_all_keeps_crlf_line_endings(self) -> None:
+        """Every occurrence goes through the same line-ending rule."""
+        with open(self.temp_file.name, "wb") as stream:
+            stream.write(b"a\r\nx\r\nx\r\n")
+
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string="x",
+            new_string="y",
+            replace_all=True,
+        )
+
+        self.assertEqual(chunk.state, "running")
+        with open(self.temp_file.name, "rb") as stream:
+            self.assertEqual(stream.read(), b"a\r\ny\r\ny\r\n")
+
+    async def test_edit_spanning_lines_keeps_crlf_line_endings(self) -> None:
+        """A match crossing a line ending is rebuilt with the file's ending.
+
+        The raw text cannot be searched for an LF-based multi-line
+        `old_string`, so the whole file is rebuilt — in CRLF, not LF.
+        """
+        with open(self.temp_file.name, "wb") as stream:
+            stream.write(b"one\r\ntwo\r\nthree\r\n")
+
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string="one\ntwo",
+            new_string="ONE\nTWO",
+        )
+
+        self.assertEqual(chunk.state, "running")
+        with open(self.temp_file.name, "rb") as stream:
+            self.assertEqual(stream.read(), b"ONE\r\nTWO\r\nthree\r\n")
+
+    async def test_edit_preserves_a_file_that_mixes_line_endings(self) -> None:
+        """A byte the edit does not touch keeps its own line ending."""
+        with open(self.temp_file.name, "wb") as stream:
+            stream.write(b"a\r\nb\nc\r\n")
+
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string="b",
+            new_string="B",
+        )
+
+        self.assertEqual(chunk.state, "running")
+        with open(self.temp_file.name, "rb") as stream:
+            self.assertEqual(stream.read(), b"a\r\nB\nc\r\n")
+
+    async def test_edit_keeps_crlf_when_the_content_comes_from_the_cache(
+        self,
+    ) -> None:
+        """The cache holds normalized lines; the file keeps its endings.
+
+        `_agent_state` makes Edit edit the cached lines instead of the file,
+        and those lines end in ``\\n`` no matter what the file uses.
+        """
+        state = AgentState()
+        with open(self.temp_file.name, "wb") as stream:
+            stream.write(b"line1\r\nHello World\r\nline3\r\n")
+
+        # What Read caches for this file: the lines it shows the caller.
+        await state.tool_context.cache_file(
+            file_path=self.temp_file.name,
+            lines=["line1\n", "Hello World\n", "line3\n"],
+        )
+
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string="Hello World",
+            new_string="Hi",
+            _agent_state=state,
+        )
+
+        self.assertEqual(chunk.state, "running")
+        with open(self.temp_file.name, "rb") as stream:
+            self.assertEqual(stream.read(), b"line1\r\nHi\r\nline3\r\n")

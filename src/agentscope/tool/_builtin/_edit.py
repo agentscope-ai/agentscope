@@ -20,7 +20,69 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
-from ._backend import BackendBase, _normalize_newlines
+from ._backend import (
+    BackendBase,
+    _apply_line_ending,
+    _detect_line_ending,
+    _normalize_newlines,
+)
+
+
+def _replace_in_source(
+    raw_text: str | None,
+    *,
+    normalized: str,
+    old_string: str,
+    new_string: str,
+    ending: str,
+    expected: int,
+    replace_all: bool,
+) -> str | None:
+    """Apply the edit to the file's own text, or return ``None``.
+
+    `old_string` is LF-based: the Read tool normalizes what the caller sees,
+    so a replacement computed on the normalized text cannot tell which bytes
+    it is standing in for. Editing the raw text instead leaves every byte the
+    edit does not touch alone — a CRLF file keeps its CRLFs, and a file that
+    already mixes endings keeps the mix.
+
+    That only holds when the matched span does not cross a line ending, and
+    when the file on disk is still the text the caller edited. ``None`` sends
+    the caller through the normalized text and the file's own ending.
+
+    Args:
+        raw_text (`str | None`):
+            The file as read, or ``None`` when it could not be re-read.
+        normalized (`str`):
+            The LF-normalized text the replacement was computed on.
+        old_string (`str`):
+            The LF-based text being replaced.
+        new_string (`str`):
+            Its replacement, also LF-based.
+        ending (`str`):
+            The file's own line ending.
+        expected (`int`):
+            How many times `old_string` occurs in `normalized`.
+        replace_all (`bool`):
+            Whether every occurrence is replaced.
+
+    Returns:
+        `str | None`:
+            The edited raw text, or ``None`` when it has to be rebuilt from
+            the normalized text instead.
+    """
+    if raw_text is None:
+        return None
+    if "\n" in old_string or "\r" in old_string:
+        return None
+    if _normalize_newlines(raw_text) != normalized:
+        return None
+    if raw_text.count(old_string) != expected:
+        return None
+    replacement = _apply_line_ending(new_string, ending)
+    if replace_all:
+        return raw_text.replace(old_string, replacement)
+    return raw_text.replace(old_string, replacement, 1)
 
 
 class Edit(ToolBase):
@@ -320,6 +382,9 @@ Usage:
             )
 
         content = None
+        # The file itself, kept so the write can leave the line endings it
+        # does not touch alone. `content` is the LF-normalized view.
+        raw_text = None
         if _agent_state is not None:
             # Take the mtime from the backend that reads the file, so the
             # cache also works for sandbox-only paths.
@@ -346,13 +411,23 @@ Usage:
                     is_last=True,
                 )
             content = "".join(cache.lines)
+            # The cache holds normalized lines; read the file for the endings
+            # the result has to be written back with. A backend that cannot
+            # re-read it keeps the old behaviour and writes the lines as-is.
+            try:
+                raw_text = (await self._backend.read_file(file_path)).decode(
+                    "utf-8",
+                )
+            except Exception:
+                raw_text = None
         else:
             # No state provided, read from backend
             try:
                 raw = await self._backend.read_file(file_path)
+                raw_text = raw.decode("utf-8")
                 # Normalize CRLF/CR to match the cached-content path and
                 # the LF-based old_string the caller supplies.
-                content = _normalize_newlines(raw.decode("utf-8"))
+                content = _normalize_newlines(raw_text)
             except Exception as e:
                 return ToolChunk(
                     content=[TextBlock(text=f"Error reading file: {str(e)}")],
@@ -402,11 +477,27 @@ Usage:
                 1,
             )
 
-        # Write updated content back to file via backend
+        # Write updated content back to file via backend. `updated_content` is
+        # LF-normalized, so writing it out as-is turned every CRLF in the file
+        # into an LF; apply the edit to the file's own text when the match does
+        # not cross a line ending, and otherwise give the result the file's
+        # ending.
+        ending = _detect_line_ending(raw_text) if raw_text else "\n"
+        source = _replace_in_source(
+            raw_text,
+            normalized=content,
+            old_string=old_string,
+            new_string=new_string,
+            ending=ending,
+            expected=occurrences,
+            replace_all=replace_all,
+        )
+        if source is None:
+            source = _apply_line_ending(updated_content, ending)
         try:
             await self._backend.write_file(
                 file_path,
-                updated_content.encode("utf-8"),
+                source.encode("utf-8"),
             )
         except Exception as e:
             return ToolChunk(
