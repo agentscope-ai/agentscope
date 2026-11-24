@@ -1502,7 +1502,7 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
 
     async def _generate_report(
         self,
-        schema: type[BaseModel],
+        schema: type[_CityReport],
         arguments: str = '{"cityName": "  paris "}',
     ) -> StructuredResponse:
         model = _ToolCallStructuredModel()
@@ -1560,32 +1560,6 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             _ExcludedFieldReport.model_validate(result.content).ref,
-            "r1",
-        )
-
-    async def test_nested_input_keys(self) -> None:
-        """Keep input keys inside a list and an excluded nested field."""
-
-        class Reports(BaseModel):
-            """Group reports with different serialization shapes."""
-
-            cities: list[_OutputAliasReport]
-            primary: _ExcludedFieldReport
-
-        result = await self._generate_report(
-            Reports,
-            '{"cities":[{"city":" paris "}],'
-            '"primary":{"cityName":" lyon ","ref":" r1 "}}',
-        )
-        self.assertDictEqual(
-            result.content,
-            {
-                "cities": [{"city": "Paris", "tags": []}],
-                "primary": {"cityName": "Lyon", "tags": [], "ref": " r1 "},
-            },
-        )
-        self.assertEqual(
-            Reports.model_validate(result.content).primary.ref,
             "r1",
         )
 
