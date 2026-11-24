@@ -21,12 +21,7 @@ from ..message import (
 )
 
 
-# Extensions of the media types this framework's own adapters emit.
-# ``mimetypes.guess_extension`` answers from per-host tables -- the Windows
-# registry against a MIME database elsewhere -- so it reports no extension
-# at all for ``audio/wav`` and ``audio/pcm`` on Linux, and a different one
-# for ``audio/l16`` depending on the host. Pinning the types the framework
-# produces keeps the same block naming the same file everywhere.
+# Pin audio extensions because host MIME tables vary.
 _MEDIA_TYPE_EXTENSIONS = {
     "audio/aac": ".aac",
     "audio/flac": ".flac",
