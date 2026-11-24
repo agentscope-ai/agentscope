@@ -155,11 +155,5 @@ class ModelErrorEvent(ModelEvent):
 
     code: str = ""
     message: str = ""
-
-
-class ResponseFailedEvent(ModelErrorEvent):
-    """A provider error that ends only the identified response."""
-
-    item_id: str
-    input_tokens: int = Field(default=0, ge=0)
-    output_tokens: int = Field(default=0, ge=0)
+    response: ResponseDoneEvent | None = None
+    """The terminal response when the error is scoped to one reply."""

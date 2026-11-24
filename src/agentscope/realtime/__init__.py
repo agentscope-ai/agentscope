@@ -20,7 +20,6 @@ from ._events import (
     ModelEvent,
     ResponseCreatedEvent,
     ResponseDoneEvent,
-    ResponseFailedEvent,
     SessionClosedEvent,
     SessionEndedEvent,
     SessionStartedEvent,
@@ -90,6 +89,5 @@ __all__ = [
     "DelegatedResponseEvent",
     "ToolCallEvent",
     "ResponseDoneEvent",
-    "ResponseFailedEvent",
     "ModelErrorEvent",
 ]

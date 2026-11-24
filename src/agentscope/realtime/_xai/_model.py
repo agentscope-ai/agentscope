@@ -297,27 +297,23 @@ class XAIRealtimeModel(RealtimeModelBase):
             case "response.done":
                 response = data.get("response", {})
                 usage = response.get("usage") or {}
-                response_id = response.get("id") or self._response_id
-                if response_id == self._response_id:
+                done = me.ResponseDoneEvent(
+                    item_id=response.get("id") or self._response_id,
+                    input_tokens=usage.get("input_tokens") or 0,
+                    output_tokens=usage.get("output_tokens") or 0,
+                )
+                if done.item_id == self._response_id:
                     self._response_id = ""
-                input_tokens = usage.get("input_tokens") or 0
-                output_tokens = usage.get("output_tokens") or 0
                 if response.get("status") == "failed":
                     err = (response.get("status_details") or {}).get(
                         "error",
                     ) or {}
-                    return me.ResponseFailedEvent(
-                        item_id=response_id,
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
+                    return me.ModelErrorEvent(
+                        response=done,
                         code=err.get("code") or "response_failed",
                         message=err.get("message") or "",
                     )
-                return me.ResponseDoneEvent(
-                    item_id=response_id,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                )
+                return done
 
             case "response.output_audio.delta":
                 delta = data.get("delta")

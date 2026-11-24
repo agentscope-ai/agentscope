@@ -959,25 +959,27 @@ class RealtimeAgent:
                             request_response=False,
                         )
 
-            case me.ResponseDoneEvent() | me.ResponseFailedEvent():
+            case (me.ResponseDoneEvent() as done) | me.ModelErrorEvent(
+                response=me.ResponseDoneEvent() as done,
+            ):
                 async with self._barge_lock:
                     reply = self._reply
-                    if reply is None or reply.item_id != event.item_id:
+                    if reply is None or reply.item_id != done.item_id:
                         return
-                    self._metrics.input_tokens = event.input_tokens
-                    self._metrics.output_tokens = event.output_tokens
+                    self._metrics.input_tokens = done.input_tokens
+                    self._metrics.output_tokens = done.output_tokens
                     message = self._find_reply_message(self._reply_id)
                     if message is not None:
                         message.append_usage(
                             Usage(
-                                input_tokens=event.input_tokens,
-                                output_tokens=event.output_tokens,
+                                input_tokens=done.input_tokens,
+                                output_tokens=done.output_tokens,
                             ),
                         )
-                    if isinstance(event, me.ResponseFailedEvent):
+                    if isinstance(event, me.ModelErrorEvent):
                         logger.error(
                             "RealtimeAgent: response %s failed (%s): %s",
-                            event.item_id,
+                            done.item_id,
                             event.code,
                             event.message,
                         )

@@ -270,10 +270,12 @@ class XAIParseTest(unittest.TestCase):
         )
         self.assertEqual(
             event,
-            me.ResponseFailedEvent(
-                item_id="resp_001",
-                input_tokens=18,
-                output_tokens=3,
+            me.ModelErrorEvent(
+                response=me.ResponseDoneEvent(
+                    item_id="resp_001",
+                    input_tokens=18,
+                    output_tokens=3,
+                ),
                 code="server_error",
                 message="boom",
             ),
@@ -289,8 +291,8 @@ class XAIParseTest(unittest.TestCase):
         )
         self.assertEqual(
             event,
-            me.ResponseFailedEvent(
-                item_id="resp_001",
+            me.ModelErrorEvent(
+                response=me.ResponseDoneEvent(item_id="resp_001"),
                 code="response_failed",
             ),
         )
