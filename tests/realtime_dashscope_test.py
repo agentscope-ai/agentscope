@@ -8,6 +8,7 @@ import json
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, call, patch
+from urllib.parse import parse_qs, urlsplit
 
 from agentscope.credential import DashScopeCredential
 from agentscope.realtime import (
@@ -77,6 +78,7 @@ class DashScopeCardsTest(unittest.TestCase):
                     c.model_type,
                     c.supports_tools,
                     c.max_audio_turns,
+                    c.release_date.isoformat() if c.release_date else None,
                 )
                 for c in DashScopeRealtimeModel.list_models()
             ],
@@ -86,30 +88,35 @@ class DashScopeCardsTest(unittest.TestCase):
                     "dashscope_omni_realtime",
                     False,
                     None,
+                    "2025-05-08",
                 ),
                 (
                     "qwen3-omni-flash-realtime",
                     "dashscope_omni_realtime",
                     False,
                     8,
+                    "2025-12-04",
                 ),
                 (
                     "qwen3.5-omni-flash-realtime",
                     "dashscope_omni_realtime",
                     True,
                     80,
+                    "2026-03-30",
                 ),
                 (
                     "qwen3.5-omni-plus-realtime",
                     "dashscope_omni_realtime",
                     True,
                     100,
+                    "2026-03-30",
                 ),
                 (
                     "qwen3.8-omni-flash-realtime",
                     "dashscope_omni_realtime",
                     True,
                     100,
+                    "2026-09-21",
                 ),
             ],
         )
@@ -160,6 +167,7 @@ class DashScopeCardsTest(unittest.TestCase):
                     c.model_type,
                     c.max_audio_turns,
                     c.max_audio_duration_s,
+                    c.release_date.isoformat() if c.release_date else None,
                 )
                 for c in DashScopeAudioRealtimeModel.list_models()
             ],
@@ -169,18 +177,21 @@ class DashScopeCardsTest(unittest.TestCase):
                     "dashscope_audio_realtime",
                     50,
                     300,
+                    "2026-07-14",
                 ),
                 (
                     "qwen-audio-3.0-realtime-plus",
                     "dashscope_audio_realtime",
                     50,
                     300,
+                    "2026-07-14",
                 ),
                 (
                     "qwen-audio-3.1-realtime-plus",
                     "dashscope_audio_realtime",
                     50,
                     300,
+                    "2026-09-20",
                 ),
             ],
         )
@@ -207,6 +218,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen-omni-turbo-realtime": {
                     "schema": {
                         "default": "Chelsie",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": ["Cherry", "Serena", "Ethan", "Chelsie"],
                         "title": "Voice",
                         "type": "string",
@@ -216,6 +230,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen3-omni-flash-realtime": {
                     "schema": {
                         "default": "Cherry",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": ["Cherry", "Serena", "Ethan", "Chelsie"],
                         "title": "Voice",
                         "type": "string",
@@ -225,6 +242,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen3.5-omni-flash-realtime": {
                     "schema": {
                         "default": "Tina",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": ["Tina", "Serena", "Ethan"],
                         "title": "Voice",
                         "type": "string",
@@ -234,6 +254,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen3.5-omni-plus-realtime": {
                     "schema": {
                         "default": "Tina",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": ["Tina", "Serena", "Ethan"],
                         "title": "Voice",
                         "type": "string",
@@ -243,6 +266,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen3.8-omni-flash-realtime": {
                     "schema": {
                         "default": "Tina",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": [
                             "Tina",
                             "Serena",
@@ -288,6 +314,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen-audio-3.0-realtime-flash": {
                     "schema": {
                         "default": "longanqian",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": [
                             "longanqian",
                             "longanlingxin",
@@ -303,6 +332,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen-audio-3.0-realtime-plus": {
                     "schema": {
                         "default": "longanqian",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": [
                             "longanqian",
                             "longanlingxin",
@@ -318,6 +350,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen-audio-3.1-realtime-plus": {
                     "schema": {
                         "default": "longanqian_v3.1",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": [
                             "longanqian",
                             "longanlingxin",
@@ -388,6 +423,18 @@ class DashScopeCardsTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Invalid DashScope"):
             _realtime_url("not-a-url", "model-x")
+
+    def test_adapter_encodes_realtime_model_name(self) -> None:
+        """Model names remain a single query value after URL encoding."""
+        for model in ("qwen-plus&injected=1#fragment+%", "模型 v1"):
+            with self.subTest(model=model):
+                url = _realtime_url(WORKSPACE_BASE_URL, model)
+                self.assertTrue(url.isascii())
+                self.assertNotIn(" ", url)
+                self.assertEqual(
+                    parse_qs(urlsplit(url).query),
+                    {"model": [model]},
+                )
 
     def test_credential_maps_card_back_to_class(self) -> None:
         """The service-layer lookup: card.model_type -> class, no scan."""
@@ -609,6 +656,7 @@ class DashScopeParseTest(unittest.TestCase):
                     "suggested_rules": [],
                     "finished_at": None,
                 },
+                "non_blocking": False,
             },
         )
         self.assertEqual(self.model._tool_names, {})

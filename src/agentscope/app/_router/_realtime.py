@@ -123,7 +123,7 @@ async def _create_realtime_offer(
     realtime_service: RealtimeService,
 ) -> RealtimeOfferResponse:
     """Create one offer while this process serializes session starts."""
-    await access.resolve_agent(user_id, body.agent_id)
+    agent_record = await access.resolve_agent(user_id, body.agent_id)
     session = await storage.get_session(
         user_id,
         body.agent_id,
@@ -175,6 +175,28 @@ async def _create_realtime_offer(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+    card = getattr(model, "card", None)
+    uses_session_chat = (
+        getattr(card, "delegation_backend", "none") == "session_chat"
+    )
+    if uses_session_chat and session.state.has_awaiting_tool_calls(
+        agent_record.data.name,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Complete the pending Chat confirmation or "
+                "external execution before starting GPT Live."
+            ),
+        )
+    if (
+        uses_session_chat
+        and getattr(session.config, "chat_model_config", None) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Configure a chat model before starting GPT Live.",
+        )
 
     lock_key = MessageBusKeys.session_lock(session_id)
     if await message_bus.is_locked(lock_key):

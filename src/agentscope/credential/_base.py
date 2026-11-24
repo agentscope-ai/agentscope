@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase, ModelCard
     from ..realtime import RealtimeModelBase, RealtimeModelCard
-    from ..tts import TTSModelBase
+    from ..tts import TTSModelBase, VoiceCloningClientBase
     from ..tts._tts_model_card import TTSModelCard
 
 
@@ -41,6 +41,28 @@ class CredentialBase(BaseModel):
         raise NotImplementedError(
             f"{cls.__name__} must implement ``get_chat_model_class``.",
         )
+
+    @classmethod
+    def get_chat_model_classes(cls) -> list[Type["ChatModelBase"]]:
+        """Return all chat model classes supported by this credential.
+
+        Providers that expose multiple API surfaces (e.g. OpenAI Chat
+        Completions vs Responses API) should override this to return all
+        applicable classes. The default returns a single-element list from
+        :meth:`get_chat_model_class`.
+
+        Returns:
+            `list[Type[ChatModelBase]]`:
+                The chat model classes.
+        """
+        return [cls.get_chat_model_class()]
+
+    @classmethod
+    def get_voice_cloning_client_class(
+        cls,
+    ) -> Type["VoiceCloningClientBase"] | None:
+        """Return the voice creation client, or None when unsupported."""
+        return None
 
     @classmethod
     def get_tts_model_classes(cls) -> list[Type["TTSModelBase"]]:
@@ -102,15 +124,17 @@ class CredentialBase(BaseModel):
     @classmethod
     def list_models(cls) -> list["ModelCard"]:
         """List the candidate chat models that are available under this
-        credential. The default implementation delegates to the
-        :meth:`ChatModelBase.list_models` of the class returned by
-        :meth:`get_chat_model_class`.
+        credential. Merges model cards from all classes returned by
+        :meth:`get_chat_model_classes`.
 
         Returns:
             `list[ModelCard]`:
                 A list of candidate models described by their model cards.
         """
-        return cls.get_chat_model_class().list_models()
+        cards: list["ModelCard"] = []
+        for model_cls in cls.get_chat_model_classes():
+            cards.extend(model_cls.list_models())
+        return cards
 
     @classmethod
     def get_embedding_model_class(cls) -> Type["EmbeddingModelBase"] | None:

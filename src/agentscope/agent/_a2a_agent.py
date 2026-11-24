@@ -395,6 +395,11 @@ class A2AAgent:
                 if not _awaiting_input(task.status.state):
                     self.state.task_id = None
 
+        # Build the request before anything is committed, so an input it
+        # rejects neither consumes the observed messages nor leaves a
+        # reply started without an end.
+        request = self._build_request(input_msgs)
+
         reply_id = _generate_id()
         # The reply message is assembled from the very events streamed to
         # the caller, so the two can never disagree.
@@ -416,9 +421,7 @@ class A2AAgent:
         # The message is going out now: consume the observed messages.
         self.state.observed_context.clear()
 
-        async for response in self._client.send_message(
-            self._build_request(input_msgs),
-        ):
+        async for response in self._client.send_message(request):
             events: list[AgentEvent] = []
             match response.WhichOneof("payload"):
                 case "message":

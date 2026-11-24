@@ -403,6 +403,69 @@ class TestOllamaFormatTools(unittest.TestCase):
         self.assertIsNone(fmt_choice)
 
 
+class TestOllamaThinkParameter(IsolatedAsyncioTestCase):
+    """The ``think`` option is only sent when explicitly configured."""
+
+    def setUp(self) -> None:
+        self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
+        self.mock_client.chat = AsyncMock(
+            return_value=_mock_completion(content="Hi"),
+        )
+
+    async def _call_and_get_kwargs(self) -> dict:
+        """Run one call and return the kwargs passed to client.chat."""
+        await self.model([])
+        call = self.mock_client.chat.await_args
+        return call.kwargs
+
+    async def test_think_omitted_by_default(self) -> None:
+        """Default parameters leave ``think`` out of the request so the
+        model's own default behavior applies."""
+        kwargs = await self._call_and_get_kwargs()
+        self.assertEqual(
+            kwargs,
+            {
+                "model": "qwen3:8b",
+                "messages": [],
+                "stream": False,
+            },
+        )
+
+    async def test_think_true_forwarded(self) -> None:
+        """``thinking_enable=True`` sends ``think: true``."""
+        self.model.parameters = OllamaChatModel.Parameters(
+            thinking_enable=True,
+        )
+        kwargs = await self._call_and_get_kwargs()
+        self.assertEqual(
+            kwargs,
+            {
+                "model": "qwen3:8b",
+                "messages": [],
+                "stream": False,
+                "think": True,
+            },
+        )
+
+    async def test_think_false_forwarded(self) -> None:
+        """``thinking_enable=False`` sends ``think: false``."""
+        self.model.parameters = OllamaChatModel.Parameters(
+            thinking_enable=False,
+        )
+        kwargs = await self._call_and_get_kwargs()
+        self.assertEqual(
+            kwargs,
+            {
+                "model": "qwen3:8b",
+                "messages": [],
+                "stream": False,
+                "think": False,
+            },
+        )
+
+
 def _api_chat_transport(
     messages: list[dict | list[dict]],
     stream: bool,
@@ -544,4 +607,66 @@ class TestOllamaRepeatedToolCall(IsolatedAsyncioTestCase):
         self.assertCountEqual(
             [_.id for _ in results],
             [_.id for _ in calls],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Structured-output no_think fallback
+# ---------------------------------------------------------------------------
+
+
+class OllamaNoThinkFallbackTest(IsolatedAsyncioTestCase):
+    """The structured-output fallback ladder must include a no_think
+    attempt for Ollama."""
+
+    def test_disable_thinking_kwargs_is_think_false(self) -> None:
+        """The provider-specific thinking toggle is a top-level option."""
+        self.assertEqual(
+            _make_model()._get_disable_thinking_kwargs(),
+            {"think": False},
+        )
+
+    async def test_fallback_ladder_sends_think_false_and_parses(
+        self,
+    ) -> None:
+        """The no_think attempt sends ``think=False`` to the client, and
+        its tool arguments are parsed and validated."""
+        from pydantic import BaseModel
+
+        class _Schema(BaseModel):
+            answer: str
+
+        model = OllamaChatModel(
+            model="qwen3:8b",
+            stream=False,
+            context_size=40_960,
+            parameters=OllamaChatModel.Parameters(
+                thinking_enable=True,
+            ),
+        )
+        model.client.chat = AsyncMock(
+            side_effect=[
+                _mock_completion(content="I will answer in text."),
+                _mock_completion(content="Still text."),
+                _mock_completion(
+                    tool_calls=[
+                        {
+                            "name": "generate_structured_output",
+                            "args": {"answer": "Paris"},
+                        },
+                    ],
+                ),
+            ],
+        )
+
+        result = await model.generate_structured_output(
+            [UserMsg(name="user", content="What is the capital of France?")],
+            _Schema,
+        )
+
+        self.assertEqual(result.content, {"answer": "Paris"})
+        calls = model.client.chat.call_args_list
+        self.assertEqual(
+            [call.kwargs["think"] for call in calls],
+            [True, True, False],
         )

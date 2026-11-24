@@ -27,6 +27,49 @@ def _vectors(count: int) -> list:
 class FileEmbeddingCacheEvictionTest(IsolatedAsyncioTestCase):
     """The size limit must never cost more entries than it stores."""
 
+    def test_negative_limits_are_rejected(self) -> None:
+        """Invalid budgets fail before the cache directory is accessed."""
+        cases = [
+            (-1, None, "max_file_number"),
+            (-10, None, "max_file_number"),
+            (None, -1, "max_cache_size"),
+            (None, -10, "max_cache_size"),
+            (-1, -1, "max_file_number"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            cache_dir = os.path.join(directory, "cache")
+            for max_file_number, max_cache_size, parameter in cases:
+                with self.subTest(
+                    max_file_number=max_file_number,
+                    max_cache_size=max_cache_size,
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        f"{parameter} must be non-negative",
+                    ):
+                        FileEmbeddingCache(
+                            cache_dir=cache_dir,
+                            max_file_number=max_file_number,
+                            max_cache_size=max_cache_size,
+                        )
+                    self.assertFalse(os.path.exists(cache_dir))
+
+    async def test_cache_size_limits(self) -> None:
+        """None, zero, and positive size budgets keep their behavior."""
+        embeddings = [[1.0, 2.0]]
+        for limit in (None, 0, 1):
+            with self.subTest(limit=limit):
+                with tempfile.TemporaryDirectory() as cache_dir:
+                    cache = FileEmbeddingCache(
+                        cache_dir=cache_dir,
+                        max_cache_size=limit,
+                    )
+                    await cache.store(embeddings, "entry")
+                    self.assertEqual(
+                        await cache.retrieve("entry"),
+                        None if limit == 0 else embeddings,
+                    )
+
     async def test_file_count_limits(self) -> None:
         """Only None is unlimited; zero and positive limits are enforced."""
         for limit in (None, 0, 1, 2):
@@ -194,3 +237,38 @@ class FileEmbeddingCacheEvictionTest(IsolatedAsyncioTestCase):
                 _vectors(10),
             )
             self.assertLessEqual(cache._get_cache_size(), 1)
+
+
+class FileEmbeddingCacheKeyOrderTest(IsolatedAsyncioTestCase):
+    """A dict identifier must key the cache regardless of key order."""
+
+    async def test_dict_identifier_is_key_order_independent(self) -> None:
+        """The same mapping hits the cache however it was spelled."""
+        with tempfile.TemporaryDirectory() as cache_dir:
+            cache = FileEmbeddingCache(cache_dir=cache_dir)
+            stored = {"model": "m", "input": ["a"], "encoding_format": "float"}
+            reordered = {
+                "encoding_format": "float",
+                "input": ["a"],
+                "model": "m",
+            }
+
+            await cache.store(_vectors(1), stored)
+
+            self.assertEqual(await cache.retrieve(reordered), _vectors(1))
+            self.assertEqual(
+                FileEmbeddingCache._get_filename(stored),
+                FileEmbeddingCache._get_filename(reordered),
+            )
+
+    async def test_remove_accepts_a_reordered_identifier(self) -> None:
+        """``remove`` must find an entry stored under a different key order."""
+        with tempfile.TemporaryDirectory() as cache_dir:
+            cache = FileEmbeddingCache(cache_dir=cache_dir)
+            stored = {"model": "m", "input": ["a"]}
+            reordered = {"input": ["a"], "model": "m"}
+
+            await cache.store(_vectors(1), stored)
+            await cache.remove(reordered)
+
+            self.assertIsNone(await cache.retrieve(stored))
