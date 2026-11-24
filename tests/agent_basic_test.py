@@ -2160,7 +2160,7 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(self.agent.state.cur_iter, 2)
 
     async def test_event_block_id_matches_data_block_id(self) -> None:
-        """Base64 and URL DataBlocks keep their id on the emitted event."""
+        """Base64 and URL data blocks keep their ID and name on the event."""
         agent = Agent(
             name="test",
             system_prompt="",
@@ -2171,6 +2171,7 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         chunks = [
             DataBlock(
                 id="b64-block",
+                name="recording.wav",
                 source=Base64Source(
                     data=base64.b64encode(b"hello").decode("ascii"),
                     media_type="audio/wav",
@@ -2178,6 +2179,7 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
             ),
             DataBlock(
                 id="url-block",
+                name="linked.wav",
                 source=URLSource(
                     url="https://example.com/a.wav",
                     media_type="audio/wav",
@@ -2193,10 +2195,10 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
             )
         ]
         self.assertListEqual(
-            [(type(e).__name__, e.block_id) for e in events],
+            [(type(e).__name__, e.block_id, e.name) for e in events],
             [
-                ("ToolResultDataDeltaEvent", "b64-block"),
-                ("ToolResultDataDeltaEvent", "url-block"),
+                ("ToolResultDataDeltaEvent", "b64-block", "recording.wav"),
+                ("ToolResultDataDeltaEvent", "url-block", "linked.wav"),
             ],
         )
 
