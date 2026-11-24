@@ -176,6 +176,32 @@ class InMemoryMessageBus(
             self._queue_expires_at[key] = now + ttl_secs
         return entry_id
 
+    async def queue_push_consuming(
+        self,
+        key: str,
+        payload: dict,
+        source_key: str,
+        entry_ids: list[str],
+    ) -> bool:
+        """Prepare both mutations before committing without yielding."""
+        now = time.monotonic()
+        self._drop_expired_queue(source_key, now)
+        self._drop_expired_queue(key, now)
+        source = self._queues.get(source_key, [])
+        selected = set(entry_ids)
+        positions = [
+            index
+            for index, (entry_id, _) in enumerate(source)
+            if entry_id in selected
+        ]
+        if not positions or len(positions) != len(entry_ids):
+            return False
+        entry = self._next_id(), deepcopy(payload)
+        self._queues[key].append(entry)
+        for index in reversed(positions):
+            del source[index]
+        return True
+
     async def queue_drain(
         self,
         key: str,

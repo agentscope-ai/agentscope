@@ -142,7 +142,8 @@ the other team members. Any other output you produce is invisible to them, \
 so anything you want them to see MUST be sent through `TeamSay`.""",
             permission_context=PermissionContext(
                 # Read-only
-                mode=PermissionMode.EXPLORE,
+                mode=PermissionMode.ASK,
+                read_only=True,
             ),
         ),
     ],

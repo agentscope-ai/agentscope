@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Inject steering inputs at normal Agent reasoning boundaries."""
 import asyncio
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager
+from dataclasses import replace
 from typing import Any, AsyncGenerator, Callable, TYPE_CHECKING
 
 from ._base import MiddlewareBase
@@ -16,7 +17,15 @@ from ..event import (
     ReplyStartEvent,
     UserConfirmResultEvent,
 )
-from ..message import AssistantMsg, DataBlock, HintBlock, Msg, TextBlock
+from ..permission._evidence import has_verified_source
+from ..message import (
+    AssistantMsg,
+    DataBlock,
+    HintBlock,
+    Msg,
+    TextBlock,
+)
+from ..permission import PermissionBehavior, PermissionMode, PermissionDecision
 
 if TYPE_CHECKING:
     from ..agent import Agent
@@ -83,6 +92,65 @@ class SteeringMiddleware(MiddlewareBase):
             # Close when the invocation actually exits, not at that event.
             if active_reply_id is not None:
                 await self._source.finish_reply(session_id, active_reply_id)
+
+    @staticmethod
+    def _has_user_input(pending: list[SteeringInput]) -> bool:
+        return any(
+            message.role in ("user", "system") and has_verified_source(message)
+            for item in pending
+            for message in item.messages
+        )
+
+    @asynccontextmanager
+    async def tool_dispatch_guard(
+        self,
+        agent: "Agent",
+    ) -> AsyncGenerator[Callable[[], bool], None]:
+        """Keep the source's pending-input check live through dispatch."""
+        async with self._source.dispatch_inputs(
+            agent.state.session_id,
+            agent.state.reply_id,
+        ) as current:
+            yield lambda: self._has_user_input(current())
+
+    async def on_check_permission(
+        self,
+        agent: "Agent",
+        input_kwargs: dict,
+        next_handler: Callable,
+    ) -> PermissionDecision:
+        """Check pending steering without consuming input after approval."""
+        decision = await next_handler(**input_kwargs)
+        if (
+            decision.behavior != PermissionBehavior.ALLOW
+            or agent.state.permission_context.mode != PermissionMode.AUTO
+            or agent.state.reply_context.has_user_confirmation(
+                input_kwargs["tool_call"],
+            )
+        ):
+            return decision
+        try:
+            # Use the same configured deadline for this source read.
+            # pylint: disable-next=protected-access
+            async with asyncio.timeout(agent._engine.review_timeout):
+                pending = await self._source.read(
+                    agent.state.session_id,
+                    agent.state.reply_id,
+                )
+            if not self._has_user_input(pending):
+                return decision
+            reason = "Pending steering requires user approval before execution"
+        except Exception as error:
+            reason = f"Pending steering check failed: {type(error).__name__}"
+        return replace(
+            decision,
+            behavior=PermissionBehavior.ASK
+            if agent.state.effective_permission_context.interactive
+            else PermissionBehavior.DENY,
+            message=reason,
+            decision_reason=reason,
+            review=None,
+        )
 
     async def on_reasoning(
         self,
@@ -182,6 +250,7 @@ class SteeringMiddleware(MiddlewareBase):
                 reply_id=reply_id,
                 block_id=hint.id,
                 source=hint.source,
+                source_role=hint.source_role,
                 hint=hint.hint,
             )
         # Receive any further cancellation redirected by the event consumer
@@ -231,6 +300,9 @@ class SteeringMiddleware(MiddlewareBase):
                     id=f"{item_id}:{index}",
                     hint=content,
                     source=self._hint_source,
+                    source_role=message.role
+                    if has_verified_source(message)
+                    else None,
                 ),
             )
         return hints

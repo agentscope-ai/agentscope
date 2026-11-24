@@ -223,7 +223,7 @@ export interface InterruptSessionResponse {
 	session_id: string;
 }
 
-export interface UpdateSessionRequest {
+export interface UpdateSessionRequest extends PermissionConstraints {
 	name?: string;
 	chat_model_config?: ChatModelConfig;
 	/**
@@ -267,14 +267,9 @@ export interface SessionListResponse {
 	total: number;
 }
 
-/**
- * Response body for `GET /schedule/{id}/sessions`. Returns plain
- * `SessionRecord[]` (no team / is_running enrichment) because
- * scheduled-execution sessions are listed for audit purposes only,
- * not for opening in the chat UI.
- */
+/** Session links shown in the schedule's execution history. */
 export interface ScheduleSessionsResponse {
-	sessions: SessionRecord[];
+	sessions: Pick<SessionRecord, 'id' | 'created_at'>[];
 	total: number;
 }
 
@@ -395,11 +390,8 @@ export type SessionStatus = 'running' | 'idle' | 'awaiting_permission' | 'awaiti
  */
 export interface SessionView {
 	/**
-	 * The record with the bulk of `state` stripped: `context`, `summary`
-	 * and `tool_context` arrive cleared, since they hold the model's
-	 * conversation and every file it has read. `permission_context` and
-	 * `tasks_context` survive — the panels seed from them. Messages come
-	 * from `GET /sessions/{id}/messages`.
+	 * List state contains only effective permissions and tasks. Fetch the
+	 * conversation from `GET /sessions/{id}/messages`.
 	 */
 	session: SessionRecord;
 	/**
@@ -794,17 +786,17 @@ export interface SkillRecord extends SkillView {
 
 // ─── Schedule ─────────────────────────────────────────────────────────────────
 
-export type PermissionMode =
-	| 'default'
-	| 'accept_edits'
-	| 'explore'
-	| 'bypass'
-	| 'dont_ask'
-	| (string & {});
+export type PermissionMode = 'ask' | 'auto' | 'bypass';
+
+export interface PermissionConstraints {
+	read_only?: boolean;
+	allow_workspace_edits?: boolean;
+	interactive?: boolean;
+}
 
 export type ScheduleSource = 'USER' | 'AGENT';
 
-export interface ScheduleData {
+export interface ScheduleData extends Omit<PermissionConstraints, 'interactive'> {
 	name: string;
 	description: string;
 	enabled: boolean;
@@ -825,7 +817,7 @@ export interface ScheduleRecord extends RecordBase {
 	data: ScheduleData;
 }
 
-export interface CreateScheduleRequest {
+export interface CreateScheduleRequest extends Omit<PermissionConstraints, 'interactive'> {
 	name: string;
 	description?: string;
 	cron_expression: string;
@@ -843,7 +835,7 @@ export interface CreateScheduleResponse {
 	schedule_id: string;
 }
 
-export interface UpdateScheduleRequest {
+export interface UpdateScheduleRequest extends Omit<PermissionConstraints, 'interactive'> {
 	name?: string;
 	description?: string;
 	cron_expression?: string;
@@ -1280,7 +1272,7 @@ export interface RoutingConfig {
 	bindings: ChannelBinding[];
 }
 
-export interface SessionSettings {
+export interface SessionSettings extends PermissionConstraints {
 	chat_model_config: ChatModelConfig;
 	fallback_chat_model_config?: ChatModelConfig | null;
 	permission_mode: PermissionMode;

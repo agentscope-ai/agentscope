@@ -44,7 +44,10 @@ export const chatApi = {
 	 * @param body - The chat request payload.
 	 * @returns Acceptance status (``queued`` for ordinary user turns).
 	 */
-	trigger: (body: ChatRequest) =>
+	trigger: (
+		body: ChatRequest,
+		toolSession: Pick<ChatRequest, 'agent_id' | 'session_id'> = body,
+	) =>
 		client.post<{
 			status: 'started' | 'queued';
 			session_id: string;
@@ -53,10 +56,13 @@ export const chatApi = {
 			...body,
 			client_builtin_tools:
 				body.client_builtin_tools ??
-				getEnabledClientBuiltinTools(body.agent_id, body.session_id),
+				getEnabledClientBuiltinTools(toolSession.agent_id, toolSession.session_id),
 			client_external_tools:
 				body.client_external_tools ??
-				getEnabledClientExternalToolDefinitions(body.agent_id, body.session_id),
+				getEnabledClientExternalToolDefinitions(
+					toolSession.agent_id,
+					toolSession.session_id,
+				),
 		}),
 
 	/**

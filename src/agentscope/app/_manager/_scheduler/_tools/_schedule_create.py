@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The schedule create tool."""
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
@@ -13,6 +14,7 @@ from .....permission import (
     PermissionMode,
 )
 from .....state import AgentState
+from .....permission._evidence import retain_authorization_evidence
 from .....tool import ToolBase, ToolChunk
 from ....storage import (
     ScheduleData,
@@ -67,12 +69,22 @@ class _ScheduleCreateParams(BaseModel):
     )
 
     permission_mode: str = Field(
-        default=PermissionMode.DONT_ASK.value,
+        default=PermissionMode.AUTO.value,
         description=(
             "Permission mode for the agent during scheduled execution. "
             f"Allowed values: {[m.value for m in PermissionMode]}. "
-            "Defaults to 'dont_ask' since no user is present."
+            "Defaults to 'auto'. Unresolved approvals are denied because "
+            "no user is present."
         ),
+    )
+    read_only: bool = Field(
+        default=False,
+        description="Restrict scheduled execution to read-only operations.",
+    )
+    allow_workspace_edits: bool = Field(
+        default=False,
+        description="Grant edits within authorized working directories. "
+        "The read-only restriction takes precedence when enabled.",
     )
 
 
@@ -155,10 +167,29 @@ to complete the task independently.
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
-        """Check permission for the tool usage."""
+        """Require separate approval for a recurring permission increase."""
+        mode = tool_input.get("permission_mode", PermissionMode.AUTO.value)
+        grants_edits = (
+            tool_input.get("allow_workspace_edits")
+            and not context.allow_workspace_edits
+        )
+        changes_reviewer = mode == PermissionMode.BYPASS.value or (
+            context.mode == PermissionMode.ASK
+            and mode == PermissionMode.AUTO.value
+        )
+        if context.mode != PermissionMode.BYPASS and (
+            grants_edits or changes_reviewer
+        ):
+            return PermissionDecision(
+                behavior=PermissionBehavior.ASK,
+                message="Creating this schedule would grant broader "
+                "permissions than the current session. Explicit approval "
+                "of the recurring permission increase is required.",
+                bypass_immune=True,
+            )
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
-            message=f"{self.name} is always allowed to be called.",
+            message="Schedule stays within the current approval scope.",
         )
 
     async def __call__(  # type: ignore[override]
@@ -171,7 +202,9 @@ to complete the task independently.
         started_at: datetime | None = None,
         ended_at: datetime | None = None,
         stateful: bool = False,
-        permission_mode: str = PermissionMode.DONT_ASK.value,
+        permission_mode: str = PermissionMode.AUTO.value,
+        read_only: bool = False,
+        allow_workspace_edits: bool = False,
         _agent_state: AgentState | None = None,
     ) -> ToolChunk:
         """Create a new scheduled task.
@@ -197,6 +230,10 @@ to complete the task independently.
                 Whether consecutive executions share the same session context.
             permission_mode (`str`, optional):
                 Permission mode value string.
+            read_only (`bool`, optional):
+                Restrict scheduled execution to read-only operations.
+            allow_workspace_edits (`bool`, optional):
+                Grant edits within authorized working directories.
             _agent_state (`AgentState | None`, optional):
                 Injected agent state; provides the source session ID.
 
@@ -208,12 +245,18 @@ to complete the task independently.
         try:
             perm_mode = PermissionMode(permission_mode)
         except ValueError:
-            perm_mode = PermissionMode.DONT_ASK
+            return ToolChunk(
+                content="Invalid approval mode. Use ask, auto, or bypass.",
+                state=ToolResultState.ERROR,
+            )
 
         source_session_id = (
             _agent_state.session_id if _agent_state is not None else ""
         )
 
+        authority = (
+            _agent_state.permission_review_context() if _agent_state else {}
+        )
         record = ScheduleRecord(
             user_id=self._user_id,
             agent_id=self._agent_id,
@@ -227,6 +270,22 @@ to complete the task independently.
                 ended_at=ended_at,
                 stateful=stateful,
                 permission_mode=perm_mode,
+                read_only=read_only,
+                allow_workspace_edits=allow_workspace_edits,
+                deny_rules=deepcopy(
+                    _agent_state.effective_permission_context.deny_rules,
+                )
+                if _agent_state is not None
+                else {},
+                authorization_evidence=retain_authorization_evidence(
+                    authority.get("authorization_evidence", []),
+                    _agent_state.context,
+                )
+                if _agent_state is not None
+                else [],
+                authorization_evidence_complete=(
+                    authority.get("evidence_complete", True)
+                ),
                 source=ScheduleSource.AGENT,
                 source_session_id=source_session_id,
                 chat_model_config=self._chat_model_config,

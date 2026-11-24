@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """Runtime assembly for browser realtime agents."""
 
+import asyncio
 import inspect
-from typing import Literal
+from typing import Any, Literal
 
 from ..._logging import logger
 from ...agent import Agent, ModelConfig, RealtimeAgent
 from ...middleware import MiddlewareBase, RAGMiddleware
-from ...permission import AdditionalWorkingDirectory
+from ...permission import AdditionalWorkingDirectory, PermissionReview
+from ...permission.reviewer import ChatPermissionReviewer
 from ...rag import KnowledgeBase
 from ...realtime import RealtimeModelBase
 from ...state import AgentState
@@ -26,6 +28,7 @@ from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..storage import ChannelOrigin, SessionRecord, StorageBase
 from ..workspace_manager import WorkspaceManagerBase
 from ._access import ResourceAccessService
+from ._session_permissions import refresh_session_permissions
 from ._model import get_model
 from ._toolkit import get_toolkit
 
@@ -153,6 +156,7 @@ class RealtimeService:
         if session is None:
             raise RuntimeError(f"Session {session_id!r} no longer exists.")
 
+        await refresh_session_permissions(self._storage, user_id, session)
         card = getattr(model, "card", None)
         uses_session_chat = (
             getattr(card, "delegation_backend", "none") == "session_chat"
@@ -242,6 +246,7 @@ class RealtimeService:
             chat_kind,
         )
         delegation_agent_factory = None
+        chat_model = None
         if uses_session_chat:
             chat_config = session.config.chat_model_config
             if chat_config is None:
@@ -276,6 +281,40 @@ class RealtimeService:
 
             delegation_agent_factory = _create_delegation_agent
 
+        chat_reviewer = (
+            ChatPermissionReviewer(chat_model)
+            if chat_model is not None
+            else None
+        )
+        reviewer_lock = asyncio.Lock()
+
+        async def _review_permission(
+            request: dict[str, Any],
+        ) -> PermissionReview:
+            """Load once on demand, under the engine's review deadline."""
+            nonlocal chat_reviewer
+            async with reviewer_lock:
+                if chat_reviewer is None:
+                    current_session = await self._storage.get_session(
+                        user_id,
+                        agent_id,
+                        session_id,
+                    )
+                    chat_config = (
+                        current_session.config.chat_model_config
+                        if current_session is not None
+                        else None
+                    )
+                    if chat_config is None:
+                        raise ValueError("No chat model configured for review")
+                    review_model = await get_model(
+                        user_id,
+                        chat_config,
+                        self._access,
+                    )
+                    chat_reviewer = ChatPermissionReviewer(review_model)
+            return await chat_reviewer(request)
+
         return RealtimeAgent(
             name=agent_record.data.name,
             system_prompt=system_prompt,
@@ -283,6 +322,8 @@ class RealtimeService:
             toolkit=toolkit,
             state=session.state,
             delegation_agent_factory=delegation_agent_factory,
+            permission_reviewer=_review_permission,
+            workspace_instructions=workspace.get_instructions,
         )
 
     async def _build_delegation_middlewares(

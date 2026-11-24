@@ -55,6 +55,9 @@ from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
     PermissionDecision,
+    PermissionMode,
+    PermissionReview,
+    PermissionReviewer,
 )
 from agentscope.state import AgentState
 from agentscope.tool import ToolBase, ToolChunk, ToolResponse, Toolkit
@@ -2187,6 +2190,8 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
         tool: ToolBase,
         confirm: bool | None = None,
         non_blocking: bool = False,
+        permission_mode: PermissionMode = PermissionMode.ASK,
+        reviewer: PermissionReviewer | None = None,
     ) -> tuple[list[tuple[Any, ...]], ScriptedModel]:
         """Run one tool-calling reply; answer a permission prompt with
         *confirm* if one appears. Returns the tool-related events."""
@@ -2200,6 +2205,10 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
             "be brief",
             model,
             toolkit=Toolkit(tools=[tool]),
+            state=AgentState(
+                permission_context=PermissionContext(mode=permission_mode),
+            ),
+            permission_reviewer=reviewer,
         )
 
         def _checkpoint_tool_state(event: Any) -> str:
@@ -2236,6 +2245,7 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
                                     reply_id=event.reply_id,
                                     confirm_results=[
                                         ConfirmResult(
+                                            request_id=event.id,
                                             tool_call=event.tool_calls[0],
                                             confirmed=bool(confirm),
                                         ),
@@ -2260,6 +2270,103 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
                             # event did, with any follow-up request.
                             reported.set()
         return events, model
+
+    async def test_auto_review_controls_realtime_execution(self) -> None:
+        """Voice tools use the same automatic approval contract as chat."""
+        for risk in ("low", "critical"):
+            reviewer = AsyncMock(
+                return_value=PermissionReview(
+                    risk_level=risk,
+                    user_authorization="high",
+                    policy_violation=False,
+                    rationale="Review evidence",
+                ),
+            )
+            events, model = await self._run_tool_scenario(
+                AskTool(),
+                permission_mode=PermissionMode.AUTO,
+                reviewer=reviewer,
+            )
+            self.assertEqual(
+                [
+                    event
+                    for event in events
+                    if event[0] in ("ask", "result_end")
+                ],
+                [
+                    (
+                        "result_end",
+                        "success" if risk == "low" else "denied",
+                        "finished",
+                    ),
+                ],
+            )
+            self.assertEqual(
+                "tool_result(c1,'x-final')" in model.calls,
+                risk == "low",
+            )
+            self.assertEqual(
+                reviewer.call_args.args[0]["action"]["arguments"],
+                {"q": "x"},
+            )
+
+    async def test_auto_review_enforces_connected_skill_instructions(
+        self,
+    ) -> None:
+        """The reviewer sees skill constraints before a voice tool executes."""
+        requirement = "Publishing requires explicit user confirmation."
+
+        async def review(request: dict) -> PermissionReview:
+            return PermissionReview(
+                risk_level="low",
+                user_authorization="medium",
+                policy_violation=requirement
+                in request["application_instructions"],
+                rationale="The required user confirmation is missing.",
+            )
+
+        for skills in (None, requirement):
+            with self.subTest(skills=skills):
+                reviewer = AsyncMock(side_effect=review)
+                with patch.object(
+                    Toolkit,
+                    "get_skill_instructions",
+                    new=AsyncMock(return_value=skills),
+                ):
+                    events, model = await self._run_tool_scenario(
+                        AskTool(),
+                        permission_mode=PermissionMode.AUTO,
+                        reviewer=reviewer,
+                    )
+                expected_prompt = (
+                    f"be brief\n\n{requirement}" if skills else "be brief"
+                )
+                self.assertEqual(
+                    {
+                        "model_instructions": model.instructions,
+                        "review_instructions": reviewer.call_args.args[0][
+                            "application_instructions"
+                        ],
+                        "executed": "tool_result(c1,'x-final')" in model.calls,
+                        "outcome": [
+                            event
+                            for event in events
+                            if event[0] in ("ask", "result_end")
+                        ],
+                    },
+                    {
+                        "model_instructions": expected_prompt,
+                        "review_instructions": expected_prompt,
+                        "executed": skills is None,
+                        "outcome": [
+                            (
+                                "result_end",
+                                "success" if skills is None else "denied",
+                                "finished",
+                            ),
+                        ],
+                    },
+                )
 
     async def test_non_blocking_permissions_and_errors(self) -> None:
         """Immediate scheduling preserves permission and error reporting."""
@@ -3988,23 +4095,31 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                     UserConfirmResultEvent(
                         reply_id="r1",
                         confirm_results=[
-                            ConfirmResult(tool_call=old_call, confirmed=True),
+                            ConfirmResult(
+                                request_id="previous",
+                                tool_call=old_call,
+                                confirmed=True,
+                            ),
                         ],
                     ),
                 )
             warning.assert_called_once_with(
                 "RealtimeAgent: ignored confirmation for tool %s "
-                "from reply %s; expected reply %s",
+                "for reply/prompt %s; expected %s",
                 "old",
-                "r1",
-                "r2",
+                ("r1", "previous"),
+                ("r2", agent._confirmation_replies["old"][1]),
             )
             self.assertFalse(agent._confirmations["old"].done())
             await agent.send(
                 UserConfirmResultEvent(
                     reply_id="r2",
                     confirm_results=[
-                        ConfirmResult(tool_call=new_call, confirmed=True),
+                        ConfirmResult(
+                            request_id=agent._confirmation_replies["old"][1],
+                            tool_call=new_call,
+                            confirmed=True,
+                        ),
                     ],
                 ),
             )

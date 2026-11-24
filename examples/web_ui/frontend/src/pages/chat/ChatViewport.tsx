@@ -19,9 +19,11 @@ import { toast } from 'sonner';
 import type {
 	ASRModelConfig,
 	ChatModelConfig,
+	PermissionConstraints,
 	PermissionMode,
 	RealtimeModelConfig,
 	SessionKnowledgeConfig,
+	SessionView,
 	TTSModelConfig,
 	UpdateSessionRequest,
 } from '@/api';
@@ -66,7 +68,7 @@ import { useAvailableRealtimeModels } from '@/hooks/useAvailableRealtimeModels';
 import { useBackgroundTasks } from '@/hooks/useBackgroundTasks';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
-import { useMessages } from '@/hooks/useMessages';
+import { memberCardKey, useMessages } from '@/hooks/useMessages';
 import { useRealtimeVoice } from '@/hooks/useRealtimeVoice';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
@@ -192,7 +194,7 @@ function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
  */
 export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatViewportProps) {
 	const { t } = useTranslation();
-	const { sessions, refetch: refetchSessions } = useSessions(agentId);
+	const { sessions, refetch: refetchSessions, update: updateSession } = useSessions(agentId);
 	const { groups } = useAvailableModels();
 	const { groups: realtimeGroups } = useAvailableRealtimeModels();
 	const { groups: asrGroups, loading: asrModelsLoading } = useAvailableASRModels();
@@ -208,10 +210,12 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	);
 	const [selectedKnowledgeConfig, setSelectedKnowledgeConfig] =
 		useState<SessionKnowledgeConfig | null>(null);
-	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
+	const [selectedPermissionMode, setSelectedPermissionMode] = useState<PermissionMode>('ask');
 	const [credentialOpen, setCredentialOpen] = useState(false);
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
-	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
+	const [permissionContext, setPermissionContext] = useState<
+		(PermissionContext & PermissionConstraints) | null
+	>(null);
 	const [configPending, setConfigPending] = useState(false);
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
@@ -323,7 +327,6 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		reorderQueued,
 		onUserConfirm,
 		onClientExternalToolResult,
-		onExternalExecutionResult,
 		onSubagentConfirm,
 		subagentHitl,
 		interrupt,
@@ -414,20 +417,18 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	 * @param apply - Mirrors the change into local state on success.
 	 */
 	const patchConfig = useCallback(
-		async (body: UpdateSessionRequest, apply: () => void) => {
+		async (body: UpdateSessionRequest, apply?: (session: SessionView['session']) => void) => {
 			if (!sessionId || !agentId) return;
 			setConfigPending(true);
 			try {
-				await sessionApi.update(sessionId, agentId, body);
-				apply();
-				await refetchSessions();
+				await updateSession(sessionId, body, apply);
 			} catch {
 				// Toast already shown; local state deliberately untouched.
 			} finally {
 				setConfigPending(false);
 			}
 		},
-		[sessionId, agentId, refetchSessions],
+		[sessionId, agentId, updateSession],
 	);
 
 	const handleKnowledgeConfigChange = useCallback(
@@ -805,7 +806,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		if (!view) return;
 		const mode = (view.session.state?.permission_context as Record<string, unknown>)
 			?.mode as string;
-		setSelectedPermissionMode(mode ?? 'default');
+		setSelectedPermissionMode((mode as PermissionMode) ?? 'ask');
 	}, [sessionId, view]);
 
 	/**
@@ -890,7 +891,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	/**
 	 * Persist a permission-mode change.
 	 *
-	 * @param mode - New permission mode (e.g. `default`, `explore`).
+	 * @param mode - New permission mode (`ask`, `auto`, or `bypass`).
 	 */
 	/**
 	 * Persist a new working directory.
@@ -915,10 +916,14 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		}
 	};
 
-	const handlePermissionModeChange = async (mode: string) => {
-		await patchConfig({ permission_mode: mode as PermissionMode }, () =>
-			setSelectedPermissionMode(mode),
-		);
+	const updatePermissions = async (updates: UpdateSessionRequest) => {
+		await patchConfig(updates, (saved) => {
+			if (seededSessionRef.current !== saved.id) return;
+			const policy = saved.state.permission_context as PermissionContext &
+				PermissionConstraints;
+			setPermissionContext(policy);
+			setSelectedPermissionMode(policy.mode as PermissionMode);
+		});
 	};
 
 	return (
@@ -1012,8 +1017,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										variant={'ghost'}
 										className="font-mono text-muted-foreground hover:text-foreground"
 										value={selectedPermissionMode}
-										disabled={!sessionId || configPending}
-										onChange={handlePermissionModeChange}
+										disabled={!view || configPending}
+										onChange={(permission_mode) =>
+											updatePermissions({ permission_mode })
+										}
+										constraints={permissionContext ?? undefined}
+										unattended={view?.session.origin.type === 'schedule'}
+										onConstraintsChange={updatePermissions}
 									/>
 									<DropdownMenu>
 										<DropdownMenuTrigger asChild>
@@ -1105,7 +1115,6 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onClientExternalToolResult={onClientExternalToolResult}
-									onExternalExecutionResult={onExternalExecutionResult}
 									onInterrupt={interrupt}
 									onUpdateQueued={updateQueued}
 									onDeleteQueued={deleteQueued}
@@ -1153,18 +1162,31 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									asrResetKey={`${agentId ?? ''}:${sessionId ?? ''}:${selectedASRModel?.credential_id ?? ''}:${selectedASRModel?.model ?? ''}`}
 									footerSlot={
 										subagentHitl.length > 0 ? (
-											<SubagentHitlCard
-												key={`${subagentHitl[0].worker_session_id}:${subagentHitl[0].reply_id}`}
-												entry={subagentHitl[0]}
-												onConfirm={(toolCall, confirm, rules) =>
-													onSubagentConfirm(
-														subagentHitl[0],
-														toolCall,
-														confirm,
-														rules,
-													)
-												}
-											/>
+											<div className="max-h-[60vh] space-y-2 overflow-y-auto">
+												{subagentHitl.map((entry) => (
+													<SubagentHitlCard
+														key={memberCardKey(entry)}
+														entry={entry}
+														onResult={(call, result, state) =>
+															onClientExternalToolResult(
+																call,
+																result,
+																entry.reply_id,
+																entry,
+																state,
+															)
+														}
+														onConfirm={(toolCall, confirm, rules) =>
+															onSubagentConfirm(
+																entry,
+																toolCall,
+																confirm,
+																rules,
+															)
+														}
+													/>
+												))}
+											</div>
 										) : null
 									}
 									allowedInputTypes={(

@@ -325,6 +325,7 @@ class _FakeChatService:
         client_builtin_tools: list[str] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
+        channel_requester_id: str = "",
     ) -> None:
         """Record the call and signal a waiter."""
         call: dict[str, Any] = {
@@ -333,6 +334,8 @@ class _FakeChatService:
             "agent_id": agent_id,
             "input_msg": input_msg,
         }
+        if channel_requester_id:
+            call["channel_requester_id"] = channel_requester_id
         if client_external_tools is not None:
             call["client_external_tools"] = client_external_tools
         if client_builtin_tools is not None:
@@ -360,6 +363,7 @@ class _BlockingChatService(_FakeChatService):
         client_builtin_tools: list[str] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
+        channel_requester_id: str = "",
     ) -> None:
         await super().run(
             user_id,
@@ -368,6 +372,7 @@ class _BlockingChatService(_FakeChatService):
             input_msg,
             queue_item_id=queue_item_id,
             input_persisted=input_persisted,
+            channel_requester_id=channel_requester_id,
             client_external_tools=client_external_tools,
             client_builtin_tools=client_builtin_tools,
         )

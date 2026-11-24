@@ -9,7 +9,7 @@ import type {
 } from './types';
 
 export const scheduleApi = {
-	list: () => client.get<ScheduleListResponse>('/schedule/'),
+	list: () => client.get<ScheduleListResponse>('/schedule/', undefined, { silent: true }),
 
 	create: (body: CreateScheduleRequest) =>
 		client.post<CreateScheduleResponse>('/schedule/', body),

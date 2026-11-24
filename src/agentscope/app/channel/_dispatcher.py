@@ -20,6 +20,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from typing import AsyncIterator
 
 from ..._logging import logger
@@ -138,7 +139,9 @@ class ChannelLifecycleDispatcher:
                 config=record.platform_config,
             )
             task = asyncio.create_task(
-                channel.start_listening(self._gateway.process),
+                channel.start_listening(
+                    partial(self._gateway.process, channel=channel),
+                ),
                 name=f"channel-listener:{record.id}",
             )
             self._instances[record.id] = ChannelInstance(
@@ -254,4 +257,4 @@ class ChannelLifecycleDispatcher:
         """
         inst = self._instances.get(channel_id)
         if inst:
-            await self._gateway.process(event)
+            await self._gateway.process(event, channel=inst.channel)

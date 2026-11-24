@@ -263,6 +263,9 @@
 		"externalExecution": {
 			"title": "{{name}} is waiting for an external executor",
 			"rejected": "The result was not accepted. Please check your answer and submit again.",
+			"unconfirmed": "Your submission has not been confirmed yet. You can retry.",
+			"notAccepted": "The call ended without accepting this submission.",
+			"restoreTool": "Re-enable {{name}} or use a client configured with the original tool, then submit again.",
 			"description": "This tool must be completed by an integration provided by the host application."
 		},
 		"newSession": "New Session",
@@ -615,14 +618,20 @@
 		"pickModelFirst": "Pick a model first"
 	},
 	"permission-mode": {
-		"placeholder": "Select permission mode",
-		"trigger-tooltip": "Permission Mode",
-		"label": "Permission Mode",
-		"default-tooltip": "Default mode: all operations require explicit permission (most secure)",
-		"accept_edits-tooltip": "Auto-allow file reads/writes in working directories and filesystem commands; other operations follow normal rules",
-		"explore-tooltip": "Read-only mode: allow read/grep/glob tools, deny write/edit/bash modification tools",
-		"bypass-tooltip": "All operations automatically allowed without any permission checks (use in trusted/sandbox environments)",
-		"dont_ask-tooltip": "Convert all ASK decisions to DENY; suitable for scheduled tasks or background execution when user is unavailable"
+		"constraints": "Access and approval settings",
+		"interactive": "Allow asking for approval",
+		"placeholder": "Select approval mode",
+		"trigger-tooltip": "Approval mode",
+		"label": "Approval mode",
+		"ask": "Ask for approval",
+		"auto": "Auto review",
+		"bypass": "Bypass approvals",
+		"ask-tooltip": "Apply permission rules and ask you when approval is required. Explicit denials and environment restrictions still apply.",
+		"auto-tooltip": "Apply rules and let a model review pending approvals. Failed reviews require human approval or are denied when unattended.",
+		"bypass-tooltip": "Approve pending requests automatically. Explicit denials and environment restrictions still apply.",
+		"read-only": "Read-only scope",
+		"workspace-edits": "Workspace edits allowed",
+		"unattended": "Unattended: deny unresolved approvals"
 	},
 	"dialog-mcp-create": {
 		"configLabel": "MCP Configuration",

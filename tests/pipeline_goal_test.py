@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """Test the goal pipeline."""
-from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -20,6 +19,7 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.pipeline import GoalPipeline
+from agentscope.state import AgentState
 from agentscope.types import ReplyFinishedReason
 
 
@@ -76,11 +76,8 @@ class StubAgent:
         """Initialize the stub with one script entry per call."""
         self.name = name
         self.script = script
-        self.state = SimpleNamespace(
-            reply_id=f"{name}-reply",
-            context=[],
-            summary="",
-        )
+        self.state = AgentState()
+        self.state.reply_id = f"{name}-reply"
         self.received: list[Any] = []
         self.conversation_before_calls: list[tuple[list[Any], Any]] = []
 
@@ -485,7 +482,11 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         answer = UserConfirmResultEvent(
             reply_id="executor-reply",
             confirm_results=[
-                ConfirmResult(confirmed=True, tool_call=request.tool_calls[0]),
+                ConfirmResult(
+                    request_id=request.id,
+                    confirmed=True,
+                    tool_call=request.tool_calls[0],
+                ),
             ],
         )
         await self._run(pipe, answer)

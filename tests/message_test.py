@@ -443,6 +443,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                         "hint": "hint...",
                         "id": AnyString(),
                         "source": None,
+                        "source_role": None,
                         "created_at": AnyString(),
                         "finished_at": AnyString(),
                     },

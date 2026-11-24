@@ -82,7 +82,10 @@ class _CatalogGateway(GatewayClient):
     ) -> tuple[int, bytes]:
         """Handle scoped listing and header replacement like the gateway."""
         del include_auth
-        if params != {"agent_id": "agent", "session_id": "session"}:
+        scope = {"agent_id": "agent", "session_id": "session"}
+        if method == "GET" and path.endswith("/tools"):
+            scope["with_bindings"] = "true"
+        if params != scope:
             raise AssertionError(f"Unexpected scope: {params!r}")
         self.requests.append((method, path, body))
         if method == "GET" and path == "/mcps":
@@ -108,8 +111,14 @@ class _CatalogGateway(GatewayClient):
             }
             tenant = normalized.get("x-tenant", "A")
             self.listed.append(tenant)
+            catalogue = _catalogue(tenant)
             response = json.dumps(
-                [tool.model_dump(mode="json") for tool in _catalogue(tenant)],
+                {
+                    "tools": [t.model_dump(mode="json") for t in catalogue],
+                    "bindings": {
+                        t.name: f"{tenant}:{t.name}" for t in catalogue
+                    },
+                },
             ).encode()
             if self.gates:
                 entered, release = self.gates.pop(0)
@@ -295,6 +304,46 @@ class GatewayHeadersDiscoveryTest(IsolatedAsyncioTestCase):
             (await proxy.get_tool("only_B")).name,
             "mcp__remote__only_B",
         )
+        self.assertEqual(gateway.listed, ["A", "B"])
+
+    async def test_custom_listing_rechecks_names_after_rotation(self) -> None:
+        """A proxy cannot return tools from a former tenant's catalog."""
+
+        class RotatingClient(GatewayMCPClient):
+            """Rotate the tenant after collecting the first list."""
+
+            async def list_raw_tools(self) -> list[Tool]:
+                tools = await super().list_raw_tools()
+                if not self._runtime_headers:
+                    await self.set_runtime_headers({"X-Tenant": "B"})
+                return tools
+
+        gateway = _CatalogGateway()
+        client = RotatingClient.model_validate(gateway.spec)
+        client.attach(
+            gateway,
+            agent_id="agent",
+            session_id="session",
+            connected=True,
+        )
+        with self.assertRaisesRegex(ValueError, "Tool 'only_A' not found"):
+            await client.list_tools()
+        self.assertEqual(gateway.listed, ["A", "B"])
+
+    async def test_bulk_wrappers_keep_each_tenants_bindings(self) -> None:
+        """Changing credentials between listings cannot rebind old proxies."""
+        gateway, proxy = await self._proxy()
+        first = await proxy.list_tools()
+        await proxy.set_runtime_headers({"X-Tenant": "B"})
+        second = await proxy.list_tools()
+        for tenant, tools in (("A", first), ("B", second)):
+            self.assertEqual(
+                [(t.name, t._binding) for t in tools],
+                [
+                    ("mcp__remote__shared", f"{tenant}:shared"),
+                    (f"mcp__remote__only_{tenant}", f"{tenant}:only_{tenant}"),
+                ],
+            )
         self.assertEqual(gateway.listed, ["A", "B"])
 
     async def test_failed_discovery_does_not_restore_pre_update_cache(

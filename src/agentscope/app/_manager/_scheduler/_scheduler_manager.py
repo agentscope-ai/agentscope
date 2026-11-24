@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfoNotFoundError
 from typing import Self, TYPE_CHECKING
 
 from ....message import HintBlock
-from ....permission import PermissionContext
 from ....state import AgentState
 from ....tool import ToolBase
 from ...._logging import logger
@@ -221,9 +220,7 @@ class SchedulerManager:
                             record.data.name,
                         )
                         state = AgentState()
-                        state.permission_context = PermissionContext(
-                            mode=record.data.permission_mode,
-                        )
+                        record.apply_to_session(state, new_session=True)
                         session_config = SessionConfig(
                             workspace_id=(
                                 await workspace_manager.assign_workspace_id(
@@ -258,9 +255,7 @@ class SchedulerManager:
                         record.data.name,
                     )
                     state = AgentState()
-                    state.permission_context = PermissionContext(
-                        mode=record.data.permission_mode,
-                    )
+                    record.apply_to_session(state, new_session=True)
                     session = await storage.upsert_session(
                         user_id=record.user_id,
                         agent_id=record.agent_id,

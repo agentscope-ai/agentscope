@@ -452,11 +452,11 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
                 and self._gateway_process.returncode is not None
             ):
                 return False
-            if await self._gateway.health():
+            if await self._gateway.health(require_compatible=True):
                 return True
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 1.0)
-        return await self._gateway.health()
+        return await self._gateway.health(require_compatible=True)
 
     @staticmethod
     def _allocate_gateway_port() -> int:

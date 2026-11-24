@@ -1,6 +1,6 @@
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { ChevronRight } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { getDisplayName, renderConfirmBody } from './tool-renderers';
 import { Button } from '@/components/ui/button';
@@ -11,9 +11,6 @@ import { cn } from '@/lib/utils';
 
 type SelectOption = 'yes' | 'yes_with_rule' | 'no';
 
-const OPTIONS_WITH_SUGGESTED_RULES: SelectOption[] = ['yes', 'yes_with_rule', 'no'];
-const OPTIONS_WITHOUT_SUGGESTED_RULES: SelectOption[] = ['yes', 'no'];
-
 export function ConfirmCard({
 	toolCall,
 	onUserConfirm,
@@ -23,57 +20,31 @@ export function ConfirmCard({
 }) {
 	const { t } = useTranslation();
 	const hasSuggestedRules = !!toolCall.suggested_rules?.length;
-	const options = hasSuggestedRules
-		? OPTIONS_WITH_SUGGESTED_RULES
-		: OPTIONS_WITHOUT_SUGGESTED_RULES;
-	const [selected, setSelected] = useState<SelectOption>('yes');
+	const [selected, setSelected] = useState<SelectOption | null>(null);
 	const [hasConfirmed, setHasConfirmed] = useState<boolean>(false);
 	const submittingRef = useRef(false);
 
-	const handleConfirm = useCallback(
-		async (confirm: boolean, rules?: ToolCallBlock['suggested_rules']) => {
-			if (submittingRef.current) return;
-			submittingRef.current = true;
-			setHasConfirmed(true);
-			try {
-				await onUserConfirm(confirm, rules);
-			} catch {
-				submittingRef.current = false;
-				setHasConfirmed(false);
-			}
-		},
-		[onUserConfirm],
-	);
-
-	useEffect(() => {
-		const handleKeyDown = async (e: KeyboardEvent) => {
-			const currentIndex = options.indexOf(selected);
-			switch (e.key) {
-				case 'ArrowUp':
-					e.preventDefault();
-					setSelected(options[(currentIndex - 1 + options.length) % options.length]);
-					break;
-				case 'ArrowDown':
-					e.preventDefault();
-					setSelected(options[(currentIndex + 1) % options.length]);
-					break;
-				case 'Enter':
-					e.preventDefault();
-					if (selected === 'yes_with_rule') {
-						await handleConfirm(true, [toolCall.suggested_rules![0]]);
-					} else {
-						await handleConfirm(selected === 'yes');
-					}
-					break;
-			}
-		};
-
-		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [handleConfirm, selected, options, toolCall.suggested_rules]);
+	const handleConfirm = async (option: SelectOption) => {
+		if (submittingRef.current) return;
+		submittingRef.current = true;
+		setSelected(option);
+		setHasConfirmed(true);
+		try {
+			await onUserConfirm(
+				option !== 'no',
+				option === 'yes_with_rule' ? [toolCall.suggested_rules![0]] : undefined,
+			);
+		} catch {
+			submittingRef.current = false;
+			setHasConfirmed(false);
+		}
+	};
 
 	return (
-		<div className="bg-muted ring ring-border rounded-[28px] w-full px-6 py-5 space-y-4 text-sm overflow-hidden">
+		<div
+			data-confirm-card
+			className="bg-muted ring ring-border rounded-[28px] w-full px-6 py-5 space-y-4 text-sm overflow-hidden"
+		>
 			<div className="flex flex-col gap-y-2 max-w-full">
 				<strong className="text-secondary-foreground">{getDisplayName(toolCall, t)}</strong>
 				{/* Capped so a long tool input (raw JSON for MCP tools) cannot
@@ -83,7 +54,27 @@ export function ConfirmCard({
 					{renderConfirmBody(toolCall, t)}
 				</div>
 			</div>
-			<div className="flex flex-col">
+			<div
+				className="flex flex-col"
+				onBlur={(event) => {
+					if (
+						!submittingRef.current &&
+						!event.currentTarget.contains(event.relatedTarget)
+					)
+						setSelected(null);
+				}}
+				onKeyDown={(event) => {
+					if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+					const buttons = Array.from(
+						event.currentTarget.querySelectorAll<HTMLButtonElement>('button:enabled'),
+					);
+					const current = buttons.indexOf(event.target as HTMLButtonElement);
+					if (current < 0) return;
+					event.preventDefault();
+					const step = event.key === 'ArrowDown' ? 1 : -1;
+					buttons[(current + step + buttons.length) % buttons.length].focus();
+				}}
+			>
 				<strong className="text-secondary-foreground mb-1">
 					{t('chat.confirmToolCall')}
 				</strong>
@@ -94,11 +85,11 @@ export function ConfirmCard({
 					)}
 					size="sm"
 					variant="ghost"
-					onMouseEnter={() => setSelected('yes')}
+					onFocus={() => setSelected('yes')}
 					onClick={async (e) => {
 						e.stopPropagation();
 						e.preventDefault();
-						await handleConfirm(true);
+						await handleConfirm('yes');
 					}}
 					disabled={hasConfirmed}
 				>
@@ -124,11 +115,11 @@ export function ConfirmCard({
 						)}
 						size="sm"
 						variant="ghost"
-						onMouseEnter={() => setSelected('yes_with_rule')}
+						onFocus={() => setSelected('yes_with_rule')}
 						onClick={async (e) => {
 							e.stopPropagation();
 							e.preventDefault();
-							await handleConfirm(true, [toolCall.suggested_rules![0]]);
+							await handleConfirm('yes_with_rule');
 						}}
 						disabled={hasConfirmed}
 					>
@@ -173,11 +164,11 @@ export function ConfirmCard({
 					)}
 					size="sm"
 					variant="ghost"
-					onMouseEnter={() => setSelected('no')}
+					onFocus={() => setSelected('no')}
 					onClick={async (e) => {
 						e.stopPropagation();
 						e.preventDefault();
-						await handleConfirm(false);
+						await handleConfirm('no');
 					}}
 					disabled={hasConfirmed}
 				>

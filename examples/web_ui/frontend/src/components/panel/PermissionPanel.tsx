@@ -15,7 +15,13 @@ interface PermissionPanelProps {
 	 * The permission context to render. Pass ``null`` when no data is
 	 * available yet (renders an empty state).
 	 */
-	permissionContext: PermissionContext | null;
+	permissionContext:
+		| (PermissionContext & {
+				read_only?: boolean;
+				allow_workspace_edits?: boolean;
+				interactive?: boolean;
+		  })
+		| null;
 }
 
 /** i18n key suffix for each behavior group title. */
@@ -166,6 +172,21 @@ export function PermissionPanel({ permissionContext }: PermissionPanelProps) {
 			</span>
 
 			<div className="flex flex-col flex-1 min-h-0 overflow-y-auto gap-y-4">
+				{(permissionContext?.read_only ||
+					permissionContext?.allow_workspace_edits ||
+					permissionContext?.interactive === false) && (
+					<div className="flex flex-wrap gap-2">
+						{permissionContext?.read_only && (
+							<Badge variant="outline">{t('permission-mode.read-only')}</Badge>
+						)}
+						{permissionContext?.allow_workspace_edits && (
+							<Badge variant="outline">{t('permission-mode.workspace-edits')}</Badge>
+						)}
+						{permissionContext?.interactive === false && (
+							<Badge variant="outline">{t('permission-mode.unattended')}</Badge>
+						)}
+					</div>
+				)}
 				{/* Working directories — always shown, with an empty state. */}
 				<div className="flex flex-col gap-y-1.5">
 					<div className="flex items-center gap-x-1.5 text-xs font-medium text-muted-foreground">

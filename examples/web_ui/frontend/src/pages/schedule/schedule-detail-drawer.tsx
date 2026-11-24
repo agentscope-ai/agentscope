@@ -3,10 +3,11 @@ import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { parseCronExpression, getFrequencyLabel } from './schedule-utils';
-import type { ScheduleRecord, SessionRecord } from '@/api';
+import type { ScheduleRecord, ScheduleSessionsResponse, UpdateScheduleRequest } from '@/api';
 import { scheduleApi } from '@/api';
 import { StatusBadge } from '@/components/badge/StatusBadge';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
+import { PermissionModeSelect } from '@/components/select/PermissionModeSelect';
 import { Button } from '@/components/ui/button';
 import {
 	Drawer,
@@ -25,6 +26,7 @@ interface ScheduleDetailDrawerProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	onDelete: (scheduleId: string) => Promise<void>;
+	onUpdate: typeof scheduleApi.update;
 }
 
 export function ScheduleDetailDrawer({
@@ -32,31 +34,54 @@ export function ScheduleDetailDrawer({
 	open,
 	onOpenChange,
 	onDelete,
+	onUpdate,
 }: ScheduleDetailDrawerProps) {
 	const { t } = useTranslation();
 	const { agents } = useAgents();
 	const navigate = useNavigate();
 	const [openDeleteDialog, setOpenDeleteDialog] = React.useState(false);
-	const [sessions, setSessions] = React.useState<SessionRecord[]>([]);
-	const [sessionsLoading, setSessionsLoading] = React.useState(false);
+	const [history, setHistory] = React.useState<{
+		scheduleId: string;
+		sessions: ScheduleSessionsResponse['sessions'];
+	} | null>(null);
+	const [permissionPending, setPermissionPending] = React.useState(false);
+	const scheduleId = open ? schedule?.id : undefined;
+	const sessions = history && history.scheduleId === scheduleId ? history.sessions : null;
 
 	React.useEffect(() => {
-		if (!schedule || !open) {
-			setSessions([]);
-			return;
-		}
-		setSessionsLoading(true);
+		setHistory(null);
+		if (!scheduleId) return;
+		let active = true;
 		scheduleApi
-			.listSessions(schedule.id)
-			.then((res) => setSessions(res.sessions))
-			.catch(() => setSessions([]))
-			.finally(() => setSessionsLoading(false));
-	}, [schedule, open]);
+			.listSessions(scheduleId)
+			.then(
+				(res) => res.sessions,
+				() => [],
+			)
+			.then((sessions) => {
+				if (active) setHistory({ scheduleId, sessions });
+			});
+		return () => {
+			active = false;
+		};
+	}, [scheduleId]);
 
 	const handleDelete = async () => {
 		if (!schedule) return;
 		await onDelete(schedule.id);
 		onOpenChange(false);
+	};
+
+	const updatePermissions = async (updates: UpdateScheduleRequest) => {
+		if (!schedule) return;
+		setPermissionPending(true);
+		try {
+			await onUpdate(schedule.id, updates);
+		} catch {
+			// The API client displays the error; keep the saved settings.
+		} finally {
+			setPermissionPending(false);
+		}
 	};
 
 	if (!schedule) return null;
@@ -115,7 +140,16 @@ export function ScheduleDetailDrawer({
 		},
 		{
 			title: t('schedule.permissionMode'),
-			content: data.permission_mode,
+			content: (
+				<PermissionModeSelect
+					value={data.permission_mode}
+					constraints={data}
+					unattended
+					disabled={permissionPending}
+					onChange={(mode) => updatePermissions({ permission_mode: mode })}
+					onConstraintsChange={updatePermissions}
+				/>
+			),
 		},
 		{
 			title: t('schedule.stateful'),
@@ -158,34 +192,31 @@ export function ScheduleDetailDrawer({
 								{t('schedule.executionHistory')}
 							</h3>
 							<div className="flex-1 overflow-y-auto space-y-1">
-								{sessionsLoading && (
+								{sessions === null && (
 									<div className="text-center py-4 text-muted-foreground text-sm">
 										{t('common.loading')}
 									</div>
 								)}
-								{!sessionsLoading && sessions.length === 0 && (
+								{sessions?.length === 0 && (
 									<div className="text-center py-4 text-muted-foreground text-sm">
 										{t('common.noData')}
 									</div>
 								)}
-								{!sessionsLoading &&
-									sessions.map((session) => (
-										<div
-											key={session.id}
-											className="flex flex-row justify-between text-xs px-2.5 py-2 font-mono rounded-md ring ring-border items-center cursor-pointer hover:bg-muted/50 transition-colors"
-											onClick={() => {
-												navigate(
-													`/chat/${schedule.agent_id}/${session.id}`,
-												);
-												onOpenChange(false);
-											}}
-										>
-											<span className="text-muted-foreground">
-												{new Date(session.created_at).toLocaleString()}
-											</span>
-											<StatusBadge status="completed" />
-										</div>
-									))}
+								{sessions?.map((session) => (
+									<div
+										key={session.id}
+										className="flex flex-row justify-between text-xs px-2.5 py-2 font-mono rounded-md ring ring-border items-center cursor-pointer hover:bg-muted/50 transition-colors"
+										onClick={() => {
+											navigate(`/chat/${schedule.agent_id}/${session.id}`);
+											onOpenChange(false);
+										}}
+									>
+										<span className="text-muted-foreground">
+											{new Date(session.created_at).toLocaleString()}
+										</span>
+										<StatusBadge status="completed" />
+									</div>
+								))}
 							</div>
 						</div>
 					</div>

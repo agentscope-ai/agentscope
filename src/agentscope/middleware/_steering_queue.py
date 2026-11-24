@@ -2,8 +2,9 @@
 """Input sources and receipts for cooperative reply steering."""
 import asyncio
 from abc import ABC, abstractmethod
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import AsyncIterator, Callable, Literal
 
 from .._utils._common import _generate_id
 from ..message import Msg
@@ -61,6 +62,16 @@ class SteeringSource(ABC):
         reply_id: str,
     ) -> list[SteeringInput]:
         """Read pending inputs for this reply in arrival order."""
+
+    def dispatch_inputs(
+        self,
+        session_id: str,
+        reply_id: str,
+    ) -> AbstractAsyncContextManager[Callable[[], list[SteeringInput]]]:
+        """Provide a live view or hold a producer lock through dispatch."""
+        raise NotImplementedError(
+            "Automatic dispatch requires a stable pending-input view",
+        )
 
     @abstractmethod
     async def acknowledge(
@@ -197,6 +208,25 @@ class SteeringQueue(SteeringSource):
         """Return pending inputs without transferring ownership."""
         pending = self._pending.get((session_id, reply_id), {})
         return [item for item, _ in pending.values()]
+
+    @asynccontextmanager
+    async def dispatch_inputs(  # pylint: disable=invalid-overridden-method
+        self,
+        session_id: str,
+        reply_id: str,
+    ) -> AsyncIterator[Callable[[], list[SteeringInput]]]:
+        """Read local input once all asynchronous guards are ready."""
+
+        def current() -> list[SteeringInput]:
+            return [
+                item
+                for item, _ in self._pending.get(
+                    (session_id, reply_id),
+                    {},
+                ).values()
+            ]
+
+        yield current
 
     async def acknowledge(
         self,

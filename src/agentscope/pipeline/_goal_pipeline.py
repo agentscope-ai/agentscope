@@ -139,7 +139,9 @@ class GoalPipeline:
             or isinstance(inputs, list)
             and all(isinstance(_, Msg) for _ in inputs)
         ):
-            executor_inputs = deepcopy(inputs)
+            messages = inputs if isinstance(inputs, list) else [inputs]
+            executor_inputs = deepcopy(messages)
+            self.executor.state.retain_authorization(messages)
             # A fresh run, so the iteration budget starts over.
             self._iters = 0
             self._executor_retries = 0
@@ -155,14 +157,17 @@ class GoalPipeline:
 
             if isinstance(inputs, Msg):
                 self._goal = inputs.content
-                executor_inputs.content.append(TextBlock(text=hint))
             else:
                 self._goal = []
                 for _ in inputs:
                     self._goal.extend(_.content)
-                executor_inputs.append(
-                    UserMsg("system", content=hint),
-                )
+            executor_inputs.append(
+                UserMsg(
+                    "system",
+                    content=hint,
+                    metadata={"authorization_source": "generated"},
+                ),
+            )
 
         elif isinstance(
             inputs,
@@ -234,6 +239,7 @@ class GoalPipeline:
                         # Update the instruction
                         executor_inputs = UserMsg(
                             name="system",
+                            metadata={"authorization_source": "generated"},
                             content=(
                                 "<system-reminder>You have failed to generate "
                                 "valid execution report. You should call the "
@@ -253,6 +259,7 @@ class GoalPipeline:
             final_msg = None
             instruction = verifier_inputs or UserMsg(
                 name="user",
+                metadata={"authorization_source": "generated"},
                 content=[
                     TextBlock(
                         text=(
@@ -275,27 +282,32 @@ class GoalPipeline:
             )
             verifier_inputs = None
             while final_msg is None:
-                async for _ in self.verifier.reply_stream(
-                    inputs=instruction,
-                    structured_schema=_VerificationResult,
-                    yield_final_msg=True,
+                with self.verifier.state.assignment_scope(
+                    self.executor.state,
+                    "goal:executor",
                 ):
-                    if (
-                        isinstance(_, Msg)
-                        and _.finished_reason == ReplyFinishedReason.COMPLETED
+                    async for _ in self.verifier.reply_stream(
+                        inputs=instruction,
+                        structured_schema=_VerificationResult,
+                        yield_final_msg=True,
                     ):
-                        final_msg = _
-                    elif isinstance(
-                        _,
-                        (
-                            RequireExternalExecutionEvent,
-                            RequireUserConfirmEvent,
-                        ),
-                    ):
-                        break_loop = True
-                        yield _
-                    else:
-                        yield _
+                        if (
+                            isinstance(_, Msg)
+                            and _.finished_reason
+                            == ReplyFinishedReason.COMPLETED
+                        ):
+                            final_msg = _
+                        elif isinstance(
+                            _,
+                            (
+                                RequireExternalExecutionEvent,
+                                RequireUserConfirmEvent,
+                            ),
+                        ):
+                            break_loop = True
+                            yield _
+                        else:
+                            yield _
 
                 if break_loop:
                     # Escape the loop for hitl events
@@ -318,6 +330,7 @@ class GoalPipeline:
                     final_msg = None
                     instruction = UserMsg(
                         name="system",
+                        metadata={"authorization_source": "generated"},
                         content=[
                             TextBlock(
                                 text=(
@@ -351,6 +364,9 @@ class GoalPipeline:
                     self._iters += 1
                     if self.verifier_reset_context:
                         # Only the conversation, tool/task state stays
+                        self.verifier.state.retain_authorization(
+                            self.verifier.state.context,
+                        )
                         self.verifier.state.context.clear()
                         self.verifier.state.summary = ""
                     if self._iters >= self.max_iters:
@@ -362,6 +378,7 @@ class GoalPipeline:
                     feedback = final_msg.structured_output.get("message")
                     executor_inputs = UserMsg(
                         name="system",
+                        metadata={"authorization_source": "generated"},
                         content=(
                             "<system-reminder>You've failed to pass the "
                             "verification. Now recorrect your work based on "

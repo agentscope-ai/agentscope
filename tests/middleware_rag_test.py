@@ -468,6 +468,7 @@ class RAGMiddlewareTest(  # pylint: disable=too-many-public-methods
                 "reply_id": "reply-1",
                 "block_id": AnyString(),
                 "source": _HINT_SOURCE,
+                "source_role": None,
                 "hint": _EXPECTED_HINT,
                 "id": AnyString(),
                 "created_at": AnyString(),

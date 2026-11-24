@@ -8,6 +8,7 @@ from ..access import ResourceKind
 from .._manager import SchedulerManager
 from ..deps import (
     get_current_user_id,
+    get_message_bus,
     get_resource_access_service,
     get_scheduler_manager,
     get_session_service,
@@ -20,7 +21,9 @@ from ._schema import (
     ScheduleSessionsResponse,
     UpdateScheduleRequest,
 )
+from ._schema._schedule import ListedSchedule
 from .._service import ResourceAccessService, SessionService
+from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import (
     StorageBase,
     ScheduleData,
@@ -55,7 +58,10 @@ async def list_schedules(
             Paginated list of schedule records.
     """
     schedules = await storage.list_schedules(user_id)
-    return ListSchedulesResponse(schedules=schedules, total=len(schedules))
+    return ListSchedulesResponse.model_validate(
+        {"schedules": schedules, "total": len(schedules)},
+        from_attributes=True,
+    )
 
 
 @schedule_router.post(
@@ -116,8 +122,11 @@ async def create_schedule(
             enabled=body.enabled,
             stateful=body.stateful,
             permission_mode=body.permission_mode,
+            read_only=body.read_only,
+            allow_workspace_edits=body.allow_workspace_edits,
             chat_model_config=body.chat_model_config,
             source=ScheduleSource.USER,
+            authorized_description=body.description,
             # Keep the fallback aware so it denotes an absolute instant
             # even when the task's timezone differs from the server's.
             started_at=body.started_at or datetime.now().astimezone(),
@@ -141,7 +150,7 @@ async def create_schedule(
 
 @schedule_router.patch(
     "/{schedule_id}",
-    response_model=ScheduleRecord,
+    response_model=ListedSchedule,
     summary="Update a schedule",
 )
 async def update_schedule(
@@ -150,6 +159,7 @@ async def update_schedule(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
+    message_bus: MessageBus = Depends(get_message_bus),
 ) -> ScheduleRecord:
     """Partially update a schedule.
 
@@ -164,6 +174,7 @@ async def update_schedule(
         user_id (`str`): Authenticated user ID.
         storage (`StorageBase`): Storage instance.
         scheduler (`SchedulerManager`): Scheduler manager.
+        message_bus (`MessageBus`): Shared lock provider.
 
     Returns:
         `ScheduleRecord`:
@@ -174,28 +185,33 @@ async def update_schedule(
             update leaves an invalid cron expression, timezone or
             activation window.
     """
-    existing = await storage.get_schedule(user_id, schedule_id)
-    if existing is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Schedule '{schedule_id}' not found.",
+    async with message_bus.acquire_lock(
+        MessageBusKeys.schedule_lock(schedule_id),
+    ):
+        existing = await storage.get_schedule(user_id, schedule_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Schedule '{schedule_id}' not found.",
+            )
+
+        updates = body.model_dump(exclude_none=True)
+        if "description" in updates:
+            updates["authorized_description"] = updates["description"]
+        updated_data = existing.data.model_copy(update=updates)
+        updated_record = existing.model_copy(
+            update={"data": updated_data, "updated_at": datetime.now()},
         )
 
-    updates = body.model_dump(exclude_none=True)
-    updated_data = existing.data.model_copy(update=updates)
-    updated_record = existing.model_copy(
-        update={"data": updated_data, "updated_at": datetime.now()},
-    )
+        try:
+            scheduler.validate_schedule(updated_record)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
 
-    try:
-        scheduler.validate_schedule(updated_record)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(exc),
-        ) from exc
-
-    await storage.upsert_schedule(user_id, updated_record)
+        await storage.upsert_schedule(user_id, updated_record)
     await scheduler.notify_changed(schedule_id)
 
     return updated_record
@@ -268,4 +284,7 @@ async def list_schedule_sessions(
         )
 
     sessions = await storage.list_sessions_by_schedule(user_id, schedule_id)
-    return ScheduleSessionsResponse(sessions=sessions, total=len(sessions))
+    return ScheduleSessionsResponse.model_validate(
+        {"sessions": sessions, "total": len(sessions)},
+        from_attributes=True,
+    )

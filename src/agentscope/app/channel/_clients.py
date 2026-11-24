@@ -306,9 +306,16 @@ class ChannelClients:
                     )
                     if event_type == EventType.REQUIRE_USER_CONFIRM:
                         pending = {
-                            call.id
+                            call.id: request_id
                             for call in awaiting
                             if call.state == ToolCallState.ASKING
+                            and (
+                                request_id := state.confirmation_request(
+                                    agent_name,
+                                    call.id,
+                                )
+                            )
+                            in (None, raw.get("id"))
                         }
                         tools = [
                             tool
@@ -316,7 +323,7 @@ class ChannelClients:
                             if tool["id"] in pending
                         ]
                         if not tools:
-                            return
+                            continue
                         approval_ids = {}
                         if current_requester:
                             for tool in tools:
@@ -331,6 +338,7 @@ class ChannelClients:
                                         session_id=session_id,
                                         reply_id=reply_id,
                                         tool_call_id=tool["id"],
+                                        confirmation_id=pending[tool["id"]],
                                         requester_id=current_requester,
                                     ),
                                 )

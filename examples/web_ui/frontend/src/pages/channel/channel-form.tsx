@@ -42,6 +42,11 @@ export interface ChannelFormValue {
 	chatModelConfig: ChatModelConfig | null;
 	fallbackChatModelConfig: ChatModelConfig | null;
 	permissionMode: PermissionMode;
+	permissionConstraints?: {
+		read_only?: boolean;
+		allow_workspace_edits?: boolean;
+		interactive?: boolean;
+	};
 }
 
 export function defaultChannelForm(agentId = ''): ChannelFormValue {
@@ -62,7 +67,7 @@ export function defaultChannelForm(agentId = ''): ChannelFormValue {
 		],
 		chatModelConfig: null,
 		fallbackChatModelConfig: null,
-		permissionMode: 'default' as PermissionMode,
+		permissionMode: 'ask' as PermissionMode,
 	};
 }
 
@@ -78,12 +83,18 @@ export function channelFormFromRecord(record: ChannelRecord): ChannelFormValue {
 		chatModelConfig: record.session.chat_model_config,
 		fallbackChatModelConfig: record.session.fallback_chat_model_config ?? null,
 		permissionMode: record.session.permission_mode,
+		permissionConstraints: {
+			read_only: record.session.read_only,
+			allow_workspace_edits: record.session.allow_workspace_edits,
+			interactive: record.session.interactive,
+		},
 	};
 }
 
 function sessionSettings(v: ChannelFormValue) {
 	return {
 		session: {
+			...v.permissionConstraints,
 			chat_model_config: v.chatModelConfig as ChatModelConfig,
 			fallback_chat_model_config: v.fallbackChatModelConfig,
 			permission_mode: v.permissionMode,
@@ -338,6 +349,13 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
 					className="w-full"
 					value={value.permissionMode}
 					onChange={(v) => set('permissionMode', v)}
+					constraints={value.permissionConstraints}
+					onConstraintsChange={(updates) =>
+						set('permissionConstraints', {
+							...value.permissionConstraints,
+							...updates,
+						})
+					}
 				/>
 			</Field>
 

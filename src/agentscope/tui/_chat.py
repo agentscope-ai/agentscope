@@ -173,7 +173,8 @@ class HitlUI(Vertical):
 
     def __init__(self) -> None:
         super().__init__(classes="as-hitl")
-        self._pending: list[tuple[str, str, ToolCallBlock]] = []
+        self._pending: list[tuple[str, str, ToolCallBlock, str | None]] = []
+        self._current_card: tuple[str, str, str | None] | None = None
         self._choice_labels: list[str] = []
         self._submitting = False
 
@@ -189,17 +190,16 @@ class HitlUI(Vertical):
 
     def set_pending(
         self,
-        pending: list[tuple[str, str, ToolCallBlock]],
+        pending: list[tuple[str, str, ToolCallBlock, str | None]],
     ) -> None:
-        previous = (
-            (self._pending[0][0], self._pending[0][2].id)
-            if self._pending
-            else None
-        )
-        current = (pending[0][0], pending[0][2].id) if pending else None
+        current = None
+        if pending:
+            reply_id, _, call, request_id = pending[0]
+            current = (reply_id, call.id, request_id)
         self._pending = pending
-        if previous != current:
+        if self._current_card != current:
             self._submitting = False
+            self._current_card = current
         self.display = bool(pending)
         if self.is_mounted and pending:
             self._render_current()
@@ -210,7 +210,7 @@ class HitlUI(Vertical):
         self.query_one(OptionList).focus()
 
     def _render_current(self) -> None:
-        _, agent_name, tool_call = self._pending[0]
+        _, agent_name, tool_call, _ = self._pending[0]
         waiting_external = tool_call.state == ToolCallState.SUBMITTED
         total = len(self._pending)
         state = (
@@ -283,7 +283,7 @@ class HitlUI(Vertical):
     def _confirm(self, confirmed: bool, always: bool = False) -> None:
         if not self._pending or self._submitting:
             return
-        reply_id, _, tool_call = self._pending[0]
+        reply_id, _, tool_call, request_id = self._pending[0]
         if tool_call.state == ToolCallState.SUBMITTED:
             return
         self._submitting = True
@@ -294,6 +294,7 @@ class HitlUI(Vertical):
                     reply_id=reply_id,
                     confirm_results=[
                         ConfirmResult(
+                            request_id=request_id,
                             confirmed=confirmed,
                             tool_call=tool_call,
                             rules=(
@@ -482,7 +483,7 @@ class ChatUI(Widget):
         self.show_thinking = show_thinking
         self.show_usage = show_usage
         self.input_enabled = input_enabled
-        self._dismissed_calls: set[tuple[str, str]] = set()
+        self._dismissed_calls: set[tuple[str, str, str | None]] = set()
 
     def compose(self) -> ComposeResult:
         yield MessagesUI(
@@ -544,9 +545,11 @@ class ChatUI(Widget):
         if self.is_mounted:
             self.query_one(ComposerUI).set_enabled(enabled)
 
-    def _pending_tools(self) -> list[tuple[str, str, ToolCallBlock]]:
-        pending: list[tuple[str, str, ToolCallBlock]] = []
-        pending_calls: set[tuple[str, str]] = set()
+    def _pending_tools(
+        self,
+    ) -> list[tuple[str, str, ToolCallBlock, str | None]]:
+        pending: list[tuple[str, str, ToolCallBlock, str | None]] = []
+        pending_calls: set[tuple[str, str, str | None]] = set()
         for message in self._current_messages():
             if message.role != "assistant" or message.finished_at is not None:
                 continue
@@ -555,10 +558,16 @@ class ChatUI(Widget):
                     ToolCallState.ASKING,
                     ToolCallState.SUBMITTED,
                 ):
-                    call = (message.id, block.id)
+                    call = (
+                        message.id,
+                        block.id,
+                        message.confirmation_request(block.id),
+                    )
                     pending_calls.add(call)
                     if call not in self._dismissed_calls:
-                        pending.append((message.id, message.name, block))
+                        pending.append(
+                            (message.id, message.name, block, call[2]),
+                        )
         self._dismissed_calls.intersection_update(pending_calls)
         return pending
 
@@ -573,8 +582,8 @@ class ChatUI(Widget):
         hitl = self.query_one(HitlUI)
         ask_user = self.query_one(AskUserUI)
         pending = self._pending_tools()
-        ask_pending: list[tuple[str, str, ToolCallBlock]] = []
-        hitl_pending: list[tuple[str, str, ToolCallBlock]] = []
+        ask_pending: list[tuple[str, str, ToolCallBlock, str | None]] = []
+        hitl_pending: list[tuple[str, str, ToolCallBlock, str | None]] = []
         ask_user_first = bool(pending and self._is_ask_user(pending[0][2]))
         active_pending = ask_pending if ask_user_first else hitl_pending
         for item in pending:
@@ -582,7 +591,7 @@ class ChatUI(Widget):
                 break
             active_pending.append(item)
         hitl.set_pending(hitl_pending)
-        ask_user.set_pending(ask_pending)
+        ask_user.set_pending([item[:3] for item in ask_pending])
         composer.display = not pending
         composer.set_enabled(self.input_enabled and not self.disabled)
         composer.set_running_reply(self._latest_running_reply_id())
@@ -627,7 +636,11 @@ class ChatUI(Widget):
     @on(HitlUI.Confirmed)
     def _on_hitl_confirmed(self, event: HitlUI.Confirmed) -> None:
         self._dismissed_calls.update(
-            (event.value.reply_id, result.tool_call.id)
+            (
+                event.value.reply_id,
+                result.tool_call.id,
+                result.request_id,
+            )
             for result in event.value.confirm_results
         )
         self._sync_interaction_area()
@@ -637,7 +650,7 @@ class ChatUI(Widget):
     def _on_ask_user_submitted(self, event: AskUserUI.Submitted) -> None:
         # Dismiss the form locally without changing authoritative messages.
         self._dismissed_calls.add(
-            (event.value.reply_id, event.tool_call_id),
+            (event.value.reply_id, event.tool_call_id, None),
         )
         self._sync_interaction_area()
         self.post_message(self.ExternalExecutionSubmitted(event.value))

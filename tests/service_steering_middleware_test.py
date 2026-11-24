@@ -99,6 +99,7 @@ def _expected_hint_message(item_id: str, message: Msg) -> Msg:
             HintBlock(
                 id=f"{item_id}:0",
                 source=_STEERING_HINT_SOURCE,
+                source_role=message.role,
                 hint=list(message.content),
             ),
         ],
@@ -112,6 +113,7 @@ def _expected_hint_event(item_id: str, message: Msg) -> dict:
             reply_id="reply",
             block_id=f"{item_id}:0",
             source=_STEERING_HINT_SOURCE,
+            source_role=message.role,
             hint=list(message.content),
         ),
     )

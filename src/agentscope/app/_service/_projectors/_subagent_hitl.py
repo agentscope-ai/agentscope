@@ -20,13 +20,16 @@ Persistence model (see the design doc, §2.4):
 - **Authoritative state** is the worker session's own ``state.context``
   (the ``ASKING`` tool call). The projection is only a mirror.
 - The projected hash entry carries **no TTL**: a legitimate
-  confirmation can stay pending indefinitely. Stale entries (worker
-  cancelled/crashed without clearing) are healed by reconcile-on-read
-  at SSE replay time.
+  confirmation can stay pending indefinitely. Reconnecting readers check
+  committed state. Only the worker updates the cards after its checkpoint.
 """
-from datetime import datetime
-from typing import TYPE_CHECKING
+import json
+from typing import TYPE_CHECKING, Sequence, TypeAlias
 
+from ..._bus_ops import publish_session_event
+from ...message_bus import MessageBusKeys
+from ...storage._utils import _ensure_team_members
+from ....message import ToolCallState
 from ....event import (
     RequireUserConfirmEvent,
     RequireExternalExecutionEvent,
@@ -36,9 +39,16 @@ from ....event import (
 )
 
 if TYPE_CHECKING:
+    from ....message import ToolCallBlock
+    from ...message_bus import MessageBus
     from ...storage import AgentRecord, SessionRecord, StorageBase
+    from ....state import AgentState
     from ....event import AgentEvent
     from .._session_projection import SessionProjection
+
+
+_Request: TypeAlias = RequireUserConfirmEvent | RequireExternalExecutionEvent
+_OPEN_PENDING = "_open_notification_pending"
 
 
 class SubagentHitlProjector:
@@ -75,20 +85,325 @@ class SubagentHitlProjector:
         self._storage = storage
 
     @staticmethod
-    def entry_id(worker_session_id: str, reply_id: str) -> str:
-        """Return the projection entry id for one pending request.
+    def entry_id(
+        worker_session_id: str,
+        reply_id: str,
+        request_id: str | None = None,
+    ) -> str:
+        """Address one request, including records predating request keys."""
+        if request_id is None:
+            return f"{worker_session_id}:{reply_id}"
+        return json.dumps([worker_session_id, reply_id, request_id])
 
-        Args:
-            worker_session_id (`str`):
-                The worker session that emitted the HITL request.
-            reply_id (`str`):
-                The worker-side reply id the request belongs to.
+    @staticmethod
+    def pending_card(
+        card: dict,
+        state: "AgentState",
+        waiting: dict[str, "ToolCallBlock"] | None = None,
+    ) -> dict | None:
+        """Keep only calls still waiting for this particular request."""
+        if state.reply_id != card["reply_id"]:
+            return None
+        if waiting is None:
+            waiting = {c.id: c for c in state.get_awaiting_tool_calls(None)}
+        event = card["event"]
+        calls = []
+        for payload in event["tool_calls"]:
+            call = waiting.get(payload["id"])
+            if call is None:
+                continue
+            if card["event_type"] == "require_user_confirm":
+                if call.state != ToolCallState.ASKING:
+                    continue
+                current = state.confirmation_request(None, call.id)
+                if current != event["id"] and (
+                    current is not None or "request_id" in card
+                ):
+                    continue
+            elif call.state != ToolCallState.SUBMITTED:
+                continue
+            calls.append(payload)
+        if not calls:
+            return None
+        pending = {**card, "event": {**event, "tool_calls": calls}}
+        pending.pop(_OPEN_PENDING, None)
+        return pending
 
-        Returns:
-            `str`:
-                The entry id, ``"{worker_session_id}:{reply_id}"``.
-        """
-        return f"{worker_session_id}:{reply_id}"
+    @staticmethod
+    def _request_id(state: "AgentState", call: "ToolCallBlock") -> str | None:
+        """Resolve a pending call's ID, including older external requests."""
+        if call.state == ToolCallState.ASKING:
+            return state.confirmation_request(None, call.id)
+        approval = state.reply_context.tool_approvals.get(call.id)
+        return (
+            approval.external_request_id if approval else None
+        ) or f"external:{call.id}"
+
+    @classmethod
+    def pending_request_ids(cls, state: "AgentState") -> list[tuple[str, str]]:
+        """Snapshot each pending card's identity before the worker resumes."""
+        return list(
+            dict.fromkeys(
+                (state.reply_id, request_id)
+                for call in state.get_awaiting_tool_calls(None)
+                if (request_id := cls._request_id(state, call)) is not None
+            ),
+        )
+
+    @classmethod
+    def pending_requests(
+        cls,
+        state: "AgentState",
+        covered: set[str] | None = None,
+        *,
+        waiting: list["ToolCallBlock"] | None = None,
+    ) -> list[_Request]:
+        """Rebuild request groups from the member's committed reply."""
+        requests = {}
+        if waiting is None:
+            waiting = state.get_awaiting_tool_calls(None)
+        for call in waiting:
+            if covered and call.id in covered:
+                continue
+            request_id = cls._request_id(state, call)
+            if request_id is None:
+                continue
+            if request_id not in requests:
+                event_type = (
+                    RequireUserConfirmEvent
+                    if call.state == ToolCallState.ASKING
+                    else RequireExternalExecutionEvent
+                )
+                requests[request_id] = event_type(
+                    id=request_id,
+                    reply_id=state.reply_id,
+                    created_at=call.created_at,
+                    tool_calls=[],
+                )
+            requests[request_id].tool_calls.append(call.model_copy(deep=True))
+        return list(requests.values())
+
+    @staticmethod
+    def _card(
+        worker_sid: str,
+        agent_id: str,
+        name: str,
+        event: _Request,
+    ) -> dict:
+        """Serialize a request for the leader UI."""
+        return {
+            "worker_session_id": worker_sid,
+            "worker_agent_id": agent_id,
+            "worker_agent_name": name,
+            "reply_id": event.reply_id,
+            "request_id": event.id,
+            "event_type": event.type.lower(),
+            "event": event.model_dump(mode="json"),
+            "created_at": event.created_at,
+        }
+
+    @classmethod
+    def _pending_cards(
+        cls,
+        worker_sid: str,
+        agent_id: str,
+        state: "AgentState",
+        projected: list[dict],
+        waiting: list["ToolCallBlock"],
+        *,
+        recover: bool = True,
+    ) -> list[dict]:
+        """Merge the projected payloads with any missing pending calls."""
+        by_id = {call.id: call for call in waiting}
+        cards = [
+            pending
+            for card in projected
+            if (pending := cls.pending_card(card, state, by_id))
+        ]
+        if recover and waiting:
+            reply = state.get_reply_message(None)
+            covered = {
+                call["id"]
+                for card in cards
+                for call in card["event"]["tool_calls"]
+            }
+            for event in cls.pending_requests(state, covered, waiting=waiting):
+                cards.append(
+                    cls._card(worker_sid, agent_id, reply.name, event),
+                )
+        return cards
+
+    async def _reissue_missing(
+        self,
+        user_id: str,
+        worker: "SessionRecord",
+        bus: "MessageBus",
+    ) -> "SessionRecord | None":
+        """Save new prompt IDs before exposing them to either session."""
+        sid = worker.id
+        async with bus.acquire_lock(MessageBusKeys.session_lock(sid)):
+            current = await self._storage.get_session(
+                user_id,
+                worker.agent_id,
+                sid,
+            )
+            if current is None or current.team_id != worker.team_id:
+                return None
+            reply = current.state.get_reply_message(None)
+            if reply is None:
+                return current
+            prompts = RequireUserConfirmEvent.reissue_missing(reply)
+            if not prompts:
+                return current
+            async with bus.acquire_lock(
+                MessageBusKeys.session_event_checkpoint_lock(sid),
+            ):
+                history = await self._storage.get_message(
+                    user_id,
+                    sid,
+                    reply.id,
+                )
+                if history is not None:
+                    for prompt in prompts:
+                        history.append_event(prompt)
+                await self._storage.upsert_message(
+                    user_id,
+                    sid,
+                    history or reply,
+                )
+                await self._storage.update_session_state(
+                    user_id=user_id,
+                    agent_id=worker.agent_id,
+                    session_id=sid,
+                    state=current.state,
+                )
+                for prompt in prompts:
+                    await publish_session_event(
+                        bus,
+                        sid,
+                        prompt.model_dump(mode="json"),
+                    )
+            return current
+
+    async def snapshot(
+        self,
+        user_id: str,
+        leader: "SessionRecord",
+        projected: list[dict],
+        bus: "MessageBus",
+    ) -> list[dict]:
+        """Read pending cards, including workers missing from the mirror."""
+        workers = {}
+        by_worker: dict[str, list[dict]] = {}
+        for card in projected:
+            sid = card["worker_session_id"]
+            workers[sid] = card["worker_agent_id"]
+            by_worker.setdefault(sid, []).append(card)
+        from_roster = False
+        if leader.team_id:
+            team = await self._storage.get_team(user_id, leader.team_id)
+            if team and team.session_id == leader.id:
+                members = await _ensure_team_members(
+                    self._storage,
+                    user_id,
+                    team,
+                )
+                workers = {m.session_id: m.agent_id for m in members}
+                from_roster = True
+        cards = []
+        for sid, agent_id in workers.items():
+            worker = await self._storage.get_session(user_id, agent_id, sid)
+            if worker is None or (
+                from_roster and worker.team_id != leader.team_id
+            ):
+                continue
+            waiting = worker.state.get_awaiting_tool_calls(None)
+            if from_roster and any(
+                call.state == ToolCallState.ASKING
+                and worker.state.confirmation_request(None, call.id) is None
+                for call in waiting
+            ):
+                worker = await self._reissue_missing(user_id, worker, bus)
+                if worker is None:
+                    continue
+                waiting = worker.state.get_awaiting_tool_calls(None)
+            cards.extend(
+                self._pending_cards(
+                    sid,
+                    agent_id,
+                    worker.state,
+                    by_worker.get(sid, []),
+                    waiting,
+                    recover=from_roster,
+                ),
+            )
+        return cards
+
+    async def sync(
+        self,
+        leader_sid: str,
+        worker_sid: str,
+        agent: "AgentRecord",
+        state: "AgentState",
+        requests: list[_Request],
+        projection: "SessionProjection",
+        previous_request_ids: Sequence[tuple[str, str]] = (),
+    ) -> None:
+        """Publish the worker's committed changes under its session lock."""
+        previous = {
+            (card["reply_id"], card["event"]["id"]): card
+            for card in await projection.list(leader_sid, self.KIND)
+            if card["worker_session_id"] == worker_sid
+        }
+        candidates = previous.copy()
+        for event in requests:
+            candidates.setdefault(
+                (event.reply_id, event.id),
+                self._card(worker_sid, agent.id, agent.data.name, event),
+            )
+        pending = self._pending_cards(
+            worker_sid,
+            agent.id,
+            state,
+            list(candidates.values()),
+            state.get_awaiting_tool_calls(None),
+        )
+        closed = {
+            key: card.get("request_id") for key, card in previous.items()
+        }
+        # A reconnect may have recovered a card whose first write failed.
+        for reply_id, request_id in previous_request_ids:
+            closed.setdefault((reply_id, request_id), request_id)
+        for card in pending:
+            card_id = (card["reply_id"], card["event"]["id"])
+            closed.pop(card_id, None)
+            stored = previous.get(card_id)
+            if stored != card:
+                key = self.entry_id(
+                    worker_sid,
+                    card["reply_id"],
+                    card.get("request_id"),
+                )
+                # Persist the route and retry marker before notifying clients.
+                queued = {**card, _OPEN_PENDING: True}
+                if stored != queued:
+                    await projection.upsert(leader_sid, self.KIND, key, queued)
+                await projection.publish(leader_sid, self.EVT_REQUIRE, card)
+                await projection.upsert(leader_sid, self.KIND, key, card)
+
+        for (reply_id, request_id), stored_id in closed.items():
+            key = self.entry_id(worker_sid, reply_id, stored_id)
+            # A stored card lets the next sync retry an undelivered close.
+            await projection.publish(
+                leader_sid,
+                self.EVT_RESULT,
+                {
+                    "worker_session_id": worker_sid,
+                    "reply_id": reply_id,
+                    "request_id": request_id,
+                },
+            )
+            await projection.delete(leader_sid, self.KIND, key)
 
     async def maybe_project(
         self,
@@ -98,38 +413,8 @@ class SubagentHitlProjector:
         event: "AgentEvent",
         projection: "SessionProjection",
     ) -> None:
-        """Mirror a worker HITL event onto its team's leader session.
-
-        When a *worker* session emits an HITL request, write the pending
-        card (durable entry + live notification) onto the leader; when
-        it resolves one or its reply ends, clear the card. No-op for
-        non-team sessions and for the leader session itself (a leader's
-        own HITL reaches its client directly).
-
-        Args:
-            user_id (`str`):
-                The owner of the running session.
-            session_record (`SessionRecord`):
-                The currently-running session's record.
-            agent_record (`AgentRecord`):
-                The currently-running agent's record. Whether this
-                session forwards is decided by ``session_record.team_id``
-                (and the leader check below), NOT by
-                ``agent_record.source`` — an ``AgentInvite`` borrowed
-                session runs on a ``source='user'`` record but is still
-                a team worker, so its HITL must project onto the leader.
-            event (`AgentEvent`):
-                The event just published to this session's channel.
-            projection (`SessionProjection`):
-                Shared primitive used to write the durable entry and the
-                live notification.
-        """
-        # Fast path: only sessions that participate in a team forward
-        # anything, and only for the event kinds we care about. The
-        # leader/worker distinction is made below via ``team.session_id``.
-        if not session_record.team_id:
-            return
-        if not isinstance(
+        """Project one HITL update from a committed session record."""
+        if not session_record.team_id or not isinstance(
             event,
             (
                 RequireUserConfirmEvent,
@@ -140,58 +425,20 @@ class SubagentHitlProjector:
             ),
         ):
             return
-
-        team = await self._storage.get_team(
-            user_id,
-            session_record.team_id,
-        )
-        if team is None or team.session_id == session_record.id:
-            # No team, or this IS the leader session — nothing to mirror.
-            return
-        leader_sid = team.session_id
-
-        if isinstance(
-            event,
-            (RequireUserConfirmEvent, RequireExternalExecutionEvent),
-        ):
-            payload = {
-                "worker_session_id": session_record.id,
-                "worker_agent_id": agent_record.id,
-                "worker_agent_name": agent_record.data.name,
-                "reply_id": event.reply_id,
-                "event_type": (
-                    "require_user_confirm"
-                    if isinstance(event, RequireUserConfirmEvent)
-                    else "require_external_execution"
-                ),
-                "event": event.model_dump(mode="json"),
-                "created_at": datetime.now().isoformat(),
-            }
-            await projection.upsert(
-                leader_sid,
-                self.KIND,
-                self.entry_id(session_record.id, event.reply_id),
-                payload,
-            )
-            await projection.publish(leader_sid, self.EVT_REQUIRE, payload)
-        else:
-            # Clear the pending card. ``ReplyEndEvent`` is the primary
-            # clear signal (the resume's continuation event is NOT
-            # republished through the stream); the explicit result
-            # events clear early when they do flow through. All are
-            # idempotent — deleting an already-gone entry is a no-op.
-            await projection.delete(
-                leader_sid,
-                self.KIND,
-                self.entry_id(session_record.id, event.reply_id),
-            )
-            await projection.publish(
-                leader_sid,
-                self.EVT_RESULT,
-                {
-                    "worker_session_id": session_record.id,
-                    "reply_id": event.reply_id,
-                },
+        team = await self._storage.get_team(user_id, session_record.team_id)
+        if team is not None and team.session_id != session_record.id:
+            await self.sync(
+                team.session_id,
+                session_record.id,
+                agent_record,
+                session_record.state,
+                [event]
+                if isinstance(
+                    event,
+                    (RequireUserConfirmEvent, RequireExternalExecutionEvent),
+                )
+                else [],
+                projection,
             )
 
     @classmethod
@@ -200,6 +447,9 @@ class SubagentHitlProjector:
         projection: "SessionProjection",
         leader_sid: str,
         reply_id: str,
+        receipt: UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | None = None,
     ) -> dict | None:
         """Find the pending entry for ``reply_id`` under a leader.
 
@@ -215,6 +465,8 @@ class SubagentHitlProjector:
                 The leader session the confirm result was POSTed to.
             reply_id (`str`):
                 The worker-side reply id carried by the confirm result.
+            receipt:
+                Match its prompt and tool-call IDs when routing a reply.
 
         Returns:
             `dict | None`:
@@ -222,8 +474,38 @@ class SubagentHitlProjector:
                 ``worker_agent_id``), or ``None`` when no pending entry
                 matches — meaning the confirm is the leader's own.
         """
-        for entry in await projection.list(leader_sid, cls.KIND):
-            if entry.get("reply_id") == reply_id:
+        return cls.match(
+            await projection.list(leader_sid, cls.KIND),
+            reply_id,
+            receipt,
+        )
+
+    @staticmethod
+    def match(
+        cards: list[dict],
+        reply_id: str,
+        receipt: UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | None = None,
+    ) -> dict | None:
+        """Find the card addressed by a receipt."""
+        for entry in cards:
+            if entry["reply_id"] != reply_id:
+                continue
+            if receipt is None:
+                return entry
+            event = entry["event"]
+            call_ids = {call["id"] for call in event["tool_calls"]}
+            if isinstance(receipt, UserConfirmResultEvent):
+                if entry["event_type"] == "require_user_confirm" and any(
+                    r.tool_call.id in call_ids
+                    and r.request_id in (event["id"], None)
+                    for r in receipt.confirm_results
+                ):
+                    return entry
+            elif entry["event_type"] == "require_external_execution" and any(
+                result.id in call_ids for result in receipt.execution_results
+            ):
                 return entry
         return None
 
@@ -271,5 +553,9 @@ class SubagentHitlProjector:
                 await projection.delete(
                     leader_sid,
                     cls.KIND,
-                    cls.entry_id(worker_sid, entry["reply_id"]),
+                    cls.entry_id(
+                        worker_sid,
+                        entry["reply_id"],
+                        entry.get("request_id"),
+                    ),
                 )

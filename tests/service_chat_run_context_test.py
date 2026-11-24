@@ -18,6 +18,9 @@ from agentscope.app.storage import (
     ChatModelConfig,
     SessionConfig,
     SessionRecord,
+    ScheduleData,
+    ScheduleOrigin,
+    ScheduleRecord,
     TeamData,
     TeamRecord,
     TTSModelConfig,
@@ -25,6 +28,7 @@ from agentscope.app.storage import (
 from agentscope.middleware import TTSMiddleware
 from agentscope.message import UserMsg
 from agentscope.state import AgentState
+from agentscope.permission import PermissionMode, PermissionRule
 
 
 class _Storage:
@@ -40,6 +44,7 @@ class _Storage:
         self.agents = agents
         self.team = team
         self.get_team_calls = 0
+        self.get_schedule = AsyncMock()
 
     async def get_session(
         self,
@@ -100,10 +105,21 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
             with self.subTest(queued=queued):
                 await self._assert_worker_run(True, queued=queued)
 
+    async def test_scheduled_session_refreshes_approval_policy(self) -> None:
+        """Refresh reused schedule restrictions without losing history."""
+        for local_read_only in (False, True):
+            await self._assert_worker_run(
+                True,
+                scheduled=True,
+                local_read_only=local_read_only,
+            )
+
     async def _assert_worker_run(
         self,
         tts_available: bool,
         queued: bool | None = None,
+        scheduled: bool = False,
+        local_read_only: bool = False,
     ) -> None:
         """Exercise assembly and reply with or without a usable TTS model."""
         user_id = "user-1"
@@ -167,8 +183,62 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
             agents={a.id: a for a in (worker_agent, leader_agent)},
             team=team,
         )
+        if scheduled:
+            existing_rule = PermissionRule(
+                tool_name="Bash",
+                rule_content="existing restriction",
+                behavior="deny",
+                source="session",
+            )
+            inherited_rule = PermissionRule(
+                tool_name="Bash",
+                rule_content="inherited restriction",
+                behavior="deny",
+                source="parent session",
+            )
+            worker_session.state.permission_context.deny_rules = {
+                "Bash": [existing_rule],
+            }
+            worker_session.state.permission_context.read_only = local_read_only
+            worker_session.origin = ScheduleOrigin(schedule_id="schedule")
+            worker_session.state.permission_context.mode = (
+                PermissionMode.BYPASS
+            )
+            worker_session.state.context = [
+                UserMsg(name="user", content="Keep this history."),
+            ]
+            storage.get_schedule = AsyncMock(
+                return_value=ScheduleRecord(
+                    id="schedule",
+                    user_id=user_id,
+                    agent_id=worker_agent.id,
+                    data=ScheduleData(
+                        name="job",
+                        description="Run the current bounded job",
+                        authorized_description="Run the current bounded job",
+                        cron_expression="0 * * * *",
+                        chat_model_config=config.chat_model_config,
+                        permission_mode=PermissionMode.AUTO,
+                        read_only=not local_read_only,
+                        deny_rules={"Bash": [existing_rule, inherited_rule]},
+                    ),
+                ),
+            )
         equipped: list[list] = []
+        if scheduled:
+            current_authorization = (
+                storage.get_schedule.return_value.review_authorization()
+            )
+            worker_session.state.schedule_authorization = (
+                current_authorization.model_copy(
+                    update={
+                        "description": "Previous task",
+                        "authorized_description": "Previous task",
+                    },
+                )
+            )
         replies: list[object] = []
+        assembled_states: list[AgentState] = []
 
         class _Agent:
             """Capture the middlewares; reply without doing anything."""
@@ -182,6 +252,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 **_: object,
             ) -> None:
                 equipped.append(middlewares)
+                assembled_states.append(state)
                 self.state = state
                 self.name = name
 
@@ -298,6 +369,30 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
             for middleware in middlewares:
                 if isinstance(middleware, TTSMiddleware):
                     self.assertTrue(middleware.continue_on_error)
+
+        if scheduled:
+            storage.get_schedule.assert_awaited_once_with(user_id, "schedule")
+            state = assembled_states[0]
+            self.assertEqual(
+                {
+                    "mode": state.permission_context.mode,
+                    "read_only": state.permission_context.read_only,
+                    "interactive": state.permission_context.interactive,
+                    "edits": state.permission_context.allow_workspace_edits,
+                    "deny_rules": state.permission_context.deny_rules,
+                    "history": state.context,
+                    "authorization": state.schedule_authorization,
+                },
+                {
+                    "mode": PermissionMode.AUTO,
+                    "read_only": True,
+                    "interactive": False,
+                    "edits": False,
+                    "deny_rules": {"Bash": [existing_rule, inherited_rule]},
+                    "history": worker_session.state.context,
+                    "authorization": current_authorization,
+                },
+            )
 
         get_tts_model.assert_awaited_once_with(
             user_id,

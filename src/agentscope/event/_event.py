@@ -1,13 +1,20 @@
 # -*- coding: utf-8 -*-
 """Event types for agent execution."""
 from enum import StrEnum
-from typing import Any, Dict, Literal, List, Self, TypeAlias
+from typing import Any, Dict, Iterator, Literal, List, Self, TypeAlias
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ConfigDict,
+    field_validator,
+    model_validator,
+)
 from typing_extensions import deprecated
 
 from .._utils._common import _generate_id, _generate_timestamp
 from ..message import (
+    Msg,
     DataBlock,
     TextBlock,
     ToolCallBlock,
@@ -306,6 +313,8 @@ class HintBlockEvent(EventBase):
     """Unique identifier of the hint block."""
     source: str | None = None
     """Sender or origin of this hint (e.g. ``"alice"``, ``"system"``)."""
+    source_role: Literal["user", "assistant", "system"] | None = None
+    """Original role recorded by a trusted steering input adapter."""
     hint: str | List[TextBlock | DataBlock]
     """Complete hint content — ``str`` or ``list[TextBlock | DataBlock]``."""
 
@@ -358,6 +367,11 @@ class ToolResultStartEvent(EventBase):
     """ID of the corresponding tool call."""
     tool_call_name: str
     """Name of the tool that was called."""
+    tool_call_input: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    """Final arguments when acting middleware changed the approved call."""
 
 
 class ToolResultTextDeltaEvent(EventBase):
@@ -422,6 +436,11 @@ class ToolResultEndEvent(EventBase):
     """ID of the corresponding tool call."""
     state: ToolResultState
     """Final execution state of the tool call."""
+    external_request_id: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    """ID of the external result submission consumed by this call."""
     metadata: dict[str, Any] = Field(default_factory=dict)
     """Optional metadata attached to the tool result event."""
 
@@ -455,6 +474,28 @@ class RequireUserConfirmEvent(EventBase):
     tool_calls: List[ToolCallBlock]
     """Tool calls pending user confirmation."""
 
+    @classmethod
+    def issue(cls, reply_id: str, call: ToolCallBlock) -> Self:
+        """Bind the live call and its client-facing snapshot to one prompt."""
+        return cls(
+            reply_id=reply_id,
+            tool_calls=[call.model_copy(deep=True)],
+        )
+
+    @classmethod
+    def reissue_missing(cls, message: Msg) -> list[Self]:
+        """Bind each legacy unanswered call to its own confirmation."""
+        prompts = []
+        for call in message.get_content_blocks("tool_call"):
+            if (
+                call.state == "asking"
+                and message.confirmation_request(call.id) is None
+            ):
+                prompt = cls.issue(message.id, call)
+                message.set_confirmation_request(call.id, prompt.id)
+                prompts.append(prompt)
+        return prompts
+
 
 class RequireExternalExecutionEvent(EventBase):
     """Require external execution event."""
@@ -472,6 +513,11 @@ class RequireExternalExecutionEvent(EventBase):
 class ConfirmResult(BaseModel):
     """Confirm result for a tool call."""
 
+    request_id: str | None = Field(
+        default=None,
+        exclude_if=lambda v: v is None,
+    )
+    """ID of the RequireUserConfirmEvent the user answered."""
     confirmed: bool
     """Whether the user confirmed the tool call."""
     tool_call: ToolCallBlock
@@ -481,6 +527,31 @@ class ConfirmResult(BaseModel):
     applicable when ``confirmed`` is True. In case user modification is
     needed, complete permission rules are used here instead of references to
     the suggested rules in ``RequireUserConfirmEvent``."""
+
+    @field_validator("tool_call")
+    @classmethod
+    def _snapshot_answer(cls, call: ToolCallBlock) -> ToolCallBlock:
+        """Keep this answer bound to the card the caller actually saw."""
+        return call.model_copy(deep=True)
+
+    def answers(self, pending: ToolCallBlock, request_id: str | None) -> bool:
+        """Match the exact outstanding prompt for this call."""
+        return (
+            pending.state == "asking"
+            and self.tool_call.id == pending.id
+            and request_id is not None
+            and self.request_id == request_id
+        )
+
+
+class MissingConfirmationIdError(ValueError):
+    """A client answered a current card without its request identifier."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Set confirm_results[].request_id to RequireUserConfirmEvent.id "
+            "from the confirmation card you are answering.",
+        )
 
 
 class UserConfirmResultEvent(EventBase):
@@ -494,6 +565,40 @@ class UserConfirmResultEvent(EventBase):
     """ID of the reply message associated with this run."""
     confirm_results: list[ConfirmResult]
     """Confirmation results for each pending tool call."""
+
+    def matching_results(
+        self,
+        message: Msg,
+    ) -> Iterator[tuple[ToolCallBlock, ConfirmResult]]:
+        """Yield the first valid receipt for each pending card."""
+        if self.reply_id != message.id:
+            return
+        calls = {
+            call.id: call for call in message.get_content_blocks("tool_call")
+        }
+        for result in self.confirm_results:
+            call = calls.get(result.tool_call.id)
+            if call is not None and result.answers(
+                call,
+                message.confirmation_request(call.id),
+            ):
+                del calls[call.id]
+                yield call, result
+
+    def validate_request_ids(self, pending: dict[str, str | None]) -> None:
+        """Require an ID for current cards; allow legacy cards to reissue."""
+        missing = {
+            result.tool_call.id
+            for result in self.confirm_results
+            if result.request_id is None and pending.get(result.tool_call.id)
+        }
+        if missing and not missing.issubset(
+            result.tool_call.id
+            for result in self.confirm_results
+            if result.request_id == pending.get(result.tool_call.id)
+            and result.request_id is not None
+        ):
+            raise MissingConfirmationIdError()
 
 
 class UserInterruptEvent(EventBase):

@@ -1,30 +1,25 @@
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { Users } from 'lucide-react';
+import { useState } from 'react';
 
 import { ConfirmCard } from './ConfirmCard';
+import { ExternalExecutionCard } from './ExternalExecutionCard';
 import type { SubagentHitlEntry } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
+import type { ClientExternalToolResult } from '@/lib/client-external-tools';
 
-/**
- * A pending HITL confirmation raised by a team *member* (worker)
- * session, surfaced on the *leader* view so the user can answer it
- * without drilling into the member's own session.
- *
- * Renders one {@link ConfirmCard} per pending tool call, reusing the
- * exact same confirm UI (and suggested-rules interaction) as a
- * first-party confirmation. The only addition is a header naming the
- * member that is asking.
- *
- * Confirmation is routed through {@link onConfirm}, which the parent
- * wires to ``useMessages``' ``onSubagentConfirm`` — POSTing the result
- * to the leader front door, where the backend forwards it to the
- * worker session (design §3.6).
- */
+/** Render the member's pending interaction on the leader session. */
 export function SubagentHitlCard({
 	entry,
+	onResult,
 	onConfirm,
 }: {
 	entry: SubagentHitlEntry;
+	onResult: (
+		call: ToolCallBlock,
+		result: ClientExternalToolResult,
+		state?: 'success' | 'interrupted',
+	) => Promise<void>;
 	onConfirm: (
 		toolCall: ToolCallBlock,
 		confirm: boolean,
@@ -32,6 +27,7 @@ export function SubagentHitlCard({
 	) => Promise<void>;
 }) {
 	const { t } = useTranslation();
+	const [cancelling, setCancelling] = useState<Set<string>>(() => new Set());
 	const toolCalls = entry.event.tool_calls ?? [];
 
 	if (toolCalls.length === 0) return null;
@@ -43,13 +39,35 @@ export function SubagentHitlCard({
 				<span>{t('chat.subagentConfirmTitle', { name: entry.worker_agent_name })}</span>
 			</div>
 			<div className="space-y-2">
-				{toolCalls.map((toolCall) => (
-					<ConfirmCard
-						key={toolCall.id}
-						toolCall={toolCall}
-						onUserConfirm={(confirm, rules) => onConfirm(toolCall, confirm, rules)}
-					/>
-				))}
+				{toolCalls.map((toolCall) =>
+					entry.event_type === 'require_external_execution' ? (
+						<ExternalExecutionCard
+							key={JSON.stringify([entry.event.id, toolCall.id])}
+							toolCall={toolCall}
+							autoFocus={false}
+							onSubmit={(result) => onResult(toolCall, result)}
+							cancelling={cancelling.has(toolCall.id)}
+							onCancel={async () => {
+								setCancelling((prev) => new Set(prev).add(toolCall.id));
+								try {
+									await onResult(toolCall, '', 'interrupted');
+								} catch {
+									setCancelling((prev) => {
+										const next = new Set(prev);
+										next.delete(toolCall.id);
+										return next;
+									});
+								}
+							}}
+						/>
+					) : (
+						<ConfirmCard
+							key={JSON.stringify([entry.event.id, toolCall.id])}
+							toolCall={toolCall}
+							onUserConfirm={(confirm, rules) => onConfirm(toolCall, confirm, rules)}
+						/>
+					),
+				)}
 			</div>
 		</div>
 	);

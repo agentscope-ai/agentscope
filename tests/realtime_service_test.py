@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
 """Tests for realtime service runtime assembly."""
-# pylint: disable=protected-access
+# pylint: disable=protected-access,cell-var-from-loop
 
 import unittest
+import asyncio
+from itertools import product
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, patch
 
 from utils import MockModel
+from realtime_agent_test import ScriptedModel
+from permission_review_test import _review
 
 from agentscope.agent import Agent
 from agentscope.app._service._realtime import RealtimeService
@@ -25,15 +29,440 @@ from agentscope.app.storage import (
 )
 from agentscope.middleware import RAGMiddleware
 from agentscope.message import AssistantMsg, TextBlock, ToolCallBlock, UserMsg
-from agentscope.model import ChatResponse
-from agentscope.permission import PermissionMode
+from agentscope.model import ChatResponse, StructuredResponse
+from agentscope.permission import (
+    PermissionBehavior,
+    PermissionContext,
+    PermissionMode,
+)
 from agentscope.realtime import InteractionMode, RealtimeModelBase
 from agentscope.state import AgentState
 from agentscope.tool import FunctionTool, TaskCreate, Toolkit
 
 
+def _workspace(workdir: str) -> SimpleNamespace:
+    """Provide the workspace operations used by realtime assembly."""
+    return SimpleNamespace(
+        workdir=workdir,
+        get_instructions=AsyncMock(return_value=""),
+    )
+
+
+def _review_service(
+    session: SessionRecord,
+    workspace: SimpleNamespace | None = None,
+) -> RealtimeService:
+    """Assemble optional reviewer tests without external services."""
+    return RealtimeService(
+        storage=SimpleNamespace(get_session=AsyncMock(return_value=session)),
+        workspace_manager=SimpleNamespace(
+            get_workspace=AsyncMock(
+                return_value=workspace or _workspace("/workspace"),
+            ),
+        ),
+        scheduler_manager=object(),
+        background_task_manager=object(),
+        message_bus=object(),
+        resource_access_service=SimpleNamespace(
+            resolve_agent=AsyncMock(
+                return_value=AgentRecord(
+                    user_id="user",
+                    data=AgentData(name="Voice"),
+                ),
+            ),
+        ),
+    )
+
+
 class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
     """Verify complete toolkit and session-context assembly."""
+
+    async def test_direct_tool_review_uses_live_workspace_policy(self) -> None:
+        """Exercise workspace policy through the assembled realtime agent."""
+        restriction = "Ask the user before changing a draft."
+        session = SessionRecord(
+            id="session",
+            user_id="user",
+            agent_id="agent",
+            config=SessionConfig(workspace_id="workspace"),
+        )
+        workspace = _workspace("/workspace")
+        service = _review_service(session, workspace)
+        instructions = workspace.get_instructions
+        executed = []
+
+        def edit() -> str:
+            executed.append(True)
+            return "done"
+
+        tool = FunctionTool(edit, is_read_only=False)
+        with patch(
+            "agentscope.app._service._realtime.get_toolkit",
+            AsyncMock(return_value=Toolkit(tools=[tool])),
+        ):
+            agent = await service.create_agent(
+                user_id="user",
+                agent_id="agent",
+                session_id="session",
+                model=ScriptedModel([[]]),
+            )
+
+        async def stall() -> str:
+            await asyncio.Event().wait()
+            return ""
+
+        async with agent:
+            instructions.assert_not_awaited()
+            for case, interactive in product(
+                ("restricted", "changed", "error", "timeout"),
+                (True, False),
+            ):
+                with self.subTest(case=case, interactive=interactive):
+                    executed.clear()
+                    initial = restriction if case == "restricted" else ""
+                    instructions.reset_mock()
+                    instructions.return_value = initial
+                    instructions.side_effect = {
+                        "error": OSError("Workspace unavailable"),
+                        "timeout": stall,
+                    }.get(case)
+
+                    async def review(request: dict) -> object:
+                        if case == "changed":
+                            instructions.return_value = restriction
+                        return _review(
+                            policy_violation=restriction
+                            in request["application_instructions"],
+                        )
+
+                    reviewer = AsyncMock(side_effect=review)
+                    agent._engine.reviewer = reviewer
+                    agent._engine.review_timeout = 0.05
+                    agent.state.permission_context = PermissionContext(
+                        mode=PermissionMode.AUTO,
+                        interactive=interactive,
+                    )
+                    call = ToolCallBlock(id="call", name=tool.name, input="{}")
+                    agent._reply_id = "reply"
+                    agent.state.context = [
+                        AssistantMsg(
+                            id="reply",
+                            name=agent.name,
+                            content=[call],
+                        ),
+                    ]
+                    with patch.object(
+                        agent,
+                        "_ask_user",
+                        AsyncMock(return_value=False),
+                    ) as ask:
+                        await asyncio.wait_for(
+                            agent._run_tool("reply", call),
+                            timeout=2,
+                        )
+                    results = agent.state.context[0].get_content_blocks(
+                        "tool_result",
+                    )
+                    self.assertEqual([r.state for r in results], ["denied"])
+                    self.assertEqual(
+                        (
+                            executed,
+                            instructions.await_count,
+                            reviewer.await_count,
+                            ask.await_count,
+                        ),
+                        (
+                            [],
+                            2 if case == "changed" else 1,
+                            int(case in ("restricted", "changed")),
+                            int(interactive and case != "restricted"),
+                        ),
+                    )
+                    if case == "restricted":
+                        self.assertEqual(
+                            reviewer.call_args.args[0][
+                                "application_instructions"
+                            ],
+                            f"{agent.system_prompt}\n\n{restriction}",
+                        )
+
+    async def test_optional_reviewer_cannot_prevent_voice_start(self) -> None:
+        """Pending AUTO loads Chat config; failed loads remain retryable."""
+        for mode, interactive, outcome in product(
+            PermissionMode,
+            (False, True),
+            ("valid", "invalid", "missing"),
+        ):
+            with self.subTest(mode=mode, interactive=interactive, out=outcome):
+                session = SessionRecord(
+                    id="session",
+                    user_id="user",
+                    agent_id="agent",
+                    config=SessionConfig(workspace_id="workspace"),
+                )
+                session.state.permission_context.mode = mode
+                session.state.permission_context.interactive = interactive
+                if outcome != "missing":
+                    session.config.chat_model_config = ChatModelConfig(
+                        type="test",
+                        credential_id="credential",
+                        model="chat",
+                        parameters={},
+                    )
+                service = _review_service(session)
+                review_model = MockModel(
+                    context_size=32768,
+                    mock_structured_response=StructuredResponse(
+                        content={
+                            "risk_level": "low",
+                            "user_authorization": "high",
+                            "policy_violation": False,
+                            "rationale": "Authorized",
+                        },
+                    ),
+                )
+                loader = AsyncMock(
+                    return_value=review_model,
+                    side_effect=ValueError("Deleted credential")
+                    if outcome == "invalid"
+                    else None,
+                )
+                with (
+                    patch(
+                        "agentscope.app._service._realtime.get_toolkit",
+                        new=AsyncMock(return_value=Toolkit()),
+                    ),
+                    patch(
+                        "agentscope.app._service._realtime.get_model",
+                        new=loader,
+                    ),
+                ):
+                    agent = await service.create_agent(
+                        user_id="user",
+                        agent_id="agent",
+                        session_id="session",
+                        model=SimpleNamespace(
+                            interaction_mode=InteractionMode.TURN_BASED,
+                            card=SimpleNamespace(delegation_backend="none"),
+                        ),
+                    )
+                    loader.assert_not_awaited()
+                    decision = await agent._engine.check_permission(
+                        FunctionTool(lambda: "done", is_read_only=False),
+                        {},
+                    )
+                expected = (
+                    PermissionBehavior.ALLOW
+                    if mode == PermissionMode.BYPASS
+                    or (mode == PermissionMode.AUTO and outcome == "valid")
+                    else PermissionBehavior.ASK
+                    if interactive
+                    else PermissionBehavior.DENY
+                )
+                self.assertEqual(
+                    {
+                        "loads": loader.await_count,
+                        "reviewer": agent._engine.reviewer is not None,
+                        "decision": decision.behavior,
+                    },
+                    {
+                        "loads": int(
+                            mode == PermissionMode.AUTO
+                            and outcome != "missing",
+                        ),
+                        "reviewer": True,
+                        "decision": expected,
+                    },
+                )
+                if mode == PermissionMode.AUTO and outcome == "invalid":
+                    loader.side_effect = asyncio.CancelledError
+                    with (
+                        patch(
+                            "agentscope.app._service._realtime.get_model",
+                            new=loader,
+                        ),
+                        self.assertRaises(asyncio.CancelledError),
+                    ):
+                        await agent._engine.check_permission(
+                            FunctionTool(lambda: "done", is_read_only=False),
+                            {},
+                        )
+
+                    async def stalled(*_args: object) -> MockModel:
+                        await asyncio.Event().wait()
+                        return review_model
+
+                    loader.side_effect = stalled
+                    agent._engine.review_timeout = 0.01
+                    with patch(
+                        "agentscope.app._service._realtime.get_model",
+                        new=loader,
+                    ):
+                        decision = await asyncio.wait_for(
+                            agent._engine.check_permission(
+                                FunctionTool(
+                                    lambda: "done",
+                                    is_read_only=False,
+                                ),
+                                {},
+                            ),
+                            timeout=1,
+                        )
+                    self.assertEqual(
+                        decision.behavior,
+                        PermissionBehavior.ASK
+                        if interactive
+                        else PermissionBehavior.DENY,
+                    )
+                    self.assertIn("TimeoutError", decision.decision_reason)
+                    agent._engine.review_timeout = 300.0
+
+                current_session = session.model_copy(deep=True)
+                current_session.config.chat_model_config = ChatModelConfig(
+                    type="test",
+                    credential_id="restored",
+                    model="chat",
+                    parameters={},
+                )
+                service._storage.get_session.return_value = current_session
+                loader.side_effect = None
+                loads_before = loader.await_count
+                agent.state.permission_context.mode = PermissionMode.AUTO
+                with patch(
+                    "agentscope.app._service._realtime.get_model",
+                    new=loader,
+                ):
+                    for _ in range(2):
+                        decision = await agent._engine.check_permission(
+                            FunctionTool(lambda: "done", is_read_only=False),
+                            {},
+                        )
+                        self.assertEqual(
+                            decision.behavior,
+                            PermissionBehavior.ALLOW,
+                        )
+                cached = mode == PermissionMode.AUTO and outcome == "valid"
+                self.assertEqual(
+                    loader.await_count - loads_before,
+                    int(not cached),
+                )
+                if not cached:
+                    loader.assert_awaited_with(
+                        "user",
+                        current_session.config.chat_model_config,
+                        service._access,
+                    )
+
+    async def test_live_auto_switch_loads_one_reviewer_for_parallel_calls(
+        self,
+    ) -> None:
+        """ASK/BYPASS can switch to AUTO without rebuilding the session."""
+        for initial_mode in (PermissionMode.ASK, PermissionMode.BYPASS):
+            with self.subTest(initial_mode=initial_mode):
+                session = SessionRecord(
+                    id="session",
+                    user_id="user",
+                    agent_id="agent",
+                    config=SessionConfig(
+                        workspace_id="workspace",
+                        chat_model_config=ChatModelConfig(
+                            type="test",
+                            credential_id="credential",
+                            model="chat",
+                            parameters={},
+                        ),
+                    ),
+                )
+                session.state.permission_context = PermissionContext(
+                    mode=initial_mode,
+                    interactive=False,
+                )
+                workspace = _workspace("/workspace")
+                service = _review_service(session, workspace)
+                executed = []
+
+                def write() -> str:
+                    executed.append(True)
+                    return "written"
+
+                tool = FunctionTool(write, is_read_only=False)
+                review_model = MockModel(context_size=32768)
+                generate = AsyncMock(
+                    return_value=StructuredResponse(
+                        content=_review().model_dump(),
+                    ),
+                )
+                review_model.generate_structured_output = generate
+
+                async def load(*_args: object) -> MockModel:
+                    await asyncio.sleep(0)
+                    return review_model
+
+                with (
+                    patch(
+                        "agentscope.app._service._realtime.get_toolkit",
+                        AsyncMock(return_value=Toolkit(tools=[tool])),
+                    ),
+                    patch(
+                        "agentscope.app._service._realtime.get_model",
+                        AsyncMock(side_effect=load),
+                    ) as loader,
+                ):
+                    agent = await service.create_agent(
+                        user_id="user",
+                        agent_id="agent",
+                        session_id="session",
+                        model=ScriptedModel([[]]),
+                    )
+                    async with agent:
+                        calls = [
+                            ToolCallBlock(
+                                id=f"call-{index}",
+                                name=tool.name,
+                                input="{}",
+                            )
+                            for index in range(3)
+                        ]
+                        agent._reply_id = "reply"
+                        agent.state.context = [
+                            AssistantMsg(
+                                id="reply",
+                                name=agent.name,
+                                content=calls,
+                            ),
+                        ]
+                        await agent._run_tool("reply", calls[0])
+                        loader.assert_not_awaited()
+                        workspace.get_instructions.assert_not_awaited()
+                        agent.state.permission_context = PermissionContext(
+                            mode=PermissionMode.AUTO,
+                            interactive=False,
+                        )
+                        await asyncio.gather(
+                            *(
+                                agent._run_tool("reply", call)
+                                for call in calls[1:]
+                            ),
+                        )
+                        self.assertEqual(
+                            (
+                                executed,
+                                loader.await_count,
+                                generate.await_count,
+                                agent.model.sessions,
+                            ),
+                            (
+                                [True]
+                                * (
+                                    3
+                                    if initial_mode == PermissionMode.BYPASS
+                                    else 2
+                                ),
+                                1,
+                                2,
+                                1,
+                            ),
+                        )
 
     async def test_create_agent_assembles_the_session_toolkit(self) -> None:
         """Build the same persisted toolkit context for realtime use."""
@@ -66,7 +495,7 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
                 return_value=SimpleNamespace(session_id=session_id),
             ),
         )
-        workspace = SimpleNamespace(workdir="/workspace/session-1")
+        workspace = _workspace("/workspace/session-1")
         workspace_manager = SimpleNamespace(
             get_workspace=AsyncMock(return_value=workspace),
         )
@@ -212,7 +641,7 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
         storage = SimpleNamespace(
             get_session=AsyncMock(return_value=session),
         )
-        workspace = SimpleNamespace(workdir="/workspace/session-1")
+        workspace = _workspace("/workspace/session-1")
         workspace_manager = SimpleNamespace(
             get_workspace=AsyncMock(return_value=workspace),
         )
@@ -399,7 +828,7 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
         storage = SimpleNamespace(
             get_session=AsyncMock(return_value=session),
         )
-        workspace = SimpleNamespace(workdir="/workspace/session-1")
+        workspace = _workspace("/workspace/session-1")
         middleware = SimpleNamespace(
             is_implemented=lambda name: name == "on_reply",
         )
@@ -434,7 +863,12 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
         toolkit = object()
-        backend_model = object()
+        backend_model = MockModel(
+            context_size=32768,
+            mock_structured_response=StructuredResponse(
+                content=_review().model_dump(),
+            ),
+        )
 
         with (
             patch(
@@ -500,6 +934,12 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
             get_toolkit_mock.await_args.kwargs["middlewares"],
             [notifier, middleware],
         )
+        realtime_agent.state.permission_context.mode = PermissionMode.AUTO
+        decision = await realtime_agent._engine.check_permission(
+            FunctionTool(lambda: "done", is_read_only=False),
+            {},
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
         get_model_mock.assert_awaited_once_with(
             user_id,
             chat_config,
@@ -538,7 +978,7 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
 
         def update_permission() -> str:
             """Simulate a tool changing session permission state."""
-            state.permission_context.mode = PermissionMode.ACCEPT_EDITS
+            state.permission_context.mode = PermissionMode.AUTO
             return "Updated"
 
         def create_team() -> str:

@@ -62,7 +62,10 @@ from agentscope.workspace._daytona._constants import (
     DEFAULT_GATEWAY_PORT,
     METADATA_WORKSPACE_ID_KEY,
 )
-from agentscope.workspace._utils import _GATEWAY_BASE_REQUIREMENTS
+from agentscope.workspace._utils import (
+    _GATEWAY_BASE_REQUIREMENTS,
+    _read_glob_helper_bytes,
+)
 
 
 class _NullBus:
@@ -440,8 +443,9 @@ class _FakeGateway:
         self.closed = False
         _FakeGateway.instances.append(self)
 
-    async def health(self) -> bool:
+    async def health(self, *, require_compatible: bool = False) -> bool:
         """Always healthy."""
+        del require_compatible
         return True
 
     async def list_mcps(
@@ -1038,18 +1042,23 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         sandbox.labels = {METADATA_WORKSPACE_ID_KEY: "wid-tools"}
         _FakeDaytona.list_result[:] = [sandbox]
 
+        async def attach_gateway(workspace: DaytonaWorkspace) -> None:
+            await workspace.get_backend().write_file(
+                workspace._glob_helper_path,
+                _read_glob_helper_bytes(),
+            )
+            workspace._gateway = _FakeGateway(
+                backend=workspace.get_backend(),
+                gateway_port=workspace.gateway_port,
+            )
+
         self.gateway_patch = patch.object(
-            sandboxed_mod,
-            "GatewayClient",
-            _FakeGateway,
+            DaytonaWorkspace,
+            "_setup_mcp_gateway",
+            attach_gateway,
         )
         self.gateway_patch.start()
-        self.bootstrap_patch = patch.object(
-            DaytonaWorkspace,
-            "_bootstrap_commands",
-            return_value=[],
-        )
-        self.bootstrap_patch.start()
+        self.addCleanup(self.gateway_patch.stop)
 
         self.workspace = DaytonaWorkspace(workspace_id="wid-tools")
         await self.workspace.initialize()
@@ -1060,8 +1069,6 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Close workspace and cleanup patches/temp files."""
         await self.workspace.close()
-        self.bootstrap_patch.stop()
-        self.gateway_patch.stop()
         sys.modules.pop("daytona", None)
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 

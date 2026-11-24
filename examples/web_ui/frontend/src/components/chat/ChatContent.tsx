@@ -1,7 +1,4 @@
-import {
-	type ExternalExecutionResultEvent,
-	ReplyFinishedReason,
-} from '@agentscope-ai/agentscope/event';
+import { ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
 import {
 	type ContentBlock,
 	type Msg,
@@ -18,7 +15,6 @@ import { ClientToolsMenu } from '@/components/chat/ClientToolsMenu';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
 import { ExternalExecutionCard } from '@/components/chat/ExternalExecutionCard.tsx';
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
-import { ManualClientToolCard } from '@/components/chat/ManualClientToolCard';
 import { QueuedMessages } from '@/components/chat/QueuedMessages.tsx';
 import { TextInput } from '@/components/chat/TextInput.tsx';
 import { DiffStats } from '@/components/chat/tool-renderers/_shared';
@@ -104,7 +100,6 @@ interface ChatContentProps {
 		result: ClientExternalToolResult,
 		replyId: string,
 	) => Promise<void>;
-	onExternalExecutionResult: (event: ExternalExecutionResultEvent) => Promise<void>;
 	autoComplete?: (input: string) => string | null;
 	className?: string;
 	/** Called when the user clicks the stop button. */
@@ -167,7 +162,6 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onSend,
 	onUserConfirm,
 	onClientExternalToolResult,
-	onExternalExecutionResult,
 	autoComplete,
 	className,
 	onInterrupt,
@@ -243,10 +237,6 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	const pendingExternalToolRegistration = pendingExternalTool
 		? getClientExternalToolRegistration(pendingExternalTool.toolCall.name)
 		: undefined;
-	const PendingExternalToolComponent = pendingExternalToolRegistration?.PendingComponent;
-	const isManualClientTool =
-		pendingExternalTool?.toolCall.name.startsWith('client__') === true &&
-		!PendingExternalToolComponent;
 	const acceptsInput =
 		Boolean(pendingExternalToolRegistration?.composerResult) &&
 		(!pendingExternalToolRegistration?.canCompose ||
@@ -393,7 +383,11 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 					>
 						{toConfirmedToolCalls.length > 0 ? (
 							<ConfirmCard
-								key={`${toConfirmedToolCalls[0].replyId}:${toConfirmedToolCalls[0].toolCall.id}`}
+								key={JSON.stringify([
+									toConfirmedToolCalls[0].replyId,
+									toConfirmedToolCalls[0].toolCall.id,
+									toConfirmedToolCalls[0].requestId,
+								])}
 								toolCall={toConfirmedToolCalls[0].toolCall}
 								onUserConfirm={(confirm, rules) =>
 									onUserConfirm(
@@ -405,42 +399,22 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 								}
 							/>
 						) : pendingExternalTool ? (
-							PendingExternalToolComponent ? (
-								<PendingExternalToolComponent
-									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
-									toolCall={pendingExternalTool.toolCall}
-									onSubmit={(result) =>
-										onClientExternalToolResult(
-											pendingExternalTool.toolCall,
-											result,
-											pendingExternalTool.replyId,
-										)
-									}
-									onCancel={onInterrupt}
-									cancelling={phase === 'interrupting'}
-								/>
-							) : isManualClientTool ? (
-								<ManualClientToolCard
-									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
-									toolCall={pendingExternalTool.toolCall}
-									onSubmit={(result) =>
-										onClientExternalToolResult(
-											pendingExternalTool.toolCall,
-											result,
-											pendingExternalTool.replyId,
-										)
-									}
-									onCancel={onInterrupt}
-									cancelling={phase === 'interrupting'}
-								/>
-							) : (
-								<ExternalExecutionCard
-									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
-									replyId={pendingExternalTool.replyId}
-									toolCall={pendingExternalTool.toolCall}
-									onResult={onExternalExecutionResult}
-								/>
-							)
+							<ExternalExecutionCard
+								key={JSON.stringify([
+									pendingExternalTool.replyId,
+									pendingExternalTool.toolCall.id,
+								])}
+								toolCall={pendingExternalTool.toolCall}
+								onSubmit={(result) =>
+									onClientExternalToolResult(
+										pendingExternalTool.toolCall,
+										result,
+										pendingExternalTool.replyId,
+									)
+								}
+								onCancel={onInterrupt}
+								cancelling={phase === 'interrupting'}
+							/>
 						) : (
 							footerSlot
 						)}

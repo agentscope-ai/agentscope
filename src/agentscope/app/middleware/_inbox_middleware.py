@@ -11,14 +11,23 @@ the last assistant message's content list (same pattern as
 Each injected HintBlock also yields a one-shot ``HintBlockEvent``
 so the front-end SSE stream can render it in real time.
 """
+import asyncio
+from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import Any, AsyncGenerator, Callable
 
+from .._bus_ops import CHANNEL_USER_INBOX_SOURCE
 from ..message_bus import MessageBus, MessageBusKeys
 from ..._logging import logger
 from ...agent import Agent
 from ...event import HintBlockEvent
 from ...message import AssistantMsg, HintBlock
 from ...middleware import MiddlewareBase
+from ...permission import (
+    PermissionBehavior,
+    PermissionDecision,
+    PermissionMode,
+)
 
 
 class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
@@ -54,6 +63,71 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         self._bus = message_bus
         self._max_count = max_count
 
+    async def _pending_reason(self, session_id: str) -> str | None:
+        limit = max(1, self._max_count)
+        entries = await self._bus.queue_read(
+            MessageBusKeys.inbox(session_id),
+            max_count=limit + 1,
+        )
+        if any(
+            payload.get(CHANNEL_USER_INBOX_SOURCE) == session_id
+            for _, payload in entries
+        ):
+            return (
+                "Pending channel input requires user approval before execution"
+            )
+        if len(entries) > limit:
+            return "Inbox inspection is incomplete; user approval is required"
+        return None
+
+    @asynccontextmanager
+    async def tool_dispatch_guard(
+        self,
+        agent: Agent,
+    ) -> AsyncGenerator[Callable[[], bool], None]:
+        """Serialize the dispatch decision with trusted inbox delivery."""
+        sid = agent.state.session_id
+        async with self._bus.acquire_lock(
+            MessageBusKeys.inbox_lock(sid),
+            ttl_secs=MessageBusKeys.INBOX_LOCK_TTL_SECS,
+        ):
+            reason = await self._pending_reason(sid)
+            yield lambda: reason is not None
+
+    async def on_check_permission(
+        self,
+        agent: Agent,
+        input_kwargs: dict,
+        next_handler: Callable,
+    ) -> PermissionDecision:
+        """Invalidate AUTO approval while trusted channel input is pending."""
+        decision = await next_handler(**input_kwargs)
+        if (
+            decision.behavior != PermissionBehavior.ALLOW
+            or agent.state.permission_context.mode != PermissionMode.AUTO
+            or agent.state.reply_context.has_user_confirmation(
+                input_kwargs["tool_call"],
+            )
+        ):
+            return decision
+        try:
+            # pylint: disable-next=protected-access
+            async with asyncio.timeout(agent._engine.review_timeout):
+                reason = await self._pending_reason(agent.state.session_id)
+            if reason is None:
+                return decision
+        except Exception as error:
+            reason = f"Inbox approval check failed: {type(error).__name__}"
+        return replace(
+            decision,
+            behavior=PermissionBehavior.ASK
+            if agent.state.effective_permission_context.interactive
+            else PermissionBehavior.DENY,
+            message=reason,
+            decision_reason=reason,
+            review=None,
+        )
+
     async def on_reasoning(  # type: ignore[override]
         self,
         agent: Agent,
@@ -84,8 +158,17 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         )
 
         if entries:
+            # Only the gateway producer can attach this session-bound marker.
             hint_blocks = [
-                HintBlock.model_validate(payload)
+                HintBlock.model_validate(
+                    {
+                        **payload,
+                        "source_role": "user"
+                        if payload.get(CHANNEL_USER_INBOX_SOURCE)
+                        == agent.state.session_id
+                        else None,
+                    },
+                )
                 for _entry_id, payload in entries
             ]
 
@@ -129,6 +212,7 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     reply_id=agent.state.reply_id,
                     block_id=hint.id,
                     source=hint.source,
+                    source_role=hint.source_role,
                     hint=hint.hint,
                 )
 

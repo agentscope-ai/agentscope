@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 """Adapt the durable chat queue to SDK steering middleware."""
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Callable
+
 from pydantic import TypeAdapter
 
 from .._bus_ops import (
@@ -7,8 +10,9 @@ from .._bus_ops import (
     fail_steering_chat_input,
     list_steering_chat_inputs,
     publish_session_event,
+    read_locked_steering_inputs,
 )
-from ..message_bus import MessageBus
+from ..message_bus import MessageBus, MessageBusKeys
 from ..._logging import logger
 from ...event import CustomEvent
 from ...message import Msg
@@ -19,6 +23,15 @@ from ...middleware import (
 )
 
 _MESSAGE_INPUT_ADAPTER: TypeAdapter = TypeAdapter(Msg | list[Msg])
+
+
+def _steering_input(item: dict) -> SteeringInput:
+    """Decode one stored steering reservation."""
+    parsed = _MESSAGE_INPUT_ADAPTER.validate_python(item["input"])
+    return SteeringInput(
+        id=item["id"],
+        messages=parsed if isinstance(parsed, list) else [parsed],
+    )
 
 
 class _ChatQueueSteeringSource(SteeringSource):
@@ -42,7 +55,7 @@ class _ChatQueueSteeringSource(SteeringSource):
         inputs = []
         for item in items:
             try:
-                parsed = _MESSAGE_INPUT_ADAPTER.validate_python(item["input"])
+                inputs.append(_steering_input(item))
             except ValueError as exc:
                 error = f"The queued message could not be injected: {exc}"
                 await fail_steering_chat_input(
@@ -59,16 +72,26 @@ class _ChatQueueSteeringSource(SteeringSource):
                     self._message_ids(item["input"]),
                     error,
                 )
-            else:
-                inputs.append(
-                    SteeringInput(
-                        id=item["id"],
-                        messages=parsed
-                        if isinstance(parsed, list)
-                        else [parsed],
-                    ),
-                )
         return inputs
+
+    @asynccontextmanager
+    async def dispatch_inputs(  # pylint: disable=invalid-overridden-method
+        self,
+        session_id: str,
+        reply_id: str,
+    ) -> AsyncIterator[Callable[[], list[SteeringInput]]]:
+        """Hold steering reservations stable until the dispatch decision."""
+        async with self._bus.acquire_lock(
+            MessageBusKeys.chat_input_mutation_lock(session_id),
+            ttl_secs=MessageBusKeys.CHAT_INPUT_MUTATION_TTL_SECS,
+        ):
+            items = await read_locked_steering_inputs(
+                self._bus,
+                session_id,
+                reply_id,
+            )
+            pending = [_steering_input(item) for item in items]
+            yield lambda: pending
 
     async def acknowledge(
         self,

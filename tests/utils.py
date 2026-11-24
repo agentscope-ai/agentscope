@@ -190,3 +190,22 @@ class FakeWorkspaceManager(WorkspaceManagerBase):
 
     async def close_all(self) -> None:
         """No-op."""
+
+
+def expected_hitl_messages(base: dict, messages: list[dict]) -> list[dict]:
+    """Include the outstanding prompt IDs in the expected reply metadata."""
+    result = []
+    for message in messages:
+        item = {**base, **message}
+        pending = {
+            call["id"]: AnyString()
+            for call in item["content"]
+            if call.get("type") == "tool_call" and call["state"] == "asking"
+        }
+        if pending:
+            item["metadata"] = {
+                **item["metadata"],
+                "pending_confirmations": pending,
+            }
+        result.append(item)
+    return result

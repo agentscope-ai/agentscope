@@ -721,6 +721,7 @@ class TracingTest(IsolatedAsyncioTestCase):
             reply_id=require_confirm_event.reply_id,
             confirm_results=[
                 ConfirmResult(
+                    request_id=require_confirm_event.id,
                     confirmed=True,
                     tool_call=require_confirm_event.tool_calls[0],
                 ),
@@ -782,6 +783,7 @@ class TracingTest(IsolatedAsyncioTestCase):
             reply_id=require_confirm_event.reply_id,
             confirm_results=[
                 ConfirmResult(
+                    request_id=require_confirm_event.id,
                     confirmed=True,
                     tool_call=require_confirm_event.tool_calls[0],
                 ),

@@ -759,6 +759,22 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(editor.text, "draft")
             self.assertTrue(editor.has_focus)
 
+            # The same call can receive a second prompt after MCP discovery.
+            first = value.confirm_results[0].tool_call
+            prompt = RequireUserConfirmEvent.issue("r1", first.model_copy())
+            await _publish(chat, prompt)
+            await pilot.pause()
+            self.assertTrue(hitl.display)
+            self.assertFalse(options.disabled)
+            await pilot.press("enter")
+            await pilot.pause()
+            second = observed[-1].value.confirm_results[0]
+            self.assertEqual(
+                second.request_id,
+                prompt.id,
+            )
+            self.assertNotEqual(value.confirm_results[0].request_id, prompt.id)
+
     async def test_next_hitl_request_keeps_keyboard_focus(self) -> None:
         observed: list[ChatUI.Confirmed] = []
 
@@ -876,6 +892,7 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                                 ),
                             ],
                         ),
+                        "prompt",
                     ),
                 ],
             )
@@ -1810,6 +1827,7 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
                 AssistantMsg(
                     name="Friday",
                     id="reply",
+                    metadata={"pending_confirmations": {"call": "prompt"}},
                     content=[
                         ToolCallBlock(
                             id="call",
@@ -1826,6 +1844,7 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
             reply_id="reply",
             confirm_results=[
                 ConfirmResult(
+                    request_id="prompt",
                     tool_call=ToolCallBlock(
                         id="call",
                         name="Bash",
@@ -1884,6 +1903,7 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
                                     "created_at": AnyString(),
                                     "finished_at": None,
                                 },
+                                "request_id": "prompt",
                                 "rules": None,
                             },
                         ],
@@ -1916,6 +1936,7 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
                 AssistantMsg(
                     name="Friday",
                     id="reply",
+                    metadata={"pending_confirmations": {"call": "prompt"}},
                     content=[
                         ToolCallBlock(
                             id="call",
@@ -1935,6 +1956,7 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
                     reply_id="reply",
                     confirm_results=[
                         ConfirmResult(
+                            request_id="prompt",
                             tool_call=ToolCallBlock(
                                 id="call",
                                 name="Bash",

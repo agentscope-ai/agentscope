@@ -223,6 +223,7 @@ def _block_to_dict(block: Any) -> dict:
     if isinstance(block, HintBlock):
         return {
             "type": "hint",
+            "source_role": None,
             "hint": block.hint,
             "id": AnyString(),
             "source": block.source,
@@ -607,6 +608,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
                             AnyValue(),
                             {
                                 "type": "hint",
+                                "source_role": None,
                                 "hint": AnyString(),
                                 "id": AnyString(),
                                 "source": None,

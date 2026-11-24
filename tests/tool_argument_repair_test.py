@@ -288,7 +288,8 @@ class ToolCallArgumentRepairTest(IsolatedAsyncioTestCase):
 
         await agent.reply(UserMsg(name="user", content="Record 42"))
 
-        self.assertListEqual(tool.permission_inputs, [{"value": 42}])
+        # Both the initial check and the dispatch check see the repair.
+        self.assertListEqual(tool.permission_inputs, [{"value": 42}] * 2)
         self.assertListEqual(tool.executed, [42])
         self.assertEqual(tool_call.input, '{"value": "42"}')
         self.assertListEqual(

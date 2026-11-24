@@ -4,7 +4,7 @@
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from utils import AnyString, MockModel
+from utils import expected_hitl_messages, AnyString, MockModel
 
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.model import ChatResponse
@@ -305,6 +305,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         self,
         id: str,
         result: str,
+        request_id: str,
     ) -> list[dict]:
         """Helper method to get the expected tool result events."""
         return [
@@ -315,6 +316,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             },
             {
                 "type": "TOOL_RESULT_END",
+                "external_request_id": request_id,
                 "tool_call_id": id,
                 "state": "success",
             },
@@ -400,8 +402,18 @@ class AgentMixTest(IsolatedAsyncioTestCase):
     ) -> ConfirmResult:
         """Build a confirmation result."""
         return ConfirmResult(
+            request_id=self.agent.state.confirmation_request(
+                self.agent.name,
+                id,
+            ),
             confirmed=True,
-            tool_call=self._get_tool_call_block(id, name, tool_input),
+            tool_call=next(
+                call
+                for call in self.agent.state.get_awaiting_tool_calls(
+                    self.agent.name,
+                )
+                if (call.id, call.name, call.input) == (id, name, tool_input)
+            ),
         )
 
     def _build_tool_calls(
@@ -513,7 +525,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
         user_confirm_event = UserConfirmResultEvent(
@@ -556,10 +568,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
         external_result_event = ExternalExecutionResultEvent(
+            id="answer-1",
             reply_id=reply_id,
             execution_results=[
                 self._get_tool_result_block(
@@ -580,6 +593,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             *self._get_tool_result_events(
                 self.tool_call_id_1,
                 self.sequential_result_1,
+                external_result_event.id,
             ),
             *self.final_text_events,
             {
@@ -597,6 +611,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         expected_context_final = [
             self._get_expected_user_message(),
             {
+                "metadata": {
+                    "external_result_receipts": {
+                        self.tool_call_id_1: "answer-1",
+                    },
+                },
                 "content": [
                     self._get_expected_tool_call_block(
                         self.tool_call_id_1,
@@ -715,7 +734,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
         user_confirm_event = UserConfirmResultEvent(
@@ -765,10 +784,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
         external_result_event = ExternalExecutionResultEvent(
+            id="answer-1",
             reply_id=reply_id,
             execution_results=[
                 self._get_tool_result_block(
@@ -789,6 +809,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             *self._get_tool_result_events(
                 self.tool_call_id_1,
                 self.sequential_result_1,
+                external_result_event.id,
             ),
             self._get_require_user_confirm_event(
                 reply_id,
@@ -805,6 +826,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         expected_context = [
             self._get_expected_user_message(),
             {
+                "metadata": {
+                    "external_result_receipts": {
+                        self.tool_call_id_1: "answer-1",
+                    },
+                },
                 "content": [
                     self._get_expected_tool_call_block(
                         self.tool_call_id_1,
@@ -826,7 +852,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
         user_confirm_event = UserConfirmResultEvent(
@@ -861,6 +887,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         external_result_event = ExternalExecutionResultEvent(
+            id="answer-2",
             reply_id=reply_id,
             execution_results=[
                 self._get_tool_result_block(
@@ -881,6 +908,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             *self._get_tool_result_events(
                 self.tool_call_id_2,
                 self.sequential_result_2,
+                external_result_event.id,
             ),
             *self.final_text_events,
             {
@@ -898,6 +926,12 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         expected_context_final = [
             self._get_expected_user_message(),
             {
+                "metadata": {
+                    "external_result_receipts": {
+                        self.tool_call_id_1: "answer-1",
+                        self.tool_call_id_2: "answer-2",
+                    },
+                },
                 "content": [
                     self._get_expected_tool_call_block(
                         self.tool_call_id_1,
@@ -1040,7 +1074,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
         # Confirming the first call without a rule hands it to external
@@ -1102,13 +1136,15 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
-        # Confirming the second call sends it to the same external gate.
+        # A repeated receipt for the submitted call can share the batch
+        # with the second call's valid confirmation.
         user_confirm_event = UserConfirmResultEvent(
             reply_id=reply_id,
             confirm_results=[
+                *user_confirm_event.confirm_results,
                 self._get_confirm_result(
                     self.tool_call_id_2,
                     self.concurrent_tool_name,
@@ -1154,10 +1190,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
         external_result_event = ExternalExecutionResultEvent(
+            id="answer-1",
             reply_id=reply_id,
             execution_results=[
                 self._get_tool_result_block(
@@ -1183,10 +1220,12 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             *self._get_tool_result_events(
                 self.tool_call_id_1,
                 self.concurrent_result_1,
+                external_result_event.id,
             ),
             *self._get_tool_result_events(
                 self.tool_call_id_2,
                 self.concurrent_result_2,
+                external_result_event.id,
             ),
             *self.final_text_events,
             {
@@ -1204,6 +1243,12 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         expected_context_final = [
             self._get_expected_user_message(),
             {
+                "metadata": {
+                    "external_result_receipts": {
+                        self.tool_call_id_1: "answer-1",
+                        self.tool_call_id_2: "answer-1",
+                    },
+                },
                 "content": [
                     self._get_expected_tool_call_block(
                         self.tool_call_id_1,

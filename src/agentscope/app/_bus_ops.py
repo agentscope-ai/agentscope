@@ -21,14 +21,16 @@ other's internals.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncGenerator, TYPE_CHECKING, Literal
+from typing import AsyncGenerator, TYPE_CHECKING, Literal, TypeVar
 
 from .._logging import logger
 from ..event import CustomEvent
+from ..message import HintBlock
 from ..middleware import SteeringAcknowledgementUncertainError
 from .message_bus._keys import MessageBusKeys
 from ._chat_input_store import (
@@ -64,8 +66,31 @@ class ChatQueueBusyError(RuntimeError):
     """Raised when a short queue mutation lock cannot be acquired."""
 
 
+class BufferedMediaUnavailableError(RuntimeError):
+    """The selected attachments expired or were consumed by another turn."""
+
+
 class ChatSteeringUnavailableError(RuntimeError):
     """Raised when a queued turn cannot steer the requested active reply."""
+
+
+@asynccontextmanager
+async def session_execution(
+    bus: MessageBus,
+    session_id: str,
+) -> AsyncGenerator[None, None]:
+    """Serialize session state access and expose only execution as live."""
+    async with (
+        bus.acquire_lock(
+            MessageBusKeys.session_lock(session_id),
+            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+        ),
+        bus.acquire_lock(
+            MessageBusKeys.session_execution_lock(session_id),
+            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+        ),
+    ):
+        yield
 
 
 @asynccontextmanager
@@ -327,6 +352,37 @@ async def nudge_chat_inputs(
         logger.exception("Failed to nudge queued inputs for %s.", session_id)
 
 
+_CommitResult = TypeVar("_CommitResult")
+
+
+async def finish_cancelled_wait(
+    task: asyncio.Task[_CommitResult],
+) -> _CommitResult:
+    """Finish an owned commit before the caller propagates cancellation."""
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+    return task.result()
+
+
+async def _push_input(
+    bus: MessageBus,
+    key: str,
+    payload: dict,
+    buffered_media: tuple[str, list[str]] | None,
+) -> None:
+    """Commit the input and its selected media together."""
+    if buffered_media is None:
+        await bus.queue_push(key, payload)
+    elif not await bus.queue_push_consuming(key, payload, *buffered_media):
+        raise BufferedMediaUnavailableError(
+            "The selected attachments are no longer available. "
+            "Please resend them with your message.",
+        )
+
+
 async def enqueue_chat_input(
     bus: "MessageBus",
     user_id: str,
@@ -336,6 +392,8 @@ async def enqueue_chat_input(
     *,
     client_external_tools: list[ClientExternalToolDefinition] | None = None,
     client_builtin_tools: list[ClientBuiltinToolName] | None = None,
+    buffered_media: tuple[str, list[str]] | None = None,
+    channel_requester_id: str = "",
 ) -> dict:
     """Append an ordinary user turn to a session FIFO and wake its pump.
 
@@ -361,6 +419,10 @@ async def enqueue_chat_input(
             Client tool definitions scoped to this queued turn.
         client_builtin_tools:
             Native external tool names supported by this turn's client.
+        buffered_media:
+            Channel media queue and the transport entry IDs to consume.
+        channel_requester_id:
+            Platform sender verified by the channel gateway.
 
     Returns:
         `dict`:
@@ -388,6 +450,8 @@ async def enqueue_chat_input(
         "input": serialized,
         "state": "queued",
     }
+    if channel_requester_id:
+        item["channel_requester_id"] = channel_requester_id
     if client_external_tools:
         item["client_external_tools"] = [
             tool.model_dump(mode="json") for tool in client_external_tools
@@ -438,10 +502,16 @@ async def enqueue_chat_input(
                 item["input_ref"],
                 json.dumps(serialized),
             )
-            await bus.queue_push(
-                MessageBusKeys.chat_inputs(session_id),
-                queue_entry(item),
-            )
+            try:
+                await _push_input(
+                    bus,
+                    MessageBusKeys.chat_inputs(session_id),
+                    queue_entry(item),
+                    buffered_media,
+                )
+            except BufferedMediaUnavailableError:
+                await discard_input(bus, item)
+                raise
             try:
                 await _publish_chat_queue_changed(bus, session_id)
             except Exception:
@@ -621,13 +691,22 @@ async def list_steering_chat_inputs(
         MessageBusKeys.chat_input_mutation_lock(session_id),
         ttl_secs=MessageBusKeys.CHAT_INPUT_MUTATION_TTL_SECS,
     ):
-        payloads = await _read_chat_input_payloads(bus, session_id)
-        return [
-            _public_chat_input(payload)
-            for payload in payloads
-            if payload.get("state", "queued") == "steering"
-            and payload.get("target_reply_id") == reply_id
-        ]
+        return await read_locked_steering_inputs(bus, session_id, reply_id)
+
+
+async def read_locked_steering_inputs(
+    bus: "MessageBus",
+    session_id: str,
+    reply_id: str,
+) -> list[dict]:
+    """Read reply reservations while holding the chat-input mutation lock."""
+    payloads = await _read_chat_input_payloads(bus, session_id)
+    return [
+        _public_chat_input(payload)
+        for payload in payloads
+        if payload.get("state", "queued") == "steering"
+        and payload.get("target_reply_id") == reply_id
+    ]
 
 
 async def acknowledge_steering_chat_inputs(
@@ -882,6 +961,7 @@ async def update_chat_input(
                 f"Queued message '{item_id}' is currently steering.",
             )
         previous = dict(item)
+        item.pop("channel_requester_id", None)
         item["input"] = serialized
         item["state"] = "queued"
         item.pop("target_reply_id", None)
@@ -1301,6 +1381,10 @@ async def _notify_chat_queue_changed(
 # it never spawns a run that has nothing to do.
 
 
+# Server-owned provenance, written only by the channel input adapter.
+CHANNEL_USER_INBOX_SOURCE = "_channel_user_session"
+
+
 async def deliver_to_inbox(
     bus: "MessageBus",
     *,
@@ -1325,6 +1409,10 @@ async def deliver_to_inbox(
             JSON-serialisable payload, normally a serialised
             :class:`~agentscope.message.HintBlock`.
     """
+    payload = dict(payload)
+    payload.pop(CHANNEL_USER_INBOX_SOURCE, None)
+    if "source_role" in payload:
+        payload["source_role"] = None
     async with bus.acquire_lock(
         MessageBusKeys.inbox_lock(session_id),
         ttl_secs=MessageBusKeys.INBOX_LOCK_TTL_SECS,
@@ -1342,6 +1430,35 @@ async def deliver_to_inbox(
             session_id=session_id,
             agent_id=agent_id,
         )
+
+
+async def deliver_channel_input(
+    bus: "MessageBus",
+    *,
+    session_id: str,
+    hint: HintBlock,
+    buffered_media: tuple[str, list[str]] | None = None,
+) -> bool:
+    """Queue trusted user input only if a run still owns its consumption."""
+    async with bus.acquire_lock(
+        MessageBusKeys.inbox_lock(session_id),
+        ttl_secs=MessageBusKeys.INBOX_LOCK_TTL_SECS,
+    ):
+        if not await bus.registry_exists(
+            MessageBusKeys.inbox_consumer(session_id),
+            MessageBusKeys.INBOX_CONSUMER_FIELD,
+        ):
+            return False
+        await _push_input(
+            bus,
+            MessageBusKeys.inbox(session_id),
+            {
+                **hint.model_dump(mode="json"),
+                CHANNEL_USER_INBOX_SOURCE: session_id,
+            },
+            buffered_media,
+        )
+        return True
 
 
 async def register_inbox_consumer(bus: "MessageBus", session_id: str) -> None:
@@ -1371,6 +1488,8 @@ async def register_inbox_consumer(bus: "MessageBus", session_id: str) -> None:
 async def has_pending_inbox_or_release(
     bus: "MessageBus",
     session_id: str,
+    *,
+    keep_consuming: bool = True,
 ) -> bool:
     """Report whether the inbox still holds anything, releasing the
     consumer registration when it does not.
@@ -1393,6 +1512,9 @@ async def has_pending_inbox_or_release(
             The application message bus.
         session_id (`str`):
             The session being consumed.
+        keep_consuming (`bool`):
+            Keep the registration when work remains. False for a run
+            that is exiting even with pending input.
 
     Returns:
         `bool`:
@@ -1410,16 +1532,15 @@ async def has_pending_inbox_or_release(
                 break
             payloads.extend(payload for _entry_id, payload in batch)
 
-        if not payloads:
+        if not payloads or not keep_consuming:
             await bus.registry_del(
                 MessageBusKeys.inbox_consumer(session_id),
                 MessageBusKeys.INBOX_CONSUMER_FIELD,
             )
-            return False
 
         for payload in payloads:
             await bus.queue_push(inbox, payload)
-        return True
+        return bool(payloads)
 
 
 async def abandon_inbox_consumer(
@@ -1447,14 +1568,12 @@ async def abandon_inbox_consumer(
         agent_id (`str`):
             The agent that owns the session.
     """
-    pending = await has_pending_inbox_or_release(bus, session_id)
-    if not pending:
+    if not await has_pending_inbox_or_release(
+        bus,
+        session_id,
+        keep_consuming=False,
+    ):
         return
-
-    await bus.registry_del(
-        MessageBusKeys.inbox_consumer(session_id),
-        MessageBusKeys.INBOX_CONSUMER_FIELD,
-    )
     await enqueue_run_trigger(
         bus,
         user_id=user_id,

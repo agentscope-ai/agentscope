@@ -59,6 +59,7 @@ from .._bus_ops import (
     update_chat_input,
 )
 from ...event import UserConfirmResultEvent, ExternalExecutionResultEvent
+from ...event._event import MissingConfirmationIdError
 from ...message import Msg
 
 chat_router = APIRouter(
@@ -483,10 +484,59 @@ async def chat(
             SessionProjection(message_bus),
             request.session_id,
             request.input.reply_id,
+            request.input,
         )
+        if target is None:
+            session = await storage.get_session(
+                user_id,
+                run_agent_id,
+                run_session_id,
+            )
+            if (
+                session
+                and session.team_id
+                and (session.state.reply_id != request.input.reply_id)
+            ):
+                projector = SubagentHitlProjector(storage)
+                cards = await projector.snapshot(
+                    user_id,
+                    session,
+                    [],
+                    message_bus,
+                )
+                target = projector.match(
+                    cards,
+                    request.input.reply_id,
+                    request.input,
+                )
         if target is not None:
             run_session_id = target["worker_session_id"]
             run_agent_id = target["worker_agent_id"]
+
+        if isinstance(request.input, UserConfirmResultEvent) and any(
+            result.request_id is None
+            for result in request.input.confirm_results
+        ):
+            # A client can receive a card before its parked state is saved.
+            try:
+                async with message_bus.acquire_lock_bounded(
+                    MessageBusKeys.session_lock(run_session_id),
+                ):
+                    session = await storage.get_session(
+                        user_id,
+                        run_agent_id,
+                        run_session_id,
+                    )
+                    if session is not None:
+                        session.state.confirmation_status(None, request.input)
+            except MissingConfirmationIdError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except TimeoutError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Session is busy. Retry with the confirmation "
+                    "card's RequireUserConfirmEvent.id as request_id.",
+                ) from exc
 
         await enqueue_run_trigger(
             message_bus,

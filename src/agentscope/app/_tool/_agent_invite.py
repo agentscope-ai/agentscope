@@ -153,9 +153,8 @@ class AgentInvite(_TeamToolBase):
     """
 
     name: str = "AgentInvite"
-    # No leader state needed — the borrowed session starts from a
-    # fresh PermissionContext(); nothing carries over from the leader.
-    is_state_injected: bool = False
+    # Inherit task evidence and hard limits, but not filesystem grants.
+    is_state_injected: bool = True
 
     description: str
     input_schema: dict
@@ -232,6 +231,7 @@ class AgentInvite(_TeamToolBase):
         self,
         target: str,
         prompt: str,
+        _agent_state: AgentState | None = None,
     ) -> ToolChunk:
         """Mint a team-scoped session on top of an existing agent record.
 
@@ -256,8 +256,11 @@ class AgentInvite(_TeamToolBase):
                 The ``"<name>@<handle>"`` display string chosen from
                 the enum.
             prompt (`str`):
-                First task delivered as a user message to the invited
+                First task delivered as a team hint to the invited
                 agent.
+            _agent_state (`AgentState | None`, optional):
+                Current leader state, injected by the runtime. Direct calls
+                fall back to the stored leader state for original evidence.
 
         Returns:
             `ToolChunk`:
@@ -376,25 +379,15 @@ class AgentInvite(_TeamToolBase):
                     leader_session.config.fallback_chat_model_config
                 )
 
-            # Permission context is NOT inherited from the leader.
-            # PermissionContext.working_directories and allow/deny/ask
-            # rules are anchored to the leader's workspace, which the
-            # invited agent may not share (it has its own workspace_id).
-            # Merging leader dirs / rules would advertise paths the
-            # invited agent cannot reach and pull in user confirmations
-            # granted against a different filesystem. Nor do we inherit
-            # from the invited agent's own primary session — the
-            # team-scoped conversation is a separate context; prior
-            # "user approved X" state should not silently cross over.
-            # HITL prompts in this team will re-confirm any sensitive
-            # tool call.
-            worker_state = AgentState(
-                # permission_context defaults to a fresh
-                # ``PermissionContext()``; tasks_context defaults to
-                # empty. Both are the intended reset for the borrowed
-                # session — the invited agent's main-session state
-                # stays with its own session.
+            # Keep the leader's restrictions separate from local grants
+            # because the invited worker may use a different workspace.
+            leader_state = (
+                _agent_state
+                if _agent_state is not None
+                else leader_session.state
             )
+            worker_state = AgentState()
+            worker_state.inherit_member_scope(leader_state)
 
             invited_display = _display_name(
                 invited.data.name,

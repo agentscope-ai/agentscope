@@ -17,12 +17,26 @@ the reply back — so scheduled / background runs reach the channel too,
 not just inbound messages.
 """
 import json
+from collections.abc import AsyncIterator
 
 from ..._logging import logger
+from ..._utils._common import _generate_id
+from ...event import (
+    ReplyEndEvent,
+    ReplyStartEvent,
+    TextBlockDeltaEvent,
+    TextBlockEndEvent,
+    TextBlockStartEvent,
+)
 from ...message import DataBlock, HintBlock, TextBlock, UserMsg
-from ...permission import PermissionContext, PermissionMode
 from ...state import AgentState
-from .._bus_ops import deliver_to_inbox, enqueue_run_trigger
+from .._bus_ops import (
+    BufferedMediaUnavailableError,
+    ChatQueueBusyError,
+    ChatQueueFullError,
+    deliver_channel_input,
+    enqueue_chat_input,
+)
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import (
     ChannelRecord,
@@ -41,6 +55,7 @@ from ._approval import (
 )
 from ._base import (
     ChannelAuthConfirmationResultEvent,
+    ChannelBase,
     ChannelDecisionStatus,
     ChannelEvent,
     ChannelConfirmationResultEvent,
@@ -52,6 +67,19 @@ from ._routing import resolve
 _MEDIA_BUFFER_TTL_SECS = 300
 # Max buffered attachments carried into one text message.
 _MEDIA_BUFFER_MAX = 9
+
+
+async def _retry_notice(text: str) -> AsyncIterator[dict]:
+    """Send a retry notice through the channel's regular response stream."""
+    reply_id = _generate_id()
+    for event in (
+        ReplyStartEvent(session_id="", reply_id=reply_id, name="AgentScope"),
+        TextBlockStartEvent(reply_id=reply_id, block_id=reply_id),
+        TextBlockDeltaEvent(reply_id=reply_id, block_id=reply_id, delta=text),
+        TextBlockEndEvent(reply_id=reply_id, block_id=reply_id),
+        ReplyEndEvent(session_id="", reply_id=reply_id),
+    ):
+        yield event.model_dump(mode="json")
 
 
 class ChannelGateway:
@@ -78,12 +106,15 @@ class ChannelGateway:
     async def process(
         self,
         event: ChannelEvent | ChannelConfirmationResultEvent,
+        *,
+        channel: ChannelBase | None = None,
     ) -> ChannelDecisionStatus | None:
         """Handle one inbound event (message or confirmation decision).
 
         Args:
             event (`ChannelEvent | ChannelConfirmationResultEvent`): The
                 inbound message or card-click decision.
+            channel: The originating adapter for immediate delivery notices.
 
         Returns:
             `ChannelDecisionStatus | None`: A decision outcome for card clicks,
@@ -96,6 +127,25 @@ class ChannelGateway:
             if isinstance(event, ChannelConfirmationResultEvent):
                 return await self._handle_decision(event)
             await self._handle_message(event)
+            return None
+        except (
+            ChatQueueFullError,
+            ChatQueueBusyError,
+            BufferedMediaUnavailableError,
+        ) as exc:
+            if channel is None or not isinstance(event, ChannelEvent):
+                raise
+            if isinstance(exc, BufferedMediaUnavailableError):
+                text = str(exc)
+            else:
+                reason = (
+                    "busy" if isinstance(exc, ChatQueueBusyError) else "full"
+                )
+                text = (
+                    f"The message queue is {reason}. "
+                    "Please resend your message shortly."
+                )
+            await channel.send_response(event, _retry_notice(text))
             return None
         except Exception:  # pylint: disable=broad-except
             logger.exception(
@@ -132,6 +182,7 @@ class ChannelGateway:
             agent_id=approval.agent_id,
             session_id=approval.session_id,
             tool_call_id=approval.tool_call_id,
+            confirmation_id=approval.confirmation_id,
             approved=event.approved,
             expected_reply_id=approval.reply_id,
             approval_id=event.approval_id,
@@ -209,7 +260,6 @@ class ChannelGateway:
         if not record.enabled:
             return  # stale event from a since-disabled channel
 
-        agent_id, session_id, scope = resolve(event, record)
         if event.chat_id:
             await self._bus.registry_set(
                 MessageBusKeys.channel_seen_chats(event.channel_id),
@@ -217,19 +267,54 @@ class ChannelGateway:
                 "1",
             )
 
-        content = await self._aggregate_media(event)
-        if content is None:
-            return  # media buffered; nothing to run until a text message
+        key = MessageBusKeys.channel_media_buffer(
+            event.channel_id,
+            event.chat_id,
+            event.channel_user_id,
+        )
+        async with self._bus.acquire_lock(f"lock:{key}"):
+            if not any(isinstance(b, TextBlock) for b in event.content):
+                for block in event.content:
+                    if isinstance(block, DataBlock):
+                        await self._bus.queue_push(
+                            key,
+                            block.model_dump(mode="json"),
+                            ttl_secs=_MEDIA_BUFFER_TTL_SECS,
+                        )
+                return
+            entries = await self._bus.queue_read(
+                key,
+                max_count=_MEDIA_BUFFER_MAX,
+            )
+            buffered = [DataBlock.model_validate(p) for _, p in entries]
+            await self._deliver_message(
+                record,
+                event,
+                [*buffered, *event.content],
+                (key, [entry_id for entry_id, _ in entries])
+                if entries
+                else None,
+            )
 
+    async def _deliver_message(
+        self,
+        record: ChannelRecord,
+        event: ChannelEvent,
+        content: list[TextBlock | DataBlock],
+        buffered_media: tuple[str, list[str]] | None,
+    ) -> None:
+        """Deliver the caption and its buffered media together."""
+        agent_id, session_id, scope = resolve(event, record)
         # A reply already in flight → inject the input as a hint so the
         # live run folds it in. Otherwise start a fresh user turn.
-        if await self._bus.is_locked(MessageBusKeys.session_lock(session_id)):
-            await deliver_to_inbox(
+        if await self._bus.is_locked(
+            MessageBusKeys.session_execution_lock(session_id),
+        ):
+            if await deliver_channel_input(
                 self._bus,
-                user_id=record.user_id,
                 session_id=session_id,
-                agent_id=agent_id,
-                payload=HintBlock(
+                buffered_media=buffered_media,
+                hint=HintBlock(
                     hint=content,
                     source=json.dumps(
                         {
@@ -239,58 +324,25 @@ class ChannelGateway:
                         },
                         ensure_ascii=False,
                     ),
-                ).model_dump(mode="json"),
-            )
-            return
+                ),
+            ):
+                return
 
         await self._ensure_session(record, agent_id, session_id, event, scope)
-        # Deliver as a genuine user turn; the run's output is streamed
-        # back by the dispatcher's forward loop, not collected here.
-        await enqueue_run_trigger(
+        # Preserve this turn until the current reply can accept new input.
+        await enqueue_chat_input(
             self._bus,
             user_id=record.user_id,
             session_id=session_id,
             agent_id=agent_id,
-            kind=MessageBusKeys.WAKEUP_KIND_MESSAGE,
-            inputs=UserMsg(
-                name=event.channel_user_id,
-                content=content,
-                metadata=(
-                    {CHANNEL_APPROVAL_UNAVAILABLE: True}
-                    if event.metadata.get(CHANNEL_APPROVAL_UNAVAILABLE) is True
-                    else None
-                ),
+            buffered_media=buffered_media,
+            channel_requester_id=(
+                ""
+                if event.metadata.get(CHANNEL_APPROVAL_UNAVAILABLE) is True
+                else event.channel_user_id
             ),
+            inputs=UserMsg(name=event.channel_user_id, content=content),
         )
-
-    async def _aggregate_media(
-        self,
-        event: ChannelEvent,
-    ) -> list[TextBlock | DataBlock] | None:
-        """Merge buffered attachments with this message: media-only
-        buffers and returns ``None``; the next text drains and combines.
-
-        Args:
-            event (`ChannelEvent`): The inbound message.
-        """
-        key = MessageBusKeys.channel_media_buffer(
-            event.channel_id,
-            event.chat_id,
-            event.channel_user_id,
-        )
-        has_text = any(isinstance(b, TextBlock) for b in event.content)
-        if not has_text:
-            for block in event.content:
-                if isinstance(block, DataBlock):
-                    await self._bus.queue_push(
-                        key,
-                        block.model_dump(mode="json"),
-                        ttl_secs=_MEDIA_BUFFER_TTL_SECS,
-                    )
-            return None
-        entries = await self._bus.queue_drain(key, max_count=_MEDIA_BUFFER_MAX)
-        buffered = [DataBlock.model_validate(p) for _id, p in entries]
-        return [*buffered, *event.content]
 
     # -- Session creation (deterministic id, idempotent) --
 
@@ -335,9 +387,7 @@ class ChannelGateway:
             name=self._session_name(record, event, scope),
         )
         initial_state = AgentState(
-            permission_context=PermissionContext(
-                mode=PermissionMode(record.session.permission_mode),
-            ),
+            permission_context=record.session.to_permission_context(),
         )
         await self._storage.upsert_session(
             user_id=record.user_id,

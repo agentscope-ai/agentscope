@@ -2,7 +2,7 @@ import { format } from 'date-fns';
 import { ChevronDownIcon, CircleAlert, Loader2, PlusCircle } from 'lucide-react';
 import * as React from 'react';
 
-import type { ChatModelConfig, PermissionMode } from '@/api';
+import type { ChatModelConfig, PermissionMode, scheduleApi } from '@/api';
 import { AgentSelect } from '@/components/select/AgentSelect';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect';
@@ -30,14 +30,13 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useAgents } from '@/hooks/useAgents';
-import { useSchedules } from '@/hooks/useSchedules';
 import { useTranslation } from '@/i18n/useI18n';
 import { getScheduleEndAt, getScheduleStartAt } from '@/pages/schedule/schedule-utils';
 
 interface Props {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	onCreated?: () => void;
+	onCreate: typeof scheduleApi.create;
 }
 
 type FreqType = 'once' | 'daily' | 'weekly' | 'monthly';
@@ -55,7 +54,8 @@ function getDefaultForm() {
 		endDate: undefined as Date | undefined,
 		agentId: '',
 		chatModelConfig: null as ChatModelConfig | null,
-		permissionMode: 'dont_ask' as PermissionMode,
+		permissionMode: 'auto' as PermissionMode,
+		permissionConstraints: { read_only: false, allow_workspace_edits: false },
 		timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
 		stateful: false,
 	};
@@ -114,9 +114,8 @@ function DatePickerButton({
 	);
 }
 
-export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
+export function CreateScheduleDialog({ open, onOpenChange, onCreate }: Props) {
 	const { t } = useTranslation();
-	const { create } = useSchedules();
 	const { agents } = useAgents();
 	const [form, setForm] = React.useState(getDefaultForm);
 	const [loading, setLoading] = React.useState(false);
@@ -159,7 +158,7 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 				cronExpression = buildCronExpr(form.freq, form.time, form.date);
 			}
 
-			await create({
+			await onCreate({
 				name: form.name.trim(),
 				description: form.description.trim(),
 				cron_expression: cronExpression,
@@ -174,8 +173,8 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 				enabled: true,
 				stateful: form.stateful,
 				permission_mode: form.permissionMode,
+				...form.permissionConstraints,
 			});
-			onCreated?.();
 			onOpenChange(false);
 		} catch (e) {
 			setError(String(e));
@@ -306,6 +305,14 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 								size="default"
 								value={form.permissionMode}
 								onChange={(v) => set('permissionMode', v)}
+								unattended
+								constraints={form.permissionConstraints}
+								onConstraintsChange={(updates) =>
+									set('permissionConstraints', {
+										...form.permissionConstraints,
+										...updates,
+									})
+								}
 							/>
 						</Field>
 

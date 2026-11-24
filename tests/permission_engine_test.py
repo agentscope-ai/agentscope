@@ -6,6 +6,7 @@ covers rule priority, rule pattern matching (Bash / file glob), dangerous
 path detection, suggestion generation, Bash read-only command analysis,
 and bypass-immune safety checks.
 """
+import asyncio
 import functools
 import os
 import sys
@@ -34,6 +35,38 @@ from agentscope.tool import (
 
 class PermissionEngineCompoundBashTest(IsolatedAsyncioTestCase):
     """Exercise compound permissions without running shell commands."""
+
+    async def test_split_once_per_rule_evaluation(self) -> None:
+        """Only matching rules need to enumerate individual operations."""
+        tool = Bash()
+        engine = PermissionEngine(PermissionContext())
+        args = {"command": "git status && git diff"}
+        with patch.object(
+            tool,
+            "get_permission_inputs",
+            wraps=tool.get_permission_inputs,
+        ) as split:
+            await engine.check_permission(tool, args)
+            self.assertEqual(split.call_count, 0)
+            for behavior, pattern in (
+                ("deny", "git push:*"),
+                ("ask", "git add:*"),
+                ("allow", "git:*"),
+            ):
+                engine.add_rule(
+                    PermissionRule(
+                        tool_name=tool.name,
+                        rule_content=pattern,
+                        behavior=behavior,
+                        source="test",
+                    ),
+                )
+            for count in (1, 2):
+                decision = await engine.check_permission(tool, args)
+                self.assertEqual(
+                    (decision.behavior, split.call_count),
+                    (PermissionBehavior.ALLOW, count),
+                )
 
     async def test_parser_failure_requires_confirmation(self) -> None:
         """A parser exception must yield a safety ASK, not raw-prefix ALLOW."""
@@ -89,8 +122,9 @@ class PermissionEngineCompoundBashTest(IsolatedAsyncioTestCase):
                     ),
                 )
                 expected = (
-                    PermissionBehavior.DENY
-                    if mode == PermissionMode.DONT_ASK
+                    PermissionBehavior.ALLOW
+                    if mode == PermissionMode.BYPASS
+                    and behavior == PermissionBehavior.ASK
                     else behavior
                 )
                 for separator in (" && ", " || ", "; ", " | ", "\n", " & "):
@@ -196,8 +230,8 @@ class PermissionEngineCompoundBashTest(IsolatedAsyncioTestCase):
             "git status && for x in a; do git add x; done",
         ):
             for mode, expected in (
-                (PermissionMode.DEFAULT, PermissionBehavior.ASK),
-                (PermissionMode.DONT_ASK, PermissionBehavior.DENY),
+                (PermissionMode.ASK, PermissionBehavior.ASK),
+                ("dont_ask", PermissionBehavior.DENY),
                 (PermissionMode.BYPASS, PermissionBehavior.ALLOW),
             ):
                 with self.subTest(mode=mode, command=command):
@@ -222,7 +256,7 @@ class PermissionEngineRulePriorityTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
-        self.context = PermissionContext(mode=PermissionMode.DEFAULT)
+        self.context = PermissionContext(mode=PermissionMode.ASK)
         self.engine = PermissionEngine(self.context)
 
     async def test_deny_rule_priority(self) -> None:
@@ -332,7 +366,7 @@ class PermissionEngineBashRuleTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
-        self.context = PermissionContext(mode=PermissionMode.DEFAULT)
+        self.context = PermissionContext(mode=PermissionMode.ASK)
         self.engine = PermissionEngine(self.context)
 
     async def test_bash_prefix_pattern_matching(self) -> None:
@@ -450,7 +484,7 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
-        self.context = PermissionContext(mode=PermissionMode.DEFAULT)
+        self.context = PermissionContext(mode=PermissionMode.ASK)
         self.engine = PermissionEngine(self.context)
 
     async def test_file_glob_pattern_matching(self) -> None:
@@ -540,7 +574,7 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
-        self.context = PermissionContext(mode=PermissionMode.DEFAULT)
+        self.context = PermissionContext(mode=PermissionMode.ASK)
         self.engine = PermissionEngine(self.context)
 
     async def test_dangerous_file_blocks_write(self) -> None:
@@ -597,7 +631,7 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
         """Test that dangerous paths require confirmation even in
         ACCEPT_EDITS mode."""
         context = PermissionContext(
-            mode=PermissionMode.ACCEPT_EDITS,
+            mode="accept_edits",
             working_directories={
                 "/home/user": AdditionalWorkingDirectory(
                     path="/home/user",
@@ -673,7 +707,7 @@ class PermissionEngineSuggestionTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
-        self.context = PermissionContext(mode=PermissionMode.DEFAULT)
+        self.context = PermissionContext(mode=PermissionMode.ASK)
         self.engine = PermissionEngine(self.context)
 
     async def test_bash_suggestions(self) -> None:
@@ -734,8 +768,33 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
-        self.context = PermissionContext(mode=PermissionMode.DEFAULT)
+        self.context = PermissionContext(mode=PermissionMode.ASK)
         self.engine = PermissionEngine(self.context)
+
+    async def test_pwd_is_classified_once(self) -> None:
+        """An unrestricted Bash ALLOW needs only Bash's own classification."""
+        tool = Bash()
+        parser = tool._bash_parser  # pylint: disable=protected-access
+        with (
+            patch.object(
+                parser,
+                "check_injection_risk",
+                wraps=parser.check_injection_risk,
+            ) as risk,
+            patch.object(
+                parser,
+                "is_read_only_command",
+                wraps=parser.is_read_only_command,
+            ) as classify,
+        ):
+            result = await self.engine.check_permission(
+                tool,
+                {"command": "pwd"},
+            )
+        self.assertEqual(
+            (result.behavior, risk.call_count, classify.call_count),
+            (PermissionBehavior.ALLOW, 1, 1),
+        )
 
     async def test_git_status_is_read_only(self) -> None:
         """Test that git status is auto-allowed as read-only."""
@@ -864,7 +923,7 @@ class PermissionEngineSafetyCheckAllowRuleImmuneTest(
 
     async def test_injection_check_not_bypassed_by_allow_rule(self) -> None:
         """Allow rule for ``ls:*`` does not authorize ``ls $(rm -rf /)``."""
-        context = PermissionContext(mode=PermissionMode.DEFAULT)
+        context = PermissionContext(mode=PermissionMode.ASK)
         engine = PermissionEngine(context)
         engine.add_rule(
             PermissionRule(
@@ -884,7 +943,7 @@ class PermissionEngineSafetyCheckAllowRuleImmuneTest(
 
     async def test_dangerous_removal_not_bypassed_by_allow_rule(self) -> None:
         """Allow rule for ``rm:*`` does not authorize ``rm -rf /``."""
-        context = PermissionContext(mode=PermissionMode.DEFAULT)
+        context = PermissionContext(mode=PermissionMode.ASK)
         engine = PermissionEngine(context)
         engine.add_rule(
             PermissionRule(
@@ -957,12 +1016,137 @@ class PermissionEngineBypassImmuneFieldTest(IsolatedAsyncioTestCase):
     field), this fully covers the bypass-immune contract.
     """
 
+    async def test_scope_tightens_during_tool_check(self) -> None:
+        """A grant still needs a read-only check when the scope tightens."""
+        engine = PermissionEngine(
+            PermissionContext(mode=PermissionMode.BYPASS),
+        )
+        tool = _FakeToolReturningAsk(bypass_immune=False)
+
+        async def grant(
+            _input: dict,
+            context: PermissionContext,
+        ) -> PermissionDecision:
+            context.read_only = True
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="Tool permits the operation",
+            )
+
+        with patch.object(tool, "check_permissions", side_effect=grant):
+            result = await engine.check_permission(tool, {})
+        self.assertEqual(result.behavior, PermissionBehavior.DENY)
+
+    async def test_rule_added_while_read_only_fallback_waits(self) -> None:
+        """An in-flight classification must respect the latest rules."""
+        tool = _FakeToolReturningAsk(bypass_immune=False)
+
+        async def check_rule(behavior: PermissionBehavior) -> None:
+            policy = PermissionContext()
+            engine = PermissionEngine(
+                policy,
+                context_provider=lambda: policy,
+                rule_context_provider=lambda: policy,
+            )
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            async def classify(_input: dict) -> bool:
+                started.set()
+                await release.wait()
+                return True
+
+            with patch.object(tool, "check_read_only", side_effect=classify):
+                check = asyncio.create_task(engine.check_permission(tool, {}))
+                try:
+                    await asyncio.wait_for(started.wait(), timeout=2)
+                    if behavior == PermissionBehavior.DENY:
+                        policy = policy.model_copy(deep=True)
+                    engine.add_rule(
+                        PermissionRule(
+                            tool_name=tool.name,
+                            rule_content=None,
+                            behavior=behavior,
+                            source="test",
+                        ),
+                    )
+                finally:
+                    release.set()
+                decision = await check
+            self.assertEqual(decision.behavior, behavior)
+
+        for behavior in (PermissionBehavior.ASK, PermissionBehavior.DENY):
+            with self.subTest(behavior=behavior):
+                await check_rule(behavior)
+
+    async def test_live_hard_limits_override_grants_after_tool_check(
+        self,
+    ) -> None:
+        """Concurrent restrictions apply to tool, rule, and human grants."""
+        tool = _FakeToolReturningAsk(bypass_immune=False)
+
+        async def check(limit: str, grant: str) -> None:
+            policy = PermissionContext()
+            engine = PermissionEngine(policy, context_provider=lambda: policy)
+            if grant == "rule":
+                engine.add_rule(
+                    PermissionRule(
+                        tool_name=tool.name,
+                        rule_content=None,
+                        behavior=PermissionBehavior.ALLOW,
+                        source="test",
+                    ),
+                )
+            started, release = asyncio.Event(), asyncio.Event()
+
+            async def tool_check(*_: object) -> PermissionDecision:
+                started.set()
+                await release.wait()
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW
+                    if grant == "tool"
+                    else PermissionBehavior.ASK,
+                    bypass_immune=grant == "human",
+                    message="Tool check completed",
+                )
+
+            with patch.object(tool, "check_permissions", new=tool_check):
+                task = asyncio.create_task(
+                    engine.check_permission(
+                        tool,
+                        {},
+                        confirmed=grant == "human",
+                    ),
+                )
+                try:
+                    await asyncio.wait_for(started.wait(), timeout=2)
+                    if limit == "read_only":
+                        policy = policy.model_copy(update={"read_only": True})
+                    else:
+                        engine.add_rule(
+                            PermissionRule(
+                                tool_name=tool.name,
+                                rule_content=None,
+                                behavior=PermissionBehavior.DENY,
+                                source="test",
+                            ),
+                        )
+                finally:
+                    release.set()
+                decision = await task
+            self.assertEqual(decision.behavior, PermissionBehavior.DENY)
+
+        for limit in ("read_only", "deny"):
+            for grant in ("tool", "rule", "human"):
+                with self.subTest(limit=limit, grant=grant):
+                    await check(limit, grant)
+
     async def test_bypass_immune_ask_not_overridden_by_allow_rule(
         self,
     ) -> None:
         """An ASK with ``bypass_immune=True`` survives a matching allow
         rule that would otherwise grant the operation."""
-        context = PermissionContext(mode=PermissionMode.DEFAULT)
+        context = PermissionContext(mode=PermissionMode.ASK)
         engine = PermissionEngine(context)
         engine.add_rule(
             PermissionRule(
@@ -985,7 +1169,7 @@ class PermissionEngineBypassImmuneFieldTest(IsolatedAsyncioTestCase):
         """A regular ASK (``bypass_immune=False``) yields to a matching
         allow rule — proving the field, not the ``decision_reason``
         text, governs immunity."""
-        context = PermissionContext(mode=PermissionMode.DEFAULT)
+        context = PermissionContext(mode=PermissionMode.ASK)
         engine = PermissionEngine(context)
         engine.add_rule(
             PermissionRule(
@@ -1035,7 +1219,7 @@ class PermissionEngineBypassImmuneFieldTest(IsolatedAsyncioTestCase):
         """Under DONT_ASK, even a bypass-immune ASK is converted to
         DENY (issue #3 contract): no user is available to confirm,
         so the only safe action is to refuse."""
-        context = PermissionContext(mode=PermissionMode.DONT_ASK)
+        context = PermissionContext(mode="dont_ask")
         engine = PermissionEngine(context)
 
         decision = await engine.check_permission(
@@ -1174,7 +1358,7 @@ class PermissionEngineDecoratedHookTest(IsolatedAsyncioTestCase):
     def _engine_with(self, rule: PermissionRule) -> PermissionEngine:
         """Return a default-mode engine that contains ``rule``."""
         engine = PermissionEngine(
-            PermissionContext(mode=PermissionMode.DEFAULT),
+            PermissionContext(mode=PermissionMode.ASK),
         )
         engine.add_rule(rule)
         return engine
@@ -1196,7 +1380,7 @@ class PermissionEngineDecoratedHookTest(IsolatedAsyncioTestCase):
             {"command": self._unrelated_command},
         )
         self.assertEqual(unrelated.behavior, PermissionBehavior.ASK)
-        self.assertEqual(unrelated.decision_reason, "Mode: default")
+        self.assertEqual(unrelated.decision_reason, "Mode: ask")
 
         matched = await engine.check_permission(
             tool,
@@ -1229,7 +1413,7 @@ class PermissionEngineDecoratedHookTest(IsolatedAsyncioTestCase):
             {"command": self._unrelated_command},
         )
         self.assertEqual(unrelated.behavior, PermissionBehavior.ASK)
-        self.assertEqual(unrelated.decision_reason, "Mode: default")
+        self.assertEqual(unrelated.decision_reason, "Mode: ask")
 
     async def test_ask_rule_does_not_match_every_command(self) -> None:
         """An ask rule must prompt only for commands that actually match."""
@@ -1255,12 +1439,12 @@ class PermissionEngineDecoratedHookTest(IsolatedAsyncioTestCase):
             {"command": self._unrelated_command},
         )
         self.assertEqual(unrelated.behavior, PermissionBehavior.ASK)
-        self.assertEqual(unrelated.decision_reason, "Mode: default")
+        self.assertEqual(unrelated.decision_reason, "Mode: ask")
 
     async def test_decorated_generate_suggestions_is_awaited(self) -> None:
         """Suggestion hooks wrapped by a sync decorator must return rules."""
         engine = PermissionEngine(
-            PermissionContext(mode=PermissionMode.DEFAULT),
+            PermissionContext(mode=PermissionMode.ASK),
         )
         decision = await engine.check_permission(
             _AuditedSuggestionsBash(),
@@ -1281,7 +1465,7 @@ class PermissionEngineSyncHookTest(IsolatedAsyncioTestCase):
     def _engine_with(self, rule: PermissionRule) -> PermissionEngine:
         """Return a default-mode engine that contains ``rule``."""
         engine = PermissionEngine(
-            PermissionContext(mode=PermissionMode.DEFAULT),
+            PermissionContext(mode=PermissionMode.ASK),
         )
         engine.add_rule(rule)
         return engine
@@ -1309,7 +1493,7 @@ class PermissionEngineSyncHookTest(IsolatedAsyncioTestCase):
             {"command": "printf hello"},
         )
         self.assertEqual(skipped.behavior, PermissionBehavior.ASK)
-        self.assertEqual(skipped.decision_reason, "Mode: default")
+        self.assertEqual(skipped.decision_reason, "Mode: ask")
 
     async def test_sync_match_rule_deny(self) -> None:
         """A sync ``match_rule`` still denies only the commands it matches."""
@@ -1335,7 +1519,7 @@ class PermissionEngineSyncHookTest(IsolatedAsyncioTestCase):
             {"command": "printf hello"},
         )
         self.assertEqual(skipped.behavior, PermissionBehavior.ASK)
-        self.assertEqual(skipped.decision_reason, "Mode: default")
+        self.assertEqual(skipped.decision_reason, "Mode: ask")
 
     async def test_sync_match_rule_ask(self) -> None:
         """A sync ``match_rule`` asks only for commands it matches."""
@@ -1361,12 +1545,12 @@ class PermissionEngineSyncHookTest(IsolatedAsyncioTestCase):
             {"command": "printf hello"},
         )
         self.assertEqual(skipped.behavior, PermissionBehavior.ASK)
-        self.assertEqual(skipped.decision_reason, "Mode: default")
+        self.assertEqual(skipped.decision_reason, "Mode: ask")
 
     async def test_sync_generate_suggestions(self) -> None:
         """A sync ``generate_suggestions`` override is returned as a list."""
         engine = PermissionEngine(
-            PermissionContext(mode=PermissionMode.DEFAULT),
+            PermissionContext(mode=PermissionMode.ASK),
         )
         decision = await engine.check_permission(
             _SyncSuggestTool(),

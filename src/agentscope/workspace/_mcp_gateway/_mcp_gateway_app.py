@@ -32,14 +32,18 @@ gateway does not need).
 
 import argparse
 import asyncio
+import hashlib
+import json
 import secrets
 from typing import Any
 
 import anyio
+import mcp.types
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from agentscope.mcp import MCPClient
+from agentscope.tool import MCPTool
 
 
 class _State:
@@ -47,6 +51,7 @@ class _State:
 
     def __init__(self) -> None:
         self.clients: dict[tuple[str, str], dict[str, MCPClient]] = {}
+        self.registrations: dict[tuple[str, str, str], str] = {}
         self.lock = asyncio.Lock()
 
 
@@ -84,6 +89,11 @@ def _build_app(
     instance_nonce: str | None = None,
 ) -> FastAPI:
     """Build the FastAPI app with all routes wired against ``state``."""
+    if not callable(MCPTool.__dict__.get("bind_for_dispatch")):
+        raise RuntimeError(
+            "Gateway requires MCPTool bound dispatch. Rebuild the sandbox "
+            "with the matching AgentScope runtime.",
+        )
     app = FastAPI(title="agentscope-workspace-mcp-gateway")
 
     def _lookup(agent_id: str, session_id: str, name: str) -> MCPClient:
@@ -96,6 +106,16 @@ def _build_app(
                 f"session={session_id!r}",
             )
         return client
+
+    def _scope(agent_id: str, session_id: str, name: str) -> str:
+        client = _lookup(agent_id, session_id, name)
+        nonce = state.registrations[agent_id, session_id, name]
+        # pylint: disable-next=protected-access
+        return f"{nonce}.{client._runtime_headers_generation}"
+
+    def _binding(scope: str, definition: mcp.types.Tool) -> str:
+        raw = json.dumps(definition.model_dump(mode="json"), sort_keys=True)
+        return f"{scope}.{hashlib.sha256(raw.encode()).hexdigest()}"
 
     if auth_token:
 
@@ -119,9 +139,11 @@ def _build_app(
 
     @app.get("/health", response_model=None)
     async def _health() -> Any:
+        # The standalone script advertises its own wire protocol.
+        payload = {"status": "ok", "protocol_version": 1}
         if instance_nonce is not None:
-            return {"status": "ok", "instance_nonce": instance_nonce}
-        return PlainTextResponse("ok")
+            payload["instance_nonce"] = instance_nonce
+        return payload
 
     @app.get("/mcps")
     async def _list_mcps(
@@ -154,6 +176,11 @@ def _build_app(
                 )
             try:
                 by_name[name] = await _build_client(body, runtime_headers)
+                state.registrations[
+                    agent_id,
+                    session_id,
+                    name,
+                ] = secrets.token_hex(16)
             except HTTPException:
                 raise
             except ValueError as e:
@@ -171,6 +198,7 @@ def _build_app(
         async with state.lock:
             client = _lookup(agent_id, session_id, name)
             del state.clients[(agent_id, session_id)][name]
+            state.registrations.pop((agent_id, session_id, name), None)
             if not state.clients[(agent_id, session_id)]:
                 del state.clients[(agent_id, session_id)]
             if client.is_stateful and client.is_connected:
@@ -205,10 +233,53 @@ def _build_app(
         name: str,
         agent_id: str = "",
         session_id: str = "",
-    ) -> list[dict[str, Any]]:
+        with_bindings: bool = False,
+    ) -> Any:
         client = _lookup(agent_id, session_id, name)
+        scope = _scope(agent_id, session_id, name) if with_bindings else None
         raw = await client.list_raw_tools()
-        return [t.model_dump(mode="json") for t in raw]
+        tools = [t.model_dump(mode="json") for t in raw]
+        if scope is None:
+            return tools
+        if scope != _scope(agent_id, session_id, name):
+            raise HTTPException(409, "MCP target changed during lookup")
+        return {
+            "tools": tools,
+            "bindings": {t.name: _binding(scope, t) for t in raw},
+        }
+
+    @app.post("/mcps/{name}/approved-tools/{tool}")
+    async def _call_approved_tool(
+        name: str,
+        tool: str,
+        request: Request,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> dict[str, Any]:
+        body = await request.json()
+        expected = body.get("binding")
+        client = _lookup(agent_id, session_id, name)
+        scope = _scope(agent_id, session_id, name)
+        if not isinstance(expected, str) or not expected.startswith(
+            f"{scope}.",
+        ):
+            raise HTTPException(409, "The approved MCP registration changed")
+        # Refresh even when an upstream does not notify on catalog changes.
+        raw = await client.list_raw_tools()
+        if not any(t.name == tool for t in raw):
+            raise HTTPException(409, "The approved MCP tool is unavailable")
+        resolved = await client.get_tool(tool)
+        if (
+            scope != _scope(agent_id, session_id, name)
+            # Compare the descriptor of the instance we are about to invoke.
+            # pylint: disable-next=protected-access
+            or expected != _binding(scope, resolved._tool)
+        ):
+            raise HTTPException(409, "The approved MCP target changed")
+        resolved.stream_progress = False
+        bound = resolved.bind_for_dispatch()
+        chunk = await bound(**(body.get("arguments") or {}))
+        return {"chunk": chunk.model_dump(mode="json")}
 
     @app.post("/mcps/{name}/tools/{tool}")
     async def _call_tool(

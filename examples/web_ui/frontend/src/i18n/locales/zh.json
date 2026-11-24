@@ -263,6 +263,9 @@
 		"externalExecution": {
 			"title": "{{name}} 正在等待外部执行器",
 			"rejected": "提交的结果未被接受，请检查回答后重新提交。",
+			"unconfirmed": "本次提交尚未确认，你可以重试。",
+			"notAccepted": "工具调用已结束，本次答案未被采纳。",
+			"restoreTool": "请重新启用 {{name}}，或使用配置了原工具的客户端重新提交。",
 			"description": "该工具需要由宿主应用提供的集成完成。"
 		},
 		"newSession": "新会话",
@@ -615,14 +618,20 @@
 		"pickModelFirst": "请先选择 Embedding 模型"
 	},
 	"permission-mode": {
-		"placeholder": "选择权限模式",
-		"trigger-tooltip": "权限模式",
-		"label": "权限模式",
-		"default-tooltip": "默认模式：所有操作需要明确授权（最安全）",
-		"accept_edits-tooltip": "自动允许工作目录内的文件读写及文件系统命令（mkdir、rm、mv 等），其他操作按正常规则处理",
-		"explore-tooltip": "只读模式：允许读取/Grep/Glob 工具，禁止写入/编辑/Bash 等修改操作",
-		"bypass-tooltip": "所有操作自动允许，无需权限检查（适用于可信/沙箱环境）",
-		"dont_ask-tooltip": "将所有 ASK 决策转为 DENY，适合定时任务或用户不在场时的后台执行"
+		"constraints": "访问与审批设置",
+		"interactive": "允许询问用户审批",
+		"placeholder": "选择审批模式",
+		"trigger-tooltip": "审批模式",
+		"label": "审批模式",
+		"ask": "询问确认",
+		"auto": "自动审批",
+		"bypass": "跳过审批",
+		"ask-tooltip": "按规则判断权限，需要审批时询问你。显式拒绝和环境限制始终生效。",
+		"auto-tooltip": "按规则判断权限，需要审批时由模型评估风险和授权。审核失败转人工；无人值守时拒绝。",
+		"bypass-tooltip": "自动批准待审批操作，仍遵守显式拒绝规则和环境限制。",
+		"read-only": "只读范围",
+		"workspace-edits": "允许工作目录内编辑",
+		"unattended": "无人值守：无法确认时拒绝"
 	},
 	"dialog-mcp-create": {
 		"configLabel": "MCP 配置",

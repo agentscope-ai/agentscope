@@ -7,6 +7,7 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, Union
 
 from utils import AnyString, MockModel
 from pydantic import BaseModel
+from agentscope.state._state import ToolApproval
 from agentscope.event import AgentEvent, ReplyEndEvent
 from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.middleware import MiddlewareBase
@@ -1483,7 +1484,14 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
             )
 
         self.assertIs(actual, expected)
-        engine.assert_awaited_once_with(tool, tool_input)
+        engine.assert_awaited_once_with(
+            tool,
+            tool_input,
+            messages=agent.state.context,
+            instructions=agent._get_permission_instructions,
+            confirmed=False,
+            rechecks=None,
+        )
 
     async def test_on_check_permission_follows_onion_order(self) -> None:
         """Permission middleware wraps the engine in registration order."""
@@ -1555,10 +1563,18 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
         async def check_permission(
             checked_tool: ToolBase,
             checked_input: dict,
+            messages: list,
+            instructions: Callable[[], Awaitable[str]],
+            confirmed: bool,
+            rechecks: list,
         ) -> PermissionDecision:
             self.execution_log.append("engine")
             self.assertIs(checked_tool, tool)
             self.assertEqual(checked_input, {"value": "original"})
+            self.assertEqual(messages, agent.state.context)
+            self.assertEqual(instructions, agent._get_permission_instructions)
+            self.assertEqual(rechecks, [])
+            self.assertFalse(confirmed)
             return engine_decision
 
         with patch.object(
@@ -1795,7 +1811,14 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
         self.assertEqual(tool_call.input, '{"value": "original"}')
         self.assertEqual(tool_input, {"value": "original"})
         self.assertIs(seen_by_inner[0], forwarded_input)
-        engine.assert_awaited_once_with(tool, forwarded_input)
+        engine.assert_awaited_once_with(
+            tool,
+            forwarded_input,
+            messages=agent.state.context,
+            instructions=agent._get_permission_instructions,
+            confirmed=False,
+            rechecks=[],
+        )
 
     async def test_on_check_permission_exception_propagates(self) -> None:
         """Permission middleware failures propagate to the caller."""
@@ -1902,7 +1925,7 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
         self.assertTrue(events)
         self.assertListEqual(executed, [])
 
-    async def test_confirmed_tool_call_runs_hook_without_rechecking_engine(
+    async def test_confirmed_tool_call_rechecks_policy_through_hook(
         self,
     ) -> None:
         """Application policy can override a user-confirmed ALLOW."""
@@ -1923,8 +1946,11 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 tool_input: dict[str, Any],
                 context: PermissionContext,
             ) -> PermissionDecision:
-                """The confirmed path must skip this method."""
-                raise AssertionError("permission should not be rechecked")
+                """Recheck tool policy before accepting confirmation."""
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ASK,
+                    message="Confirmation required",
+                )
 
             async def call(self) -> ToolChunk:
                 executed.append(True)
@@ -1955,6 +1981,9 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
             toolkit=Toolkit(tools=[tool]),
             middlewares=[ObserveMiddleware()],
         )
+        agent.state.reply_context.tool_approvals[
+            "call_permission"
+        ] = ToolApproval(user_confirmed=True)
         tool_call = ToolCallBlock(
             id="call_permission",
             name=tool.name,

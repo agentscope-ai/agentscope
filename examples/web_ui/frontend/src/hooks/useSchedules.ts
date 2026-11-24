@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { toast } from 'sonner';
 
 import { scheduleApi } from '../api';
 import type { ScheduleRecord, CreateScheduleRequest, UpdateScheduleRequest } from '../api';
+import { ApiError } from '../api/client';
 
 /**
  * Manages scheduled agent tasks with CRUD operations.
@@ -9,24 +11,35 @@ import type { ScheduleRecord, CreateScheduleRequest, UpdateScheduleRequest } fro
  */
 export function useSchedules() {
 	const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
-	const [loading, setLoading] = useState(false);
+	const [initialLoading, setInitialLoading] = useState(true);
 	const [error, setError] = useState<Error | null>(null);
+	const requestSeq = useRef(0);
+	const mounted = useRef(false);
 
 	const refetch = useCallback(async () => {
-		setLoading(true);
+		if (!mounted.current) return;
+		const seq = ++requestSeq.current;
 		setError(null);
 		try {
 			const res = await scheduleApi.list();
-			setSchedules(res.schedules);
+			if (seq === requestSeq.current) setSchedules(res.schedules);
 		} catch (e) {
-			setError(e as Error);
+			if (seq === requestSeq.current) {
+				setError(e as Error);
+				if (e instanceof ApiError) toast.error(e.detail);
+			}
 		} finally {
-			setLoading(false);
+			if (seq === requestSeq.current) setInitialLoading(false);
 		}
 	}, []);
 
 	useEffect(() => {
-		refetch();
+		mounted.current = true;
+		void refetch();
+		return () => {
+			mounted.current = false;
+			requestSeq.current += 1;
+		};
 	}, [refetch]);
 
 	/** Creates a new schedule, registers it with the scheduler, and refreshes the list. */
@@ -43,7 +56,9 @@ export function useSchedules() {
 	const update = useCallback(
 		async (scheduleId: string, body: UpdateScheduleRequest) => {
 			const res = await scheduleApi.update(scheduleId, body);
-			await refetch();
+			if (!mounted.current) return res;
+			setSchedules((current) => current.map((item) => (item.id === res.id ? res : item)));
+			void refetch();
 			return res;
 		},
 		[refetch],
@@ -58,5 +73,5 @@ export function useSchedules() {
 		[refetch],
 	);
 
-	return { schedules, loading, error, refetch, create, update, remove };
+	return { schedules, initialLoading, error, refetch, create, update, remove };
 }

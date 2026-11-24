@@ -591,12 +591,14 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                 reply_id=restored_state.reply_id,
                 confirm_results=[
                     ConfirmResult(
-                        confirmed=True,
-                        tool_call=ToolCallBlock(
-                            id="confirm_call_1",
-                            name="mock_confirm_tool",
-                            input='{"input": "test"}',
+                        request_id=agent.state.confirmation_request(
+                            "Friday",
+                            "confirm_call_1",
                         ),
+                        confirmed=True,
+                        tool_call=agent.state.get_awaiting_tool_calls(
+                            agent.name,
+                        )[0],
                     ),
                 ],
             ),
@@ -638,12 +640,14 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                     reply_id=self.agent.state.reply_id,
                     confirm_results=[
                         ConfirmResult(
-                            confirmed=True,
-                            tool_call=ToolCallBlock(
-                                id="confirm_call_1",
-                                name="mock_confirm_tool",
-                                input='{"input": "test"}',
+                            request_id=self.agent.state.confirmation_request(
+                                "Friday",
+                                "confirm_call_1",
                             ),
+                            confirmed=True,
+                            tool_call=self.agent.state.get_awaiting_tool_calls(
+                                self.agent.name,
+                            )[0],
                         ),
                     ],
                 ),

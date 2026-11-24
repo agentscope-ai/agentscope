@@ -4,6 +4,8 @@ import asyncio
 import inspect
 import json
 from abc import abstractmethod
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from copy import deepcopy
 from pathlib import Path
 from typing import Type, Any, AsyncGenerator
@@ -36,6 +38,64 @@ from ..tool import ToolChoice
 
 _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
+
+
+class _StructuredOutputInput:
+    """Source messages and the corresponding native structured request."""
+
+    def __init__(
+        self,
+        messages: list[Msg],
+        structured_model: Type[BaseModel] | dict,
+    ) -> None:
+        self.messages = messages
+        self.structured_model = deepcopy(structured_model)
+        func_name = "generate_structured_output"
+        if isinstance(self.structured_model, dict):
+            input_schema = self.structured_model
+        else:
+            input_schema = self.structured_model.model_json_schema()
+
+        instruction = (
+            "<system-reminder>Now you **MUST** call the tool named "
+            f"'{func_name}' to generate the structured output required "
+            "by the user. DON'T do anything else.</system-reminder>"
+        )
+
+        copied_messages = deepcopy(messages)
+        if copied_messages[-1].role == "user":
+            copied_messages[-1].content = copied_messages[
+                -1
+            ].get_content_blocks() + [TextBlock(text=instruction)]
+        else:
+            copied_messages.append(
+                UserMsg(name="user", content=[TextBlock(text=instruction)]),
+            )
+
+        self.api_messages = copied_messages
+        self.tools: list[dict[str, Any]] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": func_name,
+                    "description": "Call this function to generate "
+                    "structured output required by "
+                    "the user.",
+                    "parameters": input_schema,
+                },
+            },
+        ]
+
+
+# Task-local so a model override can replace the list passed to super()
+# without losing the review budget or affecting another call on the model.
+_InputCheck = Callable[
+    [list[Msg], Type[BaseModel] | dict],
+    Awaitable[_StructuredOutputInput],
+]
+_structured_input_check: ContextVar[
+    tuple["ChatModelBase", _InputCheck] | None
+] = ContextVar("structured_input_check", default=None)
 
 
 class ChatModelBase:
@@ -567,6 +627,11 @@ class ChatModelBase:
                 "`generate_structured_output` method.",
             )
 
+        # Reject over-budget model preprocessing before starting retries.
+        check = _structured_input_check.get()
+        if check is not None and check[0] is self:
+            await check[1](messages, structured_model)
+
         user_tool_choice = kwargs.pop("tool_choice", None)
         if user_tool_choice is None:
             forced_tc = ToolChoice(mode="generate_structured_output")
@@ -700,45 +765,17 @@ class ChatModelBase:
             **kwargs (`Any`):
                 Additional keyword arguments forwarded to ``_call_api``.
         """
-        func_name = "generate_structured_output"
-        if isinstance(structured_model, dict):
-            input_schema = structured_model
+        # An attempt override can also edit the messages before calling super.
+        check = _structured_input_check.get()
+        if check is not None and check[0] is self:
+            request = await check[1](messages, structured_model)
         else:
-            input_schema = structured_model.model_json_schema()
-
-        instruction = (
-            "<system-reminder>Now you **MUST** call the tool named "
-            f"'{func_name}' to generate the structured output required "
-            "by the user. DON'T do anything else.</system-reminder>"
-        )
-
-        copied_messages = deepcopy(messages)
-        # Insert instruction to ensure llm is correctly guided
-        if copied_messages[-1].role == "user":
-            # Insert a user message to the last
-            copied_messages[-1].content = copied_messages[
-                -1
-            ].get_content_blocks() + [TextBlock(text=instruction)]
-        else:
-            copied_messages.append(
-                UserMsg(name="user", content=[TextBlock(text=instruction)]),
-            )
-
+            request = _StructuredOutputInput(messages, structured_model)
+        function = request.tools[0]["function"]
         res = await self._call_api(
             model_name=model_name,
-            messages=copied_messages,
-            tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": func_name,
-                        "description": "Call this function to generate "
-                        "structured output required by "
-                        "the user.",
-                        "parameters": input_schema,
-                    },
-                },
-            ],
+            messages=request.api_messages,
+            tools=request.tools,
             tool_choice=tool_choice,
             **kwargs,
         )
@@ -775,10 +812,10 @@ class ChatModelBase:
         structured_output: dict[str, Any] | None = None
         try:
             for _ in completed_response.content:
-                if isinstance(_, ToolCallBlock) and _.name == func_name:
+                if isinstance(_, ToolCallBlock) and _.name == function["name"]:
                     structured_output = _json_loads_with_repair(
                         _.input,
-                        input_schema,
+                        function["parameters"],
                     )
                     break
 

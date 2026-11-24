@@ -128,6 +128,22 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 consumption.
         """
 
+    async def queue_push_consuming(
+        self,
+        key: str,
+        payload: dict,
+        source_key: str,
+        entry_ids: list[str],
+    ) -> bool:
+        """Append a payload and remove the given source IDs atomically.
+
+        Require a nonempty selection of distinct, existing source IDs.
+        Return False if it is stale or invalid. Preserve unselected entries
+        and queue TTLs. Callers hold the destination queue mutation lock.
+        A transport failure may leave the outcome unknown to the caller.
+        """
+        raise NotImplementedError("This bus does not support atomic enqueue.")
+
     @abstractmethod
     async def queue_drain(
         self,

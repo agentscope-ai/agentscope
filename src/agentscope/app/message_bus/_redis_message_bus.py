@@ -28,6 +28,39 @@ return entries
 """
 
 
+# Bound a single EVAL (including driver retries) by its receipt's lifetime.
+_QUEUE_COMMIT_TTL_SECS = 3600
+
+# Redis scripts do not roll back on error. Check permissions for all writes
+# after XADD up front. XADD validates the destination before changing it.
+_QUEUE_PUSH_CONSUMING_LUA = """
+if redis.call('EXISTS', KEYS[3]) == 1 then return 1 end
+if #ARGV < 3 then return 0 end
+local seen = {}
+for i = 3, #ARGV do
+  local id = ARGV[i]
+  if seen[id] then return 0 end
+  local entry = redis.call('XRANGE', KEYS[2], id, id, 'COUNT', 1)
+  if not entry[1] or entry[1][1] ~= id then return 0 end
+  seen[id] = true
+end
+if redis.acl_check_cmd then
+  if not redis.acl_check_cmd('XDEL', KEYS[2], ARGV[3]) then
+    return redis.error_reply('NOPERM cannot consume source entries')
+  end
+  if not redis.acl_check_cmd('SET', KEYS[3], '1', 'EX', ARGV[2]) then
+    return redis.error_reply('NOPERM cannot save enqueue receipt')
+  end
+end
+redis.call('XADD', KEYS[1], '*', 'payload', ARGV[1])
+for i = 3, #ARGV do
+  redis.call('XDEL', KEYS[2], ARGV[i])
+end
+redis.call('SET', KEYS[3], '1', 'EX', ARGV[2])
+return 1
+"""
+
+
 # Validate every target before deleting, preserving concurrent appends.
 _QUEUE_REMOVE_IF_LUA = """
 local matches = cjson.decode(ARGV[1])
@@ -325,6 +358,28 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         if ttl_secs is not None:
             await self._client.expire(key, ttl_secs)
         return entry_id
+
+    async def queue_push_consuming(
+        self,
+        key: str,
+        payload: dict,
+        source_key: str,
+        entry_ids: list[str],
+    ) -> bool:
+        """Atomically enqueue and retain a receipt across driver retries."""
+        receipt_key = f"{key}:commit:{uuid.uuid4().hex}"
+        async with asyncio.timeout(_QUEUE_COMMIT_TTL_SECS):
+            accepted = await self._client.eval(
+                _QUEUE_PUSH_CONSUMING_LUA,
+                3,
+                key,
+                source_key,
+                receipt_key,
+                json.dumps(payload, ensure_ascii=False),
+                _QUEUE_COMMIT_TTL_SECS,
+                *entry_ids,
+            )
+        return bool(accepted)
 
     async def queue_drain(
         self,

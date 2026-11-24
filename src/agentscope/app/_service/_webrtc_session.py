@@ -18,7 +18,11 @@ from ...event import (
     ReplyStartEvent,
 )
 from ...state import AgentState
-from .._bus_ops import nudge_chat_inputs, publish_session_event
+from .._bus_ops import (
+    nudge_chat_inputs,
+    publish_session_event,
+    session_execution,
+)
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
 from ._webrtc_audio_transport import WebRTCAudioTransport
@@ -196,10 +200,7 @@ class WebRTCSession:
         if self._close_task is not None:
             return
         try:
-            async with self.message_bus.acquire_lock(
-                MessageBusKeys.session_lock(self.session_id),
-                ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
-            ):
+            async with session_execution(self.message_bus, self.session_id):
                 self._lock_acquired.set()
                 try:
                     self.agent = await self._agent_factory()

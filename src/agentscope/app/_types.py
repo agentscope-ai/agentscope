@@ -188,14 +188,9 @@ class SubAgentTemplate(BaseModel):
     extend_leader_permission_rules: bool = Field(
         default=True,
         description=(
-            "Whether the leader session's allow/deny/ask permission "
-            "rules should be merged on top of the template's. "
-            "``True`` (default) — leader rules are appended after "
-            "the template's rules for each tool, so the worker "
-            "doesn't re-prompt for permissions the user has already "
-            "confirmed; the template's rules take precedence on "
-            "evaluation order. ``False`` — the template's rules are "
-            "the worker's complete rule set."
+            "Append the leader's allow and ask rules after the template's "
+            "rules for each tool. Defaults to True. The leader's effective "
+            "deny rules always apply to the worker."
         ),
     )
 

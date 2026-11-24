@@ -1,12 +1,18 @@
 # -*- coding: utf-8 -*-
 """Tests for schedule validation before persistence and registration."""
+import asyncio
 from datetime import datetime, timedelta
+from itertools import product
 from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from jsonschema import validate
 
+from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app._service import SessionService
 from agentscope.app._manager import SchedulerManager
 from agentscope.app._manager._scheduler._tools._schedule_create import (
     ScheduleCreate,
@@ -24,6 +30,9 @@ from agentscope.app.storage import (
     ChatModelConfig,
     ScheduleData,
     ScheduleRecord,
+    ScheduleSource,
+    SessionRecord,
+    SessionConfig,
 )
 from agentscope.app.deps import (
     get_current_user_id,
@@ -31,7 +40,9 @@ from agentscope.app.deps import (
     get_scheduler_manager,
     get_storage,
 )
+from agentscope.message import UserMsg
 from agentscope.permission import PermissionMode
+from agentscope.state import AgentState
 
 
 class _Access:
@@ -132,7 +143,7 @@ def _record() -> ScheduleRecord:
                 model="model-1",
                 parameters={},
             ),
-            permission_mode=PermissionMode.DONT_ASK,
+            permission_mode="dont_ask",
         ),
     )
 
@@ -145,6 +156,7 @@ class ScheduleHttpEndTimeTest(TestCase):
         self.storage = _Storage()
         self.scheduler = _Scheduler()
         app = FastAPI()
+        app.state.message_bus = InMemoryMessageBus()
         app.include_router(schedule_router)
         app.dependency_overrides.update(
             {
@@ -155,6 +167,83 @@ class ScheduleHttpEndTimeTest(TestCase):
             },
         )
         self.client = self.enterContext(TestClient(app))
+
+    def test_create_exposes_only_configurable_permissions(self) -> None:
+        """Modern and legacy requests always schedule unattended runs."""
+        schemas = self.client.get("/openapi.json").json()["components"][
+            "schemas"
+        ]
+        for name in (
+            "CreateScheduleRequest",
+            "UpdateScheduleRequest",
+            "ListedScheduleData",
+        ):
+            self.assertNotIn("interactive", schemas[name]["properties"])
+        payload = _request("0 9 * * *").model_dump(exclude_unset=True)
+        cases: list[
+            tuple[str | None, dict[str, bool], tuple[str, bool, bool]]
+        ] = [
+            (None, {}, ("auto", False, False)),
+            ("bypass", {"read_only": True}, ("bypass", True, False)),
+            ("auto", {"allow_workspace_edits": True}, ("auto", False, True)),
+            ("default", {}, ("ask", False, False)),
+            ("explore", {"read_only": False}, ("ask", True, False)),
+            ("accept_edits", {}, ("ask", False, True)),
+            ("dont_ask", {}, ("ask", False, True)),
+        ]
+        for mode, options, expected in cases:
+            with self.subTest(mode=mode):
+                body = {**payload, **options, "interactive": True}
+                if mode is not None:
+                    body["permission_mode"] = mode
+                response = self.client.post("/schedule/", json=body)
+                self.assertEqual(response.status_code, 201, response.text)
+                record = self.storage.upserted[-1]
+                state = AgentState()
+                record.apply_to_session(state, new_session=True)
+                policy = state.permission_context
+                self.assertEqual(
+                    (
+                        policy.mode.value,
+                        policy.read_only,
+                        policy.allow_workspace_edits,
+                        policy.interactive,
+                    ),
+                    (*expected, False),
+                )
+                self.assertNotIn("interactive", record.data.model_dump())
+
+    def test_create_preserves_omitted_permission_fields(self) -> None:
+        """Compact requests include explicit and mode-implied settings."""
+        base = _request("0 9 * * *").model_dump(exclude_unset=True)
+        cases: list[tuple[dict[str, object], dict[str, object]]] = [
+            ({}, {}),
+            ({"permission_mode": "auto"}, {"permission_mode": "auto"}),
+            ({"read_only": False}, {"read_only": False}),
+            (
+                {"permission_mode": "explore", "read_only": False},
+                {"permission_mode": "ask", "read_only": True},
+            ),
+        ]
+        for fields, expected in cases:
+            with self.subTest(fields=fields):
+                request = CreateScheduleRequest.model_validate(
+                    {**base, **fields},
+                )
+                self.assertEqual(
+                    request.model_dump(mode="json", exclude_unset=True),
+                    {**base, **expected},
+                )
+
+    def test_legacy_interactive_setting_is_ignored_on_restore(self) -> None:
+        """A persisted flag cannot enable interaction for a schedule."""
+        payload = _record().model_dump(mode="json")
+        payload["data"].update(permission_mode="auto", interactive=True)
+        record = ScheduleRecord.model_validate(payload)
+        state = AgentState()
+        record.apply_to_session(state, new_session=True)
+        self.assertFalse(state.permission_context.interactive)
+        self.assertNotIn("interactive", record.data.model_dump())
 
     def test_start_and_end_round_trip_through_create_and_list(self) -> None:
         """Both absolute boundaries survive persistence and list output."""
@@ -180,6 +269,10 @@ class ScheduleHttpEndTimeTest(TestCase):
                 "permission_mode": PermissionMode(payload["permission_mode"]),
                 "source": "USER",
                 "source_session_id": "",
+                "authorized_description": payload["description"],
+                "authorization_evidence": [],
+                "authorization_evidence_complete": True,
+                "deny_rules": {},
             },
         }
         self.assertEqual(created.json(), {"schedule_id": record.id})
@@ -188,16 +281,25 @@ class ScheduleHttpEndTimeTest(TestCase):
             [expected_record],
         )
         self.assertEqual(self.scheduler.notified, [record.id])
+        expected_listed = ScheduleRecord.model_validate(
+            expected_record,
+        ).model_dump(
+            mode="json",
+            exclude={
+                "data": {
+                    "authorization_evidence",
+                    "authorization_evidence_complete",
+                    "authorized_description",
+                    "deny_rules",
+                },
+            },
+        )
         listed = self.client.get("/schedule/")
         self.assertEqual(listed.status_code, 200, listed.text)
         self.assertEqual(
             listed.json(),
             {
-                "schedules": [
-                    ScheduleRecord.model_validate(expected_record).model_dump(
-                        mode="json",
-                    ),
-                ],
+                "schedules": [expected_listed],
                 "total": 1,
             },
         )
@@ -212,6 +314,75 @@ class ScheduleHttpEndTimeTest(TestCase):
                 last_fire,
                 last_fire + timedelta(seconds=1),
             ),
+        )
+
+    def test_list_omits_archived_instructions_used_by_scheduler(self) -> None:
+        """Agent-created schedules keep original evidence only in storage."""
+        state = AgentState()
+        state.retain_authorization(
+            [UserMsg("user", "Private scope for review.")],
+        )
+        record = _record()
+        record.data.source = ScheduleSource.AGENT
+        record.data.authorization_evidence = state.authorization_evidence
+        self.storage.upserted.append(record)
+        response = self.client.get("/schedule/")
+        self.assertEqual(response.status_code, 200)
+        listed_data = response.json()["schedules"][0]["data"]
+        self.assertNotIn("interactive", listed_data)
+        self.assertNotIn("authorization_evidence", response.text)
+        self.assertNotIn("Private scope for review.", response.text)
+        execution = AgentState()
+        record.apply_to_session(execution, new_session=True)
+        self.assertEqual(
+            execution.schedule_authorization.evidence,
+            state.authorization_evidence,
+        )
+
+    def test_drawer_history_and_patch_exclude_archived_evidence(self) -> None:
+        """Only public task settings and session links cross the HTTP API."""
+        record = _record()
+        state = AgentState()
+        state.retain_authorization([UserMsg("user", "Private archive.")])
+        record.data.authorization_evidence = state.authorization_evidence
+        record.apply_to_session(state, new_session=True)
+        session = SessionRecord(
+            user_id=record.user_id,
+            agent_id=record.agent_id,
+            config=SessionConfig(workspace_id="ws"),
+            state=state,
+        )
+        storage = AsyncMock()
+        storage.get_schedule.return_value = record
+        storage.list_sessions_by_schedule.return_value = [session]
+        self.client.app.dependency_overrides[get_storage] = lambda: storage
+        history = self.client.get(f"/schedule/{record.id}/sessions")
+        self.assertEqual(history.status_code, 200)
+        self.assertEqual(
+            history.json(),
+            {
+                "sessions": [
+                    session.model_dump(
+                        mode="json",
+                        include={"id", "created_at"},
+                    ),
+                ],
+                "total": 1,
+            },
+        )
+        updated = self.client.patch(
+            f"/schedule/{record.id}",
+            json={"read_only": True},
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertNotIn("interactive", updated.json()["data"])
+        self.assertTrue(updated.json()["data"]["read_only"])
+        self.assertNotIn("authorization_evidence", updated.text)
+        self.assertNotIn("Private archive.", updated.text)
+        persisted = storage.upsert_schedule.await_args.args[1]
+        self.assertEqual(
+            (persisted.data.read_only, persisted.data.authorization_evidence),
+            (True, state.authorization_evidence),
         )
 
     def test_invalid_end_time_returns_422_without_side_effects(self) -> None:
@@ -696,6 +867,10 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
                             "started_at": record.data.started_at,
                             "source": "USER",
                             "source_session_id": "",
+                            "authorized_description": "",
+                            "authorization_evidence": [],
+                            "authorization_evidence_complete": True,
+                            "deny_rules": {},
                         },
                     ],
                 )
@@ -797,11 +972,164 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
                 user_id="user-1",
                 storage=storage,
                 scheduler=scheduler,
+                message_bus=InMemoryMessageBus(),
             )
 
         self.assertEqual(ctx.exception.status_code, 422)
         self.assertEqual(storage.upserted, [])
         self.assertEqual(scheduler.notified, [])
+
+    async def test_concurrent_rename_preserves_read_only(self) -> None:
+        """A PATCH merges only after the previous writer commits."""
+        record = _record()
+        bus = InMemoryMessageBus()
+        storage = AsyncMock()
+        scheduler = _Scheduler()
+
+        async def read(*_: str) -> ScheduleRecord:
+            snapshot = record.model_copy(deep=True)
+            await asyncio.sleep(0)
+            return snapshot
+
+        async def save(_: str, updated: ScheduleRecord) -> None:
+            nonlocal record
+            record = updated
+
+        storage.get_schedule.side_effect = read
+        storage.upsert_schedule.side_effect = save
+        expected = record.data.model_copy(
+            update={"name": "renamed", "read_only": True},
+        )
+        await asyncio.gather(
+            *(
+                update_schedule(
+                    record.id,
+                    body,
+                    record.user_id,
+                    storage,
+                    scheduler,
+                    bus,
+                )
+                for body in (
+                    UpdateScheduleRequest(read_only=True),
+                    UpdateScheduleRequest(name="renamed"),
+                )
+            ),
+        )
+        self.assertEqual(
+            (record.data, scheduler.notified),
+            (expected, [record.id, record.id]),
+        )
+
+    async def test_patch_and_delete_share_the_schedule_lock(self) -> None:
+        """Both orderings leave the schedule deleted."""
+        for delete_first in (False, True):
+            with self.subTest(delete_first=delete_first):
+                await self._assert_patch_delete_order(delete_first)
+
+    async def _assert_patch_delete_order(self, delete_first: bool) -> None:
+        """Pause the first writer until the second is waiting for its lock."""
+        record = _record()
+        rows = {record.id: record}
+        bus = InMemoryMessageBus()
+        storage = AsyncMock()
+        scheduler = _Scheduler()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def read(_: str, key: str) -> ScheduleRecord | None:
+            snapshot = rows.get(key)
+            if not delete_first:
+                entered.set()
+                await release.wait()
+            return snapshot
+
+        async def save(_: str, updated: ScheduleRecord) -> None:
+            rows[updated.id] = updated
+
+        async def remove(_: str, key: str) -> bool:
+            if delete_first:
+                entered.set()
+                await release.wait()
+            return rows.pop(key, None) is not None
+
+        storage.get_schedule.side_effect = read
+        storage.upsert_schedule.side_effect = save
+        storage.delete_schedule.side_effect = remove
+        storage.list_sessions_by_schedule.return_value = []
+        service = SessionService(storage, bus)
+        rename = update_schedule(
+            record.id,
+            UpdateScheduleRequest(name="renamed"),
+            record.user_id,
+            storage,
+            scheduler,
+            bus,
+        )
+        delete = service.delete_schedule(record.user_id, record.id)
+        first = asyncio.create_task(delete if delete_first else rename)
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        second = asyncio.create_task(
+            rename if delete_first else delete,
+        )
+        try:
+            await asyncio.sleep(0)
+            self.assertFalse(second.done())
+        finally:
+            release.set()
+            results = await asyncio.gather(
+                first,
+                second,
+                return_exceptions=True,
+            )
+        if delete_first:
+            self.assertIsInstance(results[1], HTTPException)
+            self.assertEqual(
+                (results[0], results[1].status_code),
+                (True, 404),
+            )
+        else:
+            self.assertEqual(
+                (results[0].data.name, results[1]),
+                ("renamed", True),
+            )
+        self.assertEqual(rows, {})
+
+    async def test_update_permission_constraints(self) -> None:
+        """False clears constraints; omitted fields remain unchanged."""
+        for updates in (
+            {"permission_mode": "auto"},
+            {"permission_mode": "bypass", "read_only": False},
+            {"read_only": False, "allow_workspace_edits": False},
+            {"allow_workspace_edits": True},
+            {"read_only": None},
+        ):
+            with self.subTest(updates=updates):
+                existing = _record()
+                existing.data.read_only = True
+                storage = _Storage(existing)
+                scheduler = _Scheduler()
+                result = await update_schedule(
+                    existing.id,
+                    UpdateScheduleRequest.model_validate(updates),
+                    user_id="user-1",
+                    storage=storage,
+                    scheduler=scheduler,
+                    message_bus=InMemoryMessageBus(),
+                )
+                self.assertEqual(
+                    result.data.model_dump(mode="json"),
+                    {
+                        **existing.data.model_dump(mode="json"),
+                        **{
+                            key: value
+                            for key, value in updates.items()
+                            if value is not None
+                        },
+                    },
+                )
+                self.assertEqual(storage.upserted, [result])
+                self.assertEqual(scheduler.notified, [existing.id])
 
     async def test_update_invalid_timezone_keeps_existing_state(self) -> None:
         """Update rejects an unknown timezone before changing state."""
@@ -816,6 +1144,7 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
                 user_id="user-1",
                 storage=storage,
                 scheduler=scheduler,
+                message_bus=InMemoryMessageBus(),
             )
 
         self.assertEqual(ctx.exception.status_code, 422)
@@ -838,6 +1167,71 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
             await tool(name="bad", cron_expression="not a cron")
 
         self.assertEqual(storage.upserted, [])
+
+    async def test_tool_persists_independent_permission_constraints(
+        self,
+    ) -> None:
+        """Model-visible arguments survive creation and runtime conversion."""
+        for mode, read_only, edits in product(
+            PermissionMode,
+            (False, True),
+            (False, True),
+        ):
+            with self.subTest(mode=mode, read_only=read_only, edits=edits):
+                storage = _Storage()
+                scheduler = _Scheduler()
+                tool = ScheduleCreate(
+                    user_id="user-1",
+                    agent_id="agent-1",
+                    chat_model_config=_request("0 9 * * *").chat_model_config,
+                    storage=storage,
+                    scheduler_manager=scheduler,
+                )
+                arguments = {
+                    "name": "Constrained schedule",
+                    "cron_expression": "0 9 * * *",
+                    "permission_mode": mode.value,
+                    "read_only": read_only,
+                    "allow_workspace_edits": edits,
+                }
+                self.assertEqual(
+                    {
+                        field: {
+                            key: tool.input_schema["properties"][field][key]
+                            for key in ("type", "default")
+                        }
+                        for field in ("read_only", "allow_workspace_edits")
+                    },
+                    {
+                        "read_only": {"type": "boolean", "default": False},
+                        "allow_workspace_edits": {
+                            "type": "boolean",
+                            "default": False,
+                        },
+                    },
+                )
+                validate(arguments, tool.input_schema)
+                await tool(**arguments)
+                record = storage.upserted[0]
+                restored = ScheduleRecord.model_validate_json(
+                    record.model_dump_json(),
+                )
+                state = AgentState()
+                restored.apply_to_session(state, new_session=True)
+                self.assertEqual(
+                    state.permission_context.model_dump(mode="json"),
+                    {
+                        "mode": mode.value,
+                        "read_only": read_only,
+                        "allow_workspace_edits": edits,
+                        "interactive": False,
+                        "working_directories": {},
+                        "allow_rules": {},
+                        "ask_rules": {},
+                        "deny_rules": {},
+                    },
+                )
+                self.assertEqual(scheduler.notified, [record.id])
 
     async def test_tool_invalid_timezone_does_not_persist(self) -> None:
         """The agent-facing tool rejects an unknown timezone before writing."""
