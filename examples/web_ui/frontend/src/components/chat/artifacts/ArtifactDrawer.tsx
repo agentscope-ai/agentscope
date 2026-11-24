@@ -19,12 +19,14 @@ import { defaultRehypePlugins } from 'streamdown';
 import {
 	BINARY_PREVIEW_LIMIT,
 	type FileTarget,
+	isOfficeKind,
 	previewKind,
 	PreviewTooLargeError,
 	readPreviewBlob,
 	TEXT_PREVIEW_LIMIT,
 } from './artifacts';
 import { staticHtml } from './htmlPreview';
+import { OfficePreview, type OfficePreviewError } from './OfficePreview';
 import { type FileEditState, useFileLeaveGuard } from './useFileLeaveGuard';
 import { ApiError } from '@/api/client';
 import { type FileEditAccess, type TextFileSnapshot, workspaceApi } from '@/api/workspace';
@@ -45,8 +47,8 @@ import { useTranslation } from '@/i18n/useI18n';
 import { copyToClipboard } from '@/utils/common';
 
 type Preview =
-	| { status: 'loading' | 'unsupported' | 'large' | 'missing' | 'error' }
-	| { status: 'ready'; text?: string; url?: string };
+	| { status: 'loading' | 'unsupported' | 'large' | 'missing' | 'error' | OfficePreviewError }
+	| { status: 'ready'; text?: string; url?: string; officeFile?: Blob };
 
 const ArtifactEditor = lazy(() =>
 	import('./ArtifactEditor').catch(() => ({ default: ArtifactEditorFallback })),
@@ -162,7 +164,7 @@ export function ArtifactPreviewContent({
 	const [accessAttempt, setAccessAttempt] = useState(0);
 	const normalize = (value: string) => value.replace(/\r\n?/g, '\n');
 	const dirty = snapshot !== null && draft !== normalize(snapshot.text);
-	const editable = !['image', 'pdf', 'binary'].includes(kind);
+	const editable = ['markdown', 'html', 'csv', 'text'].includes(kind);
 	const reopenRequired = editError === 'editSessionChanged' || editError === 'editPathChanged';
 
 	useEffect(() => {
@@ -338,13 +340,15 @@ export function ArtifactPreviewContent({
 				artifact.path,
 				controller.signal,
 			);
-			const binary = kind === 'image' || kind === 'pdf';
+			const binary = isOfficeKind(kind) || kind === 'image' || kind === 'pdf';
 			const blob = await readPreviewBlob(
 				response,
 				binary ? BINARY_PREVIEW_LIMIT : TEXT_PREVIEW_LIMIT,
 			);
 			if (controller.signal.aborted) return;
-			if (binary) {
+			if (isOfficeKind(kind)) {
+				setPreview({ status: 'ready', officeFile: blob });
+			} else if (binary) {
 				// Force a display MIME from the selected extension; never execute a
 				// response's arbitrary Content-Type in the application's origin.
 				objectUrl = URL.createObjectURL(
@@ -552,6 +556,13 @@ export function ArtifactPreviewContent({
 						<Loader2 className="size-4 animate-spin" />
 						{t('common.loading')}
 					</div>
+				) : preview.status === 'ready' && preview.officeFile && isOfficeKind(kind) ? (
+					<OfficePreview
+						kind={kind}
+						file={preview.officeFile}
+						name={artifact.name}
+						onError={(status) => setPreview({ status })}
+					/>
 				) : preview.status === 'ready' ? (
 					<ArtifactPreview
 						kind={kind}

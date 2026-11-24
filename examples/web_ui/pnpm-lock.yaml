@@ -72,6 +72,9 @@ importers:
       '@shadcn/react':
         specifier: ^0.2.1
         version: 0.2.1(@types/react@19.2.14)(react@19.2.6)
+      '@silurus/ooxml':
+        specifier: 0.90.2
+        version: 0.90.2
       '@streamdown/cjk':
         specifier: ^1.0.3
         version: 1.0.3(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(react@19.2.6)(unified@11.0.5)
@@ -123,6 +126,9 @@ importers:
       lucide-react:
         specifier: ^1.16.0
         version: 1.16.0(react@19.2.6)
+      mdast-util-from-markdown:
+        specifier: ^2.0.3
+        version: 2.0.3
       mime:
         specifier: ^4.1.0
         version: 4.1.0
@@ -1643,6 +1649,9 @@ packages:
 
   '@shikijs/vscode-textmate@10.0.2':
     resolution: {integrity: sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg==}
+
+  '@silurus/ooxml@0.90.2':
+    resolution: {integrity: sha512-rZL7ilRLRPemzVhKa3wbZN2LcU97/xzroY89EfZKVj0zUlEUPd6DOt6MvzS0Zp7437dii0QAfM8b8dr+VS6klA==}
 
   '@sindresorhus/merge-streams@4.0.0':
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
@@ -6609,6 +6618,8 @@ snapshots:
       '@types/hast': 3.0.4
 
   '@shikijs/vscode-textmate@10.0.2': {}
+
+  '@silurus/ooxml@0.90.2': {}
 
   '@sindresorhus/merge-streams@4.0.0': {}
 

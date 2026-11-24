@@ -1,4 +1,5 @@
 import type { ContentBlock, ToolCallBlock } from '@agentscope-ai/agentscope/message';
+import { fromMarkdown } from 'mdast-util-from-markdown';
 
 export interface FileTarget {
 	path: string;
@@ -6,7 +7,7 @@ export interface FileTarget {
 }
 
 export interface FileArtifact extends FileTarget {
-	change: 'written' | 'modified';
+	change?: 'written' | 'modified';
 }
 
 /** Append a backend directory entry without interpreting it as a browser URL. */
@@ -14,6 +15,15 @@ export function workspaceChildPath(directory: string, name: string): string {
 	const windows = /^[a-z]:[\\/]/i.test(directory) || directory.startsWith('\\\\');
 	const separator = windows && directory.includes('\\') ? '\\' : '/';
 	return `${directory}${directory.endsWith(separator) ? '' : separator}${name}`;
+}
+
+function isAbsoluteFilePath(path: string): boolean {
+	return (
+		!path.includes('\0') &&
+		(path.startsWith('/') ||
+			/^[a-z]:[\\/]/i.test(path) ||
+			/^\\\\[^\\]+\\[^\\]+(?:\\|$)/.test(path))
+	);
 }
 
 /** Keep operation IDs so repeated changes to one file remain distinguishable. */
@@ -35,15 +45,7 @@ export function extractFileChanges(content: ContentBlock[]): (FileArtifact & { i
 		}
 		if (!input || typeof input !== 'object' || !('file_path' in input)) continue;
 		const path = input.file_path;
-		if (typeof path !== 'string' || !path.trim() || path.includes('\0')) continue;
-		// History does not retain a relative path's original working directory.
-		// Accept POSIX roots, Windows drive roots and complete UNC paths only.
-		if (
-			!path.startsWith('/') &&
-			!/^[a-z]:[\\/]/i.test(path) &&
-			!/^\\\\[^\\]+\\[^\\]+(?:\\|$)/.test(path)
-		)
-			continue;
+		if (typeof path !== 'string' || !isAbsoluteFilePath(path)) continue;
 		// Keep backend paths verbatim: %, # and backslashes are not URL syntax.
 		changes.push({
 			id: call.id,
@@ -55,14 +57,64 @@ export function extractFileChanges(content: ContentBlock[]): (FileArtifact & { i
 	return changes;
 }
 
-/** Derive current-file references from successful built-in file operations. */
+/** Read standalone path fences only from the answer following the last tool. */
+function replyFileReferences(content: ContentBlock[]): FileTarget[] {
+	const references: FileTarget[] = [];
+	const lastTool = content.findLastIndex(
+		(b) => b.type === 'tool_call' || b.type === 'tool_result',
+	);
+	for (const block of content.slice(lastTool + 1)) {
+		if (block.type !== 'text' || !/(?:`{3}|~{3})/.test(block.text)) continue;
+		const lines = block.text.split(/\r\n?|\n/);
+		for (const node of fromMarkdown(block.text).children) {
+			if (
+				node.type !== 'code' ||
+				node.meta ||
+				(node.lang && !['text', 'plaintext'].includes(node.lang))
+			)
+				continue;
+			const pos = node.position;
+			// Exclude indented, unclosed and multi-line code examples.
+			if (
+				!pos ||
+				pos.end.line !== pos.start.line + 2 ||
+				!/^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(lines[pos.end.line - 1])
+			)
+				continue;
+			const path = node.value.trim();
+			const name = path.split(/[/\\]/).pop();
+			if (
+				!isAbsoluteFilePath(path) ||
+				!name ||
+				name === '.' ||
+				name === '..' ||
+				path.startsWith('//')
+			)
+				continue;
+			// An absolute executable followed by options or redirection is a command.
+			if (/\s(?:-{1,2}\S|[/\\]|[<>|;&])|[|;&]\s/.test(path)) continue;
+			references.push({ path, name });
+		}
+	}
+	return references;
+}
+
+/** Prefer explicit deliverables while retaining known write/edit provenance. */
 export function extractArtifacts(content: ContentBlock[]): FileArtifact[] {
 	const artifacts = new Map<string, FileArtifact>();
 	for (const { path, name, change } of extractFileChanges(content)) {
-		artifacts.delete(path);
-		artifacts.set(path, { path, name, change });
+		const key = filePathKey(path);
+		artifacts.delete(key);
+		artifacts.set(key, { path, name, change });
 	}
-	return [...artifacts.values()].reverse();
+	const cards = new Map<string, FileArtifact>();
+	for (const target of replyFileReferences(content)) {
+		const key = filePathKey(target.path);
+		if (cards.has(key)) continue;
+		cards.set(key, artifacts.get(key) ?? target);
+		artifacts.delete(key);
+	}
+	return [...cards.values(), ...[...artifacts.values()].reverse()];
 }
 
 export type FileChanges = ReadonlyMap<string, number>;
@@ -95,11 +147,25 @@ export function fileChangeVersion(changes: FileChanges, path: string, descendant
 	return version;
 }
 
-export type PreviewKind = 'markdown' | 'html' | 'csv' | 'text' | 'image' | 'pdf' | 'binary';
+export type OfficeKind = 'docx' | 'xlsx' | 'pptx';
+export type PreviewKind =
+	| OfficeKind
+	| 'markdown'
+	| 'html'
+	| 'csv'
+	| 'text'
+	| 'image'
+	| 'pdf'
+	| 'binary';
+
+export function isOfficeKind(kind: string): kind is OfficeKind {
+	return kind === 'docx' || kind === 'xlsx' || kind === 'pptx';
+}
 
 export function previewKind(path: string): PreviewKind {
 	const name = path.split(/[/\\]/).pop()?.toLowerCase() ?? '';
 	const extension = name.split('.').pop() ?? '';
+	if (isOfficeKind(extension)) return extension;
 	if (['md', 'markdown', 'mdx'].includes(extension)) return 'markdown';
 	if (['html', 'htm'].includes(extension)) return 'html';
 	if (extension === 'csv') return 'csv';

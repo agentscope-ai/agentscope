@@ -56,6 +56,8 @@
 		"source": "Source",
 		"unsupported": "Preview is not available for this file type. You can still download it.",
 		"large": "This file is too large to preview. Download it to view the full content.",
+		"officeEncrypted": "This Office file is encrypted. Download it and open it with its password.",
+		"officeInvalid": "Could not read the Office document. It may be damaged or contain unsupported content.",
 		"missing": "This file is no longer available in the workspace.",
 		"error": "Could not load this file. Check your connection and access, then try again.",
 		"retry": "Try again",

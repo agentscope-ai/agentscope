@@ -46,9 +46,11 @@ export function ArtifactList({
 								{artifact.path}
 							</span>
 						</span>
-						<span className="shrink-0 text-xs text-muted-foreground">
-							{t(`artifacts.${artifact.change}`)}
-						</span>
+						{artifact.change && (
+							<span className="shrink-0 text-xs text-muted-foreground">
+								{t(`artifacts.${artifact.change}`)}
+							</span>
+						)}
 					</button>
 				))}
 			</div>
