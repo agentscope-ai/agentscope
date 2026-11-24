@@ -29,7 +29,7 @@ from .._service._workspace import SkillUploadError, UploadManifest
 from ..storage import MCPRecord, StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
-from ._media_types import INLINE_MEDIA_TYPES
+from ._media_types import WORKSPACE_INLINE_MEDIA_TYPES
 from ._schema import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
@@ -582,7 +582,7 @@ async def read_workspace_file(
     # Only the preview whitelist may render inline; a scriptable type
     # (text/html, image/svg+xml, ...) is forced to a download so a crafted
     # file cannot run in the app origin.
-    if download or media_type not in INLINE_MEDIA_TYPES:
+    if download or media_type not in WORKSPACE_INLINE_MEDIA_TYPES:
         headers[
             "Content-Disposition"
         ] = f"attachment; filename*=UTF-8''{quote(basename)}"

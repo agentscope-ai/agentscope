@@ -497,6 +497,30 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("content-disposition", response.headers)
 
+    async def test_json_preview_and_download(self) -> None:
+        """Workspace JSON previews inline unless a download is requested."""
+        body = b'{"ok":true}'
+        await self._backend.write_file("/workspace/result.json", body)
+        headers = {
+            "content-type": "application/json",
+            "content-length": str(len(body)),
+            "x-content-type-options": "nosniff",
+        }
+        download_headers = {
+            **headers,
+            "content-disposition": "attachment; filename*=UTF-8''result.json",
+        }
+        for download, expected in ((False, headers), (True, download_headers)):
+            with self.subTest(download=download):
+                response = await self._read(
+                    path="result.json",
+                    download=download,
+                    token=None,
+                    x_user_id="u",
+                )
+                self.assertEqual(dict(response.headers), expected)
+                self.assertEqual(await _collect(response), body)
+
     async def test_absolute_path_outside_workspace_is_readable(self) -> None:
         """Reading, like listing, is not confined to the workspace."""
         response = await self._read(
