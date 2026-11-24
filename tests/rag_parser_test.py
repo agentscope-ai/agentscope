@@ -3779,7 +3779,7 @@ class WordParserPictureRevisionTest(IsolatedAsyncioTestCase):
         )
 
     async def test_table_pictures_respect_revision_ancestry(self) -> None:
-        """Skip a move-source paragraph and a deleted VML run in a cell."""
+        """Keep only the move-destination picture in a table paragraph."""
         from docx import Document
         from docx.oxml import parse_xml
 
@@ -3788,18 +3788,13 @@ class WordParserPictureRevisionTest(IsolatedAsyncioTestCase):
         rel_id, _ = doc.part.get_or_add_image(io.BytesIO(_GIF_PIXEL))
         paragraph = cell.paragraphs[0]
         element = paragraph._p  # pylint: disable=protected-access
-        element.addprevious(
-            parse_xml(
-                f'<w:moveFrom {_DOCX_PICTURE_NS} w:id="1" w:author="Reviewer">'
-                "<w:p><w:r>"
-                + _DOCX_PICTURE.format(
-                    ns=_DOCX_PICTURE_NS,
-                    shape_id=100,
-                    rid=rel_id,
-                )
-                + "</w:r></w:p></w:moveFrom>",
-            ),
+        moved_from = parse_xml(
+            f'<w:moveFrom {_DOCX_PICTURE_NS} w:id="1" w:author="Reviewer"/>',
         )
+        element.append(moved_from)
+        source_run = paragraph.add_run()
+        source_run.add_picture(io.BytesIO(_GIF_PIXEL))
+        moved_from.append(source_run._r)  # pylint: disable=protected-access
         element.append(
             parse_xml(
                 f'<w:del {_DOCX_PICTURE_NS} w:id="2" w:author="Reviewer">'
