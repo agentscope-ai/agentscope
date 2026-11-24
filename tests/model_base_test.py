@@ -1650,6 +1650,47 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
         restored = Report.model_validate(result.content)
         self.assertEqual([city.ref for city in restored.cities], ["L", "P"])
 
+    async def test_nested_model_containers_keep_arguments(self) -> None:
+        """Preserve nested model inputs without guessing their positions."""
+
+        class Report(BaseModel):
+            """Group cities by region and by batch."""
+
+            regions: dict[str, list[_OutputAliasReport]]
+            batches: list[list[_ExcludedFieldReport]]
+            primary: _OutputAliasReport
+
+        arguments = {
+            "regions": {"FR": [{"city": " lyon "}]},
+            "batches": [[{"cityName": " paris ", "ref": " P "}]],
+            "primary": {"city": " rome "},
+        }
+        result = await self._generate_report(Report, json.dumps(arguments))
+        self.assertDictEqual(
+            result.content,
+            {**arguments, "primary": {"city": "Rome", "tags": []}},
+        )
+        Report.model_validate(result.content)
+
+    async def test_dict_serializer_omits_required_field(self) -> None:
+        """Restore a required argument omitted by a model serializer."""
+
+        class Report(_OutputAliasReport):
+            """Serialize only the normalized city."""
+
+            ref: str = Field(alias="refId")
+
+            @model_serializer
+            def _serialize(self) -> dict[str, str]:
+                return {"cityName": self.city}
+
+        result = await self._generate_report(
+            Report,
+            '{"city":" paris ","refId":" P "}',
+        )
+        self.assertDictEqual(result.content, {"city": "Paris", "refId": " P "})
+        Report.model_validate(result.content)
+
 
 class _TrackedCleanupModel(MockModel):
     """Model with observable asynchronous stream cleanup."""

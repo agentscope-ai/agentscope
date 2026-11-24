@@ -38,6 +38,15 @@ _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
 
 
+def _contains_model(value: Any) -> bool:
+    """Check list elements and dict values for a Pydantic model."""
+    if isinstance(value, dict):
+        return any(_contains_model(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_model(item) for item in value)
+    return isinstance(value, BaseModel)
+
+
 def _container_content(children: list | dict, dumped: Any, raw: Any) -> Any:
     """Restore model elements without matching them to raw input positions."""
     if isinstance(children, list):
@@ -52,6 +61,8 @@ def _container_content(children: list | dict, dumped: Any, raw: Any) -> Any:
     result = None
     for key, child in entries:
         if not isinstance(child, BaseModel):
+            if isinstance(child, (dict, list)) and _contains_model(child):
+                return raw
             continue
         if not same_shape:
             return raw
@@ -85,7 +96,7 @@ def _structured_content(
         source = field.serialization_alias
         source = name if source is None else source
         supplied = key if key in inputs else name
-        if field.exclude and field.is_required():
+        if field.is_required() and (field.exclude or source not in content):
             if supplied not in inputs:
                 return arguments
             updates[key] = inputs[supplied]
