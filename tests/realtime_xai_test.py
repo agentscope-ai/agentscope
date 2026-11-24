@@ -2,9 +2,12 @@
 """Unit tests for the xAI Grok voice realtime adapter: cards, session
 config and frame parsing. Nothing here opens a connection."""
 # pylint: disable=protected-access
+import asyncio
 import base64
+import json
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 from utils import AnyString
 
@@ -387,6 +390,29 @@ class XAIClientFramesTest(IsolatedAsyncioTestCase):
         self.assertListEqual(self.sent, [{"type": "response.cancel"}])
 
 
+class _OpenSocket:
+    """Record outgoing frames and stay open until closed."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+        self.closed = False
+
+    def __aiter__(self) -> "_OpenSocket":
+        return self
+
+    async def __anext__(self) -> str:
+        await asyncio.Future()
+        raise StopAsyncIteration
+
+    async def send(self, payload: str) -> None:
+        """Capture an outgoing WebSocket frame."""
+        self.sent.append(payload)
+
+    async def close(self) -> None:
+        """Record that the socket was closed."""
+        self.closed = True
+
+
 class XAIDisconnectTest(IsolatedAsyncioTestCase):
     """A closed WebSocket surfaces as ModelDisconnectedError."""
 
@@ -419,3 +445,34 @@ class XAIDisconnectTest(IsolatedAsyncioTestCase):
         model = XAIRealtimeModel("grok-voice-latest", CRED)
         with self.assertRaises(ModelDisconnectedError):
             await model.commit_turn()
+
+    async def test_reconnect_forgets_the_previous_response(self) -> None:
+        """A reopened session cannot cancel the closed session's reply."""
+        model = XAIRealtimeModel("grok-voice-latest", CRED)
+        model._parse(
+            {"type": "response.created", "response": {"id": "r1"}},
+        )
+        model._parse(
+            {
+                "type": "response.function_call_arguments.delta",
+                "call_id": "c1",
+                "delta": "{}",
+            },
+        )
+        socket = _OpenSocket()
+
+        with patch(
+            "websockets.connect",
+            new=AsyncMock(return_value=socket),
+        ):
+            await model.connect(instructions="test")
+        await model.request_response()
+        await asyncio.sleep(0)
+
+        self.assertListEqual(
+            [json.loads(payload)["type"] for payload in socket.sent],
+            ["session.update", "response.create"],
+        )
+        self.assertEqual(model._response_id, "")
+        self.assertDictEqual(model._tool_args, {})
+        await model.close()

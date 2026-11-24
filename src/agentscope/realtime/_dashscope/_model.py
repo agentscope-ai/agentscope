@@ -139,6 +139,11 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         self._queue = asyncio.Queue()
         self._session_ready.clear()
         self._session_setup_error = None
+        # Response and tool-call bookkeeping is session-scoped: an id
+        # from the closed session cannot be cancelled or completed here.
+        self._item_id = ""
+        self._tool_args.clear()
+        self._tool_names.clear()
 
         credential: DashScopeCredential = self.credential  # type: ignore
         self._ws = await websockets.connect(
