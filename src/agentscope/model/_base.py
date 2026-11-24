@@ -38,6 +38,32 @@ _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
 
 
+def _container_content(children: list | dict, dumped: Any, raw: Any) -> Any:
+    """Restore model elements without matching them to raw input positions."""
+    if isinstance(children, list):
+        entries = enumerate(children)
+        same_shape = isinstance(dumped, list) and len(children) == len(dumped)
+    else:
+        entries = children.items()
+        same_shape = (
+            isinstance(dumped, dict) and children.keys() == dumped.keys()
+        )
+
+    result = None
+    for key, child in entries:
+        if not isinstance(child, BaseModel):
+            continue
+        if not same_shape:
+            return raw
+        item = _structured_content(child, None, dumped[key])
+        if item is None:
+            return raw
+        if result is None:
+            result = dumped.copy()
+        result[key] = item
+    return dumped if result is None else result
+
+
 def _structured_content(
     model: BaseModel,
     arguments: dict | None,
@@ -74,7 +100,13 @@ def _structured_content(
             ):
                 item = _structured_content(child, raw, item)
                 if item is None:
-                    if field.is_required():
+                    if arguments is None or field.is_required():
+                        return arguments
+                    continue
+            elif isinstance(child, (list, dict)):
+                item = _container_content(child, item, raw)
+                if item is None and supplied not in inputs:
+                    if arguments is None or field.is_required():
                         return arguments
                     continue
             updates[key] = item

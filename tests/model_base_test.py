@@ -3,6 +3,7 @@
 retry / accumulation / interrupt wrapper around ``_call_api``."""
 import asyncio
 import base64
+import json
 import struct
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -1593,6 +1594,61 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
         )
         restored = Envelope.model_validate(result.content)
         self.assertEqual(restored.report.primary.ref, "r1")
+
+    async def test_model_containers_keep_input_aliases(self) -> None:
+        """Normalize values and defaults in list and dict elements."""
+
+        class Report(BaseModel):
+            """Hold city reports in two container shapes."""
+
+            cities: list[_OutputAliasReport]
+            by_id: dict[str, _OutputAliasReport]
+
+        result = await self._generate_report(
+            Report,
+            '{"cities":[{"city":" paris "}],"by_id":{"L":{"city":" lyon "}}}',
+        )
+        self.assertDictEqual(
+            result.content,
+            {
+                "cities": [{"city": "Paris", "tags": []}],
+                "by_id": {"L": {"city": "Lyon", "tags": []}},
+            },
+        )
+        Report.model_validate(result.content)
+
+    async def test_model_containers_keep_original_arguments(self) -> None:
+        """Recover whole containers when an excluded field needs its input."""
+
+        class Report(BaseModel):
+            """Reverse the validated list before serialization."""
+
+            cities: list[_ExcludedFieldReport]
+            by_id: dict[str, _ExcludedFieldReport]
+            primary: _OutputAliasReport
+
+            @field_validator("cities")
+            @classmethod
+            def _reverse(
+                cls,
+                cities: list[_ExcludedFieldReport],
+            ) -> list[_ExcludedFieldReport]:
+                return cities[::-1]
+
+        paris = {"cityName": " paris ", "ref": " P "}
+        lyon = {"cityName": " lyon ", "ref": " L "}
+        arguments = {
+            "cities": [paris, lyon],
+            "by_id": {"L": lyon, "P": paris},
+            "primary": {"city": " rome "},
+        }
+        result = await self._generate_report(Report, json.dumps(arguments))
+        self.assertDictEqual(
+            result.content,
+            {**arguments, "primary": {"city": "Rome", "tags": []}},
+        )
+        restored = Report.model_validate(result.content)
+        self.assertEqual([city.ref for city in restored.cities], ["L", "P"])
 
 
 class _TrackedCleanupModel(MockModel):
