@@ -1502,7 +1502,7 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
 
     async def _generate_report(
         self,
-        schema: type[_CityReport],
+        schema: type[BaseModel],
         arguments: str = '{"cityName": "  paris "}',
     ) -> StructuredResponse:
         model = _ToolCallStructuredModel()
@@ -1562,6 +1562,37 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
             _ExcludedFieldReport.model_validate(result.content).ref,
             "r1",
         )
+
+    async def test_directly_nested_models_keep_input_keys(self) -> None:
+        """Restore input fields through two levels of nested models."""
+
+        class Report(BaseModel):
+            """Hold the primary city report."""
+
+            primary: _ExcludedFieldReport = Field(serialization_alias="main")
+
+        class Envelope(BaseModel):
+            """Wrap the report in another model."""
+
+            report: Report
+            home: _OutputAliasReport = Field(
+                default_factory=lambda: _OutputAliasReport(city=" berlin "),
+            )
+
+        result = await self._generate_report(
+            Envelope,
+            '{"report":{"primary":{"cityName":" paris ","ref":" r1 "}}}',
+        )
+        primary = {"cityName": "Paris", "tags": [], "ref": " r1 "}
+        self.assertDictEqual(
+            result.content,
+            {
+                "report": {"primary": primary},
+                "home": {"city": "Berlin", "tags": []},
+            },
+        )
+        restored = Envelope.model_validate(result.content)
+        self.assertEqual(restored.report.primary.ref, "r1")
 
 
 class _TrackedCleanupModel(MockModel):

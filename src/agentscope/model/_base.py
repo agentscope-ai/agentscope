@@ -38,12 +38,16 @@ _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
 
 
-def _structured_content(model: BaseModel, arguments: dict) -> dict:
-    """Return normalized top-level fields under their input keys."""
-    content = model.model_dump(mode="json", by_alias=True)
+def _structured_content(
+    model: BaseModel,
+    arguments: dict | None,
+    content: Any,
+) -> dict | None:
+    """Return normalized fields under their input keys, including submodels."""
     if not isinstance(content, dict):
         return arguments
 
+    inputs = arguments or {}
     remaining = content.copy()
     updates = {}
     for name, field in type(model).model_fields.items():
@@ -54,14 +58,26 @@ def _structured_content(model: BaseModel, arguments: dict) -> dict:
             return arguments
         source = field.serialization_alias
         source = name if source is None else source
+        supplied = key if key in inputs else name
         if field.exclude and field.is_required():
-            supplied = key if key in arguments else name
-            if supplied in arguments:
-                updates[key] = arguments[supplied]
+            if supplied not in inputs:
+                return arguments
+            updates[key] = inputs[supplied]
         elif source in content:
             if source not in remaining:
                 return arguments
-            updates[key] = remaining.pop(source)
+            item = remaining.pop(source)
+            child = getattr(model, name, None)
+            raw = inputs.get(supplied)
+            if isinstance(child, BaseModel) and (
+                isinstance(raw, dict) or supplied not in inputs
+            ):
+                item = _structured_content(child, raw, item)
+                if item is None:
+                    if field.is_required():
+                        return arguments
+                    continue
+            updates[key] = item
     return remaining | updates
 
 
@@ -823,6 +839,7 @@ class ChatModelBase:
                 structured_output = _structured_content(
                     validated,
                     structured_output,
+                    validated.model_dump(mode="json", by_alias=True),
                 )
 
             else:
