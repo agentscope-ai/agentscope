@@ -2615,6 +2615,7 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
             ExcelParser(table_format="csv")  # type: ignore[arg-type]
 
 
+# pylint: disable-next=too-many-public-methods
 class WordParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`WordParser`."""
 
@@ -2727,6 +2728,45 @@ class WordParserTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(sections), 1)
         self.assertEqual(sections[0].content.text, "Paragraph one.")
+
+    async def test_deleted_text_with_and_without_paragraph_mark(self) -> None:
+        """A blank line survives only when its paragraph mark survives."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        doc = DocxDocument()
+        doc.add_paragraph("first")
+        paragraph = doc.element.body.add_p()
+        paragraph.append(
+            parse_xml(
+                f'<w:del {nsdecls("w")} w:id="1" w:author="test">'
+                "<w:r><w:delText>gone</w:delText></w:r></w:del>",
+            ),
+        )
+        doc.add_paragraph("third")
+        for mark_deleted, expected in (
+            (False, "first\n\nthird"),
+            (True, "first\nthird"),
+        ):
+            with self.subTest(mark_deleted=mark_deleted):
+                if mark_deleted:
+                    paragraph.get_or_add_pPr().append(
+                        parse_xml(
+                            f'<w:rPr {nsdecls("w")}>'
+                            '<w:del w:id="2" w:author="test"/></w:rPr>',
+                        ),
+                    )
+                buffer = io.BytesIO()
+                doc.save(buffer)
+                sections = await WordParser(include_image=False).parse(
+                    buffer.getvalue(),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [s.content.text for s in sections],
+                    [expected],
+                )
 
     async def test_table_merges_by_default(self) -> None:
         """``separate_table=False`` merges the table into surrounding
