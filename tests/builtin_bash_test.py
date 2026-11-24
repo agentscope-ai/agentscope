@@ -732,8 +732,27 @@ class BashOutputLimitTest(IsolatedAsyncioTestCase):
 
         notice, output = text.split("\n", 1)
         self.assertEqual(state, "error")
-        self.assertTrue(notice.startswith("[Output truncated"))
-        self.assertEqual(len(output), 30000)
+        message = "Command failed: long\n\nStdout:\n" + "x" * 30001
+        self.assertEqual(
+            notice,
+            "[Failure message truncated: showing the first 30000 of "
+            f"{len(message)} characters. To see the rest of the command "
+            "output, write it to a file and read the part you need.]",
+        )
+        self.assertEqual(output, message[:30000])
+
+    async def test_silent_failure_truncates_only_the_message(self) -> None:
+        """A silent failure has no command output to redirect."""
+        tool = Bash(backend=self._backend(1, b""), max_output_chars=10)
+
+        self.assertEqual(
+            await self._text(tool),
+            (
+                "[Failure message truncated: showing the first 10 of 21 "
+                "characters.]\nCommand fa",
+                "error",
+            ),
+        )
 
     async def test_no_limit_returns_whole_output(self) -> None:
         """``max_output_chars=None`` leaves the limit to the agent."""

@@ -275,8 +275,31 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
         text = chunks[0].content[0].text
         self.assertEqual(chunks[0].state, "error")
         notice, output = text.split("\n", 1)
-        self.assertTrue(notice.startswith("[Output truncated"))
-        self.assertEqual(len(output), 30000)
+        message = "Command failed: Write-Error 'x'\n\nStderr:\n" + "x" * 30001
+        self.assertEqual(
+            notice,
+            "[Failure message truncated: showing the first 30000 of "
+            f"{len(message)} characters. To see the rest of the command "
+            "output, write it to a file and read the part you need.]",
+        )
+        self.assertEqual(output, message[:30000])
+
+    async def test_silent_failure_truncates_only_the_message(self) -> None:
+        """A silent failure has no command output to redirect."""
+        backend = AsyncMock()
+        backend.exec_shell.return_value = ExecResult(1, b"", b"")
+        tool = PowerShell(backend=backend, max_output_chars=10)
+
+        chunks = [chunk async for chunk in await tool(command="exit 1")]
+
+        self.assertEqual(
+            (chunks[0].content[0].text, chunks[0].state),
+            (
+                "[Failure message truncated: showing the first 10 of 23 "
+                "characters.]\nCommand fa",
+                "error",
+            ),
+        )
 
     async def test_backend_exception_returns_error_chunk(self) -> None:
         """Convert unexpected backend failures into tool errors."""

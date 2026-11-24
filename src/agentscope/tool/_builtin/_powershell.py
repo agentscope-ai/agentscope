@@ -9,6 +9,7 @@ from ._backend import (
     BackendBase,
     DEFAULT_MAX_OUTPUT_CHARS,
     LocalBackend,
+    _format_command_failure,
     _normalize_newlines,
     _truncate_output,
 )
@@ -288,13 +289,10 @@ are easier for the user to review and authorize:
             return
 
         if not result.ok():
-            error_result = f"Command failed: {command}\n"
-            if stdout:
-                error_result += f"\nStdout:\n{stdout}"
-            if stderr:
-                error_result += f"\nStderr:\n{stderr}"
-            error_result = _truncate_output(
-                error_result,
+            error_result = _format_command_failure(
+                command,
+                stdout,
+                stderr,
                 self.max_output_chars,
             )
             yield ToolChunk(

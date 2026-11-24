@@ -22,6 +22,7 @@ from .._response import ToolChunk
 from ._backend import (
     BackendBase,
     DEFAULT_MAX_OUTPUT_CHARS,
+    _format_command_failure,
     _truncate_output,
 )
 
@@ -800,26 +801,13 @@ easier to review tool calls and give permission.
                 )
                 return
 
-            # Combine output
-            output = stdout
-            if stderr:
-                if output:
-                    output += "\n"
-                output += stderr
-
-            output = _truncate_output(output, self.max_output_chars)
-
             # Check exit code
             if not result.ok():
                 # Command failed
-                error_result = f"Command failed: {command}\n"
-                if stdout:
-                    error_result += f"\nStdout:\n{stdout}"
-                if stderr:
-                    error_result += f"\nStderr:\n{stderr}"
-
-                error_result = _truncate_output(
-                    error_result,
+                error_result = _format_command_failure(
+                    command,
+                    stdout,
+                    stderr,
                     self.max_output_chars,
                 )
 
@@ -829,6 +817,15 @@ easier to review tool calls and give permission.
                     is_last=True,
                 )
             else:
+                # Combine output
+                output = stdout
+                if stderr:
+                    if output:
+                        output += "\n"
+                    output += stderr
+
+                output = _truncate_output(output, self.max_output_chars)
+
                 # Command succeeded - note: ToolChunk uses "running" state
                 # which will be converted to "finished" in ToolResponse
                 yield ToolChunk(
