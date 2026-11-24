@@ -4,8 +4,12 @@ import json
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, array
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from .._model._session import SessionRecord
+from .._model._session_list import SessionListItem
+from ._mappers import _to_record
 from ._tables import SessionRow
 
 
@@ -55,16 +59,19 @@ def session_list_columns(dialect: str) -> list[ColumnElement]:
             payload,
             *[f"$.state.{field}" for field in removed],
         )
-        tail = "last" if dialect == "mysql" else "#-1"
-        role = sa.func.json_extract(
-            payload,
-            f"$.state.context[{tail}].role",
-        )
         if dialect == "mysql":
-            role = sa.func.json_unquote(role)
+            # MariaDB before 10.9 only accepts numeric array indexes.
+            length = sa.func.json_length(payload, "$.state.context")
+            tail = sa.func.greatest(length, 1) - 1
+            role = sa.func.json_unquote(
+                sa.func.json_extract(
+                    payload,
+                    sa.func.concat("$.state.context[", tail, "].role"),
+                ),
+            )
             content = sa.func.json_extract(
                 payload,
-                "$.state.context[last].content",
+                sa.func.concat("$.state.context[", tail, "].content"),
             )
             for state in ("asking", "submitted"):
                 flags.append(
@@ -74,6 +81,7 @@ def session_list_columns(dialect: str) -> list[ColumnElement]:
                     ),
                 )
         else:
+            role = sa.func.json_extract(payload, "$.state.context[#-1].role")
             blocks = sa.func.json_each(
                 payload,
                 "$.state.context[#-1].content",
@@ -100,3 +108,44 @@ def session_list_columns(dialect: str) -> list[ColumnElement]:
             for flag, name in zip(flags, ("asking", "submitted"))
         ],
     ]
+
+
+async def read_session_list_batch(
+    session: AsyncSession,
+    dialect: str,
+    *criteria: ColumnElement[bool],
+) -> dict[str, SessionListItem]:
+    """Read the selected rows, including historical PostgreSQL JSON."""
+    columns = [c for c in SessionRow.__table__.columns if c.name != "payload"]
+    query = sa.select(*columns, *session_list_columns(dialect)).where(
+        *criteria,
+    )
+    if dialect == "postgresql":
+        try:
+            async with session.begin_nested():
+                result = await session.execute(query)
+        except sa.exc.DBAPIError as exc:
+            # JSON accepts escaped NUL, but the JSONB projection rejects it.
+            if getattr(exc.orig, "sqlstate", None) != "22P05":
+                raise
+            rows = await session.scalars(
+                sa.select(SessionRow).where(*criteria),
+            )
+            return {
+                row.id: SessionListItem.from_record(
+                    _to_record(row, SessionRecord),
+                )
+                for row in rows
+            }
+    else:
+        result = await session.execute(query)
+
+    items = {}
+    for row in result.mappings():
+        values = dict(row)
+        states = [s for s in ("asking", "submitted") if values.pop(s)]
+        items[row.id] = SessionListItem(
+            session=_to_record(SessionRow(**values), SessionRecord),
+            tool_call_states=states,
+        )
+    return items

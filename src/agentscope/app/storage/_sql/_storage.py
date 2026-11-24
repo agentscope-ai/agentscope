@@ -44,7 +44,7 @@ from .._model import (
 )
 from .._utils import _dump_with_secrets
 from ._mappers import _from_record, _to_record
-from ._session_list import session_list_columns
+from ._session_list import read_session_list_batch
 from ._tables import (
     _Base,
     AgentRow,
@@ -1341,7 +1341,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         limit: int | None = None,
         offset: int = 0,
     ) -> tuple[list[SessionListItem], int]:
-        """Read a page without transferring the conversation or file cache.
+        """Read a page of trimmed records in creation order.
 
         Keep ``list_sessions`` unchanged for full-record consumers. JSON
         projections also support old rows without a data backfill.
@@ -1361,16 +1361,15 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 SessionRow.user_id == user_id,
                 SessionRow.agent_id == agent_id,
             )
-            total = await sess.scalar(
-                sa.select(sa.func.count())
-                .select_from(SessionRow)
-                .where(*filters),
-            )
-            columns = [
-                column
-                for column in SessionRow.__table__.columns
-                if column.name != "payload"
-            ]
+            total = None
+            if limit is not None or offset > 0:
+                total = await sess.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(SessionRow)
+                    .where(*filters),
+                )
+                if offset >= total:
+                    return [], total
             ids = list(
                 await sess.scalars(
                     sa.select(SessionRow.id)
@@ -1389,33 +1388,15 @@ class AsyncSQLAlchemyStorage(StorageBase):
             # Bound IN parameters for legacy unpaginated requests too.
             for start in range(0, len(ids), 200):
                 batch = ids[start : start + 200]
-                result = await sess.execute(
-                    sa.select(*columns, *session_list_columns(dialect)).where(
-                        *filters,
-                        SessionRow.id.in_(batch),
-                    ),
+                by_id = await read_session_list_batch(
+                    sess,
+                    dialect,
+                    *filters,
+                    SessionRow.id.in_(batch),
                 )
-                by_id = {row.id: dict(row) for row in result.mappings()}
-                for session_id in batch:
-                    values = by_id.get(session_id)
-                    if values is None:
-                        # A concurrent delete can occur between the reads.
-                        continue
-                    states = [
-                        state
-                        for state in ("asking", "submitted")
-                        if values.pop(state)
-                    ]
-                    items.append(
-                        SessionListItem(
-                            session=_to_record(
-                                SessionRow(**values),
-                                SessionRecord,
-                            ),
-                            tool_call_states=states,
-                        ),
-                    )
-        return items, total
+                # A concurrent delete can occur between the reads.
+                items.extend(by_id[key] for key in batch if key in by_id)
+        return items, len(items) if total is None else total
 
     async def get_session(
         self,

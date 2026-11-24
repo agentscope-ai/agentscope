@@ -4,10 +4,12 @@
 import asyncio
 import json
 from datetime import datetime
+from os import environ
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
@@ -28,6 +30,7 @@ from agentscope.app.storage import (
     AsyncSQLAlchemyStorage,
     ChannelOrigin,
     SessionConfig,
+    SessionListItem,
     SessionRecord,
     StorageBase,
 )
@@ -256,13 +259,24 @@ class SessionListTest(IsolatedAsyncioTestCase):
             (total, [item.session.id for item in items]),
             (205, [record.id for record in reversed(records)]),
         )
-        self.assertEqual(len(queries), 4)
-        self.assertIn("ORDER BY", queries[1][0])
-        self.assertNotIn("payload", queries[1][0])
-        for statement, parameters in queries[2:]:
+        self.assertEqual(len(queries), 3)
+        self.assertIn("ORDER BY", queries[0][0])
+        self.assertNotIn("payload", queries[0][0])
+        for statement, parameters in queries[1:]:
             self.assertIn("payload", statement)
             self.assertNotIn("ORDER BY", statement)
             self.assertLess(len(parameters), 250)
+
+    async def test_full_list_total_after_concurrent_deletion(self) -> None:
+        """Count only surviving rows when selected IDs have disappeared."""
+        with patch.object(
+            _storage,
+            "read_session_list_batch",
+            return_value={},
+        ) as read_batch:
+            result = await self.storage.list_sessions_page("user", "agent")
+        read_batch.assert_awaited_once()
+        self.assertEqual(result, ([], 0))
 
     async def test_legacy_origin_and_missing_state(self) -> None:
         """Read old records without migrations or a full payload fallback."""
@@ -340,7 +354,7 @@ class SessionListTest(IsolatedAsyncioTestCase):
                 full.json(),
                 {"sessions": expected_views, "total": 6},
             )
-            for offset in (0, 2, 6):
+            for offset in (0, 2, 6, 2**63):
                 response = client.get(
                     "/sessions/",
                     params={"agent_id": "agent", "limit": 2, "offset": offset},
@@ -352,6 +366,14 @@ class SessionListTest(IsolatedAsyncioTestCase):
                         "total": 6,
                     },
                 )
+            offset_only = client.get(
+                "/sessions/",
+                params={"agent_id": "agent", "offset": 2},
+            )
+            self.assertEqual(
+                offset_only.json(),
+                {"sessions": expected_views[2:], "total": 6},
+            )
             bus.is_locked.return_value = True
             response = client.get(
                 "/sessions/",
@@ -373,6 +395,80 @@ class SessionListTest(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(response.status_code, 422)
             access.resolve_agent.assert_awaited_with("user", "agent")
+
+
+class SessionListDatabaseTest(IsolatedAsyncioTestCase):
+    """Run dialect regressions against dedicated test databases."""
+
+    async def _storage(self, url_variable: str) -> AsyncSQLAlchemyStorage:
+        url = environ.get(url_variable)
+        if not url:
+            self.skipTest(f"Set {url_variable} to an async test database URL")
+        return await self.enterAsyncContext(AsyncSQLAlchemyStorage(url))
+
+    async def test_postgresql_nul_in_history(self) -> None:
+        """Preserve NUL on full reads and trim it on paginated reads."""
+        storage = await self._storage("AGENTSCOPE_TEST_POSTGRESQL_URL")
+        self.assertEqual(storage._engine.dialect.name, "postgresql")
+        user = uuid4().hex
+        config = SessionConfig(name="history", workspace_id="ws")
+        state = AgentState(
+            context=[
+                UserMsg(name="u", content="before\x00after"),
+                SessionListTest._assistant("asking"),
+            ],
+        )
+        history = await storage.upsert_session(user, "a", config, state)
+        self.addAsyncCleanup(storage.delete_session, user, "a", history.id)
+        recent = await storage.upsert_session(user, "a", config)
+        self.addAsyncCleanup(storage.delete_session, user, "a", recent.id)
+        self.assertEqual(
+            await storage.get_session(user, "a", history.id),
+            history,
+        )
+        for offset, record in enumerate((recent, history)):
+            with self.subTest(offset=offset):
+                self.assertEqual(
+                    await storage.list_sessions_page(
+                        user,
+                        "a",
+                        limit=1,
+                        offset=offset,
+                    ),
+                    ([SessionListItem.from_record(record)], 2),
+                )
+
+    async def test_mysql_driver_tail_states(self) -> None:
+        """Extract tail states through a mysql URL, including on MariaDB."""
+        storage = await self._storage("AGENTSCOPE_TEST_MYSQL_URL")
+        self.assertEqual(storage._engine.dialect.name, "mysql")
+        user = uuid4().hex
+        record = await storage.upsert_session(
+            user,
+            "a",
+            SessionConfig(name="tail", workspace_id="ws"),
+        )
+        self.addAsyncCleanup(storage.delete_session, user, "a", record.id)
+        for state in (None, "asking", "submitted"):
+            with self.subTest(state=state):
+                context = []
+                if state:
+                    context = [
+                        UserMsg(name="u", content="first"),
+                        SessionListTest._assistant(state),
+                    ]
+                await storage.update_session_state(
+                    user,
+                    "a",
+                    record.id,
+                    AgentState(context=context),
+                )
+                full = await storage.get_session(user, "a", record.id)
+                self.assertIsNotNone(full)
+                self.assertEqual(
+                    await storage.list_sessions_page(user, "a"),
+                    ([SessionListItem.from_record(full)], 1),
+                )
 
 
 class SessionListMigrationTest(IsolatedAsyncioTestCase):
