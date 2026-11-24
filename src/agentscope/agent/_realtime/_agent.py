@@ -959,7 +959,7 @@ class RealtimeAgent:
                             request_response=False,
                         )
 
-            case me.ResponseDoneEvent():
+            case me.ResponseDoneEvent() | me.ResponseFailedEvent():
                 async with self._barge_lock:
                     reply = self._reply
                     if reply is None or reply.item_id != event.item_id:
@@ -974,7 +974,15 @@ class RealtimeAgent:
                                 output_tokens=event.output_tokens,
                             ),
                         )
-                    if self._pending_tools and self.toolkit is not None:
+                    if isinstance(event, me.ResponseFailedEvent):
+                        logger.error(
+                            "RealtimeAgent: response %s failed (%s): %s",
+                            event.item_id,
+                            event.code,
+                            event.message,
+                        )
+                        self._finish_reply(ReplyFinishedReason.ERROR)
+                    elif self._pending_tools and self.toolkit is not None:
                         # The reply goes on: tools run, then the next
                         # response answers with their results.
                         reply_id = reply.reply_id
