@@ -222,8 +222,6 @@ class ToolBase(ABC):
                 return self.call(**kwargs)
             return await self.call(**kwargs)
 
-        streams = AsyncExitStack()
-
         async def execute_chain(
             index: int = 0,
             **chain_kwargs: Any,
@@ -265,6 +263,8 @@ class ToolBase(ABC):
                 streams.push_async_callback(stream.aclose)
                 async for chunk in stream:
                     yield chunk
+
+        streams = AsyncExitStack()
 
         async def _stream() -> AsyncGenerator[ToolChunk, None]:
             # Own forwarded streams even when middleware only iterates them.
