@@ -298,8 +298,8 @@ class DownloadTokenTests(IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 
 
-class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
-    """Call the file-browsing endpoints directly, bypassing FastAPI."""
+class _WorkspaceEndpointTestBase(IsolatedAsyncioTestCase):
+    """Set up a workspace shared by the endpoint test cases."""
 
     async def asyncSetUp(self) -> None:
         files = {
@@ -313,9 +313,9 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
         self._storage = _FakeStorage([_make_session()])
         self._service = WorkspaceService(self._storage, self._wm, SECRET)
 
-    # ------------------------------------------------------------------
-    # directories
-    # ------------------------------------------------------------------
+
+class WorkspaceDirectoryEndpointTests(_WorkspaceEndpointTestBase):
+    """Exercise directory listings and path resolution."""
 
     async def test_list_root(self) -> None:
         """The workspace root lists its seeded files and directories."""
@@ -410,9 +410,9 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             status.HTTP_400_BAD_REQUEST,
         )
 
-    # ------------------------------------------------------------------
-    # files
-    # ------------------------------------------------------------------
+
+class WorkspaceFileEndpointTests(_WorkspaceEndpointTestBase):
+    """Exercise file streaming, preview headers, and download tokens."""
 
     async def _read(self, **kwargs: object) -> object:
         """Call the file endpoint with the shared fixtures filled in."""
