@@ -233,7 +233,8 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
             cold_start_words (`int | None`, defaults to `None`):
                 Minimum word count before the first text chunk is sent.
             max_retries (`int`, defaults to `3`):
-                Max retry attempts on WebSocket failure.
+                Maximum number of retries after the initial synthesis
+                attempt. The default allows up to four attempts in total.
             retry_delay (`float`, defaults to `5.0`):
                 Initial retry delay in seconds (exponential backoff).
         """
@@ -417,8 +418,9 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
 
         full_text = self._accumulated_text
         delay = self.retry_delay
+        max_attempts = max(1, self.max_retries + 1)
 
-        for attempt in range(self.max_retries):
+        for attempt in range(max_attempts):
             try:
                 # ``session.finish`` makes the server close the connection,
                 # and a failed attempt leaves it unusable as well.
@@ -435,12 +437,12 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
                 )
 
                 if full_text and not self._callback.has_audio_data():
-                    if attempt < self.max_retries - 1:
+                    if attempt < max_attempts - 1:
                         logger.warning(
                             "TTS: no audio received, retrying (%d/%d) in "
                             "%.1fs...",
                             attempt + 1,
-                            self.max_retries,
+                            max_attempts,
                             delay,
                         )
                         await asyncio.sleep(delay)
@@ -451,16 +453,16 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
                     self._reset_state()
                     raise RuntimeError(
                         f"TTS synthesis failed: no audio after "
-                        f"{self.max_retries} attempts",
+                        f"{max_attempts} attempts",
                     )
                 break
 
             except (WebSocketConnectionClosedException, ConnectionError):
-                if attempt < self.max_retries - 1:
+                if attempt < max_attempts - 1:
                     logger.warning(
                         "TTS WebSocket closed, retrying (%d/%d) in %.1fs...",
                         attempt + 1,
-                        self.max_retries,
+                        max_attempts,
                         delay,
                     )
                     await asyncio.sleep(delay)

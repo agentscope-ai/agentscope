@@ -37,6 +37,8 @@ def _guess_image_media_type(data: bytes) -> str:
         b"GIF87a": "image/gif",
         b"GIF89a": "image/gif",
         b"BM": "image/bmp",
+        b"II*\x00": "image/tiff",
+        b"MM\x00*": "image/tiff",
     }
     for signature, media_type in signatures.items():
         if data.startswith(signature):
@@ -44,6 +46,22 @@ def _guess_image_media_type(data: bytes) -> str:
     # WebP: ``RIFF`` at offset 0 + ``WEBP`` at offset 8.
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
+    if data[4:8] == b"ftyp":
+        box_size = int.from_bytes(data[:4], "big")
+        major_offset = 8
+        if box_size == 1:
+            box_size = int.from_bytes(data[8:16], "big")
+            major_offset = 16
+        elif box_size == 0:
+            box_size = len(data)
+
+        # The minor version between major and compatible brands is numeric.
+        box_end = min(box_size, len(data))
+        for offset in range(major_offset, box_end - 3, 4):
+            if offset == major_offset + 4:
+                continue
+            if data[offset : offset + 4] in (b"avif", b"avis"):
+                return "image/avif"
     return "image/jpeg"
 
 

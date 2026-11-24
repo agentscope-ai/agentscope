@@ -117,6 +117,20 @@ class FunctionTool(ToolBase):
         self._func = func
         self._permission = permission
 
+        # Track positional-only parameters since the model uses named inputs.
+        try:
+            parameters = inspect.signature(func).parameters.values()
+        except (TypeError, ValueError):
+            parameters = []
+        self._positional_only_params = [
+            param
+            for param in parameters
+            if param.kind == inspect.Parameter.POSITIONAL_ONLY
+        ]
+        self._accepts_extra_keywords = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters
+        )
+
     async def check_permissions(
         self,
         *_args: Any,
@@ -148,7 +162,31 @@ class FunctionTool(ToolBase):
             `ToolChunk` or `AsyncGenerator[ToolChunk, None]`:
                 The normalized result of the function execution.
         """
-        result = self._func(**kwargs)
+        args: list[Any] = []
+        # Defaults of omitted parameters, needed only if a later
+        # positional-only argument is given.
+        skipped_defaults: list[Any] = []
+        for param in self._positional_only_params:
+            is_injected_state = (
+                self.is_state_injected and param.name == "_agent_state"
+            )
+            # An undeclared key can match an optional positional-only
+            # parameter and still belong in **kwargs (e.g. Counter).
+            if param.name in kwargs and (
+                not self._accepts_extra_keywords
+                or param.default is inspect.Parameter.empty
+                or param.name in self.input_schema.get("properties", {})
+                or is_injected_state
+            ):
+                args.extend(skipped_defaults)
+                skipped_defaults = []
+                args.append(kwargs.pop(param.name))
+            elif param.default is not inspect.Parameter.empty:
+                skipped_defaults.append(param.default)
+            else:
+                break
+
+        result = self._func(*args, **kwargs)
         if inspect.isawaitable(result):
             result = await result
 

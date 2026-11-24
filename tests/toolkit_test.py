@@ -3,6 +3,8 @@
 """Toolkit test case."""
 import base64
 import json
+import operator
+from collections import Counter
 from functools import partial
 from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
 from unittest import TestCase
@@ -1492,6 +1494,175 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "state": "success",
                 "metadata": {},
                 "id": "test_state_injection",
+            },
+        )
+
+    async def test_positional_only_parameters(self) -> None:
+        """Positional-only parameters are exposed by name in the schema, so
+        their named arguments must be passed by position."""
+
+        def describe(
+            a: int,
+            b: int = 2,
+            c: int = 3,
+            /,
+            d: int = 4,
+            *,
+            e: int = 5,
+        ) -> str:
+            """Describe the arguments.
+
+            Args:
+                a: The first value.
+                b: The second value.
+                c: The third value.
+                d: The fourth value.
+                e: The fifth value.
+            """
+            return f"{a} {b} {c} {d} {e}"
+
+        toolkit = Toolkit(
+            tools=[
+                FunctionTool(describe),
+                # A builtin whose parameters are all positional-only
+                FunctionTool(operator.mul, name="mul"),
+                FunctionTool(
+                    Counter,
+                    name="count",
+                    input_schema={
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": {"type": "integer"},
+                    },
+                ),
+            ],
+        )
+        self.assertEqual(
+            toolkit.tool_groups[0].tools[0].input_schema,
+            {
+                "type": "object",
+                "required": ["a"],
+                "properties": {
+                    "a": {
+                        "type": "integer",
+                        "description": "The first value.",
+                    },
+                    "b": {
+                        "type": "integer",
+                        "description": "The second value.",
+                        "default": 2,
+                    },
+                    "c": {
+                        "type": "integer",
+                        "description": "The third value.",
+                        "default": 3,
+                    },
+                    "d": {
+                        "type": "integer",
+                        "description": "The fourth value.",
+                        "default": 4,
+                    },
+                    "e": {
+                        "type": "integer",
+                        "description": "The fifth value.",
+                        "default": 5,
+                    },
+                },
+            },
+        )
+
+        for name, arguments, expected in [
+            (
+                "describe",
+                {"a": 1, "b": 6, "c": 7, "d": 8, "e": 9},
+                "1 6 7 8 9",
+            ),
+            ("describe", {"a": 1}, "1 2 3 4 5"),
+            # The omitted ``b`` still takes its default before ``c``
+            ("describe", {"a": 1, "c": 7, "e": 9}, "1 2 7 4 9"),
+            ("mul", {"a": 6, "b": 7}, "42"),
+            # "iterable" is a counter key accepted through **kwds.
+            (
+                "count",
+                {"iterable": 2, "apple": 1},
+                json.dumps({"iterable": 2, "apple": 1}),
+            ),
+        ]:
+            response = None
+            async for result in toolkit.call_tool(
+                ToolCallBlock(
+                    id="test_positional_only",
+                    name=name,
+                    input=json.dumps(arguments),
+                ),
+                AgentState(),
+            ):
+                if isinstance(result, ToolResponse):
+                    response = result
+
+            self.assertEqual(
+                response.model_dump() if response is not None else None,
+                {
+                    "id": "test_positional_only",
+                    "state": "success",
+                    "metadata": {},
+                    "content": [
+                        {
+                            "type": "text",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "text": expected,
+                        },
+                    ],
+                },
+            )
+
+    async def test_extra_keyword_before_positional_input(self) -> None:
+        """An extra key leaves the matching positional slot at its default."""
+
+        def collect(
+            label: str = "default",
+            value: int = 0,
+            _agent_state: AgentState | None = None,
+            /,
+            **fields: str,
+        ) -> list:
+            assert _agent_state is not None
+            return [label, value, _agent_state.session_id, fields]
+
+        tool = FunctionTool(
+            collect,
+            input_schema={
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+                "additionalProperties": {"type": "string"},
+            },
+            is_state_injected=True,
+        )
+        chunk = await tool.call(
+            label="extra",
+            value=7,
+            _agent_state=AgentState(session_id="session"),
+        )
+        self.assertEqual(
+            chunk.model_dump(),
+            {
+                "id": AnyString(),
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "text": json.dumps(
+                            ["default", 7, "session", {"label": "extra"}],
+                        ),
+                    },
+                ],
             },
         )
 

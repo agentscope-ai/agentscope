@@ -249,7 +249,14 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
                         for ancestor in element.iterancestors()
                     ):
                         continue
-                    if element.tag == text_tag and element.text:
+                    if (
+                        element.tag == text_tag
+                        and element.text
+                        and not any(
+                            ancestor.tag == deleted_tag
+                            for ancestor in element.iterancestors()
+                        )
+                    ):
                         text_parts.append(element.text)
                     elif (
                         element.tag == tab_tag
@@ -294,54 +301,98 @@ def _extract_image_blocks(
     filename: str,
 ) -> list[DataBlock]:
     """Extract image blocks from a paragraph (both modern ``w:drawing``
-    and legacy ``w:pict`` / VML formats)."""
+    and legacy ``w:pict`` / VML formats).
+
+    Each picture is read once. A picture inside a text box is not read
+    again through the text box's own ``w:drawing``. The branches of an
+    ``mc:AlternateContent`` are copies of the same content (Word saves a
+    text box both as DrawingML and as a VML fallback), so only the first
+    branch that holds a picture is read, the choices before the fallback.
+    DrawingML pictures come before VML ones.
+
+    Args:
+        para (`DocxParagraph`):
+            The python-docx paragraph to read.
+        filename (`str`):
+            The source filename, used as each block's name.
+
+    Returns:
+        `list[DataBlock]`:
+            One block per picture that could be read.
+    """
     from docx.oxml.ns import qn
 
+    drawing_tag = qn("w:drawing")
+    pict_tag = qn("w:pict")
+    blip_tag = qn("a:blip")
+    imagedata_tag = _VML_NS + "imagedata"
+
+    def iter_pictures(
+        element: Any,
+        in_drawing: bool = False,
+        in_pict: bool = False,
+    ) -> Iterator[Any]:
+        """Visit the pictures of one readable branch, each once."""
+        if element.tag == blip_tag:
+            if in_drawing and element.get(qn("r:embed")):
+                yield element
+        elif element.tag == imagedata_tag:
+            if in_pict and element.get(qn("r:id")):
+                yield element
+        elif element.tag == _MC_ALTERNATE_CONTENT:
+            for branch in element:
+                pictures = list(iter_pictures(branch, in_drawing, in_pict))
+                if pictures:
+                    yield from pictures
+                    break
+        else:
+            in_drawing = in_drawing or element.tag == drawing_tag
+            in_pict = in_pict or element.tag == pict_tag
+            for child in element:
+                yield from iter_pictures(child, in_drawing, in_pict)
+
+    pictures = list(iter_pictures(para._element))
     blocks: list[DataBlock] = []
 
-    for drawing in para._element.findall(".//" + qn("w:drawing")):
-        for blip in drawing.findall(".//" + qn("a:blip")):
-            embed = blip.get(qn("r:embed"))
-            if not embed:
-                continue
-            try:
-                part = para.part.related_parts[embed]
-                media_type = part.content_type or _guess_image_media_type(
-                    part.blob,
-                )
-                blocks.append(
-                    DataBlock(
-                        source=Base64Source(
-                            media_type=media_type,
-                            data=base64.b64encode(part.blob).decode("utf-8"),
-                        ),
-                        name=filename,
+    for blip in pictures:
+        if blip.tag != blip_tag:
+            continue
+        try:
+            part = para.part.related_parts[blip.get(qn("r:embed"))]
+            media_type = part.content_type or _guess_image_media_type(
+                part.blob,
+            )
+            blocks.append(
+                DataBlock(
+                    source=Base64Source(
+                        media_type=media_type,
+                        data=base64.b64encode(part.blob).decode("utf-8"),
                     ),
-                )
-            except Exception as e:
-                logger.warning("Failed to extract image: %s", e)
+                    name=filename,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to extract image: %s", e)
 
-    for pict in para._element.findall(".//" + qn("w:pict")):
-        for imagedata in pict.findall(".//" + _VML_NS + "imagedata"):
-            rel_id = imagedata.get(qn("r:id"))
-            if not rel_id:
-                continue
-            try:
-                part = para.part.related_parts[rel_id]
-                media_type = part.content_type or _guess_image_media_type(
-                    part.blob,
-                )
-                blocks.append(
-                    DataBlock(
-                        source=Base64Source(
-                            media_type=media_type,
-                            data=base64.b64encode(part.blob).decode("utf-8"),
-                        ),
-                        name=filename,
+    for imagedata in pictures:
+        if imagedata.tag != imagedata_tag:
+            continue
+        try:
+            part = para.part.related_parts[imagedata.get(qn("r:id"))]
+            media_type = part.content_type or _guess_image_media_type(
+                part.blob,
+            )
+            blocks.append(
+                DataBlock(
+                    source=Base64Source(
+                        media_type=media_type,
+                        data=base64.b64encode(part.blob).decode("utf-8"),
                     ),
-                )
-            except Exception as e:
-                logger.warning("Failed to extract VML image: %s", e)
+                    name=filename,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to extract VML image: %s", e)
 
     return blocks
 
