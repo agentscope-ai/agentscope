@@ -4,6 +4,7 @@ import json
 from typing import TYPE_CHECKING
 
 from .._logging import logger
+from ._chat_receipts import index_idle_session, stored_receipt_slots
 from .message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
@@ -130,7 +131,7 @@ async def discard_input(bus: "MessageBus", payload: dict) -> None:
 
 
 async def cleanup_session(bus: "MessageBus", session_id: str) -> None:
-    """Clean empty queues; retain indexes until their receipts are gone."""
+    """Retire an empty queue while retaining its receipt quota and routing."""
     if await bus.queue_read(
         MessageBusKeys.chat_inputs(session_id),
         max_count=1,
@@ -143,35 +144,23 @@ async def cleanup_session(bus: "MessageBus", session_id: str) -> None:
         return
     await bus.registry_drop(MessageBusKeys.chat_input_payloads(session_id))
     await bus.registry_drop(MessageBusKeys.chat_input_claim(session_id))
-    # Empty queues still need recovery while their receipts are retained.
-    if await bus.registry_has_entries(
-        MessageBusKeys.chat_submissions(session_id),
-    ) or await bus.registry_has_entries(
-        MessageBusKeys.chat_input_cancellations(session_id),
-    ):
-        return
-    await untrack_empty_session(bus, session_id)
-
-
-async def untrack_empty_session(bus: "MessageBus", session_id: str) -> None:
-    """Remove recovery indexes once both queue and receipts are empty."""
     raw = await bus.registry_get(
         MessageBusKeys.chat_input_pending_registry(),
         session_id,
     )
-    if raw is not None:
-        try:
-            user_id = json.loads(raw)["user_id"]
-            if not isinstance(user_id, str) or not user_id:
-                raise ValueError("Invalid pending-input owner.")
-        except (KeyError, TypeError, ValueError):
-            logger.warning("Invalid pending-input owner for %s.", session_id)
-        else:
+    if raw is None:
+        return
+    slots = await stored_receipt_slots(bus, session_id, set())
+    try:
+        user_id = json.loads(raw)["user_id"]
+        if not isinstance(user_id, str) or not user_id:
+            raise ValueError("Invalid pending-input owner.")
+    except (KeyError, TypeError, ValueError):
+        logger.warning("Invalid pending-input owner for %s.", session_id)
+        if not slots:
             await bus.registry_del(
-                MessageBusKeys.chat_input_user_sessions(user_id),
+                MessageBusKeys.chat_input_pending_registry(),
                 session_id,
             )
-    await bus.registry_del(
-        MessageBusKeys.chat_input_pending_registry(),
-        session_id,
-    )
+        return
+    await index_idle_session(bus, user_id, session_id, slots)

@@ -15,6 +15,7 @@ import asyncio
 import base64
 import inspect
 import json
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Coroutine, Literal, Sequence, TYPE_CHECKING
 
@@ -1751,7 +1752,7 @@ class ChatService:
             trigger_text = "\n".join(
                 msg.get_text_content() for msg in trigger_msgs
             ).strip()
-            bound_inputs: list[Msg] = []
+            pending_bindings: deque[Msg] = deque()
             restore_chat_models = False
             await register_inbox_consumer(self._message_bus, session_id)
             try:
@@ -1836,7 +1837,7 @@ class ChatService:
                                             "reply_id": event.reply_id,
                                             "finished": False,
                                         }
-                                        bound_inputs.append(msg)
+                                        pending_bindings.append(msg)
                                 elif reply_msg is not None:
                                     audio.append_event(reply_msg, event)
                                 if (
@@ -1859,12 +1860,13 @@ class ChatService:
                                                 event.reply_id,
                                             )
                                             submission_id = None
-                                        for msg in input_msgs:
+                                        while pending_bindings:
                                             await self._storage.upsert_message(
                                                 user_id,
                                                 session_id,
-                                                msg,
+                                                pending_bindings[0],
                                             )
+                                            pending_bindings.popleft()
                                         if (
                                             active_reply_id is not None
                                             and active_reply_id
@@ -2140,7 +2142,7 @@ class ChatService:
                             checkpoint_cursor,
                             agent_name=agent_record.data.name,
                             requester_id=requester_id,
-                            bound_inputs=bound_inputs,
+                            pending_bindings=pending_bindings,
                         )
                     finally:
                         try:
@@ -2276,7 +2278,7 @@ class ChatService:
         *,
         agent_name: str,
         requester_id: str = "",
-        bound_inputs: Sequence[Msg] = (),
+        pending_bindings: Sequence[Msg] = (),
         replay_from: str | None = None,
     ) -> None:
         """Commit reply messages and state before advancing the SSE cursor."""
@@ -2284,7 +2286,7 @@ class ChatService:
             MessageBusKeys.session_event_checkpoint_lock(session.id),
             ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
         ):
-            for msg in (*reply_msgs, *bound_inputs):
+            for msg in (*reply_msgs, *pending_bindings):
                 await self._storage.upsert_message(user_id, session.id, msg)
             await self._storage.update_session_state(
                 user_id=user_id,

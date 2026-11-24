@@ -18,7 +18,7 @@ async def track_receipts(
     session_id: str,
     agent_id: str,
 ) -> None:
-    """Reuse queue recovery/quota indexes before writing receipts."""
+    """Register recovery and live quota checks before mutating receipts."""
     await bus.registry_set(
         MessageBusKeys.chat_input_pending_registry(),
         session_id,
@@ -31,34 +31,77 @@ async def track_receipts(
     )
 
 
+async def index_idle_session(
+    bus: "MessageBus",
+    user_id: str,
+    session_id: str,
+    slots: int,
+) -> None:
+    """Publish the idle count before retiring the live quota entry."""
+    counts = MessageBusKeys.chat_idle_receipt_counts(user_id)
+    if slots:
+        await bus.registry_set(counts, session_id, str(slots))
+    else:
+        await bus.registry_del(counts, session_id)
+    await bus.registry_del(
+        MessageBusKeys.chat_input_user_sessions(user_id),
+        session_id,
+    )
+    if not slots:
+        await bus.registry_del(
+            MessageBusKeys.chat_input_pending_registry(),
+            session_id,
+        )
+
+
+async def _read_records(bus: "MessageBus", namespace: str) -> dict[str, dict]:
+    records = await bus.registry_getall(namespace)
+    return {key: json.loads(value) for key, value in records.items()}
+
+
+def _receipt_slots(submissions: dict[str, dict], ids: set[str]) -> int:
+    """Include capacity reserved for a future cancellation or partial POST."""
+    reserved = 0
+    for record in submissions.values():
+        if record.get("state") == "reserved":
+            reserved += 1
+        elif record.get("state") == "queued":
+            ids.add(record["queue_item_id"])
+    return len(submissions) + len(ids) + reserved
+
+
+async def stored_receipt_slots(
+    bus: "MessageBus",
+    session_id: str,
+    active: set[str],
+) -> int:
+    """Count stored receipts and distinct pending/claimed queue identities."""
+    submissions = await _read_records(
+        bus,
+        MessageBusKeys.chat_submissions(session_id),
+    )
+    cancellations = await bus.registry_getall(
+        MessageBusKeys.chat_input_cancellations(session_id),
+    )
+    return _receipt_slots(submissions, active.union(cancellations))
+
+
 async def receipt_count(
     bus: "MessageBus",
     session_id: str,
     queued_ids: set[str] | None = None,
 ) -> int:
     """Pending/claimed queue identities reserve their eventual receipt slot."""
-    submissions = await bus.registry_getall(
-        MessageBusKeys.chat_submissions(session_id),
-    )
-    cancellations = await bus.registry_getall(
-        MessageBusKeys.chat_input_cancellations(session_id),
-    )
-    records = [json.loads(value) for value in submissions.values()]
     if queued_ids is None:
         pending = await bus.queue_read(MessageBusKeys.chat_inputs(session_id))
         queued_ids = {p["id"] for _, p in pending}
-    ids = set(cancellations) | queued_ids
-    # A partial enqueue may still need a cancellation receipt without a FIFO
-    # entry. Count its reserved identity until it is cancelled or collected.
-    ids.update(r["queue_item_id"] for r in records if r["state"] == "queued")
     raw = await bus.registry_get(
         MessageBusKeys.chat_input_claim(session_id),
         "claim",
     )
     if raw:
-        ids.add(json.loads(raw)["payload"]["id"])
-    reserved = sum(r["state"] == "reserved" for r in records)
-    return len(submissions) + len(ids) + reserved
+        queued_ids = queued_ids | {json.loads(raw)["payload"]["id"]}
+    return await stored_receipt_slots(bus, session_id, queued_ids)
 
 
 def cancellation_receipt(user_id: str, agent_id: str) -> str:
@@ -80,30 +123,31 @@ async def reap_receipts(
     input_result: Callable[..., Awaitable[dict]],
     cursors: dict[str, str],
     active: set[str],
-) -> bool:
-    """Collect terminal receipts and report whether any receipts remain.
+) -> None:
+    """Collect terminal receipts and update idle queue quota usage.
 
     Never expire a cancellation fence while its queue entry/claim exists.
     A claimed turn can remain parked indefinitely; durable input results,
     rather than age or missing SSE, decide when its retention can begin.
     """
     now = time()
-    retained = 0
     deferred = []
-    for namespace in (
-        MessageBusKeys.chat_submissions(session_id),
-        MessageBusKeys.chat_input_cancellations(session_id),
+    submissions_key = MessageBusKeys.chat_submissions(session_id)
+    cancellations_key = MessageBusKeys.chat_input_cancellations(session_id)
+    submissions = await _read_records(bus, submissions_key)
+    cancellations = await _read_records(bus, cancellations_key)
+    for namespace, records in (
+        (submissions_key, submissions),
+        (cancellations_key, cancellations),
     ):
-        for key, value in (await bus.registry_getall(namespace)).items():
-            retained += 1
-            record = json.loads(value)
+        for key, record in list(records.items()):
             if record.get("queue_item_id", key) in active:
                 continue
             state = record.get("state")
             if state == "reserved":
                 if record["expires_at"] <= now:
                     await bus.registry_del(namespace, key)
-                    retained -= 1
+                    del records[key]
                 continue
             if state == "queued":
                 # A failed enqueue can leave its reservation but no input.
@@ -119,11 +163,24 @@ async def reap_receipts(
                 await bus.registry_set(namespace, key, json.dumps(record))
             elif record["retire_at"] <= now:
                 await bus.registry_del(namespace, key)
-                retained -= 1
+                del records[key]
+    if not active and not await bus.registry_exists(
+        MessageBusKeys.chat_input_inflight_registry(),
+        session_id,
+    ):
+        # A failed enqueue can leave a payload without a FIFO. Retire its
+        # indexes before potentially slow result lookups consume the budget.
+        await bus.registry_drop(MessageBusKeys.chat_input_payloads(session_id))
+        await index_idle_session(
+            bus,
+            user_id,
+            session_id,
+            _receipt_slots(submissions, set(cancellations)),
+        )
     # Delete cheap expired records in both registries before querying storage.
     if not deferred:
         cursors.pop(session_id, None)
-        return bool(retained)
+        return
     cursor = cursors.get(session_id, "")
     deferred.sort(key=lambda item: (item[0] <= cursor, item[0]))
     for key, record in deferred:
@@ -164,4 +221,3 @@ async def reap_receipts(
                 key,
                 json.dumps(record),
             )
-    return True

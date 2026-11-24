@@ -1455,6 +1455,17 @@ async def _chat_admission(
         )
         pending = 0
         receipts = receipt_slots
+        if receipt_slots:
+            # An idle queue publishes its count before leaving the live
+            # index. Read live sessions first and count overlapping ids once.
+            idle = await bus.registry_getall(
+                MessageBusKeys.chat_idle_receipt_counts(user_id),
+            )
+            receipts += sum(
+                int(slots)
+                for sid, slots in idle.items()
+                if sid != session_id and sid not in sessions
+            )
 
         async def count_session(sid: str) -> tuple[int, int]:
             """Accumulate user totals and return local queue/receipt usage."""

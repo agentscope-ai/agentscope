@@ -906,10 +906,13 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             session_id,
         )
         if routing is not None:
+            user_id = json.loads(routing)["user_id"]
             await self.registry_del(
-                MessageBusKeys.chat_input_user_sessions(
-                    json.loads(routing)["user_id"],
-                ),
+                MessageBusKeys.chat_input_user_sessions(user_id),
+                session_id,
+            )
+            await self.registry_del(
+                MessageBusKeys.chat_idle_receipt_counts(user_id),
                 session_id,
             )
         await self.registry_drop(

@@ -416,9 +416,9 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(
                     await bus.registry_getall(
-                        MessageBusKeys.chat_input_user_sessions("u"),
+                        MessageBusKeys.chat_idle_receipt_counts("u"),
                     ),
-                    {"s": "a"},
+                    {"s": "1"},
                 )
                 receipt = json.loads(
                     await bus.registry_get(
@@ -438,6 +438,7 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                     MessageBusKeys.chat_input_payloads("s"),
                     MessageBusKeys.chat_input_claim("s"),
                     MessageBusKeys.chat_input_user_sessions("u"),
+                    MessageBusKeys.chat_idle_receipt_counts("u"),
                     MessageBusKeys.chat_input_pending_registry(),
                     MessageBusKeys.chat_input_inflight_registry(),
                 ):
@@ -461,6 +462,7 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                     key,
                     {
                         MessageBusKeys.chat_input_user_sessions("u"),
+                        MessageBusKeys.chat_idle_receipt_counts("u"),
                         MessageBusKeys.chat_submissions("s"),
                         MessageBusKeys.chat_input_cancellations("s"),
                     },
@@ -665,6 +667,14 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
     ) -> None:
         """A deleted session leaves neither claimed nor pending payloads."""
         async with InMemoryMessageBus() as bus:
+            item = await enqueue_chat_input(
+                bus,
+                "u",
+                "s",
+                "a",
+                UserMsg("u", "cancel me"),
+            )
+            await delete_chat_input(bus, "u", "s", "a", item["id"])
             await enqueue_chat_input(bus, "u", "s", "a", UserMsg("u", "one"))
             await enqueue_chat_input(bus, "u", "s", "a", UserMsg("u", "two"))
             queue = ChatInputQueue(bus, _FakeStorage(), _FakeChatService())
@@ -677,6 +687,7 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                 MessageBusKeys.chat_input_payloads("s"),
                 MessageBusKeys.chat_input_claim("s"),
                 MessageBusKeys.chat_input_user_sessions("u"),
+                MessageBusKeys.chat_idle_receipt_counts("u"),
                 MessageBusKeys.chat_input_pending_registry(),
                 MessageBusKeys.chat_input_inflight_registry(),
             ):

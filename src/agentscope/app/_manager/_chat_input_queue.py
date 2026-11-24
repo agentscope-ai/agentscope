@@ -36,7 +36,6 @@ from .._chat_input_store import (
     is_input_cancelled,
     INPUT_EXECUTION,
     cleanup_session,
-    untrack_empty_session,
     discard_input,
     finish_unbound_inputs,
     hydrate_input,
@@ -338,7 +337,7 @@ class ChatInputQueue:
                 )
                 if raw is not None:
                     active.add(json.loads(raw)["payload"]["id"])
-                retained = await reap_receipts(
+                await reap_receipts(
                     self._bus,
                     user_id,
                     session_id,
@@ -347,16 +346,6 @@ class ChatInputQueue:
                     self._receipt_cursors,
                     active,
                 )
-                if not active and not await self._bus.registry_exists(
-                    MessageBusKeys.chat_input_inflight_registry(),
-                    session_id,
-                ):
-                    # A crashed enqueue may leave a payload without a FIFO.
-                    await self._bus.registry_drop(
-                        MessageBusKeys.chat_input_payloads(session_id),
-                    )
-                    if not retained:
-                        await untrack_empty_session(self._bus, session_id)
         except ChatQueueBusyError:
             pass
         except TimeoutError:

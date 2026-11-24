@@ -730,7 +730,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         )
 
     async def test_inbox_followups_skip_bound_input_writes(self) -> None:
-        """Only the opening reply and final checkpoint write the binding."""
+        """A binding written at reply start survives later checkpoints."""
         inputs = [UserMsg("u", mid, id=mid) for mid in ("first", "second")]
         with patch(
             "agentscope.app._service._chat.has_pending_inbox_or_release",
@@ -746,8 +746,36 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             ],
             [
                 (mid, binding)
-                for binding in (None, receipt, receipt)
+                for binding in (None, receipt)
                 for mid in ("first", "second")
+            ],
+        )
+
+    async def test_checkpoint_retries_only_unwritten_bindings(self) -> None:
+        """A partial batch failure leaves the remaining inputs to persist."""
+        inputs = [UserMsg("u", mid, id=mid) for mid in ("one", "two", "end")]
+        write = self.storage.upsert_message
+        attempts = []
+
+        async def fail_second(user: str, session: str, msg: Msg) -> None:
+            if msg.metadata.get(INPUT_EXECUTION):
+                attempts.append(msg.id)
+                if attempts == ["one", "two"]:
+                    raise ConnectionError("binding write failed")
+            await write(user, session, msg)
+
+        with patch.object(self.storage, "upsert_message", fail_second):
+            await self._run(inputs)
+        self.assertEqual(attempts, ["one", "two", "two", "end"])
+        self.assertEqual(
+            [
+                (msg.id, msg.metadata[INPUT_EXECUTION])
+                for msg in self.storage.messages
+                if INPUT_EXECUTION in msg.metadata
+            ],
+            [
+                (msg.id, {"reply_id": "one-reply", "finished": False})
+                for msg in inputs
             ],
         )
 

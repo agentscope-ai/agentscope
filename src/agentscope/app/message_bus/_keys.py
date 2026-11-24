@@ -327,8 +327,13 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
 
     @classmethod
     def chat_input_user_sessions(cls, user_id: str) -> str:
-        """Return one user's indexed queue and receipt sessions."""
+        """Return sessions requiring a live queue or receipt quota check."""
         return f"agentscope:chat:user_sessions:{user_id}"
+
+    @classmethod
+    def chat_idle_receipt_counts(cls, user_id: str) -> str:
+        """Return retained receipt slot counts for one user's idle queues."""
+        return f"agentscope:chat:idle_receipt_counts:{user_id}"
 
     @classmethod
     def chat_inputs(cls, session_id: str) -> str:
