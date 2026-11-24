@@ -30,6 +30,7 @@ from .._service._workspace import SkillUploadError, UploadManifest
 from ..storage import MCPRecord, StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
+from ._media_types import WORKSPACE_INLINE_MEDIA_TYPES
 from ._schema import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
@@ -610,20 +611,28 @@ async def read_workspace_file(
             detail="Requested path is a directory, not a file.",
         )
 
+    media_type = (
+        mimetypes.guess_type(basename)[0] or "application/octet-stream"
+    )
+
     headers: dict[str, str] = {}
     # Lets the browser show real download progress instead of a
     # spinner of unknown length; omitted when the backend cannot stat.
     if entry.size_bytes is not None:
         headers["Content-Length"] = str(entry.size_bytes)
-    if download:
+    # Only the preview whitelist may render inline; a scriptable type
+    # (text/html, image/svg+xml, ...) is forced to a download so a crafted
+    # file cannot run in the app origin.
+    if download or media_type not in WORKSPACE_INLINE_MEDIA_TYPES:
         headers[
             "Content-Disposition"
         ] = f"attachment; filename*=UTF-8''{quote(basename)}"
+    # The declared type is authoritative — never let the browser sniff a
+    # scriptable type out of the bytes.
+    headers["X-Content-Type-Options"] = "nosniff"
 
     return StreamingResponse(
         backend.read_stream(target),
-        media_type=(
-            mimetypes.guess_type(basename)[0] or "application/octet-stream"
-        ),
+        media_type=media_type,
         headers=headers,
     )
