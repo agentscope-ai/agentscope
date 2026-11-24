@@ -4010,14 +4010,10 @@ class Agent:
                 delta=tool_call.input,
             )
 
-        # Handle the tool calls that exist in the previous chunk but not in the
-        # current chunk. Like the text and thinking streams, a data-only chunk
-        # does not end them: an omni-style model interleaves audio deltas
-        # between the argument deltas of one call, and ending the call here
-        # would restart it as an empty duplicate block.
+        # Audio-only deltas can arrive between tool argument deltas.
         finished_ids = (
             set()
-            if data_blocks
+            if data_blocks and len(data_blocks) == len(chunk.content)
             else set(block_ids["tools"]) - set(_.id for _ in tool_call_blocks)
         )
         for finished_id in finished_ids:

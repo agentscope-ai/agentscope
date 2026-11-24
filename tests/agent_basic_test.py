@@ -8,6 +8,11 @@ from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
 from agentscope.model import ChatResponse, ChatUsage, FinishedReason
+from agentscope.event import (
+    DataBlockDeltaEvent,
+    ToolCallEndEvent,
+    ToolCallStartEvent,
+)
 from agentscope.tool import (
     ToolBase,
     Toolkit,
@@ -1551,89 +1556,54 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         self.assertListEqual(context_dicts, expected_context)
         self.assertEqual(self.agent.state.cur_iter, 2)
 
-    async def test_data_only_chunk_keeps_tool_call_open(self) -> None:
-        """A data-only chunk must not end an in-flight tool call.
-
-        Omni-style models interleave audio deltas between the argument
-        deltas of one tool call. Ending the call on the data chunk and
-        starting it again on the next delta produces two tool-call blocks
-        with the same id, the second one empty.
-        """
-        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
-        tool_call_id = "tool_call_1"
+    async def test_tool_call_boundaries_with_audio_chunks(self) -> None:
+        """Keep A open across audio and close it when B arrives with audio."""
+        tool = MockSequentialTool()
+        self.agent.toolkit = Toolkit(tools=[tool])
+        first = ToolCallBlock(id="a", name=tool.name, input='{"input": "abc"}')
+        first_part = first.model_copy(update={"input": '{"input": '})
+        last_part = first.model_copy(update={"input": '"abc"}'})
+        second = ToolCallBlock(id="b", name=tool.name, input='{"input": "b"}')
+        audio = DataBlock(
+            id="audio",
+            source=Base64Source(data="AAAA", media_type="audio/pcm"),
+        )
+        done = TextBlock(text="done")
         self.model.set_responses(
             [
                 [
-                    ChatResponse(
-                        content=[
-                            ToolCallBlock(
-                                id=tool_call_id,
-                                name="mock_sequential_tool",
-                                input='{"input": ',
-                            ),
-                        ],
-                        is_last=False,
-                    ),
-                    ChatResponse(
-                        content=[
-                            DataBlock(
-                                id="audio-1",
-                                source=Base64Source(
-                                    data="AAAA",
-                                    media_type="audio/pcm",
-                                ),
-                            ),
-                        ],
-                        is_last=False,
-                    ),
-                    ChatResponse(
-                        content=[
-                            ToolCallBlock(
-                                id=tool_call_id,
-                                name="mock_sequential_tool",
-                                input='"abc"}',
-                            ),
-                        ],
-                        is_last=False,
-                    ),
-                    ChatResponse(
-                        content=[
-                            ToolCallBlock(
-                                id=tool_call_id,
-                                name="mock_sequential_tool",
-                                input='{"input": "abc"}',
-                            ),
-                        ],
-                        is_last=True,
-                    ),
+                    ChatResponse(content=[first_part], is_last=False),
+                    ChatResponse(content=[audio], is_last=False),
+                    ChatResponse(content=[last_part], is_last=False),
+                    ChatResponse(content=[second, audio], is_last=False),
+                    ChatResponse(content=[first, audio, second], is_last=True),
                 ],
                 [
-                    ChatResponse(
-                        content=[TextBlock(text="done")],
-                        is_last=False,
-                    ),
-                    ChatResponse(
-                        content=[TextBlock(text="done")],
-                        is_last=True,
-                    ),
+                    ChatResponse(content=[done], is_last=False),
+                    ChatResponse(content=[done], is_last=True),
                 ],
             ],
         )
 
-        events = [
-            event.model_dump(mode="json")
-            async for event in self.agent.reply_stream(
-                UserMsg(name="user", content="Test"),
-            )
-        ]
+        boundaries = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            if isinstance(event, (ToolCallStartEvent, ToolCallEndEvent)):
+                boundaries.append((event.type.value, event.tool_call_id))
+            elif isinstance(event, DataBlockDeltaEvent):
+                boundaries.append((event.type.value, event.block_id))
 
         self.assertListEqual(
+            boundaries,
             [
-                event["tool_call_id"]
-                for event in events
-                if event["type"] == "TOOL_CALL_START"
+                ("TOOL_CALL_START", "a"),
+                ("DATA_BLOCK_DELTA", "audio"),
+                ("TOOL_CALL_START", "b"),
+                ("TOOL_CALL_END", "a"),
+                ("DATA_BLOCK_DELTA", "audio"),
+                ("TOOL_CALL_END", "b"),
             ],
-            [tool_call_id],
         )
 
     async def test_streaming_concurrent_tool_calls(self) -> None:
