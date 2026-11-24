@@ -400,11 +400,149 @@ class SessionListTest(IsolatedAsyncioTestCase):
 class SessionListDatabaseTest(IsolatedAsyncioTestCase):
     """Run dialect regressions against dedicated test databases."""
 
-    async def _storage(self, url_variable: str) -> AsyncSQLAlchemyStorage:
+    async def _storage(
+        self,
+        url_variable: str,
+        **engine_kwargs: str,
+    ) -> AsyncSQLAlchemyStorage:
         url = environ.get(url_variable)
         if not url:
             self.skipTest(f"Set {url_variable} to an async test database URL")
-        return await self.enterAsyncContext(AsyncSQLAlchemyStorage(url))
+        return await self.enterAsyncContext(
+            AsyncSQLAlchemyStorage(url, engine_kwargs=engine_kwargs),
+        )
+
+    async def _check_page_snapshot(
+        self,
+        storage: AsyncSQLAlchemyStorage,
+    ) -> None:
+        user = uuid4().hex
+        first = await storage.upsert_session(
+            user,
+            "a",
+            SessionConfig(name="first", workspace_id="ws"),
+        )
+        self.addAsyncCleanup(storage.delete_session, user, "a", first.id)
+
+        async def write_changes(_driver: object) -> None:
+            second = await storage.upsert_session(
+                user,
+                "a",
+                SessionConfig(name="second", workspace_id="ws"),
+            )
+            self.addAsyncCleanup(storage.delete_session, user, "a", second.id)
+            await storage.upsert_session(
+                user,
+                "a",
+                SessionConfig(name="updated", workspace_id="ws"),
+                session_id=first.id,
+            )
+
+        def after_count(
+            conn: sa.Connection,
+            _cursor: object,
+            statement: str,
+            _parameters: tuple,
+            _context: object,
+            _many: bool,
+        ) -> None:
+            if "count(" in statement.lower():
+                conn.connection.dbapi_connection.run_async(write_changes)
+
+        async def page() -> tuple[list[str], int]:
+            items, total = await storage.list_sessions_page(user, "a", limit=2)
+            return sorted(item.session.config.name for item in items), total
+
+        engine = storage._engine.sync_engine
+        sa.event.listen(engine, "after_cursor_execute", after_count)
+        try:
+            self.assertEqual(await page(), (["first"], 1))
+        finally:
+            sa.event.remove(engine, "after_cursor_execute", after_count)
+        self.assertEqual(await page(), (["second", "updated"], 2))
+
+    async def test_sqlite_page_snapshot(self) -> None:
+        """Let an independent WAL writer commit while the reader is active."""
+        # Keep the database until all registered row cleanups have run.
+        directory = self.enterContext(
+            TemporaryDirectory(),  # pylint: disable=consider-using-with
+        )
+        url = URL.create(
+            "sqlite+aiosqlite",
+            database=str(Path(directory) / "snapshot.db"),
+        )
+        storage = await self.enterAsyncContext(
+            AsyncSQLAlchemyStorage(url.render_as_string()),
+        )
+        async with storage._engine.connect() as conn:
+            await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+        await self._check_page_snapshot(storage)
+
+    async def test_postgresql_page_snapshot(self) -> None:
+        """Count, membership and details must reflect the same snapshot."""
+        storage = await self._storage("AGENTSCOPE_TEST_POSTGRESQL_URL")
+        await self._check_page_snapshot(storage)
+
+    async def test_mysql_page_snapshot(self) -> None:
+        """Keep a page consistent even with a read-committed engine."""
+        storage = await self._storage(
+            "AGENTSCOPE_TEST_MYSQL_URL",
+            isolation_level="READ COMMITTED",
+        )
+        await self._check_page_snapshot(storage)
+
+    async def test_postgresql_nul_and_legacy_content(self) -> None:
+        """A NUL in either row must preserve the normal batch projection."""
+        storage = await self._storage("AGENTSCOPE_TEST_POSTGRESQL_URL")
+        user = uuid4().hex
+        config = SessionConfig(name="legacy", workspace_id="ws")
+        legacy = await storage.upsert_session(user, "a", config)
+        pending = await storage.upsert_session(
+            user,
+            "a",
+            config,
+            AgentState(context=[SessionListTest._assistant("submitted")]),
+        )
+
+        async def cleanup() -> None:
+            async with storage._session() as session:
+                await session.execute(
+                    sa.delete(SessionRow).where(SessionRow.user_id == user),
+                )
+                await session.commit()
+
+        self.addAsyncCleanup(cleanup)
+        async with storage._session() as session:
+            row = await session.get(SessionRow, legacy.id)
+            row.payload = {
+                **row.payload,
+                "state": {
+                    **row.payload["state"],
+                    "context": [
+                        {"role": "assistant", "name": "a", "content": "text"},
+                    ],
+                },
+            }
+            await session.commit()
+        expected = await storage.list_sessions_page(user, "a", limit=2)
+        for nul_id in (legacy.id, pending.id):
+            with self.subTest(nul_id=nul_id):
+                async with storage._session() as session:
+                    for record in (legacy, pending):
+                        row = await session.get(SessionRow, record.id)
+                        summary = "\x00" if record.id == nul_id else ""
+                        row.payload = {
+                            **row.payload,
+                            "state": {
+                                **row.payload["state"],
+                                "summary": summary,
+                            },
+                        }
+                    await session.commit()
+                self.assertEqual(
+                    await storage.list_sessions_page(user, "a", limit=2),
+                    expected,
+                )
 
     async def test_postgresql_nul_in_history(self) -> None:
         """Preserve NUL on full reads and trim it on paginated reads."""

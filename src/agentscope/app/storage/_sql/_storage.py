@@ -44,7 +44,7 @@ from .._model import (
 )
 from .._utils import _dump_with_secrets
 from ._mappers import _from_record, _to_record
-from ._session_list import read_session_list_batch
+from ._session_list import read_session_list_batch, read_sqlite_session_page
 from ._tables import (
     _Base,
     AgentRow,
@@ -1363,6 +1363,16 @@ class AsyncSQLAlchemyStorage(StorageBase):
             )
             total = None
             if limit is not None or offset > 0:
+                if dialect == "sqlite":
+                    return await read_sqlite_session_page(
+                        sess,
+                        *filters,
+                        limit=limit,
+                        offset=offset,
+                    )
+                await sess.connection(
+                    execution_options={"isolation_level": "REPEATABLE READ"},
+                )
                 total = await sess.scalar(
                     sa.select(sa.func.count())
                     .select_from(SessionRow)
