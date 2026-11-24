@@ -7,6 +7,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
+from agentscope.event import DataBlockStartEvent
 from agentscope.model import ChatResponse, ChatUsage, FinishedReason
 from agentscope.tool import (
     ToolBase,
@@ -19,6 +20,7 @@ from agentscope.permission import (
     PermissionContext,
 )
 from agentscope.message import (
+    AssistantMsg,
     Base64Source,
     DataBlock,
     URLSource,
@@ -2158,6 +2160,62 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
         self.assertEqual(self.agent.state.cur_iter, 2)
+
+    async def test_model_data_block_name_on_start_and_replay(self) -> None:
+        """Replay names and omit unset names from serialized start events."""
+        blocks = [
+            DataBlock(
+                id=block_id,
+                name=name,
+                source=Base64Source(data="YQ==", media_type="audio/wav"),
+            )
+            for block_id, name in (
+                ("named", "voice.wav"),
+                ("unnamed", None),
+                ("empty", ""),
+            )
+        ]
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(content=blocks, is_last=False),
+                    ChatResponse(content=blocks, is_last=True),
+                ],
+            ],
+        )
+        events = [
+            event
+            async for event in self.agent.reply_stream(
+                UserMsg(name="user", content="Send audio"),
+            )
+        ]
+        reply = AssistantMsg(
+            id=self.agent.state.reply_id,
+            name=self.agent.name,
+            content=[],
+        )
+        starts = []
+        for event in events:
+            reply.append_event(event)
+            if isinstance(event, DataBlockStartEvent):
+                starts.append(
+                    event.model_dump(
+                        include={"block_id", "name"},
+                        exclude_unset=True,
+                    ),
+                )
+        self.assertListEqual(
+            starts,
+            [
+                {"block_id": "named", "name": "voice.wav"},
+                {"block_id": "unnamed"},
+                {"block_id": "empty", "name": ""},
+            ],
+        )
+        self.assertListEqual(
+            [block.name for block in reply.content],
+            ["voice.wav", None, ""],
+        )
 
     async def test_event_block_id_matches_data_block_id(self) -> None:
         """Base64 and URL data blocks keep their ID and name on the event."""
