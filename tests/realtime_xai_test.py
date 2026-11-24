@@ -397,7 +397,9 @@ class XAIResponseFailureTest(IsolatedAsyncioTestCase):
             assert event is not None
             await agent._on_model_event(event)
 
-        lifecycle = []
+        lifecycle: list[
+            tuple[str, str] | tuple[str, str, str] | tuple[str, str, int, int]
+        ] = []
         while not agent._out.empty():
             public = agent._out.get_nowait().event
             if isinstance(public, ReplyStartEvent):
