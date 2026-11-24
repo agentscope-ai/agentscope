@@ -7,7 +7,7 @@ import struct
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer
 from utils import AnyString, MockModel
 
 from agentscope.message import (
@@ -1441,7 +1441,7 @@ class StructuredOutputStrategyTest(IsolatedAsyncioTestCase):
 class _CityReport(BaseModel):
     """A structured-output schema with a default and a validator."""
 
-    city: str
+    city: str = Field(alias="cityName")
     tags: list[str] = Field(default_factory=list)
 
     @field_validator("city")
@@ -1449,6 +1449,14 @@ class _CityReport(BaseModel):
     def _normalize_city(cls, value: str) -> str:
         """Strip and title-case the city name."""
         return value.strip().title()
+
+
+class _ScalarCityReport(_CityReport):
+    """Serialize the whole report as a single string."""
+
+    @model_serializer
+    def _serialize_city(self) -> str:
+        return self.city
 
 
 class _ToolCallStructuredModel(MockModel):
@@ -1475,9 +1483,10 @@ class _ToolCallStructuredModel(MockModel):
 class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
     """Test the content returned for a Pydantic structured model."""
 
-    async def test_content_is_the_validated_model(self) -> None:
-        """Defaults and validators of the structured model are applied to
-        the returned content."""
+    async def _generate_report(
+        self,
+        schema: type[_CityReport],
+    ) -> StructuredResponse:
         model = _ToolCallStructuredModel()
         model.set_responses(
             [
@@ -1486,7 +1495,7 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
                         ToolCallBlock(
                             id="call_1",
                             name="generate_structured_output",
-                            input='{"city": "  paris "}',
+                            input='{"cityName": "  paris "}',
                         ),
                     ],
                     is_last=True,
@@ -1494,12 +1503,20 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        result = await model.generate_structured_output(
+        return await model.generate_structured_output(
             [UserMsg(name="user", content="hi")],
-            _CityReport,
+            schema,
         )
 
-        self.assertDictEqual(result.content, {"city": "Paris", "tags": []})
+    async def test_content_is_the_validated_model(self) -> None:
+        """Return normalized fields and defaults under their aliases."""
+        result = await self._generate_report(_CityReport)
+        self.assertDictEqual(result.content, {"cityName": "Paris", "tags": []})
+
+    async def test_scalar_serializer_keeps_tool_arguments(self) -> None:
+        """Preserve the tool argument dict when serialization is scalar."""
+        result = await self._generate_report(_ScalarCityReport)
+        self.assertDictEqual(result.content, {"cityName": "  paris "})
 
 
 class _TrackedCleanupModel(MockModel):

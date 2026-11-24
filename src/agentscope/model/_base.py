@@ -792,9 +792,11 @@ class ChatModelBase:
                 jsonschema.validate(structured_output, structured_model)
 
             elif issubclass(structured_model, BaseModel):
-                structured_output = structured_model.model_validate(
-                    structured_output,
-                ).model_dump(mode="json")
+                validated = structured_model.model_validate(structured_output)
+                content = validated.model_dump(mode="json", by_alias=True)
+                # A scalar serializer cannot supply the response dictionary.
+                if isinstance(content, dict):
+                    structured_output = content
 
             else:
                 raise ValueError(
