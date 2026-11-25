@@ -74,6 +74,7 @@ from ._access import ResourceAccessService
 from ._model import get_model
 from ._tts_model import get_tts_model
 from ._toolkit import get_toolkit
+from ._session import SessionService, SessionStatus
 from ._session_projection import SessionProjection
 from ._sop import SOPService
 from ._projectors import SubagentHitlProjector
@@ -822,11 +823,13 @@ class ChatService:
           cancels its chat-run task; the agent's ``CancelledError``
           cleanup runs (fake tool results for pending calls, fallback
           message, ``ReplyEndEvent(INTERRUPTED)``).
-        - **Not running**: enqueue a ``resume`` trigger carrying a
-          :class:`UserInterruptEvent`. If the session is parked on
-          HITL, the agent short-circuits into the same cleanup path;
-          if it is idle, the agent silently no-ops. Callers do not
-          need to distinguish the two — the operation is idempotent.
+        - **Not running**: a parked session (HITL confirmation or an
+          external execution result outstanding) gets a ``resume``
+          trigger carrying a :class:`UserInterruptEvent`, so the agent
+          short-circuits into the same cleanup path. An idle session
+          has nothing to unwind and is left alone — no trigger is
+          enqueued. Callers do not need to distinguish the two; the
+          operation is idempotent.
 
         Args:
             user_id (`str`):
@@ -855,6 +858,19 @@ class ChatService:
                 MessageBusKeys.session_interrupt_channel(),
                 {"session_id": session_id},
             )
+            return
+
+        if (
+            SessionService.derive_parked_status(session.state.context)
+            is SessionStatus.IDLE
+        ):
+            # Nothing to unwind: with no tool call left open, the resume
+            # run the trigger would start has no cleanup to perform. It
+            # would only take the session's run slot, so a caller that
+            # interrupts and immediately resends — the natural
+            # "interrupt the previous turn, then send a new one" — hits
+            # ``ChatRunRegistry.spawn``'s "already has an active chat
+            # run" while that empty run drains.
             return
 
         await enqueue_run_trigger(
