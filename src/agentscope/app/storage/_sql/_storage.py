@@ -1361,18 +1361,21 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 SessionRow.user_id == user_id,
                 SessionRow.agent_id == agent_id,
             )
-            total = None
-            if limit is not None or offset > 0:
-                if dialect == "sqlite":
-                    return await read_sqlite_session_page(
-                        sess,
-                        *filters,
-                        limit=limit,
-                        offset=offset,
-                    )
+            paginated = limit is not None or offset > 0
+            if paginated and dialect == "sqlite":
+                return await read_sqlite_session_page(
+                    sess,
+                    *filters,
+                    limit=limit,
+                    offset=offset,
+                )
+            # PostgreSQL batch reads need a savepoint even for a full list.
+            if dialect == "postgresql" or paginated:
                 await sess.connection(
                     execution_options={"isolation_level": "REPEATABLE READ"},
                 )
+            total = None
+            if paginated:
                 total = await sess.scalar(
                     sa.select(sa.func.count())
                     .select_from(SessionRow)

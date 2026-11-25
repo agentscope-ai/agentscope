@@ -483,6 +483,38 @@ class SessionListDatabaseTest(IsolatedAsyncioTestCase):
         storage = await self._storage("AGENTSCOPE_TEST_POSTGRESQL_URL")
         await self._check_page_snapshot(storage)
 
+    async def test_postgresql_autocommit_lists(self) -> None:
+        """Both list modes can use savepoints on an autocommit engine."""
+        storage = await self._storage(
+            "AGENTSCOPE_TEST_POSTGRESQL_URL",
+            isolation_level="AUTOCOMMIT",
+        )
+        user = uuid4().hex
+        config = SessionConfig(name="session", workspace_id="ws")
+        ordinary = await storage.upsert_session(user, "a", config)
+        self.addAsyncCleanup(storage.delete_session, user, "a", ordinary.id)
+        ordinary_item = SessionListItem.from_record(ordinary)
+        self.assertEqual(
+            await storage.list_sessions_page(user, "a"),
+            ([ordinary_item], 1),
+        )
+        history = await storage.upsert_session(
+            user,
+            "a",
+            config,
+            AgentState(summary="before\x00after"),
+        )
+        self.addAsyncCleanup(storage.delete_session, user, "a", history.id)
+        history_item = SessionListItem.from_record(history)
+        self.assertEqual(
+            await storage.list_sessions_page(user, "a"),
+            ([history_item, ordinary_item], 2),
+        )
+        self.assertEqual(
+            await storage.list_sessions_page(user, "a", limit=1),
+            ([history_item], 2),
+        )
+
     async def test_mysql_page_snapshot(self) -> None:
         """Keep a page consistent even with a read-committed engine."""
         storage = await self._storage(
