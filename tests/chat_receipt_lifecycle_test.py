@@ -29,6 +29,7 @@ from agentscope.app._bus_ops import (
 from agentscope.app._manager._chat_input_queue import ChatInputQueue
 from agentscope.app._chat_input_store import cleanup_session
 from agentscope.app._chat_receipts import (
+    ReceiptProbes,
     reap_receipts,
     receipt_count,
     track_receipts,
@@ -39,6 +40,8 @@ from agentscope.message import UserMsg
 
 class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
     """Use a controlled clock on the in-memory and Redis implementations."""
+
+    # pylint: disable=too-many-public-methods
 
     async def asyncSetUp(self) -> None:
         self.now = 1000
@@ -112,7 +115,15 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     lookup = AsyncMock(
                         side_effect=[{"state": s} for s in states],
                     )
-                    await reap_receipts(bus, "u", "s", "a", lookup, {}, set())
+                    await reap_receipts(
+                        bus,
+                        "u",
+                        "s",
+                        "a",
+                        lookup,
+                        set(),
+                        ReceiptProbes(),
+                    )
                     self.assertEqual(
                         [call.args for call in lookup.await_args_list],
                         [
@@ -591,6 +602,64 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                         record,
                     )
 
+    async def test_slow_terminal_query_releases_receipt_quota(self) -> None:
+        """A storage read that takes 250 ms can outlive the sweep lock."""
+        for bus in self.backends:
+            with self.subTest(backend=type(bus).__name__):
+                self.now = 1000
+                async with bus:
+                    queue = self.collector(bus)
+                    await track_receipts(bus, "u", "s", "a")
+                    namespace = MessageBusKeys.chat_submissions("s")
+                    record = {"state": "claimed", "message_ids": ["m"]}
+                    await bus.registry_set(
+                        namespace,
+                        "old",
+                        json.dumps(record),
+                    )
+                    finished = asyncio.Event()
+
+                    async def lookup(*_args: str) -> dict:
+                        await asyncio.sleep(0.25)
+                        finished.set()
+                        return {"state": "finished"}
+
+                    with patch.object(
+                        queue,
+                        "_receipt_input_result",
+                        side_effect=lookup,
+                    ) as query:
+                        await queue._recover_pending_chat_inputs_locked()
+                        self.assertFalse(
+                            await bus.is_locked(
+                                MessageBusKeys.chat_input_mutation_lock("s"),
+                            ),
+                        )
+                        await asyncio.wait_for(finished.wait(), 2)
+                        await queue._recover_pending_chat_inputs_locked()
+                        self.assertEqual(
+                            json.loads(
+                                await bus.registry_get(namespace, "old"),
+                            ),
+                            {**record, "retire_at": 4600},
+                        )
+                        self.now = 4601
+                        await queue._recover_pending_chat_inputs_locked()
+                        query.assert_awaited_once_with("u", "s", "a", "m")
+                    self.assertEqual(await receipt_count(bus, "s"), 0)
+                    with patch.object(
+                        MessageBusKeys,
+                        "CHAT_RECEIPT_SESSION_MAX_LEN",
+                        1,
+                    ):
+                        await enqueue_chat_input(
+                            bus,
+                            "u",
+                            "s",
+                            "a",
+                            UserMsg("u", "text"),
+                        )
+
     async def test_slow_queries_do_not_starve_later_receipts(self) -> None:
         """Cheap expiry and query rotation survive either timeout budget."""
         for bus in self.backends:
@@ -697,7 +766,9 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                                 await recover()
                             self.assertEqual(
                                 queried,
-                                ["slow", "fast", "slow"],
+                                ["slow", "fast"]
+                                if budget == "query"
+                                else ["slow", "fast", "slow"],
                             )
                             self.assertEqual(
                                 {
@@ -878,7 +949,7 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                                 "a",
                                 sid,
                             ),
-                            {"state": "cancelled", "queue_item_id": None},
+                            None,
                         )
                     with self.assertRaises(ChatSubmissionConflictError):
                         await enqueue_chat_input(

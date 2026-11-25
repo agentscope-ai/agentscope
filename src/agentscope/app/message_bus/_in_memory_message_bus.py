@@ -334,8 +334,13 @@ class InMemoryMessageBus(
         *,
         max_len: int,
     ) -> tuple[str, str | None]:
-        """Read the adjacent IDs from the same in-memory log."""
+        """Capture the tail before appending and trimming the log."""
+        log = self._logs.get(key)
+        previous = log[-1][0] if log else ""
         entry_id = await self.log_append(key, payload, max_len=max_len)
+        if type(self).log_append is InMemoryMessageBus.log_append:
+            return entry_id, previous
+        # An overridden append may yield. Only trust the observed adjacency.
         log = self._logs.get(key)
         if log and len(log) >= 2 and log[-1][0] == entry_id:
             return entry_id, log[-2][0]

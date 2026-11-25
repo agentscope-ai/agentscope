@@ -36,7 +36,7 @@ _LOG_APPEND_WITH_PREVIOUS_LUA = """
 local tail = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
 local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[1],
                       '*', 'payload', ARGV[2])
-return {id, tail[1] and tail[1][1] or false}
+return {id, tail[1] and tail[1][1] or ''}
 """
 
 

@@ -197,12 +197,16 @@ export const sessionApi = {
 						line = fragments.join('');
 						fragments.length = 0;
 					}
-					if (checkHistory && (line.startsWith(':') || line.startsWith('data: '))) {
+					if (onHistoryStatus && line.startsWith(': history-')) {
 						const comment = line.trimEnd();
 						if (comment === ': history-changed' || comment === ': history-pending') {
-							checkHistory(comment === ': history-changed' ? 'changed' : 'pending');
+							onHistoryStatus(
+								comment === ': history-changed' ? 'changed' : 'pending',
+							);
 							return;
 						}
+					}
+					if (checkHistory && (line.startsWith(':') || line.startsWith('data: '))) {
 						// Older servers begin directly with replay data or a heartbeat.
 						checkHistory('current');
 						checkHistory = undefined;

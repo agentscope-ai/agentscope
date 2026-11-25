@@ -47,7 +47,8 @@ export const chatApi = {
 		options?: ApiRequestOptions,
 	) =>
 		client.post<{
-			state: 'cancelled' | 'started';
+			state: 'cancelled' | 'started' | 'unknown';
+			reply_id?: string;
 			queue_item_id: string | null;
 			before_claim?: boolean;
 		}>(

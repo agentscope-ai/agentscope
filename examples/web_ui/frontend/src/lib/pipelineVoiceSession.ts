@@ -53,7 +53,8 @@ export interface PipelineVoiceOptions {
 		id: string,
 		signal: AbortSignal,
 	) => Promise<{
-		state: 'cancelled' | 'started';
+		state: 'cancelled' | 'started' | 'unknown';
+		reply_id?: string;
 		before_claim?: boolean;
 		queue_item_id: string | null;
 	}>;
@@ -557,40 +558,27 @@ export class PipelineVoiceSession {
 		const work = Promise.resolve().then(async () => {
 			signal.throwIfAborted();
 			if (!this.cancellationPending) return;
+			let recoveredReply: string | undefined;
 			if (this.submissionId) {
 				const result = await this.options.cancelSubmission(this.submissionId, signal);
 				signal.throwIfAborted();
 				if (result.queue_item_id) this.bindQueueItem(result.queue_item_id);
 				if (!this.cancellationPending) return;
-				if (result.state === 'cancelled') {
-					if (result.before_claim) {
-						this.finishCancellation(true);
-						return;
-					}
-					// A retired receipt can belong to an already completed reply.
-					if (this.userMessageId) {
-						const input = await this.options.inputResult(
-							this.userMessageId,
-							this.submissionId,
-							signal,
-						);
-						signal.throwIfAborted();
-						if (input.reply_id && (!this.replyId || input.reply_id === this.replyId))
-							this.bindCancelledReply(input.reply_id);
-					}
-					this.finishCancellation();
+				if (result.state === 'cancelled' && (result.before_claim || !this.userMessageId)) {
+					this.finishCancellation(result.before_claim);
 					return;
 				}
+				if (result.state === 'started') recoveredReply = result.reply_id;
 			}
-			if (this.userMessageId && this.submissionId) {
+			if (recoveredReply) {
+				this.bindCancelledReply(recoveredReply);
+			} else if (this.userMessageId && this.submissionId) {
 				const result = await this.options.inputResult(
 					this.userMessageId,
 					this.submissionId,
 					signal,
 				);
 				signal.throwIfAborted();
-				if (this.replyId && result.reply_id && result.reply_id !== this.replyId)
-					throw new Error('Voice submission returned a different reply.');
 				if (result.reply_id) this.bindCancelledReply(result.reply_id);
 				if (!this.cancellationPending) return;
 				if (result.state === 'finished') {
@@ -642,6 +630,8 @@ export class PipelineVoiceSession {
 	}
 
 	private bindCancelledReply(replyId: string): void {
+		if (this.replyId && replyId !== this.replyId)
+			throw new Error('Voice submission returned a different reply.');
 		this.replyId = replyId;
 		this.inputStarted = true;
 		this.options.suppressedReplies.add(replyId);

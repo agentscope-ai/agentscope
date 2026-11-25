@@ -5,21 +5,24 @@ import json
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from agentscope.app._chat_input_store import (
     INPUT_EXECUTION,
+    REPLY_SUBMISSION,
     finish_unbound_inputs,
 )
 from agentscope.app._bus_ops import (
     bind_chat_submission,
     cancel_chat_submission,
 )
+from agentscope.app._router._chat import chat_router
 from agentscope.app._router._session import session_router
 from agentscope.app._service import ChatService
-from agentscope.app.deps import get_chat_service
+from agentscope.app.deps import get_chat_service, get_message_bus, get_storage
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.message import AssistantMsg, ToolCallBlock, UserMsg
 from agentscope.state import AgentState
@@ -57,6 +60,80 @@ class InputResultTest(IsolatedAsyncioTestCase):
             self.bus,
             Mock(),
         )
+
+    async def test_http_cancel_after_receipt_loss(self) -> None:
+        """Cancel and result agree on the exact parked submission."""
+        submission = str(uuid4())
+        reply = AssistantMsg(
+            name="a",
+            id="R",
+            content=[
+                ToolCallBlock(id="t", name="tool", input="{}", state="asking"),
+            ],
+            metadata={
+                REPLY_SUBMISSION: {
+                    "submission_id": submission,
+                    "message_ids": ["m"],
+                },
+            },
+        )
+        self.messages["R"] = reply
+        self.storage.get_session.return_value.state = AgentState(
+            reply_id="R",
+            context=[reply],
+        )
+        app = FastAPI()
+        app.include_router(chat_router)
+        app.include_router(session_router)
+        app.dependency_overrides[get_chat_service] = lambda: self.service
+        app.dependency_overrides[get_message_bus] = lambda: self.bus
+        app.dependency_overrides[get_storage] = lambda: self.storage
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-User-ID": "owner"},
+        ) as client:
+            params = {"agent_id": "a", "session_id": "s"}
+            path = f"/chat/submissions/{submission}/cancel"
+            for _ in range(2):
+                response = await client.post(path, params=params)
+                self.assertEqual(
+                    (response.status_code, response.json()),
+                    (
+                        200,
+                        {
+                            "state": "started",
+                            "reply_id": "R",
+                            "queue_item_id": None,
+                        },
+                    ),
+                )
+            result = await client.get(
+                "/sessions/s/inputs/m/result",
+                params={"agent_id": "a", "submission_id": submission},
+            )
+            self.assertEqual(
+                result.json(),
+                {"state": "reply", "reply_id": "R"},
+            )
+            other = await client.post(
+                f"/chat/submissions/{uuid4()}/cancel",
+                params=params,
+            )
+            binding = reply.metadata.pop(REPLY_SUBMISSION)
+            legacy = await client.post(path, params=params)
+            self.assertEqual(
+                (legacy.status_code, legacy.json()),
+                (200, {"state": "unknown", "queue_item_id": None}),
+            )
+            reply.metadata[REPLY_SUBMISSION] = binding
+            reply.finished_reason = "interrupted"
+            ended = await client.post(path, params=params)
+            for response in (other, ended):
+                self.assertEqual(
+                    (response.status_code, response.json()),
+                    (200, {"state": "cancelled", "queue_item_id": None}),
+                )
 
     async def test_submission_result_survives_reused_message_id(self) -> None:
         """A delayed cancellation resolves A while the same Msg ID runs B."""
@@ -292,6 +369,23 @@ class InputResultTest(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     await self.service.input_result("owner", "s", "a", "u"),
                     {"state": expected, "reply_id": "A"},
+                )
+                # A pre-upgrade parked reply cannot prove which submission
+                # used this message ID after losing its in-memory receipt.
+                self.assertEqual(
+                    await self.service.input_result(
+                        "owner",
+                        "s",
+                        "a",
+                        "u",
+                        submission_id="lost",
+                    ),
+                    {
+                        "state": "unknown"
+                        if expected == "reply"
+                        else "finished",
+                        "reply_id": None,
+                    },
                 )
 
     async def test_terminal_receipt_preserves_parked_reply(self) -> None:

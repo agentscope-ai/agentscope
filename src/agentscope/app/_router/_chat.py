@@ -134,8 +134,14 @@ async def cancel_submission(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     message_bus: MessageBus = Depends(get_message_bus),
+    chat_service: ChatService = Depends(get_chat_service),
 ) -> dict:
-    """Cancel even a submission whose POST has not reached this server."""
+    """Fence an unstarted submission or identify work still to interrupt.
+
+    A started response can include the recovered reply_id for a targeted
+    interrupt. An unknown response means the parked reply has no durable
+    submission binding and its cancellation could not be confirmed.
+    """
     session = await storage.get_session(user_id, agent_id, session_id)
     if session is None:
         raise HTTPException(
@@ -146,13 +152,33 @@ async def cancel_submission(
             },
         )
     try:
-        return await cancel_chat_submission(
+        result = await cancel_chat_submission(
             message_bus,
             user_id,
             session_id,
             agent_id,
             str(submission_id),
         )
+        if result is not None:
+            return result
+        # A process-local receipt may have disappeared while the tool call
+        # remains parked. Check storage after releasing the queue lock.
+        saved = await chat_service.input_result(
+            user_id,
+            session_id,
+            agent_id,
+            None,
+            submission_id=str(submission_id),
+        )
+        if saved["state"] == "reply":
+            return {
+                "state": "started",
+                "reply_id": saved["reply_id"],
+                "queue_item_id": None,
+            }
+        if saved["state"] == "unknown":
+            return {"state": "unknown", "queue_item_id": None}
+        return {"state": "cancelled", "queue_item_id": None}
     except ChatQueueBusyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except LookupError as exc:

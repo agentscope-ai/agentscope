@@ -641,7 +641,10 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                     },
                 ),
             )
-            publish.assert_any_await(key, {**event, "_entry_id": entry_id})
+            publish.assert_any_await(
+                key,
+                {**event, "_entry_id": entry_id, "_previous_entry_id": None},
+            )
 
     async def test_snapshot_does_not_acquire_mutation_lock(self) -> None:
         """Polling succeeds even while a mutation lock is held."""

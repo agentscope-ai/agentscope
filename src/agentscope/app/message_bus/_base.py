@@ -318,7 +318,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """Append and return (entry ID, immediate predecessor if known).
 
         A predecessor must be established atomically with the append.
-        Buses without this capability leave it unknown.
+        An empty string confirms the log was empty. None means unknown.
         """
         return await self.log_append(key, payload, max_len=max_len), None
 

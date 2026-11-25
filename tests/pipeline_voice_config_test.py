@@ -3,6 +3,7 @@
 """Independent voice policy survives queuing and parked reply resumes."""
 import asyncio
 import base64
+import json
 from typing import Any, AsyncGenerator
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
@@ -23,7 +24,7 @@ from agentscope.app._bus_ops import (
     enqueue_chat_input,
     list_chat_inputs,
 )
-from agentscope.app._chat_input_store import INPUT_EXECUTION
+from agentscope.app._chat_input_store import INPUT_EXECUTION, REPLY_SUBMISSION
 from agentscope.app._manager import CancelDispatcher, ChatRunRegistry
 from agentscope.app._manager._chat_input_queue import ChatInputQueue
 from agentscope.app._router._schema import ChatRequest, UpdateSessionRequest
@@ -358,6 +359,20 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
                     ),
                 )
         for submission in ("A", "B"):
+            saved = await self.storage.get_message(
+                "user-1",
+                "session-1",
+                submission,
+            )
+            self.assertEqual(
+                saved.metadata[REPLY_SUBMISSION],
+                {"submission_id": submission, "message_ids": ["shared"]},
+            )
+            raw = await self.bus.registry_get(
+                MessageBusKeys.chat_submissions("session-1"),
+                submission,
+            )
+            self.assertIn("retire_at", json.loads(raw))
             self.assertEqual(
                 await self.service.input_result(
                     "user-1",
@@ -488,6 +503,29 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         """Stopping closes the original tools and unblocks queued chat."""
         current = self.session.config.chat_model_config
         reply = await self._park_voice_reply()
+        reply.metadata[REPLY_SUBMISSION] = {
+            "submission_id": "voice-id",
+            "message_ids": ["shared"],
+        }
+        await self.storage.upsert_message("user-1", "session-1", reply)
+        # A fresh bus has no leases, but the original parked reply survives.
+        self.bus = await self.enterAsyncContext(InMemoryMessageBus())
+        self.service._message_bus = self.bus
+        for sub, mid, expected in (
+            ("voice-id", "shared", {"state": "reply", "reply_id": reply.id}),
+            ("other", "shared", {"state": "finished", "reply_id": None}),
+            ("voice-id", "other", {"state": "unknown", "reply_id": None}),
+        ):
+            self.assertEqual(
+                await self.service.input_result(
+                    "user-1",
+                    "session-1",
+                    "agent-1",
+                    mid,
+                    sub,
+                ),
+                expected,
+            )
         queue = ChatInputQueue(self.bus, self.storage, self.service)
         self.addAsyncCleanup(queue.close)
         await enqueue_chat_input(
@@ -526,6 +564,16 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(closed.finished_reason, "interrupted")
         self.assertEqual(closed.metadata, reply.metadata)
+        self.assertEqual(
+            await self.service.input_result(
+                "user-1",
+                "session-1",
+                "agent-1",
+                "shared",
+                "voice-id",
+            ),
+            {"state": "finished", "reply_id": reply.id},
+        )
         for message in (closed, self.session.state.context[-1]):
             self.assertEqual(
                 [(b.type, b.id, b.state) for b in message.content],

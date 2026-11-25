@@ -230,7 +230,7 @@ async def publish_session_event(
     )
     notification = {**event, "_entry_id": entry_id}
     if previous is not None:
-        notification["_previous_entry_id"] = previous
+        notification["_previous_entry_id"] = previous or None
     try:
         await bus.publish(key, notification)
     except Exception:
@@ -605,13 +605,47 @@ async def bind_chat_submission(
         )
 
 
+async def finish_chat_submission(
+    bus: "MessageBus",
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+    submission_id: str,
+    reply_id: str,
+) -> None:
+    """Start retention after this submission's reply checkpoint commits."""
+    async with chat_input_mutation(bus, session_id):
+        record = await get_submission(
+            bus,
+            session_id,
+            submission_id,
+            user_id,
+            agent_id,
+        )
+        if (
+            record is not None
+            and record.get("state") == "claimed"
+            and record.get("reply_id") == reply_id
+        ):
+            record["state"] = "finished"
+            record.setdefault(
+                "retire_at",
+                time() + MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS,
+            )
+            await bus.registry_set(
+                MessageBusKeys.chat_submissions(session_id),
+                submission_id,
+                json.dumps(record),
+            )
+
+
 async def cancel_chat_submission(
     bus: "MessageBus",
     user_id: str,
     session_id: str,
     agent_id: str,
     submission_id: str,
-) -> dict:
+) -> dict | None:
     """Fence delayed submissions and cancel initialization of claimed ones.
 
     The fence and queue cancellation receipt precede acknowledgement.
@@ -619,6 +653,7 @@ async def cancel_chat_submission(
     from an empty queue, even after execution has left that queue.
     Claimed inputs record cancellation intent before a targeted broadcast;
     only the worker's terminal receipt confirms initialization has stopped.
+    Return None when the bus has no receipt to confirm cancellation.
     """
     async with chat_input_mutation(bus, session_id):
         record = await get_submission(
@@ -629,8 +664,7 @@ async def cancel_chat_submission(
             agent_id,
         )
         if record is None:
-            # Only issued leases may submit, including after collection.
-            return {"state": "cancelled", "queue_item_id": None}
+            return None
         await track_receipts(bus, user_id, session_id, agent_id)
         item_id = record["queue_item_id"]
         if record["state"] == "finished":

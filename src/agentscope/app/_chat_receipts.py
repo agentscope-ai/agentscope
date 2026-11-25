@@ -174,8 +174,8 @@ async def reap_receipts(
     session_id: str,
     agent_id: str,
     input_result: Callable[..., Awaitable[dict]],
-    cursors: dict[str, str],
     active: set[str],
+    probes: "ReceiptProbes",
 ) -> None:
     """Collect terminal receipts and update idle queue quota usage.
 
@@ -230,41 +230,19 @@ async def reap_receipts(
             (submissions, cancellations),
         )
     # Delete cheap expired records in both registries before querying storage.
-    if not deferred:
-        cursors.pop(session_id, None)
-        return
-    cursor = cursors.get(session_id, "")
-    deferred.sort(key=lambda item: (item[0] <= cursor, item[0]))
+    await probes.discard_missing({key for key, _ in deferred})
+    deferred.sort(key=lambda item: (item[0] <= probes.cursor, item[0]))
     for key, record in deferred:
         # Advance before awaiting so even an outer timeout makes progress.
-        cursors[session_id] = key
-        try:
-            async with asyncio.timeout(
-                MessageBusKeys.CHAT_RECEIPT_QUERY_TIMEOUT_SECS,
-            ):
-                message_ids = record.get("message_ids") or [None]
-                if record.get("reply_id"):
-                    # All inputs in this submission share one bound reply.
-                    message_ids = message_ids[:1]
-                all_finished = True
-                for mid in message_ids:
-                    result = await input_result(
-                        user_id,
-                        session_id,
-                        agent_id,
-                        mid,
-                        **(
-                            {"submission_id": key}
-                            if "reply_id" in record
-                            else {}
-                        ),
-                    )
-                    if result["state"] != "finished":
-                        all_finished = False
-                        break
-        except TimeoutError:
-            continue
-        if all_finished:
+        probes.cursor = key
+        if await probes.finished(
+            input_result,
+            user_id,
+            session_id,
+            agent_id,
+            key,
+            record,
+        ):
             record["retire_at"] = (
                 now + MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS
             )
@@ -273,3 +251,78 @@ async def reap_receipts(
                 key,
                 json.dumps(record),
             )
+
+
+class ReceiptProbes:
+    """Retain one session's scan cursor and outstanding storage reads."""
+
+    def __init__(self) -> None:
+        self.cursor = ""
+        self._pending: dict[str, tuple[dict, asyncio.Task[bool]]] = {}
+
+    async def discard_missing(self, keys: set[str]) -> None:
+        """Release reads for collected receipts or removed sessions."""
+        tasks = []
+        for key in self._pending.keys() - keys:
+            _, task = self._pending.pop(key)
+            task.cancel()
+            tasks.append(task)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def finished(
+        self,
+        input_result: Callable[..., Awaitable[dict]],
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        key: str,
+        record: dict,
+    ) -> bool:
+        """Apply completed evidence only to the receipt that was queried."""
+        if key in self._pending:
+            previous, task = self._pending[key]
+            if not task.done() and previous == record:
+                return False
+            del self._pending[key]
+            if previous == record:
+                return task.result()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        async def lookup() -> bool:
+            message_ids = record.get("message_ids") or [None]
+            if record.get("reply_id"):
+                message_ids = message_ids[:1]
+            for mid in message_ids:
+                result = await input_result(
+                    user_id,
+                    session_id,
+                    agent_id,
+                    mid,
+                    **({"submission_id": key} if "reply_id" in record else {}),
+                )
+                if result["state"] != "finished":
+                    return False
+            return True
+
+        task = asyncio.create_task(
+            asyncio.wait_for(
+                lookup(),
+                MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS,
+            ),
+        )
+        try:
+            async with asyncio.timeout(
+                MessageBusKeys.CHAT_RECEIPT_QUERY_TIMEOUT_SECS,
+            ):
+                return await asyncio.shield(task)
+        except TimeoutError:
+            # Release the queue lock on schedule. The next sweep consumes
+            # the result under the lock after reading the receipt again.
+            self._pending[key] = (record, task)
+            return False
+        except asyncio.CancelledError:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            raise

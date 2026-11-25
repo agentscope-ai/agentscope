@@ -937,6 +937,10 @@ class _LegacySessionBarrier:
         return True
 
 
+class _SessionHistoryGap(Exception):
+    """A trim removed events between the delivered and buffered frames."""
+
+
 class _SessionEventReplay:
     """Merge the append-ordered log and live events using opaque cursors."""
 
@@ -944,18 +948,38 @@ class _SessionEventReplay:
         self.bus = bus
         self.key = key
         self.cursor = after
+        self.validated_session: str | None = None
         self.pending: OrderedDict[str, dict] = OrderedDict()
+        self.unverified: set[str] = set()
         self.recent: OrderedDict[str, None] = OrderedDict()
         self.queued: set[str] = set()
 
     async def read(self) -> list[tuple[str, dict]]:
         """Extend the buffered log after its tail or the delivered cursor."""
+        anchor = next(reversed(self.pending), self.cursor)
         rows = await self.bus.log_read(
             self.key,
-            since=next(reversed(self.pending), self.cursor),
+            since=anchor,
             max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
         )
         self.pending.update(rows)
+        if rows and self.validated_session is not None:
+            # A heartbeat can see the trimmed suffix before its notification
+            # (and thus before seeing the notification's predecessor ID).
+            if anchor is None:
+                if (
+                    await self.history_status(self.validated_session)
+                    != "current"
+                ):
+                    self.unverified.add(rows[0][0])
+            else:
+                head = await self.bus.log_read(self.key, max_count=1)
+                if (
+                    not head
+                    or rows[0][0] == head[0][0]
+                    or self.bus.log_cursor_precedes(anchor, head[0][0])
+                ):
+                    self.unverified.add(rows[0][0])
         return rows
 
     async def read_initial(self) -> None:
@@ -1008,6 +1032,14 @@ class _SessionEventReplay:
                 break
         return successor
 
+    async def frames(self, item: dict) -> AsyncGenerator[str, None]:
+        """Encode the missing log entries and the live notification as SSE."""
+        if (entry_id := item.get("_entry_id")) is not None:
+            self.queued.discard(entry_id)
+        async for payload in self.deliver(item):
+            data = json.dumps(payload, ensure_ascii=False)
+            yield f"data: {data}\n\n"
+
     async def deliver(self, item: dict) -> AsyncGenerator[dict, None]:
         """Yield through the notified ID, including any missed broadcasts."""
         entry_id = item.get("_entry_id")
@@ -1017,11 +1049,14 @@ class _SessionEventReplay:
         if entry_id == self.cursor or entry_id in self.recent:
             return
 
+        # An explicit null predecessor proves this is the first entry. A
+        # missing field on an older publisher provides no ordering evidence.
         if (
-            not self.pending
-            and self.cursor is not None
-            and item.get("_previous_entry_id") == self.cursor
+            "_previous_entry_id" in item
+            and item["_previous_entry_id"] == self.cursor
         ):
+            self.pending.pop(entry_id, None)
+            self.unverified.discard(entry_id)
             self.advance(entry_id)
             yield session_event_payload(item)
             return
@@ -1035,6 +1070,16 @@ class _SessionEventReplay:
                 and successor not in self.pending
             ):
                 return
+        previous = item.get("_previous_entry_id")
+        if trimmed and self.unverified and previous is None:
+            raise _SessionHistoryGap
+        if (
+            previous is not None
+            and previous != self.cursor
+            and previous not in self.pending
+            and previous not in self.recent
+        ):
+            raise _SessionHistoryGap
         while self.pending:
             first = next(iter(self.pending), entry_id)
             # A second trim can remove the snapshot's records as well.
@@ -1047,6 +1092,10 @@ class _SessionEventReplay:
                 ):
                     break
             key, payload = self.pending.popitem(last=False)
+            # A trimmed log alone cannot bridge this gap. The subscription
+            # barrier lets queued adjacent notifications fill it first.
+            if key in self.unverified:
+                raise _SessionHistoryGap
             self.advance(key)
             yield payload
             if key == entry_id:
@@ -1182,13 +1231,6 @@ async def stream_session_events(
 
         replay = _SessionEventReplay(message_bus, events_key, after)
 
-        async def deliver(item: dict) -> AsyncGenerator[str, None]:
-            if (entry_id := item.get("_entry_id")) is not None:
-                replay.queued.discard(entry_id)
-            async for payload in replay.deliver(item):
-                data = json.dumps(payload, ensure_ascii=False)
-                yield f"data: {data}\n\n"
-
         async def replay_snapshot(
             *,
             notify: bool = False,
@@ -1223,10 +1265,10 @@ async def stream_session_events(
                 if item is None:
                     queue.put_nowait(None)
                     break
-                async for frame in deliver(item):
+                async for frame in replay.frames(item):
                     yield frame
             if last_id is not None and last_id in replay.pending:
-                async for frame in deliver({"_entry_id": last_id}):
+                async for frame in replay.frames({"_entry_id": last_id}):
                     yield frame
             if notify and not feeder_task.done():
                 yield ": replay-complete\n\n"
@@ -1277,6 +1319,7 @@ async def stream_session_events(
                 yield f": history-{history}\n\n"
                 if history != "current":
                     return
+                replay.validated_session = session_id
             async for frame in replay_snapshot(notify=replay_notice):
                 yield frame
 
@@ -1335,8 +1378,16 @@ async def stream_session_events(
                     continue
                 if item is None:
                     break
-                async for frame in deliver(item):
+                async for frame in replay.frames(item):
                     yield frame
+        except _SessionHistoryGap:
+            checkpoint = await message_bus.registry_get(
+                MessageBusKeys.session_event_checkpoint(session_id),
+                MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+            )
+            history = "changed" if checkpoint != after else "pending"
+            yield f": history-{history}\n\n"
+            return
         except _SessionBarrierTimeout:
             # Close without advancing past unconfirmed live events.
             return

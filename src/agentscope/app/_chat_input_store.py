@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 
 INPUT_EXECUTION = "_agentscope_input_execution"
+REPLY_SUBMISSION = "_agentscope_submission"
 
 
 async def get_submission(

@@ -41,7 +41,11 @@ from .._chat_input_store import (
     hydrate_input,
     queue_entry,
 )
-from .._chat_receipts import reap_receipts, waiting_for_receipt_expiry
+from .._chat_receipts import (
+    ReceiptProbes,
+    reap_receipts,
+    waiting_for_receipt_expiry,
+)
 
 if TYPE_CHECKING:
     from ._chat_run_registry import ChatRunRegistry
@@ -78,7 +82,7 @@ class ChatInputQueue:
         self._recovery_task: asyncio.Task | None = None
         self._recovery_owner = uuid.uuid4().hex
         self._retry_tasks: set[asyncio.Task] = set()
-        self._receipt_cursors: dict[str, str] = {}
+        self._receipt_probes: dict[str, ReceiptProbes] = {}
         self._closed = False
 
     async def close(self, *, release_leadership: bool = True) -> None:
@@ -94,6 +98,9 @@ class ChatInputQueue:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        for probes in self._receipt_probes.values():
+            await probes.discard_missing(set())
+        self._receipt_probes.clear()
         self._retry_tasks.clear()
         self._recovery_task = None
         if release_leadership:
@@ -250,11 +257,8 @@ class ChatInputQueue:
             MessageBusKeys.chat_input_inflight_registry(),
         )
         sessions = inflight_sessions | pending_sessions
-        self._receipt_cursors = {
-            sid: key
-            for sid, key in self._receipt_cursors.items()
-            if sid in sessions
-        }
+        for sid in self._receipt_probes.keys() - sessions.keys():
+            await self._receipt_probes.pop(sid).discard_missing(set())
         sessions_to_collect: list[tuple[str, str, str]] = []
         for session_id, raw_routing in sessions.items():
             try:
@@ -348,8 +352,11 @@ class ChatInputQueue:
                     session_id,
                     agent_id,
                     self._receipt_input_result,
-                    self._receipt_cursors,
                     active,
+                    self._receipt_probes.setdefault(
+                        session_id,
+                        ReceiptProbes(),
+                    ),
                 )
         except ChatQueueBusyError:
             pass

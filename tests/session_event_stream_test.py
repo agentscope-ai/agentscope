@@ -142,6 +142,166 @@ class SessionHistoryValidationTest(IsolatedAsyncioTestCase):
                         [": history-pending\n\n"],
                     )
 
+    async def test_ordered_notifications_survive_checkpoint_trim(self) -> None:
+        """A new subscription keeps every live frame and remains open."""
+        async with (
+            FakeRedis(decode_responses=True) as redis,
+            RedisMessageBus(connection_pool=redis.connection_pool) as remote,
+            InMemoryMessageBus() as local,
+            asyncio.timeout(5),
+        ):
+            for bus in (local, remote):
+                for heartbeat in (False, True):
+                    with self.subTest(
+                        bus=type(bus).__name__,
+                        heartbeat=heartbeat,
+                    ):
+                        await self._check_ordered_trim(bus, heartbeat)
+
+    async def _check_ordered_trim(
+        self,
+        bus: MessageBus,
+        heartbeat: bool,
+    ) -> None:
+        sid = uuid4().hex
+        key = MessageBusKeys.session_events(sid)
+
+        async def publish_reply() -> None:
+            for name in ("start", "delta", "end"):
+                end = await publish_session_event(bus, sid, {"frame": name})
+            await bus.registry_set(
+                MessageBusKeys.session_event_checkpoint(sid),
+                MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                end,
+            )
+            await bus.log_trim(key, end)
+
+        read = bus.log_read
+
+        async def read_during_publish(*args: object, **kwargs: object) -> list:
+            nonlocal heartbeat
+            if heartbeat:
+                heartbeat = False
+                await publish_reply()
+            return await read(*args, **kwargs)
+
+        response = await stream_session_events(
+            session_id=sid,
+            agent_id="a",
+            user_id="u",
+            storage=_Storage(),  # type: ignore[arg-type]
+            message_bus=bus,
+            after=None,
+            validate_history=True,
+            replay_notice=True,
+        )
+        async with aclosing(response.body_iterator) as stream:
+            self.assertEqual(
+                [await anext(stream), await anext(stream)],
+                [": history-current\n\n", ": replay-complete\n\n"],
+            )
+            with patch.object(
+                _session,
+                "_HEARTBEAT_INTERVAL_SECS",
+                0.03,
+            ), patch.object(
+                bus,
+                "log_read",
+                read_during_publish,
+            ):
+                if not heartbeat:
+                    await publish_reply()
+                for name in ("start", "delta", "end"):
+                    self.assertEqual(
+                        await anext(stream),
+                        f'data: {{"frame": "{name}"}}\n\n',
+                    )
+                await publish_session_event(bus, sid, {"frame": "next"})
+                while (frame := await anext(stream)) == ":\n\n":
+                    pass
+                self.assertEqual(_decode(frame), {"frame": "next"})
+
+    async def test_late_trimmed_delta_invalidates_live_stream(self) -> None:
+        """A retained end cannot acknowledge a missing predecessor."""
+        async with InMemoryMessageBus() as bus, asyncio.timeout(3):
+            response = await stream_session_events(
+                session_id="s",
+                agent_id="a",
+                user_id="u",
+                storage=_Storage(),  # type: ignore[arg-type]
+                message_bus=bus,
+                after=None,
+                validate_history=True,
+            )
+            key = MessageBusKeys.session_events("s")
+            async with aclosing(response.body_iterator) as stream:
+                self.assertEqual(await anext(stream), ": history-current\n\n")
+                await publish_session_event(bus, "s", {"frame": "start"})
+                self.assertEqual(
+                    _decode(await anext(stream)),
+                    {"frame": "start"},
+                )
+                delayed = []
+
+                async def delay(_: str, item: dict) -> None:
+                    delayed.append(item)
+
+                with patch.object(bus, "publish", delay):
+                    await publish_session_event(bus, "s", {"frame": "delta"})
+                    end = await publish_session_event(
+                        bus,
+                        "s",
+                        {"frame": "end"},
+                    )
+                await bus.registry_set(
+                    MessageBusKeys.session_event_checkpoint("s"),
+                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                    end,
+                )
+                await bus.log_trim(key, end)
+                for item in reversed(delayed):
+                    await bus.publish(key, item)
+                self.assertEqual(await anext(stream), ": history-changed\n\n")
+                self.assertEqual([f async for f in stream], [])
+
+    async def test_heartbeat_recovers_trim_before_first_notification(
+        self,
+    ) -> None:
+        """An empty initial cursor can also lose the whole live prefix."""
+        async with InMemoryMessageBus() as bus, asyncio.timeout(3):
+            response = await stream_session_events(
+                session_id="s",
+                agent_id="a",
+                user_id="u",
+                storage=_Storage(),  # type: ignore[arg-type]
+                message_bus=bus,
+                after=None,
+                validate_history=True,
+            )
+            key = MessageBusKeys.session_events("s")
+            async with aclosing(response.body_iterator) as stream:
+                self.assertEqual(await anext(stream), ": history-current\n\n")
+                for frame in ("start", "delta", "end"):
+                    end = await bus.log_append(
+                        key,
+                        {"frame": frame},
+                        max_len=3,
+                    )
+                await bus.registry_set(
+                    MessageBusKeys.session_event_checkpoint("s"),
+                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                    end,
+                )
+                await bus.log_trim(key, end)
+                with patch(
+                    "agentscope.app._router._session._HEARTBEAT_INTERVAL_SECS",
+                    0.01,
+                ):
+                    self.assertEqual(
+                        [f async for f in stream],
+                        [": history-changed\n\n"],
+                    )
+
 
 class SessionEventStreamTest(IsolatedAsyncioTestCase):
     """The session route changes from replay to live without a gap."""

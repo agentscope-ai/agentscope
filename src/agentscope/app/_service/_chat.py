@@ -28,13 +28,18 @@ from .._bus_ops import (
     deliver_to_inbox,
     enqueue_run_trigger,
     finish_active_chat_reply,
+    finish_chat_submission,
     has_pending_inbox_or_release,
     publish_session_event,
     register_active_chat_reply,
     register_inbox_consumer,
 )
 from ..message_bus import MessageBus, MessageBusKeys
-from .._chat_input_store import INPUT_EXECUTION, get_submission
+from .._chat_input_store import (
+    INPUT_EXECUTION,
+    REPLY_SUBMISSION,
+    get_submission,
+)
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
 from ..channel._approval import (
@@ -971,7 +976,7 @@ class ChatService:
         user_id: str,
         session_id: str,
         agent_id: str,
-        message_id: str,
+        message_id: str | None,
         submission_id: str | None = None,
     ) -> dict:
         """Resolve an input independently of the trimmed event replay log.
@@ -979,7 +984,8 @@ class ChatService:
         Read under the persistence checkpoint lock so a terminal reply
         cannot be observed before its session state has been saved.
         Missing message receipts are unknown. Collected submission leases
-        are terminal and cannot admit a delayed POST.
+        are terminal and cannot admit a delayed POST. A submission-only
+        lookup resolves the whole turn when cancelling by submission ID.
         """
         async with self._message_bus.acquire_lock(
             MessageBusKeys.session_event_checkpoint_lock(session_id),
@@ -994,6 +1000,7 @@ class ChatService:
                 raise LookupError(f"Session {session_id!r} not found.")
             unknown = {"state": "unknown", "reply_id": None}
             identity = {}
+            reply = None
             if submission_id is not None:
                 receipt = await get_submission(
                     self._message_bus,
@@ -1002,27 +1009,66 @@ class ChatService:
                     user_id,
                     agent_id,
                 )
-                # Only terminal submissions may be collected. Missing leases
-                # cannot admit a delayed POST or identify a different reply.
                 if receipt is None:
-                    return {"state": "finished", "reply_id": None}
-                if message_id not in receipt.get("message_ids", []):
+                    # A process-local lease can disappear while the current
+                    # reply is parked. Only its exact binding can resume.
+                    reply = await self._storage.get_message(
+                        user_id,
+                        session_id,
+                        session.state.reply_id,
+                    )
+                    binding = (
+                        reply.metadata.get(REPLY_SUBMISSION)
+                        if reply is not None and reply.role == "assistant"
+                        else None
+                    )
+                    if (
+                        binding is None
+                        and session.state.has_awaiting_tool_calls()
+                    ):
+                        # Older parked replies have no submission identity.
+                        # Reused input IDs cannot prove which lease owns one.
+                        if message_id is None:
+                            return unknown
+                        msg = await self._storage.get_message(
+                            user_id,
+                            session_id,
+                            message_id,
+                        )
+                        execution = (
+                            msg.metadata.get(INPUT_EXECUTION) if msg else None
+                        )
+                        if isinstance(execution, dict) and (
+                            execution.get("reply_id") == session.state.reply_id
+                        ):
+                            return unknown
+                    if not isinstance(binding, dict) or (
+                        binding.get("submission_id") != submission_id
+                    ):
+                        return {"state": "finished", "reply_id": None}
+                    receipt = {**binding, "reply_id": reply.id}
+                if message_id is not None and message_id not in receipt.get(
+                    "message_ids",
+                    [],
+                ):
                     return unknown
                 if queue_id := receipt.get("queue_item_id"):
                     identity["queue_item_id"] = queue_id
-                if receipt["state"] in ("cancelled", "finished"):
+                if receipt.get("state") in ("cancelled", "finished"):
                     return {
                         **identity,
                         "state": "finished",
                         "reply_id": receipt.get("reply_id"),
                     }
-            else:
+            elif message_id is not None:
                 msg = await self._storage.get_message(
                     user_id,
                     session_id,
                     message_id,
                 )
                 receipt = msg.metadata.get(INPUT_EXECUTION) if msg else None
+            else:
+                return unknown
             if not isinstance(receipt, dict):
                 return unknown
             reply_id = receipt.get("reply_id")
@@ -1034,11 +1080,12 @@ class ChatService:
                     else "unknown",
                     "reply_id": None,
                 }
-            reply = await self._storage.get_message(
-                user_id,
-                session_id,
-                reply_id,
-            )
+            if reply is None:
+                reply = await self._storage.get_message(
+                    user_id,
+                    session_id,
+                    reply_id,
+                )
             finished = reply is not None and reply.finished_reason is not None
             if not finished and not await self._message_bus.is_locked(
                 MessageBusKeys.session_lock(session_id),
@@ -1828,6 +1875,15 @@ class ChatService:
                                             ),
                                         },
                                     )
+                                    if submission_id is not None:
+                                        reply_msg.metadata[
+                                            REPLY_SUBMISSION
+                                        ] = {
+                                            "submission_id": submission_id,
+                                            "message_ids": [
+                                                msg.id for msg in input_msgs
+                                            ],
+                                        }
                                     for msg in input_msgs:
                                         msg.metadata[INPUT_EXECUTION] = {
                                             "reply_id": event.reply_id,
@@ -2327,6 +2383,26 @@ class ChatService:
                     MessageBusKeys.session_events(session.id),
                     before_id=replay_from or cursor,
                 )
+        # The collector can hold the queue lock while reading a checkpoint.
+        # Acquire that lock only after releasing the checkpoint lock.
+        for msg in reply_msgs:
+            binding = msg.metadata.get(REPLY_SUBMISSION)
+            if isinstance(binding, dict) and msg.finished_reason is not None:
+                try:
+                    await finish_chat_submission(
+                        self._message_bus,
+                        user_id,
+                        session.id,
+                        session.agent_id,
+                        binding["submission_id"],
+                        msg.id,
+                    )
+                except Exception:
+                    # The collector can recover from the durable reply.
+                    logger.exception(
+                        "Could not retire the submission for reply %s.",
+                        msg.id,
+                    )
 
     async def _parked_dispatch(
         self,
