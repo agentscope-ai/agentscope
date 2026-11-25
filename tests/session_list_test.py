@@ -341,7 +341,11 @@ class SessionListTest(IsolatedAsyncioTestCase):
             self.assertEqual(full.status_code, 200, full.text)
             expected_views = [
                 {
-                    "session": self._expected_record(record),
+                    "session": {
+                        **self._expected_record(record),
+                        "created_at": f"{record.created_at.isoformat()}Z",
+                        "updated_at": f"{record.updated_at.isoformat()}Z",
+                    },
                     "is_running": False,
                     "status": status,
                     "team": None,

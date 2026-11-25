@@ -3,7 +3,7 @@
 """The storage base class."""
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import Any, Self
+from typing import Any, ClassVar, Self
 
 
 from ._model import (
@@ -33,6 +33,9 @@ from ...state import AgentState
 
 class StorageBase(ABC):
     """The storage abstract base class."""
+
+    session_timestamps_are_utc: ClassVar[bool] = False
+    """Whether naive session timestamps represent UTC."""
 
     async def __aenter__(self) -> Self:
         """Start the storage backend (open connection pool, etc.)."""

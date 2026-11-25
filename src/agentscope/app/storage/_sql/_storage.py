@@ -114,6 +114,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
     schema; ``aclose`` disposes the engine.
     """
 
+    session_timestamps_are_utc = True
+
     def __init__(
         self,
         url: str,
