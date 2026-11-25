@@ -71,7 +71,7 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
         # an audio-capable model instead.
         # https://developers.openai.com/api/docs/guides/audio
         media_type = getattr(block.source, "media_type", "") or ""
-        if media_type.split("/", 1)[0] == "audio":
+        if media_type.split("/", 1)[0].lower() == "audio":
             logger.warning(
                 "Audio input is not supported by the OpenAI Responses API. "
                 "Use OpenAIChatModel with an audio-capable model instead. "

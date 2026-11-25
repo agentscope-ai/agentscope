@@ -479,12 +479,16 @@ class A2AAgent:
                         update.status.state,
                     )
 
-                    events += _parts_to_events(
-                        update.status.message.parts,
-                        reply_id,
-                        {"a2a": {"task_id": update.task_id}},
-                        run,
-                    )
+                    # A status update only carries a message when the peer
+                    # has one to add. An empty one must not end the text
+                    # block the previous artifact chunk left open.
+                    if update.status.message.parts:
+                        events += _parts_to_events(
+                            update.status.message.parts,
+                            reply_id,
+                            {"a2a": {"task_id": update.task_id}},
+                            run,
+                        )
 
                 case "task":
                     # A full Task snapshot, the only payload the

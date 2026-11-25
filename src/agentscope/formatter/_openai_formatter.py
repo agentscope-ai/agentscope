@@ -3,7 +3,6 @@
 import asyncio
 import re
 from abc import ABC
-from fnmatch import fnmatch
 from typing import Any
 
 from pydantic import Field
@@ -88,10 +87,10 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                 A dictionary in OpenAI API format, or ``None`` if the block
                 should be skipped.
         """
-        if not any(
-            fnmatch(block.source.media_type, pattern)
-            for pattern in self.supported_input_media_types
-        ):
+        # Normalize the MIME type (lowercase, matched case-insensitively)
+        # before the checks below and the data-URI built from it.
+        supported = self._get_supported_tool_result_block(block)
+        if supported is None:
             logger.warning(
                 "Unsupported media type %s for OpenAI API. "
                 "Supported types: %s. This block will be skipped.",
@@ -99,6 +98,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                 ", ".join(self.supported_input_media_types),
             )
             return None
+        block = supported
 
         main_type = block.source.media_type.split("/")[0]
 

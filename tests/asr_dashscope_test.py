@@ -2,15 +2,22 @@
 """DashScope batch and realtime ASR model tests."""
 
 import asyncio
+import gc
 import json
+import weakref
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, call as expected_call, patch
 
 from websockets.asyncio.server import ServerConnection, serve
 
-from agentscope.asr import DashScopeASRModel, DashScopeRealtimeASRModel
+from agentscope.asr import (
+    ASRResponse,
+    DashScopeASRModel,
+    DashScopeRealtimeASRModel,
+)
 from agentscope.credential import DashScopeCredential
+from agentscope.message import TextBlock
 
 
 class DashScopeASRModelTest(IsolatedAsyncioTestCase):
@@ -441,6 +448,56 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
                             "action": "run-task",
                         },
                     )
+
+    async def test_only_latest_partial_is_retained(self) -> None:
+        """A burst retains one cumulative partial before the next read."""
+        # pylint: disable=protected-access
+        model = DashScopeRealtimeASRModel(
+            credential=DashScopeCredential(api_key="test-key"),
+        )
+        responses: list[weakref.ReferenceType[ASRResponse]] = []
+
+        def record_response(
+            *,
+            content: TextBlock | None,
+            is_last: bool,
+        ) -> ASRResponse:
+            """Record a reference without retaining the response."""
+            response = ASRResponse(content=content, is_last=is_last)
+            responses.append(weakref.ref(response))
+            return response
+
+        with patch(
+            "agentscope.asr._dashscope._realtime_model.ASRResponse",
+            side_effect=record_response,
+        ):
+            for text, sentence_end in [
+                ("First. ", True),
+                ("Par", False),
+                ("Partial", False),
+            ]:
+                model._handle_result(
+                    {
+                        "payload": {
+                            "output": {
+                                "sentence": {
+                                    "text": text,
+                                    "sentence_end": sentence_end,
+                                },
+                            },
+                        },
+                    },
+                )
+
+            gc.collect()
+            self.assertEqual(
+                [result() is not None for result in responses],
+                [False, False, True],
+            )
+            response = model._drain_latest_response()
+            self.assertIsNotNone(response.content)
+            self.assertEqual(response.content.text, "First. Partial")
+            self.assertIsNone(model._drain_latest_response().content)
 
     async def test_streams_pcm_and_returns_partial_and_final_text(
         self,
