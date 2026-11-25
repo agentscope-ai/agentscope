@@ -102,11 +102,50 @@ class KnowledgeDocumentData(BaseModel):
     """The chunker-change batch for which this document was reset."""
 
     alternate_index: bool = False
-    """Whether reads use the alternate vector ID for this document."""
+    """Whether reads use the alternate vector slot for this document."""
+
+    slot_layout: Literal["legacy", "isolated", "migrated"] = "legacy"
+    """Legacy slots use a tilde ID. Isolated slots use another collection.
+
+    Migrated uploads use isolated slots and reserve their old alias.
+    """
+
+    legacy_alias_published: bool = False
+    """Whether a previous publication confirmed ownership of the tilde ID."""
+
+    @property
+    def owns_legacy_alias(self) -> bool:
+        """Whether the upload's publication history proves alias ownership."""
+        return self.legacy_alias_published or (
+            self.slot_layout == "legacy" and self.alternate_index
+        )
 
     def vector_id(self, document_id: str) -> str:
         """Return the published vector ID for an application document."""
-        return f"~{document_id}" if self.alternate_index else document_id
+        if self.alternate_index and self.slot_layout == "legacy":
+            return f"~{document_id}"
+        return document_id
+
+    def begin_reindex(self, batch: str) -> None:
+        """Reserve the inactive slot without moving the published version."""
+        self.legacy_alias_published = self.owns_legacy_alias
+        if self.slot_layout == "legacy" and not self.alternate_index:
+            self.slot_layout = "migrated" if self.reindex_id else "isolated"
+        self.reindex_id = batch
+
+    def publish_index(self, alternate: bool) -> None:
+        """Remember the old slot's owner before switching the published one."""
+        self.legacy_alias_published = self.owns_legacy_alias
+        self.alternate_index = alternate
+
+    @property
+    def has_legacy_alias(self) -> bool:
+        """Whether a raw tilde ID could contain historical upload chunks."""
+        return (
+            self.owns_legacy_alias
+            or self.slot_layout == "migrated"
+            or (self.slot_layout == "legacy" and self.reindex_id is not None)
+        )
 
     pending_since: datetime | None = None
     """Start of the current pending pass, in UTC; absent on legacy data."""

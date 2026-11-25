@@ -2346,23 +2346,24 @@ class RedisStorage(StorageBase):
     ) -> list[KnowledgeDocumentRecord]:
         """List all documents in a knowledge base.
 
-        Reads the per-KB document index Set and fetches each record.
+        Reads the per-KB document index set and fetches its records together.
         Records whose keys have expired or been deleted externally are
         silently skipped.
         """
         ids = await self._client.smembers(
             self._document_index_key(user_id, knowledge_base_id),
         )
-        records: list[KnowledgeDocumentRecord] = []
-        for document_id in ids:
-            raw = await self._client.get(
-                self._document_key(user_id, knowledge_base_id, document_id),
-            )
-            if raw:
-                records.append(
-                    KnowledgeDocumentRecord.model_validate_json(raw),
-                )
-        return records
+        if not ids:
+            return []
+        keys = [
+            self._document_key(user_id, knowledge_base_id, document_id)
+            for document_id in ids
+        ]
+        return [
+            KnowledgeDocumentRecord.model_validate_json(raw)
+            for raw in await self._client.mget(keys)
+            if raw
+        ]
 
     async def delete_knowledge_document(
         self,
@@ -2398,6 +2399,7 @@ class RedisStorage(StorageBase):
         *,
         expected_lease_token: str | None = None,
         alternate_index: bool | None = None,
+        migrate_vector_slot: bool = False,
     ) -> None:
         """Atomically update status, optionally requiring lease ownership."""
         key = self._document_key(user_id, knowledge_base_id, document_id)
@@ -2422,7 +2424,9 @@ class RedisStorage(StorageBase):
                     if chunk_count is not None:
                         record.data.chunk_count = chunk_count
                     if alternate_index is not None:
-                        record.data.alternate_index = alternate_index
+                        record.data.publish_index(alternate_index)
+                    if migrate_vector_slot:
+                        record.data.slot_layout = "migrated"
                     record.updated_at = datetime.now()
                     pipe.multi()
                     pipe.set(key, record.model_dump_json())

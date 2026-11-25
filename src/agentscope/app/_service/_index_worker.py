@@ -33,6 +33,11 @@ from ..._logging import logger
 from ...message import DataBlock
 from ...rag import ApproxTokenChunker
 from ..message_bus import MessageBusKeys
+from ..rag.knowledge_base_manager._vector_slots import version_knowledge
+from ._knowledge_reindex import (
+    status_update_keywords,
+    supports_index_publication,
+)
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -428,6 +433,12 @@ class IndexWorker:
         chunker = self._resolve_chunker_from_record(kb_record)
 
         data = record.data
+        replacing = data.reindex_id is not None
+        if replacing and not supports_index_publication(self._storage):
+            raise RuntimeError("Storage cannot publish a replacement index.")
+        status_options: dict[str, Any] = {}
+        if "expected_lease_token" in status_update_keywords(self._storage):
+            status_options["expected_lease_token"] = lease_token
         media_type = data.content_type or None
         if media_type:
             media_type = media_type.split(";", 1)[0].strip().lower() or None
@@ -484,7 +495,7 @@ class IndexWorker:
             "parsing",
             # Clear stale errors; None leaves the stored value unchanged.
             error="" if getattr(data, "error", None) else None,
-            expected_lease_token=lease_token,
+            **status_options,
         )
         file_bytes = await self._read_blob(data.blob_uri)
         sections = await self._parse(parser, file_bytes, data.filename)
@@ -495,7 +506,7 @@ class IndexWorker:
             knowledge_base_id,
             document_id,
             "chunking",
-            expected_lease_token=lease_token,
+            **status_options,
         )
         chunks = await chunker.chunk(sections)
         if not chunks and media_type == "application/pdf":
@@ -510,7 +521,7 @@ class IndexWorker:
             knowledge_base_id,
             document_id,
             "indexing",
-            expected_lease_token=lease_token,
+            **status_options,
         )
         knowledge = await self._manager.get_write_knowledge(
             user_id,
@@ -539,13 +550,16 @@ class IndexWorker:
                 )
                 for index, chunk in enumerate(text_chunks)
             ]
-        replacing = data.reindex_id is not None
-        previous_id = data.vector_id(document_id) if replacing else document_id
         alternate = replacing and not data.alternate_index
-        target_id = f"~{document_id}" if alternate else document_id
+        if alternate and data.slot_layout == "legacy":
+            if "migrate_vector_slot" not in status_update_keywords(
+                self._storage,
+            ):
+                raise RuntimeError("Retry to allocate an isolated slot.")
+            status_options["migrate_vector_slot"] = True
         records = await knowledge.prepare_document(
             chunks=chunks,
-            document_id=target_id,
+            document_id=document_id,
             document_metadata={
                 "filename": data.filename,
                 "media_type": media_type,
@@ -589,18 +603,40 @@ class IndexWorker:
                 lease_ttl=self._lease_ttl,
             ):
                 return
-            # Clear partial writes from an earlier attempt in the target slot.
-            await knowledge.delete_document(target_id)
+            if replacing:
+                versions = version_knowledge(knowledge)
+                if alternate:
+                    knowledge = versions
+                elif await knowledge.vector_store.has_collection(
+                    versions.collection,
+                ):
+                    await versions.ensure_collection()
+                await knowledge.vector_store.prepare_for_replacement(
+                    knowledge.collection,
+                )
+            # Reclaim the inactive version immediately before reusing it.
+            # Keeping it until then lets a search spanning both collections
+            # observe a publication even when it reads across the switch.
+            await knowledge.delete_document(document_id)
             try:
-                await knowledge.write_document_records(records)
+                if replacing:
+                    await knowledge.vector_store.insert_for_publication(
+                        knowledge.collection,
+                        document_id,
+                        records,
+                        knowledge.metadata_filter,
+                    )
+                    status_options["alternate_index"] = alternate
+                else:
+                    await knowledge.write_document_records(records)
             except Exception:
                 # Bulk inserts may have committed only a prefix. The target
                 # is still unpublished, even if this cleanup also fails.
                 if replacing:
                     try:
-                        await knowledge.delete_document(target_id)
+                        await knowledge.delete_document(document_id)
                     except Exception:
-                        logger.exception("Failed to discard %s", target_id)
+                        logger.exception("Failed to discard %s", document_id)
                 raise
             await self._storage.update_knowledge_document_status(
                 user_id,
@@ -608,26 +644,8 @@ class IndexWorker:
                 document_id,
                 "ready",
                 chunk_count=len(chunks),
-                expected_lease_token=lease_token,
-                alternate_index=alternate,
+                **status_options,
             )
-            if replacing:
-                # A lost lease can turn the publication into a no-op.
-                try:
-                    published = await self._storage.get_knowledge_document(
-                        user_id,
-                        knowledge_base_id,
-                        document_id,
-                    )
-                    if (
-                        published
-                        and published.data.alternate_index == alternate
-                    ):
-                        await knowledge.delete_document(previous_id)
-                except Exception:
-                    # Reads ignore retired vectors. The next attempt or
-                    # document deletion will reclaim this slot.
-                    logger.exception("Failed to retire %s", previous_id)
 
     def _csv_media_type(
         self,
@@ -788,13 +806,24 @@ class IndexWorker:
         )
         message = _sanitise_error(exc)
         try:
+            status_options: dict[str, Any] = {}
+            if "expected_lease_token" in status_update_keywords(self._storage):
+                status_options["expected_lease_token"] = lease_token
+            elif not await self._storage.renew_knowledge_document_lease(
+                user_id=user_id,
+                knowledge_base_id=knowledge_base_id,
+                document_id=document_id,
+                processing_node=lease_token,
+                lease_ttl=self._lease_ttl,
+            ):
+                return
             await self._storage.update_knowledge_document_status(
                 user_id,
                 knowledge_base_id,
                 document_id,
                 "error",
                 error=message,
-                expected_lease_token=lease_token,
+                **status_options,
             )
         except Exception:  # noqa: BLE001 — last-resort log
             logger.exception(

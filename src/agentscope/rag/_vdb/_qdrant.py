@@ -27,6 +27,7 @@ from .._document import Chunk
 
 if TYPE_CHECKING:
     from qdrant_client import AsyncQdrantClient
+    from qdrant_client.models import VectorParams
 
 
 class QdrantStore(VectorStoreBase):
@@ -154,6 +155,50 @@ class QdrantStore(VectorStoreBase):
                 distance=models.Distance(self._distance),
             ),
         )
+
+    async def _vector_params(self, name: str) -> "VectorParams":
+        """Read the actual unnamed dense vector configuration."""
+        from qdrant_client import models
+
+        info = await self.get_client().get_collection(name)
+        vectors = info.config.params.vectors
+        if isinstance(vectors, dict):
+            vectors = vectors.get("")
+        if not isinstance(vectors, models.VectorParams):
+            raise ValueError(
+                f"Collection {name!r} requires an unnamed dense vector.",
+            )
+        return vectors
+
+    async def ensure_compatible_collection(
+        self,
+        name: str,
+        source: str,
+        dimensions: int,
+    ) -> None:
+        """Create or validate a companion using the source's actual schema."""
+        params = await self._vector_params(source)
+        if params.size != dimensions:
+            raise ValueError(
+                f"Collection {source!r} has {params.size} dimensions, "
+                f"incompatible with the embedding size {dimensions}.",
+            )
+        client = self.get_client()
+        if not await client.collection_exists(name):
+            try:
+                await client.create_collection(name, vectors_config=params)
+                return
+            except Exception:
+                # Another handle may have won creation. Validate its schema.
+                if not await client.collection_exists(name):
+                    raise
+        other = await self._vector_params(name)
+        if (params.size, params.distance) != (other.size, other.distance):
+            raise ValueError(
+                f"Qdrant collection {name!r} has incompatible vector "
+                f"configuration ({other.size}, {other.distance.value}) for "
+                f"{source!r} ({params.size}, {params.distance.value}).",
+            )
 
     async def delete_collection(self, name: str) -> None:
         """Delete a collection and all its data.
@@ -318,17 +363,9 @@ class QdrantStore(VectorStoreBase):
         from qdrant_client import models
 
         client = self.get_client()
-        collection_info = await client.get_collection(collection)
-        vectors = collection_info.config.params.vectors
-        if isinstance(vectors, dict):
-            vectors = vectors.get("")
-        if not isinstance(vectors, models.VectorParams):
-            raise ValueError(
-                "QdrantStore.search requires an unnamed dense vector.",
-            )
         # The constructor's metric only applies to newly created collections.
         # Read the actual schema, including after an external recreation.
-        distance = vectors.distance
+        distance = (await self._vector_params(collection)).distance
         query_filter = self._build_metadata_filter(metadata_filter)
         if exclude_document_ids:
             query_filter = query_filter or models.Filter()

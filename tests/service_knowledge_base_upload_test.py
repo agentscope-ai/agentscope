@@ -119,7 +119,17 @@ class _FakeVectorStore(VectorStoreBase):
         collection: str,
         metadata_filter: dict[str, Any] | None = None,
     ) -> list[DocumentSummary]:
-        return []
+        summaries = {}
+        for row in self._collections.get(collection, []):
+            if row.document_id not in summaries:
+                summaries[row.document_id] = DocumentSummary(
+                    document_id=row.document_id,
+                    source=row.chunk.source,
+                    chunk_count=0,
+                    metadata=row.chunk.metadata,
+                )
+            summaries[row.document_id].chunk_count += 1
+        return list(summaries.values())
 
     async def list_chunks(
         self,

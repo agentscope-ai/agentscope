@@ -2167,6 +2167,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         *,
         expected_lease_token: str | None = None,
         alternate_index: bool | None = None,
+        migrate_vector_slot: bool = False,
     ) -> None:
         """Update status and payload with an optional atomic token guard."""
         async with self._session() as sess:
@@ -2184,7 +2185,9 @@ class AsyncSQLAlchemyStorage(StorageBase):
             if chunk_count is not None:
                 record.data.chunk_count = chunk_count
             if alternate_index is not None:
-                record.data.alternate_index = alternate_index
+                record.data.publish_index(alternate_index)
+            if migrate_vector_slot:
+                record.data.slot_layout = "migrated"
             record.updated_at = _utcnow()
             new_row = _from_record(KnowledgeDocumentRow, record)
             statement = sa.update(KnowledgeDocumentRow).where(

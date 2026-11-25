@@ -28,14 +28,14 @@ import {
 import { useUploadContext } from '@/context/UploadContext';
 import { isInFlight } from '@/context/uploadTypes';
 import type { UploadPhase, UploadTask } from '@/context/uploadTypes';
-import { useDocumentStatusPolling } from '@/hooks/useDocumentStatusPolling';
-import { useKnowledgeDocuments } from '@/hooks/useKnowledgeDocuments';
+import type { useKnowledgeDocuments } from '@/hooks/useKnowledgeDocuments';
 import { useKnowledgeSupportedContentTypes } from '@/hooks/useKnowledgeSupportedContentTypes';
 import { cn } from '@/lib/utils';
 
 interface KnowledgeDocumentsPanelProps {
 	knowledgeBaseId: string;
 	editable: boolean;
+	documentState: ReturnType<typeof useKnowledgeDocuments>;
 }
 
 /**
@@ -271,6 +271,7 @@ function RowView({ row, onCancel, onDismiss, onDelete, onOpen, onRetry }: RowVie
 export function KnowledgeDocumentsPanel({
 	knowledgeBaseId,
 	editable,
+	documentState,
 }: KnowledgeDocumentsPanelProps) {
 	const { t } = useTranslation();
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -279,12 +280,8 @@ export function KnowledgeDocumentsPanel({
 	const [detailTarget, setDetailTarget] = useState<KnowledgeDocumentView | null>(null);
 
 	const { enqueue, cancel, dismiss, tasksForKb, clearFinishedForKb } = useUploadContext();
-	const { documents, loading, refetch } = useKnowledgeDocuments(knowledgeBaseId);
+	const { documents, loading, refetch, statuses, setStatus } = documentState;
 	const tasks = tasksForKb(knowledgeBaseId);
-	const { statuses, setStatus } = useDocumentStatusPolling({
-		knowledgeBaseId,
-		documents,
-	});
 	const { mediaTypes, extensions } = useKnowledgeSupportedContentTypes();
 
 	// Lowercased extension set used to gate `handleFiles`. Built once
@@ -332,15 +329,7 @@ export function KnowledgeDocumentsPanel({
 	// upload response and the next list refresh — which only happens
 	// when indexing finishes.
 	const rows: Row[] = useMemo(() => {
-		const unclaimed = new Map(
-			documents.map((doc) => {
-				const polled = statuses[doc.id];
-				return [
-					doc.id,
-					polled && polled.updated_at > doc.updated_at ? polled : doc,
-				] as const;
-			}),
-		);
+		const unclaimed = new Map(documents?.map((doc) => [doc.id, doc]));
 		const taskRows: Row[] = tasks.map((task) => {
 			const doc = task.documentId ? unclaimed.get(task.documentId) : undefined;
 			if (!doc) return { kind: 'local', task };
@@ -353,7 +342,7 @@ export function KnowledgeDocumentsPanel({
 			localTask: null,
 		}));
 		return [...taskRows, ...documentRows];
-	}, [documents, statuses, tasks]);
+	}, [documents, tasks]);
 
 	const onUploadClick = useCallback(() => {
 		fileInputRef.current?.click();

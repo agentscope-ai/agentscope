@@ -267,8 +267,8 @@ class KnowledgeBaseManagerBase(ABC):
         Implementations must:
 
         1. authorise the call by looking the record up first;
-        2. drop the vector store collection (or scope) the strategy
-           uses;
+        2. remove the KB's scope from its primary collection and its
+           companion ``<collection>_versions`` when present;
         3. remove the :class:`KnowledgeBaseRecord` from storage.
 
         Args:

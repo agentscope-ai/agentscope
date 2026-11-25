@@ -90,6 +90,9 @@ class KnowledgeBaseData(BaseModel):
     reindex_pending: bool = False
     """Whether documents still need to be dispatched for this batch."""
 
+    retired_vector_aliases: set[str] = Field(default_factory=set)
+    """Ambiguous legacy IDs kept out of reads after their upload is gone."""
+
 
 class KnowledgeBaseRecord(_RecordBase):
     """A persisted knowledge base record.

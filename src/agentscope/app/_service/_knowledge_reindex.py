@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Resumable dispatch of a persisted knowledge-base reindex batch."""
 
+import inspect
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,28 @@ from .._bus_ops import enqueue_index_task
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
     from ..storage import KnowledgeBaseRecord, StorageBase
+
+
+def status_update_keywords(storage: "StorageBase") -> set[str]:
+    """Read the explicitly declared status-update contract of a backend."""
+    try:
+        params = inspect.signature(
+            storage.update_knowledge_document_status,
+        ).parameters
+    except (TypeError, ValueError):
+        return set()
+    return {
+        p.name
+        for p in params.values()
+        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    }
+
+
+def supports_index_publication(storage: "StorageBase") -> bool:
+    """Publishing a replacement requires both fields in the same write."""
+    return {"expected_lease_token", "alternate_index"}.issubset(
+        status_update_keywords(storage),
+    )
 
 
 async def resume_knowledge_base_reindex(
@@ -25,6 +48,11 @@ async def resume_knowledge_base_reindex(
     """
     if not record.data.reindex_pending:
         return record
+    # Legacy writers could only start an empty batch. Later uploads are
+    # independent of it, even when dispatch was interrupted.
+    if not supports_index_publication(storage):
+        record.data.reindex_pending = False
+        return await storage.upsert_knowledge_base(record.user_id, record)
     documents = await storage.list_knowledge_documents(
         record.user_id,
         record.id,
@@ -36,7 +64,7 @@ async def resume_knowledge_base_reindex(
             document.processing_node = None
             document.lease_expires_at = None
             document.data.error = None
-            document.data.reindex_id = record.data.reindex_id
+            document.data.begin_reindex(record.data.reindex_id)
             await storage.upsert_knowledge_document(record.user_id, document)
         if document.status == "pending":
             await enqueue_index_task(

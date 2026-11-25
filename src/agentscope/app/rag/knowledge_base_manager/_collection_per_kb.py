@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from ._base import KnowledgeBaseManagerBase
 from ._dimension_policy import DimensionPolicy, DimensionPolicyKind
 from ._errors import KnowledgeBaseNotFoundError
+from ._vector_slots import version_collection
 from ...._logging import logger
 from ....rag import KnowledgeBase
 from ..._service._embedding import build_embedding_model
@@ -31,10 +32,9 @@ if TYPE_CHECKING:
 class CollectionPerKbManager(KnowledgeBaseManagerBase):
     """One-collection-per-KB knowledge base manager.
 
-    Each knowledge base maps to one collection in the bound
-    :class:`~agentscope.rag.VectorStoreBase`.  The collection is
-    created at :meth:`create_knowledge_base` time and dropped at
-    :meth:`delete_knowledge_base` time.
+    Each knowledge base owns a primary collection. Rebuilding an upload
+    allocates a companion for its alternate version. Deleting the KB
+    drops both collections.
     """
 
     async def get_dimension_policy(self) -> DimensionPolicy:
@@ -136,12 +136,12 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
         if record is None:
             return False
 
-        if await self._vector_store.has_collection(
+        for collection in (
+            version_collection(record.data.collection_name),
             record.data.collection_name,
         ):
-            await self._vector_store.delete_collection(
-                record.data.collection_name,
-            )
+            if await self._vector_store.has_collection(collection):
+                await self._vector_store.delete_collection(collection)
         return await self._storage.delete_knowledge_base(
             user_id,
             knowledge_base_id,

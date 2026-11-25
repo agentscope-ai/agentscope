@@ -41,6 +41,7 @@ class _FakeIndices:
         self.exists = AsyncMock(return_value=False)
         self.create = AsyncMock()
         self.delete = AsyncMock()
+        self.refresh = AsyncMock(return_value={"_shards": {"failed": 0}})
 
 
 class _FakeClient:
@@ -51,7 +52,13 @@ class _FakeClient:
         self.bulk = AsyncMock(return_value={"errors": False, "items": []})
         self.open_point_in_time = AsyncMock()
         self.close_point_in_time = AsyncMock()
-        self.delete_by_query = AsyncMock()
+        self.delete_by_query = AsyncMock(
+            return_value={
+                "timed_out": False,
+                "version_conflicts": 0,
+                "failures": [],
+            },
+        )
         self.search = AsyncMock()
         self.close = AsyncMock()
 
@@ -135,6 +142,19 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
             self.client.delete_by_query.await_args.kwargs["refresh"],
             False,
         )
+
+        self.client.indices.refresh.assert_not_awaited()
+
+    async def test_empty_publication_refreshes_deletions(self) -> None:
+        store = ElasticsearchStore("http://localhost:9200", refresh=False)
+        await store.delete("versions", "doc")
+        await store.insert_for_publication("versions", "doc", [], None)
+        self.client.bulk.assert_not_awaited()
+        self.client.indices.refresh.assert_awaited_once_with(index="versions")
+
+        self.client.indices.refresh.return_value = {"_shards": {"failed": 1}}
+        with self.assertRaisesRegex(RuntimeError, "refresh"):
+            await store.insert_for_publication("versions", "doc", [], None)
 
     async def test_insert_surfaces_bulk_item_failures(self) -> None:
         self.client.bulk.return_value = {

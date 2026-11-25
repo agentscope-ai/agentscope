@@ -28,6 +28,7 @@ from pydantic import ValidationError
 
 from ..access import ResourceKind
 from ..message_bus import MessageBusKeys
+from ..rag.knowledge_base_manager._vector_slots import version_knowledge
 from ..rag.knowledge_base_manager import (
     DimensionPolicyError,
     KnowledgeBaseNotFoundError,
@@ -45,7 +46,10 @@ from ._access import (
     KnowledgeBaseView,
     ResourceAccessService,
 )
-from ._knowledge_reindex import resume_knowledge_base_reindex
+from ._knowledge_reindex import (
+    resume_knowledge_base_reindex,
+    supports_index_publication,
+)
 
 
 _IN_FLIGHT_DOCUMENT_STATUSES = {
@@ -331,8 +335,7 @@ class KnowledgeBaseService:
         chunker_config: ChunkerConfig | None,
     ) -> "KnowledgeBaseRecord":
         """Apply an update while holding the knowledge-base lock."""
-        documents: list[KnowledgeDocumentRecord] = []
-        chunker_changed = False
+        reindex_id = None
         if chunker_config is not None:
             chunker_config = self._validate_chunker_config(chunker_config)
             current = await self._manager.get_knowledge_base(
@@ -373,6 +376,9 @@ class KnowledgeBaseService:
                             f"{len(in_flight)} document(s) are being indexed."
                         ),
                     )
+                if documents:
+                    self._require_index_publication()
+                    reindex_id = uuid.uuid4().hex
 
         record = await self._manager.update_knowledge_base(
             user_id=owner_id,
@@ -380,7 +386,7 @@ class KnowledgeBaseService:
             name=name,
             description=description,
             chunker_config=chunker_config,
-            reindex_id=uuid.uuid4().hex if chunker_changed else None,
+            reindex_id=reindex_id,
         )
         if record is None:
             raise HTTPException(
@@ -393,6 +399,14 @@ class KnowledgeBaseService:
             self._bus,
             record,
         )
+
+    def _require_index_publication(self) -> None:
+        """Reject a rebuild before any configuration or document changes."""
+        if not supports_index_publication(self._storage):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="Storage cannot publish an index with a lease check.",
+            )
 
     def _validate_chunker_config(
         self,
@@ -574,6 +588,7 @@ class KnowledgeBaseService:
             user_id=owner_id,
             knowledge_base_id=knowledge_base_id,
             data=KnowledgeDocumentData(
+                slot_layout="isolated",
                 filename=filename,
                 size=size,
                 content_type=content_type,
@@ -597,7 +612,9 @@ class KnowledgeBaseService:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="The knowledge base no longer exists.",
                     )
-                record.data.reindex_id = knowledge_base.data.reindex_id
+                batch = knowledge_base.data.reindex_id
+                if batch and supports_index_publication(self._storage):
+                    record.data.reindex_id = batch
                 stored = await self._storage.upsert_knowledge_document(
                     owner_id,
                     record,
@@ -954,7 +971,10 @@ class KnowledgeBaseService:
             )
             if kb is None:
                 raise HTTPException(404, detail="Knowledge base not found.")
-            doc.data.reindex_id = kb.data.reindex_id or uuid.uuid4().hex
+            if doc.data.reindex_id is not None:
+                self._require_index_publication()
+            if supports_index_publication(self._storage):
+                doc.data.begin_reindex(kb.data.reindex_id or uuid.uuid4().hex)
             doc.status = "pending"
             doc.data.error = None
             doc.data.pending_since = datetime.now(timezone.utc)
@@ -1044,9 +1064,31 @@ class KnowledgeBaseService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=str(exc),
             ) from exc
-        await knowledge.delete_document(document_id)
-        if record.data.reindex_id is not None:
-            await knowledge.delete_document(f"~{document_id}")
+        primary_ids = [document_id]
+        if record.data.has_legacy_alias:
+            # Keep SDK reads routed to the companion after removing the row.
+            kb = await self._storage.get_knowledge_base(
+                owner_id,
+                knowledge_base_id,
+            )
+            if kb is not None:
+                kb.data.retired_vector_aliases.add(f"~{document_id}")
+                await self._storage.upsert_knowledge_base(owner_id, kb)
+            if record.data.owns_legacy_alias:
+                primary_ids.append(f"~{document_id}")
+        for target, ids in (
+            (version_knowledge(knowledge), [document_id]),
+            (knowledge, primary_ids),
+        ):
+            store = target.vector_store
+            if not await store.has_collection(target.collection):
+                continue
+            # A snapshot-based delete must see even unrefreshed uploads.
+            await store.refresh_search(target.collection)
+            for key in ids:
+                await target.delete_document(key)
+            # Once the upload record is gone, residual hits look like SDK rows.
+            await store.refresh_search(target.collection)
         await self._storage.delete_knowledge_document(
             owner_id,
             knowledge_base_id,

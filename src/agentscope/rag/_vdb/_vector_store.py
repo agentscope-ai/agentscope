@@ -164,6 +164,26 @@ class VectorStoreBase(ABC):
                 All vectors inserted later must have this many elements.
         """
 
+    async def ensure_compatible_collection(
+        self,
+        name: str,
+        source: str,
+        dimensions: int,
+    ) -> None:
+        """Ensure a companion whose search scores compare with the source.
+
+        Stores supporting per-collection metrics can inspect the source and
+        validate an existing companion before their results are merged.
+        """
+        del source  # Stores with a fixed metric only need the dimension.
+        if not await self.has_collection(name):
+            await self.create_collection(name, dimensions)
+
+    async def is_search_index_ready(self, collection: str) -> bool:
+        """Check an existing collection without waiting for an index build."""
+        del collection  # Most stores make new collections searchable at once.
+        return True
+
     @abstractmethod
     async def delete_collection(self, name: str) -> None:
         """Delete a collection and all its data.
@@ -204,6 +224,32 @@ class VectorStoreBase(ABC):
                 The records to insert (each carrying a
                 :class:`Chunk` and its embedding vector).
         """
+
+    async def prepare_for_replacement(self, collection: str) -> None:
+        """Make earlier writes visible to deletion in the inactive slot.
+
+        The target collection may not exist on its first use. Stores whose
+        deletions already see pending writes need no preparation.
+        """
+
+    async def refresh_search(self, collection: str) -> None:
+        """Flush deferred search updates on backends with explicit refresh."""
+
+    async def insert_for_publication(
+        self,
+        collection: str,
+        document_id: str,
+        records: list[VectorRecord],
+        metadata_filter: dict[str, Any] | None,
+    ) -> None:
+        """Write one replacement before switching the published document.
+
+        Backends with asynchronous search indexing can wait for the exact
+        write attempt here. Other stores retain their usual insert behavior.
+        """
+        del document_id, metadata_filter
+        if records:
+            await self.insert(collection, records)
 
     @abstractmethod
     async def delete(

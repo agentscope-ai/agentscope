@@ -15,7 +15,9 @@ through the constructor arguments:
 import asyncio
 import heapq
 import math
+import re
 import time
+import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
 from ._vector_store import (
@@ -66,6 +68,7 @@ class MongoDBStore(VectorStoreBase):
     """
 
     _max_search_limit: int = 10_000
+    _publication_timeout = 30.0
 
     def __init__(
         self,
@@ -150,24 +153,7 @@ class MongoDBStore(VectorStoreBase):
         return self._db()[collection]
 
     async def create_collection(self, name: str, dimensions: int) -> None:
-        """Create a new MongoDB collection with a vector search index.
-
-        No-op if the collection already exists.
-
-        Args:
-            name (`str`):
-                The collection name. Typically, the knowledge base ID.
-            dimensions (`int`):
-                The fixed vector dimensionality for this collection.
-        """
-        if await self.has_collection(name):
-            return
-
-        from pymongo.operations import SearchIndexModel
-
-        await self._db().create_collection(name)
-        col = self._col(name)
-
+        """Ensure both the collection and its named vector index exist."""
         fields: list[dict[str, Any]] = [
             {
                 "type": "vector",
@@ -181,13 +167,85 @@ class MongoDBStore(VectorStoreBase):
             for field_path in self._filter_fields
         )
 
-        model = SearchIndexModel(
-            definition={"fields": fields},
-            name=self._index_name,
-            type="vectorSearch",
+        await self._ensure_collection_index(name, {"fields": fields})
+
+    async def _named_index(self, name: str) -> dict | None:
+        """Read the named index independently of collection existence."""
+        cursor = await self._col(name).list_search_indexes(self._index_name)
+        return await anext(aiter(cursor), None)
+
+    async def _ensure_collection_index(
+        self,
+        name: str,
+        definition: dict,
+    ) -> dict:
+        """Resume partial creation and return the serving index definition."""
+        from pymongo.errors import CollectionInvalid, OperationFailure
+        from pymongo.operations import SearchIndexModel
+
+        if not await self.has_collection(name):
+            try:
+                await self._db().create_collection(name)
+            except (CollectionInvalid, OperationFailure):
+                if not await self.has_collection(name):
+                    raise
+        index = await self._named_index(name)
+        if index is None or index.get("status") == "DOES_NOT_EXIST":
+            model = SearchIndexModel(
+                definition=definition,
+                name=self._index_name,
+                type="vectorSearch",
+            )
+            try:
+                await self._col(name).create_search_index(model)
+            except OperationFailure as exc:
+                # A concurrent creator may have installed the same name.
+                if exc.code != 68 and await self._named_index(name) is None:
+                    raise
+        elif active := self._serving_definition(index):
+            return active
+        return await self._ensure_index_ready(name)
+
+    @staticmethod
+    def _vector_field(definition: dict) -> dict:
+        """Select the dense field used by this store's vector queries."""
+        for field in definition.get("fields", []):
+            if field.get("type") == "vector" and field.get("path") == "vector":
+                if field.get("similarity") in {
+                    "cosine",
+                    "euclidean",
+                    "dotProduct",
+                } and field.get("numDimensions"):
+                    return field
+        raise ValueError(
+            "MongoDB index has an incompatible vector definition.",
         )
-        await col.create_search_index(model)
-        await self._wait_for_index_ready(col, name)
+
+    async def ensure_compatible_collection(
+        self,
+        name: str,
+        source: str,
+        dimensions: int,
+    ) -> None:
+        """Build the companion from the primary's actual search index."""
+        definition = await self._ensure_index_ready(source)
+        primary = self._vector_field(definition)
+        if primary["numDimensions"] != dimensions:
+            raise ValueError(
+                f"MongoDB index on {source!r} is incompatible with "
+                f"embedding dimension {dimensions}.",
+            )
+        actual = self._vector_field(
+            await self._ensure_collection_index(name, definition),
+        )
+        if any(
+            primary[key] != actual[key]
+            for key in ("numDimensions", "similarity")
+        ):
+            raise ValueError(
+                f"MongoDB vector index on {name!r} is incompatible with "
+                f"{source!r}: {actual!r} versus {primary!r}.",
+            )
 
     async def delete_collection(self, name: str) -> None:
         """Delete a collection and all its data.
@@ -210,45 +268,58 @@ class MongoDBStore(VectorStoreBase):
         """
         return name in await self._db().list_collection_names()
 
-    async def _wait_for_index_ready(
+    @staticmethod
+    def _serving_definition(index: dict | None) -> dict | None:
+        """Use the active definition while Atlas builds a staged change."""
+        if not index or not index.get("queryable"):
+            return None
+        active = [
+            host["mainIndex"]["definition"]
+            for host in index.get("statusDetail", [])
+            if host.get("mainIndex", {}).get("queryable")
+            and host["mainIndex"].get("definition")
+        ]
+        if active:
+            return active[0] if all(d == active[0] for d in active) else None
+        if index.get("status") == "BUILDING":
+            return None
+        if not index.get("latestDefinition"):
+            raise ValueError(
+                "Queryable MongoDB index has no index definition.",
+            )
+        return index["latestDefinition"]
+
+    async def is_search_index_ready(self, collection: str) -> bool:
+        """Check readiness without making published reads wait for staging."""
+        return (
+            self._serving_definition(await self._named_index(collection))
+            is not None
+        )
+
+    async def _ensure_index_ready(
         self,
-        collection: Any,
-        collection_name: str,
+        collection: str,
         timeout: float = 30.0,
-    ) -> None:
-        """Poll until the vector search index becomes queryable.
-
-        Args:
-            collection:
-                The MongoDB collection handle.
-            collection_name (`str`):
-                The collection name (used in timeout error messages).
-            timeout (`float`, defaults to ``30.0``):
-                Maximum seconds to wait before raising
-                :class:`TimeoutError`.
-
-        Raises:
-            `TimeoutError`:
-                If the index is not queryable within ``timeout`` seconds.
-        """
+    ) -> dict:
+        """Wait for the named index and return its queryable definition."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            async for index in await collection.list_search_indexes(
-                self._index_name,
-            ):
-                if index.get("queryable"):
-                    return
-                break
+            index = await self._named_index(collection)
+            if definition := self._serving_definition(index):
+                return definition
+            if index and index.get("status") == "FAILED":
+                raise RuntimeError(
+                    f"Vector index {self._index_name!r} failed on "
+                    f"{collection!r}. Inspect the build error in Atlas, "
+                    "repair or rebuild the named index, then retry once "
+                    "it is queryable.",
+                )
             await asyncio.sleep(0.5)
 
         raise TimeoutError(
             f"Vector search index {self._index_name!r} on collection "
-            f"{collection_name!r} was not queryable within {timeout}s",
+            f"{collection!r} was not queryable within {timeout}s",
         )
-
-    async def _ensure_index_ready(self, collection: str) -> None:
-        """Ensure the vector search index is queryable before reads."""
-        await self._wait_for_index_ready(self._col(collection), collection)
 
     # ------------------------------------------------------------------
     # Data operations
@@ -273,26 +344,116 @@ class MongoDBStore(VectorStoreBase):
                 The records to insert (each carrying a
                 :class:`Chunk` and its embedding vector).
         """
+        await self._write_records(collection, records, generation=None)
+
+    async def _write_records(
+        self,
+        collection: str,
+        records: list[VectorRecord],
+        generation: str | None,
+    ) -> set[str]:
+        """Keep replacement IDs immutable across search-index lag."""
         if not records:
-            return
+            return set()
+        from pymongo import UpdateOne
 
-        from pymongo import ReplaceOne
-
-        col = self._col(collection)
-        operations = [
-            ReplaceOne(
-                {"_id": f"{record.document_id}_{record.chunk.chunk_index}"},
-                {
-                    "_id": f"{record.document_id}_{record.chunk.chunk_index}",
-                    "document_id": record.document_id,
-                    "vector": record.vector,
-                    "chunk": record.chunk.model_dump(mode="json"),
-                },
-                upsert=True,
+        ids = set()
+        operations = []
+        for record in records:
+            key = f"{record.document_id}_{record.chunk.chunk_index}"
+            if generation is None:
+                # SDK upserts update either the legacy key or its currently
+                # stored generation. The anchored prefix uses the _id index.
+                row_id = key
+                literal = re.escape(key).replace("\x00", r"\x00")
+                selector = re.compile(f"^{literal}(:[0-9a-f]{{32}})?$")
+            else:
+                row_id = f"{key}:{generation}"
+                selector = row_id
+            ids.add(row_id)
+            operations.append(
+                UpdateOne(
+                    {"_id": selector},
+                    {
+                        "$setOnInsert": {"_id": row_id},
+                        "$set": {
+                            "document_id": record.document_id,
+                            "vector": record.vector,
+                            "chunk": record.chunk.model_dump(mode="json"),
+                        },
+                    },
+                    upsert=True,
+                ),
             )
-            for record in records
-        ]
-        await col.bulk_write(operations, ordered=False)
+        await self._col(collection).bulk_write(operations, ordered=False)
+        return ids
+
+    async def insert_for_publication(
+        self,
+        collection: str,
+        document_id: str,
+        records: list[VectorRecord],
+        metadata_filter: dict[str, Any] | None,
+    ) -> None:
+        """Wait for the new physical IDs to surface through vector search."""
+        expected = await self._write_records(
+            collection,
+            records,
+            uuid.uuid4().hex,
+        )
+        definition = await self._ensure_index_ready(collection)
+        filter_paths = {
+            field["path"]
+            for field in definition["fields"]
+            if field["type"] == "filter"
+        }
+        scope = self._build_metadata_filter(metadata_filter)
+        match: dict[str, Any] = {"document_id": document_id}
+        if scope:
+            match = {"$and": [match, *scope["$and"]]}
+        col = self._col(collection)
+        dimensions = self._vector_field(definition)["numDimensions"]
+        # Any nonzero vector can enumerate a fully scoped result set.
+        stage = {
+            "index": self._index_name,
+            "path": "vector",
+            "queryVector": [1.0] + [0.0] * (dimensions - 1),
+        }
+        needed = {"document_id"} | {
+            f"chunk.metadata.{k}" for k in metadata_filter or {}
+        }
+        if needed <= filter_paths:
+            stage["filter"] = match
+        try:
+            async with asyncio.timeout(self._publication_timeout):
+                while True:
+                    limit = len(expected) + 1
+                    if "filter" not in stage:
+                        # Legacy indexes can only apply the scope after search.
+                        limit = max(limit, await col.count_documents({}) + 1)
+                    search = {**stage, "limit": limit}
+                    if limit <= self._max_search_limit:
+                        search["numCandidates"] = min(
+                            self._max_search_limit,
+                            max(100, limit * 20),
+                        )
+                    else:
+                        search["exact"] = True
+                    cursor = await col.aggregate(
+                        [
+                            {"$vectorSearch": search},
+                            {"$match": match},
+                            {"$project": {"_id": 1}},
+                        ],
+                    )
+                    if {doc["_id"] async for doc in cursor} == expected:
+                        return
+                    await asyncio.sleep(0.5)
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"Vector index {self._index_name!r} on {collection!r} did "
+                f"not expose the replacement chunks for {document_id!r}.",
+            ) from exc
 
     async def delete(
         self,
@@ -365,8 +526,12 @@ class MongoDBStore(VectorStoreBase):
                 "ANN limit",
             )
         filter_expr = self._build_metadata_filter(metadata_filter)
+        definition = await self._ensure_index_ready(collection)
         if exclude_document_ids:
-            if "document_id" not in self._filter_fields:
+            if not any(
+                f.get("type") == "filter" and f.get("path") == "document_id"
+                for f in definition.get("fields", [])
+            ):
                 # An existing Atlas index may only cover custom metadata.
                 hits, window_size = await self._search_excluding_window(
                     collection,
@@ -383,13 +548,13 @@ class MongoDBStore(VectorStoreBase):
                     top_k,
                     filter_expr,
                     exclude_document_ids,
+                    self._vector_field(definition)["similarity"],
                 )
             condition = {"document_id": {"$nin": sorted(exclude_document_ids)}}
             if filter_expr:
                 filter_expr["$and"].append(condition)
             else:
                 filter_expr = condition
-        await self._ensure_index_ready(collection)
         col = self._col(collection)
 
         vector_search: dict[str, Any] = {
@@ -433,6 +598,7 @@ class MongoDBStore(VectorStoreBase):
         top_k: int,
         filter_expr: dict[str, Any] | None,
         exclude_document_ids: set[str],
+        similarity: str,
     ) -> list[VectorSearchResult]:
         """Rank eligible vectors beyond a saturated legacy index window."""
         query = {
@@ -450,11 +616,11 @@ class MongoDBStore(VectorStoreBase):
             vector = doc.get("vector")
             if not vector or len(vector) != len(query_vector):
                 continue
-            if self._distance == "euclidean":
+            if similarity == "euclidean":
                 score = 1 / (1 + math.dist(vector, query_vector))
             else:
                 dot = sum(x * y for x, y in zip(vector, query_vector))
-                if self._distance == "cosine":
+                if similarity == "cosine":
                     norm = query_norm * math.hypot(*vector)
                     if not norm:
                         continue

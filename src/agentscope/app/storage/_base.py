@@ -1309,6 +1309,7 @@ class StorageBase(ABC):
         *,
         expected_lease_token: str | None = None,
         alternate_index: bool | None = None,
+        migrate_vector_slot: bool = False,
     ) -> None:
         """Update only the status-related fields of a document record.
 
@@ -1317,6 +1318,10 @@ class StorageBase(ABC):
         ``ready`` / ``error``).  Cheaper than a full upsert and avoids
         races with concurrent lease writes by touching only the status
         / error / chunk_count fields.
+
+        To support reindexing, declare both ``expected_lease_token`` and
+        ``alternate_index`` in the backend method signature and apply them
+        atomically. Backends with the original signature support uploads.
 
         Args:
             user_id (`str`):
@@ -1336,6 +1341,9 @@ class StorageBase(ABC):
                 ``None`` leaves the existing value unchanged.
             alternate_index (`bool | None`, optional):
                 Publish this vector slot atomically with the ready status.
+            migrate_vector_slot (`bool`, optional):
+                Switch a legacy record to the isolated alternate collection
+                atomically with publication.
             expected_lease_token (`str | None`, optional):
                 Atomically update only if ``processing_node`` matches
                 this token. A missing record or mismatched token is a

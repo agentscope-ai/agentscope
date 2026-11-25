@@ -171,7 +171,8 @@ class KnowledgeBase:
         Looks up the collection via
         :meth:`VectorStoreBase.has_collection` and creates it with the
         embedding model's :attr:`~EmbeddingModelBase.dimensions` when
-        absent.
+        absent. Backends with asynchronous index creation also resume an
+        incomplete build before the collection is marked ready.
 
         Raises whatever the backend raises if the collection exists at
         an incompatible dimension (the backend is the authority on
@@ -183,7 +184,11 @@ class KnowledgeBase:
             # Another caller may have initialized while we waited for I/O.
             if self._collection_ready:
                 return
-            if not await self._vector_store.has_collection(self._collection):
+            if not await self._vector_store.has_collection(
+                self._collection,
+            ) or not await self._vector_store.is_search_index_ready(
+                self._collection,
+            ):
                 await self._vector_store.create_collection(
                     self._collection,
                     dimensions=self._embedding_model.dimensions,

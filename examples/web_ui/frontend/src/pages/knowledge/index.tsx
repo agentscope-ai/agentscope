@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 
-import type { KnowledgeBaseView } from '@/api';
+import type { KnowledgeBaseView, KnowledgeDocumentView } from '@/api';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog.tsx';
 import { CreateKnowledgeBaseDialog } from '@/components/dialog/CreateKnowledgeBaseDialog.tsx';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
@@ -42,16 +42,17 @@ import {
 	SidebarMenuItem,
 } from '@/components/ui/sidebar.tsx';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases.ts';
+import { useKnowledgeDocuments } from '@/hooks/useKnowledgeDocuments.ts';
 
 interface DetailPanelProps {
 	knowledgeBase?: KnowledgeBaseView;
-	documentRefreshKey: number;
 	onTest?: () => void;
 	onEdit?: () => void;
 }
 
-function DetailPanel({ knowledgeBase, documentRefreshKey, onTest, onEdit }: DetailPanelProps) {
+function DetailPanel({ knowledgeBase, onTest, onEdit }: DetailPanelProps) {
 	const { t } = useTranslation();
+	const documentState = useKnowledgeDocuments(knowledgeBase?.id ?? null);
 
 	if (!knowledgeBase) {
 		return (
@@ -98,9 +99,13 @@ function DetailPanel({ knowledgeBase, documentRefreshKey, onTest, onEdit }: Deta
 			{/* Configuration + documents */}
 			<div className="min-h-0 flex-1 overflow-y-auto p-[20px_18px_24px]">
 				<div className="flex flex-col gap-y-6">
-					<ConfigCard knowledgeBase={knowledgeBase} onEdit={onEdit} />
+					<ConfigCard
+						knowledgeBase={knowledgeBase}
+						documents={documentState.documents}
+						onEdit={onEdit}
+					/>
 					<KnowledgeDocumentsPanel
-						key={`${knowledgeBase.id}:${documentRefreshKey}`}
+						documentState={documentState}
 						knowledgeBaseId={knowledgeBase.id}
 						editable={knowledgeBase.editable}
 					/>
@@ -127,9 +132,11 @@ function ConfigItem({ label, value }: { label: string; value: string }) {
  */
 function ConfigCard({
 	knowledgeBase,
+	documents,
 	onEdit,
 }: {
 	knowledgeBase: KnowledgeBaseView;
+	documents: KnowledgeDocumentView[] | null;
 	onEdit?: () => void;
 }) {
 	const { t } = useTranslation();
@@ -138,7 +145,16 @@ function ConfigCard({
 
 	// Only worth showing when something is not ready — a KB where every
 	// document indexed cleanly says nothing extra beyond the totals.
-	const counts = knowledgeBase.status_counts;
+	let counts = knowledgeBase.status_counts;
+	let chunks = knowledgeBase.chunk_count;
+	if (documents !== null) {
+		counts = { pending: 0, parsing: 0, chunking: 0, indexing: 0, ready: 0, error: 0 };
+		chunks = 0;
+		for (const doc of documents) {
+			counts[doc.status]++;
+			chunks += doc.chunk_count;
+		}
+	}
 	const unfinished = counts.pending + counts.parsing + counts.chunking + counts.indexing;
 	const statusValue =
 		counts.error > 0 || unfinished > 0
@@ -184,8 +200,8 @@ function ConfigCard({
 				<ConfigItem
 					label={t('knowledge.config.counts')}
 					value={t('knowledge.config.countsValue', {
-						documents: knowledgeBase.document_count,
-						chunks: knowledgeBase.chunk_count,
+						documents: documents?.length ?? knowledgeBase.document_count,
+						chunks,
 					})}
 				/>
 				{statusValue && (
@@ -358,8 +374,8 @@ export const KnowledgePage = () => {
 			</Sidebar>
 			<main className="flex-1 min-h-0 overflow-hidden rounded-[22px] bg-card shadow-panel">
 				<DetailPanel
+					key={`${selectedKb?.id}:${documentRefreshKey}`}
 					knowledgeBase={selectedKb}
-					documentRefreshKey={documentRefreshKey}
 					onTest={() => setTestOpen(true)}
 					onEdit={selectedKb ? () => setEditTarget(selectedKb) : undefined}
 				/>
