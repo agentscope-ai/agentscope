@@ -55,7 +55,6 @@ from ..storage import (
     TeamRecord,
 )
 from ...message import ToolCallState
-from ...state import ToolContext
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...event import CustomEvent
 from ..workspace_manager import WorkspaceManagerBase
@@ -207,6 +206,8 @@ async def list_sessions(
     storage: StorageBase = Depends(get_storage),
     access: ResourceAccessService = Depends(get_resource_access_service),
     message_bus: MessageBus = Depends(get_message_bus),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> ListSessionsResponse:
     """Return all sessions for an agent as enriched
     :class:`SessionView` entries.
@@ -235,6 +236,10 @@ async def list_sessions(
             the target agent is visible to the viewer.
         message_bus (`MessageBus`):
             Injected message bus (used for ``session_is_running``).
+        limit (`int | None`):
+            Maximum number of sessions; omitted for the legacy full list.
+        offset (`int`):
+            Number of sessions to skip in newest-first order.
 
     Returns:
         `ListSessionsResponse`:
@@ -248,9 +253,15 @@ async def list_sessions(
     # only ever sees their own runs of a shared agent.
     await access.resolve_agent(user_id, agent_id)
 
-    sessions = await storage.list_sessions(user_id, agent_id)
+    sessions, total = await storage.list_sessions_page(
+        user_id,
+        agent_id,
+        limit=limit,
+        offset=offset,
+    )
     views: list[SessionView] = []
-    for session in sessions:
+    for item in sessions:
+        session = item.session
         team_detail = None
         if session.team_id:
             team_record = await storage.get_team(user_id, session.team_id)
@@ -264,35 +275,21 @@ async def list_sessions(
         is_running = await message_bus.is_locked(
             MessageBusKeys.session_lock(session.id),
         )
-        # Derived before the trim below, which drops the context it reads.
+        # The live lease overrides the persisted tail tool-call states.
         session_status = (
             SessionStatus.RUNNING
             if is_running
-            else SessionService.derive_parked_status(session.state.context)
+            else SessionService.derive_tool_call_status(item.tool_call_states)
         )
         views.append(
             SessionView(
-                # ``context`` is the conversation the model sees,
-                # ``summary`` its compressed form, and ``tool_context``
-                # caches every file read — megabytes a session, none of
-                # which a sidebar renders.
-                session=session.model_copy(
-                    update={
-                        "state": session.state.model_copy(
-                            update={
-                                "context": [],
-                                "summary": "",
-                                "tool_context": ToolContext(),
-                            },
-                        ),
-                    },
-                ),
+                session=session,
                 is_running=is_running,
                 status=session_status,
                 team=team_detail,
             ),
         )
-    return ListSessionsResponse(sessions=views, total=len(views))
+    return ListSessionsResponse(sessions=views, total=total)
 
 
 @session_router.post(

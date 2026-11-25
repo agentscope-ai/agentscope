@@ -23,6 +23,7 @@ import sqlalchemy as sa
 
 from .._base import StorageBase
 from .._model._session import _origin_kwargs
+from .._model._session_list import SessionListItem
 from .._model import (
     AgentRecord,
     ChannelRecord,
@@ -43,6 +44,7 @@ from .._model import (
 )
 from .._utils import _dump_with_secrets
 from ._mappers import _from_record, _to_record
+from ._session_list import read_session_list_batch, read_sqlite_session_page
 from ._tables import (
     _Base,
     AgentRow,
@@ -1330,6 +1332,84 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 .all()
             )
         return [_to_record(r, SessionRecord) for r in rows]
+
+    async def list_sessions_page(
+        self,
+        user_id: str,
+        agent_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[SessionListItem], int]:
+        """Read a page of trimmed records in creation order.
+
+        Keep ``list_sessions`` unchanged for full-record consumers. JSON
+        projections also support old rows without a data backfill.
+        """
+        if offset < 0 or (limit is not None and limit < 1):
+            raise ValueError("offset must be >= 0 and limit must be >= 1")
+        async with self._session() as sess:
+            dialect = sess.bind.dialect.name
+            if dialect not in ("sqlite", "postgresql", "mysql"):
+                return await super().list_sessions_page(
+                    user_id,
+                    agent_id,
+                    limit=limit,
+                    offset=offset,
+                )
+            filters = (
+                SessionRow.user_id == user_id,
+                SessionRow.agent_id == agent_id,
+            )
+            paginated = limit is not None or offset > 0
+            if paginated and dialect == "sqlite":
+                return await read_sqlite_session_page(
+                    sess,
+                    *filters,
+                    limit=limit,
+                    offset=offset,
+                )
+            # PostgreSQL batch reads need a savepoint even for a full list.
+            if dialect == "postgresql" or paginated:
+                await sess.connection(
+                    execution_options={"isolation_level": "REPEATABLE READ"},
+                )
+            total = None
+            if paginated:
+                total = await sess.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(SessionRow)
+                    .where(*filters),
+                )
+                if offset >= total:
+                    return [], total
+            ids = list(
+                await sess.scalars(
+                    sa.select(SessionRow.id)
+                    .where(*filters)
+                    .order_by(
+                        SessionRow.created_at.desc(),
+                        SessionRow.id.desc(),
+                    )
+                    .limit(limit)
+                    .offset(offset),
+                ),
+            )
+            items = []
+            # MySQL can sort the original JSON even when SELECT removes
+            # heavy fields. Sort only IDs, then read without ORDER BY.
+            # Bound IN parameters for legacy unpaginated requests too.
+            for start in range(0, len(ids), 200):
+                batch = ids[start : start + 200]
+                by_id = await read_session_list_batch(
+                    sess,
+                    dialect,
+                    *filters,
+                    SessionRow.id.in_(batch),
+                )
+                # A concurrent delete can occur between the reads.
+                items.extend(by_id[key] for key in batch if key in by_id)
+        return items, len(items) if total is None else total
 
     async def get_session(
         self,
