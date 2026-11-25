@@ -19,8 +19,10 @@ issue #2360:
 import io
 import tempfile
 from email.message import EmailMessage
+from types import SimpleNamespace
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
@@ -49,8 +51,9 @@ from agentscope.app.storage import (
     KnowledgeDocumentRecord,
 )
 from agentscope.credential import OpenAICredential
+from agentscope.embedding import EmbeddingModelBase
 from agentscope.message import TextBlock
-from agentscope.rag import Chunk
+from agentscope.rag import Chunk, ElasticsearchStore, KnowledgeBase
 from agentscope.rag._vdb._vector_store import VectorRecord
 
 
@@ -281,6 +284,66 @@ class DocumentChunkBrowsingUnsupportedTest(_KnowledgeBaseDetailTestBase):
                 headers={"X-User-ID": "user-1"},
             )
             self.assertEqual(response.status_code, 501)
+
+
+class DocumentDeletionTest(_KnowledgeBaseDetailTestBase):
+    """A partial vector deletion must leave the document retryable."""
+
+    def test_incomplete_elasticsearch_delete_can_be_retried(self) -> None:
+        """A version conflict preserves the record and the original file."""
+        elasticsearch = SimpleNamespace(
+            indices=SimpleNamespace(exists=AsyncMock(return_value=True)),
+            delete_by_query=AsyncMock(
+                side_effect=[
+                    {"deleted": 4, "version_conflicts": 1},
+                    {"deleted": 1, "version_conflicts": 0},
+                ],
+            ),
+        )
+        store = ElasticsearchStore(hosts="http://localhost:9200")
+        knowledge = KnowledgeBase(
+            name="kb",
+            description="",
+            embedding_model=AsyncMock(spec=EmbeddingModelBase),
+            vector_store=store,
+            collection=f"kb_{self._kb_id}",
+        )
+        state = self._app.state
+        path = f"/knowledge_bases/{self._kb_id}/documents/doc-1"
+        headers = {"X-User-ID": "user-1"}
+        with (
+            TestClient(self._app, raise_server_exceptions=False) as client,
+            patch.object(store, "get_client", return_value=elasticsearch),
+            patch.object(
+                state.knowledge_base_manager,
+                "get_knowledge",
+                return_value=knowledge,
+            ),
+        ):
+            record = client.portal.call(
+                state.storage.get_knowledge_document,
+                "user-1",
+                self._kb_id,
+                "doc-1",
+            )
+
+            response = client.delete(path, headers=headers)
+            self.assertEqual(response.status_code, 500)
+            response = client.get(path, headers=headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.content, self._file_bytes)
+
+            response = client.delete(path, headers=headers)
+            self.assertEqual(response.status_code, 204)
+            self.assertEqual(elasticsearch.delete_by_query.await_count, 2)
+            response = client.get(path, headers=headers)
+            self.assertEqual(response.status_code, 404)
+            self.assertFalse(
+                client.portal.call(
+                    self._blob_store.exists,
+                    record.data.blob_uri,
+                ),
+            )
 
 
 class DocumentContentTest(_KnowledgeBaseDetailTestBase):
