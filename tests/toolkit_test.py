@@ -5,6 +5,7 @@ import base64
 import json
 import operator
 from collections import Counter
+from enum import Enum
 from functools import partial
 from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
 from unittest import TestCase
@@ -1665,6 +1666,107 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 ],
             },
         )
+
+    async def test_arguments_are_converted_to_annotated_types(self) -> None:
+        """The schema generated from the signature advertises the
+        annotated types, so the JSON arguments reach the function as
+        instances of those types."""
+
+        class Address(BaseModel):
+            """A postal address."""
+
+            city: str
+            zip_code: str
+
+        class Unit(str, Enum):
+            """A temperature unit."""
+
+            CELSIUS = "celsius"
+            FAHRENHEIT = "fahrenheit"
+
+        received = {}
+
+        def ship(
+            address: Address,
+            unit: Unit = Unit.CELSIUS,
+            stops: list[Address] | None = None,
+            note: Any = None,
+        ) -> str:
+            """Ship a parcel.
+
+            Args:
+                address: The destination.
+                unit: The temperature unit.
+                stops: The stops on the way.
+                note: A free-form note.
+            """
+            received.update(address=address, unit=unit, stops=stops, note=note)
+            return address.city
+
+        toolkit = Toolkit(tools=[FunctionTool(ship)])
+        tool_input = {
+            "address": {"city": "Kyoto", "zip_code": "600"},
+            "unit": "fahrenheit",
+            "stops": [{"city": "Osaka", "zip_code": "530"}],
+            "note": {"fragile": True},
+        }
+        chunks = [
+            chunk
+            async for chunk in toolkit.call_tool(
+                ToolCallBlock(
+                    id="1",
+                    name="ship",
+                    input=json.dumps(tool_input),
+                ),
+                AgentState(),
+            )
+        ]
+
+        self.assertEqual(chunks[-1].content[0].text, "Kyoto")
+        self.assertEqual(
+            received["address"],
+            Address(city="Kyoto", zip_code="600"),
+        )
+        self.assertIs(received["unit"], Unit.FAHRENHEIT)
+        self.assertEqual(
+            received["stops"],
+            [Address(city="Osaka", zip_code="530")],
+        )
+        # ``Any`` keeps the JSON value as it is
+        self.assertEqual(received["note"], {"fragile": True})
+
+    async def test_custom_schema_arguments_are_passed_as_given(self) -> None:
+        """A custom schema may differ from the signature, so its arguments
+        are not converted."""
+
+        received = []
+
+        def count(items: tuple[int, ...]) -> str:
+            """Count the items."""
+            received.append(items)
+            return str(len(items))
+
+        toolkit = Toolkit(
+            tools=[
+                FunctionTool(
+                    count,
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "items": {"type": "array"},
+                        },
+                        "required": ["items"],
+                    },
+                ),
+            ],
+        )
+        async for _ in toolkit.call_tool(
+            ToolCallBlock(id="1", name="count", input='{"items": [1, 2]}'),
+            AgentState(),
+        ):
+            pass
+
+        self.assertEqual(received, [[1, 2]])
 
     async def test_custom_input_schema(self) -> None:
         """Test overriding the auto-extracted schema with a custom one."""
