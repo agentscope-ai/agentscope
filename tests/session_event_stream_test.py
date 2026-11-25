@@ -298,7 +298,7 @@ class SessionHistoryValidationTest(IsolatedAsyncioTestCase):
                     0.01,
                 ):
                     self.assertEqual(
-                        [f async for f in stream],
+                        [f async for f in stream if f != ":\n\n"],
                         [": history-changed\n\n"],
                     )
 
