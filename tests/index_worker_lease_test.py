@@ -137,7 +137,7 @@ class _SlowPipelineWorker(IndexWorker):
 class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
     """Pipeline-vs-heartbeat race coverage."""
 
-    async def test_lost_lease_cancels_pipeline_and_marks_error(self) -> None:
+    async def test_lost_lease_cancels_pipeline_without_writing(self) -> None:
         """Renew returning False mid-pipeline must abort the pipeline.
 
         Otherwise the original worker keeps running while the new
@@ -170,13 +170,9 @@ class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
             "Pipeline ran to completion despite the lost lease.",
         )
 
-        # _mark_error must have recorded the lost-lease reason.
-        errors = [u for u in storage.status_updates if u["status"] == "error"]
-        self.assertEqual(len(errors), 1)
-        self.assertIn("Lost lease", errors[0]["error"])
-
-        # Release is still called (and is a safe no-op server-side).
-        self.assertEqual(len(storage.released), 1)
+        # A failed renewal no longer authorises shared-record writes.
+        self.assertEqual(storage.status_updates, [])
+        self.assertEqual(storage.released, [])
 
     async def test_happy_path_cancels_heartbeat_and_releases(self) -> None:
         """Normal completion still tears the heartbeat down cleanly."""
