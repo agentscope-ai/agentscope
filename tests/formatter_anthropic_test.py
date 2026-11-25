@@ -343,6 +343,44 @@ class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
+    async def test_chat_formatter_uppercase_base64_image_media_type(
+        self,
+    ) -> None:
+        """A mixed-case MIME type is matched case-insensitively."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="IMAGE/PNG",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": self.image_b64,
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_percent_encoded_local_image(self) -> None:
         """Local file:// image paths with spaces and '#' are decoded."""
         image_bytes = b"spaced-name-bytes"
