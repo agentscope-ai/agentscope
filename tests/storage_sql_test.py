@@ -34,7 +34,7 @@ from utils import AnyString
 
 from agentscope.app.storage._sql._mappers import _to_record
 from agentscope.app.storage._sql import _storage as sql_storage
-from agentscope.app.storage._sql._tables import AgentRow, SessionRow
+from agentscope.app.storage._sql._tables import AgentRow, SOPRunRow, SessionRow
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -221,6 +221,22 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await self._stack.aclose()
+
+    async def _collapse_timestamps(self, row_cls: Any) -> None:
+        """Give every row of *row_cls* the same ``created_at``.
+
+        ``_JsonRecordMixin`` declares ``created_at`` as a plain
+        ``DateTime()``, which MySQL keeps to whole seconds, so records
+        written in one second really do tie. Collapsing them here
+        reproduces that without a MySQL server.
+        """
+        async with self.storage._session() as sess:
+            await sess.execute(
+                sa.update(row_cls).values(
+                    created_at=datetime(2026, 1, 1, 12, 0, 0),
+                ),
+            )
+            await sess.commit()
 
     # ------------------------------------------------------------------
     # Credentials
@@ -455,6 +471,65 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             session.id,
         )
         self.assertEqual(fetched.team_id, "team-9")
+
+    async def test_tied_sessions_list_in_a_total_order(self) -> None:
+        """Sessions sharing a ``created_at`` still come back in one order.
+
+        ``created_at`` is a plain ``DateTime()`` — whole seconds on MySQL
+        — so a burst of sessions opened by one channel or schedule can
+        share a timestamp. Ordering by ``created_at`` alone then leaves
+        the order to the storage engine, and the callers that read
+        ``sessions[0]`` as "the newest" (the per-agent workspace binding,
+        team-member migration) can pick a different row on the next call.
+        ``list_messages`` already breaks such ties on the id; these
+        listings have to do the same.
+        """
+        agent = _agent_record("user-1")
+        await self.storage.upsert_agent("user-1", agent)
+
+        # ids chosen so that "newest first" is not insertion order.
+        for session_id in ("s2", "s3", "s1"):
+            await self.storage.upsert_session(
+                user_id="user-1",
+                agent_id=agent.id,
+                config=_session_config(),
+                session_id=session_id,
+                origin=ScheduleOrigin(schedule_id="sch-1"),
+            )
+        for session_id in ("c2", "c3", "c1"):
+            await self.storage.upsert_session(
+                user_id="user-1",
+                agent_id=agent.id,
+                config=_session_config(),
+                session_id=session_id,
+                origin=ChannelOrigin(channel_id="chan-1", chat_id="chat-1"),
+            )
+
+        await self._collapse_timestamps(SessionRow)
+
+        listed = await self.storage.list_sessions("user-1", agent.id)
+        self.assertEqual(
+            [session.id for session in listed],
+            ["s3", "s2", "s1", "c3", "c2", "c1"],
+        )
+
+        by_schedule = await self.storage.list_sessions_by_schedule(
+            "user-1",
+            "sch-1",
+        )
+        self.assertEqual(
+            [session.id for session in by_schedule],
+            ["s3", "s2", "s1"],
+        )
+
+        by_channel = await self.storage.list_sessions_by_channel(
+            "user-1",
+            "chan-1",
+        )
+        self.assertEqual(
+            [session.id for session in by_channel],
+            ["c3", "c2", "c1"],
+        )
 
     async def test_update_session_state_missing_raises(self) -> None:
         """Updating an absent session raises :class:`KeyError`."""
@@ -834,6 +909,27 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             {waiting.id, other.id},
         )
         self.assertEqual(await self.storage.list_sop_runs("user-2"), [])
+
+    async def test_tied_sop_runs_list_in_a_total_order(self) -> None:
+        """Runs sharing a ``created_at`` come back in one order too."""
+        for run_id in ("r2", "r3", "r1"):
+            await self.storage.upsert_sop_run(
+                "user-1",
+                SOPRunRecord(
+                    id=run_id,
+                    user_id="user-1",
+                    sop_id="sop-1",
+                    definition=SOPData(name="a", steps=[_A_STEP]),
+                    state=SOPRunState(steps=[SOPStepRunState()]),
+                ),
+            )
+
+        await self._collapse_timestamps(SOPRunRow)
+
+        self.assertEqual(
+            [_.id for _ in await self.storage.list_sop_runs("user-1")],
+            ["r3", "r2", "r1"],
+        )
 
     async def test_update_sop_run_writes_the_run_and_not_the_snapshot(
         self,
