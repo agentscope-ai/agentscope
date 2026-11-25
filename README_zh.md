@@ -61,6 +61,8 @@
 <img src="https://trendshift.io/api/badge/repositories/20310" alt="agentscope-ai%2Fagentscope | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
 </p>
 
+本 fork 的企业业务接入设计与首个制单验收用例见[企业业务助手方案](docs/enterprise-assistant-plan.zh.md)。
+
 ## What's AgentScope 2.0？
 
 AgentScope 2.0 是一款面向生产、易于使用的智能体框架，提供与不断进化的模型能力相匹配的核心抽象。
@@ -96,6 +98,8 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 
 
 ## 快速开始
+
+[用元境 ERP 采购入库单跑通源码提取、工具生成和试运行](examples/business_tools/purchase_receipt/README.md)
 
 ### 安装
 

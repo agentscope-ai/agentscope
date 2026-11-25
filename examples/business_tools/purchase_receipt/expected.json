@@ -1,0 +1,96 @@
+[
+  {
+    "patch": {},
+    "rows": [
+      {
+        "damageAmount": 0,
+        "damageSelectAmount": 0,
+        "payableAmount": 32,
+        "factoryDeduction": 32,
+        "inCostAmount": 32,
+        "inUnitPrice": 3.555556
+      },
+      {
+        "damageAmount": 0,
+        "damageSelectAmount": 0,
+        "payableAmount": 21,
+        "factoryDeduction": 21,
+        "inCostAmount": 21,
+        "inUnitPrice": 7
+      }
+    ],
+    "total": 53
+  },
+  {
+    "patch": {
+      "expectPcs": 5
+    },
+    "rows": [
+      {
+        "damageAmount": 0,
+        "damageSelectAmount": 0,
+        "payableAmount": 32,
+        "factoryDeduction": 32,
+        "inCostAmount": 32,
+        "inUnitPrice": 3.555556
+      },
+      {
+        "damageAmount": 0,
+        "damageSelectAmount": 0,
+        "payableAmount": 26,
+        "factoryDeduction": 26,
+        "inCostAmount": 26,
+        "inUnitPrice": 8.666667
+      }
+    ],
+    "total": 58
+  },
+  {
+    "patch": {
+      "factoryPricePcs": 5.00125
+    },
+    "rows": [
+      {
+        "damageAmount": 0,
+        "damageSelectAmount": 0,
+        "payableAmount": 32,
+        "factoryDeduction": 32,
+        "inCostAmount": 32,
+        "inUnitPrice": 3.555556
+      },
+      {
+        "damageAmount": 0,
+        "damageSelectAmount": 0,
+        "payableAmount": 21.01,
+        "factoryDeduction": 21.01,
+        "inCostAmount": 21.01,
+        "inUnitPrice": 7.003333
+      }
+    ],
+    "total": 53.01
+  },
+  {
+    "patch": {
+      "factoryPricePcs": 6
+    },
+    "rows": [
+      {
+        "damageAmount": 0,
+        "damageSelectAmount": 0,
+        "payableAmount": 32,
+        "factoryDeduction": 32,
+        "inCostAmount": 32,
+        "inUnitPrice": 3.555556
+      },
+      {
+        "damageAmount": 0,
+        "damageSelectAmount": 0,
+        "payableAmount": 25,
+        "factoryDeduction": 25,
+        "inCostAmount": 25,
+        "inUnitPrice": 8.333333
+      }
+    ],
+    "total": 57
+  }
+]

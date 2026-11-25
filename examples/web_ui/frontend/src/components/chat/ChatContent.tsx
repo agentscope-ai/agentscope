@@ -12,7 +12,7 @@ import { GitBranch, TriangleAlert } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import type { GitStatus } from '@/api';
-import type { ChatQueueItem } from '@/api/chat';
+import type { CardQuote, ChatQueueItem } from '@/api/chat';
 import { ASMessageBubble, SteeringMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
 import { ClientToolsMenu } from '@/components/chat/ClientToolsMenu';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
@@ -92,7 +92,7 @@ interface ChatContentProps {
 	queueReorderDisabled: boolean;
 	activeReplyId: string | null;
 	disabled: boolean;
-	onSend: (content: ContentBlock[]) => Promise<void> | void;
+	onSend: (content: ContentBlock[], quote?: CardQuote) => Promise<void> | void;
 	onUserConfirm: (
 		toolCall: ToolCallBlock,
 		confirm: boolean,
@@ -314,6 +314,10 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 											)}
 											<ASMessageBubble
 												message={message}
+												onCardReply={onSend}
+												cardDisabled={
+													disabled || Boolean(pendingExternalTool)
+												}
 												onUserConfirm={onUserConfirm}
 											/>
 										</MessageScrollerItem>

@@ -145,9 +145,10 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
                 continue
 
             # For the ReplyEndEvent
-            if self._last_tool_call_reports_to_leader(agent):
-                # The report has been delivered successfully, so let the
-                # original reply-end event escape the middleware chain.
+            if (
+                agent.remaining_total_iters == 0
+                or self._last_tool_call_reports_to_leader(agent)
+            ):
                 yield evt
                 continue
 
@@ -184,7 +185,7 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
             if evt.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
                 instruction = (
                     "<system-reminder>You have reached the maximum number "
-                    f"of ReAct iterations ({agent.react_config.max_iters}). "
+                    f"of ReAct iterations ({agent.reply_iteration_limit}). "
                     "Call `TeamSay` now to report to the leader and ask for "
                     "permission to continue.</system-reminder>"
                 )
@@ -202,7 +203,7 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
             # agent rejects as a swallow-without-progress loop.
             agent.state.cur_iter = min(
                 agent.state.cur_iter,
-                agent.react_config.max_iters - 1,
+                agent.reply_iteration_limit - 1,
             )
 
             hint_block = HintBlock(

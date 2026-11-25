@@ -2,18 +2,42 @@ import { useQuery } from '@tanstack/react-query';
 
 import { credentialApi, modelApi } from '@/api';
 import type { CredentialView, ModelCard } from '@/api';
+import { getUserId } from '@/api/client';
 
 export interface CredentialWithModels {
 	credential: CredentialView;
 	models: ModelCard[];
 }
 
+function distinctOwnedOpenAICredentials(credentials: CredentialView[]) {
+	const owner = getUserId();
+	const seen = new Set<string>();
+
+	return credentials.filter(({ user_id, data }) => {
+		if (
+			user_id !== owner ||
+			data.type !== 'openai_credential' ||
+			typeof data.api_key !== 'string'
+		) {
+			return true;
+		}
+		const settings = Object.keys(data)
+			.filter((key) => key !== 'id')
+			.sort()
+			.map((key) => [key, data[key]]);
+		const signature = JSON.stringify(settings);
+		if (seen.has(signature)) return false;
+		seen.add(signature);
+		return true;
+	});
+}
+
 /**
  * Fetches all credentials and their available models, grouped by provider type.
  * Provider type is read from `credential.data.type`.
- * Credentials without a `type` field or whose model fetch fails are silently skipped.
+ * Each credential can expose a different set of models.
  *
- * One credential list plus one model list per provider — the most expensive
+ * One credential list plus one model list per credential — the most expensive
  * fan-out on the page, and every model picker in the app mounts it. Cached
  * under a shared query key that credential mutations invalidate.
  */
@@ -22,12 +46,12 @@ async function fetchGroups(): Promise<Record<string, CredentialWithModels[]>> {
 	const result: Record<string, CredentialWithModels[]> = {};
 
 	await Promise.all(
-		credentials.map(async (credential) => {
+		distinctOwnedOpenAICredentials(credentials).map(async (credential) => {
 			const type = credential.data.type as string | undefined;
 			if (!type) return;
 			if (!result[type]) result[type] = [];
 			try {
-				const { models } = await modelApi.list(type);
+				const { models } = await modelApi.list(type, credential.id);
 				// Newest releases first; unknown dates last, then model name.
 				result[type].push({
 					credential,

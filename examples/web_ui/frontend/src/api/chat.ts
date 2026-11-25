@@ -7,6 +7,9 @@ import {
 	getEnabledClientExternalToolDefinitions,
 } from '@/lib/client-external-tool-store';
 
+/** The persisted assistant message and the particular list result within it. */
+export type CardQuote = { message_id: string; tool_call_id: string };
+
 export interface ChatQueueItem {
 	/** Stable business id used by queue mutation endpoints. */
 	id: string;

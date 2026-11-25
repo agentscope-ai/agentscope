@@ -20,6 +20,7 @@ from pydantic import (
 
 from ._builtin import ResetTools, SkillViewer
 from ._base import ToolBase
+from ._business_search import BusinessToolSearch, PublishedBusinessTool
 from ._response import ToolResponse, ToolChunk
 from ..skill import SkillLoaderBase, Skill
 from ._types import RegisteredTool
@@ -171,6 +172,8 @@ class Toolkit:
     async def get_tool_schemas(
         self,
         groups: list[str] | None = None,
+        *,
+        state: AgentState | None = None,
     ) -> list[dict]:
         """Get the JSON schemas of the currently available tool functions
         based on the given activated tool groups.
@@ -182,7 +185,12 @@ class Toolkit:
             groups (`list[str] | None`, optional):
                 A list of group names to filter the tool function. The "basic"
                 group will always be included regardless of the filter. If not
-                provided, only the "basic" group will be included.
+                provided, use the groups in state, or just "basic" if no
+                state is supplied.
+            state (`AgentState | None`, optional):
+                In a text conversation, expose the search entry and the
+                session's selected business tools. Omit for a static schema
+                list.
 
         Example:
             .. code-block:: JSON
@@ -216,9 +224,15 @@ class Toolkit:
         function_schemas = []
 
         # Get all available tools
+        if groups is None and state is not None:
+            groups = state.tool_context.activated_groups
         tools_dict = await self._get_available_tools(groups)
-        for tool in tools_dict.values():
-            function_schemas.append(tool.get_tool_schema())
+        for entry in tools_dict.values():
+            tool = entry.tool
+            if isinstance(tool, (BusinessToolSearch, PublishedBusinessTool)):
+                if not await tool.show_schema(state):
+                    continue
+            function_schemas.append(entry.get_tool_schema())
 
         return function_schemas
 
@@ -309,6 +323,13 @@ class Toolkit:
                 and not tool_func.is_external_tool
             ):
                 kwargs["_agent_state"] = state
+
+            if tool_func.bind_confirmation is not None:
+                # Keep host approval metadata separate from model arguments.
+                kwargs = {
+                    "_confirmation_id": tool_call.confirmation_id,
+                    "_confirmed_inputs": kwargs,
+                }
 
             if inspect.iscoroutinefunction(tool_func.__call__):
                 res = await tool_func(**kwargs)
@@ -560,6 +581,21 @@ class Toolkit:
                     group=group.name,
                 )
 
+        catalog = [
+            entry.tool
+            for entry in available_tools.values()
+            if isinstance(entry.tool, PublishedBusinessTool)
+            and entry.tool.business
+        ]
+        if catalog:
+            name = "search_business_tools"
+            suffix = 1
+            while name in available_tools:
+                suffix += 1
+                name = f"search_business_tools_{suffix}"
+            available_tools[name] = RegisteredTool(
+                tool=BusinessToolSearch(name, catalog),
+            )
         return available_tools
 
     async def check_tool_available(
@@ -607,6 +643,30 @@ class Toolkit:
             )
 
         return tools[tool_name].tool
+
+    def deny_confirmation(self, call: ToolCallBlock) -> None:
+        """Notify the host using the original, server-bound call."""
+        if call.confirmation_id is None:
+            return
+        # These callbacks belong to the host. Rejecting a pending call does not
+        # need to connect to an MCP server or activate a tool group.
+        tools = {
+            tool.name: tool
+            for group in self.tool_groups
+            for tool in group.tools
+        }
+        candidates = (
+            [tools[call.name]] if call.name in tools else tools.values()
+        )
+        for tool in candidates:
+            handlers = tool.confirmation_denials
+            if handlers and call.name in handlers:
+                handlers[call.name](call.confirmation_id)
+                return
+        if call.name not in tools:
+            raise ToolNotFoundError(
+                f"Cannot resolve the pending confirmation for '{call.name}'.",
+            )
 
     async def get_tool(self, name: str) -> ToolBase | None:
         """Get tool instance by its name.

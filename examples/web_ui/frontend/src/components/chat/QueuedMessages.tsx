@@ -231,19 +231,22 @@ export function QueuedMessages({
 								</>
 							) : (
 								<>
-									{activeReplyId && (
-										<QueueActionButton
-											disabled={steering}
-											label={t('chatQueue.steer')}
-											onClick={() =>
-												void run(item.id, () =>
-													onSteer(item.id, activeReplyId),
-												)
-											}
-										>
-											<CornerDownRight className="size-3.5" />
-										</QueueActionButton>
-									)}
+									{activeReplyId &&
+										!(
+											Array.isArray(item.input) ? item.input : [item.input]
+										).some((msg) => msg.metadata?.row_card_reply) && (
+											<QueueActionButton
+												disabled={steering}
+												label={t('chatQueue.steer')}
+												onClick={() =>
+													void run(item.id, () =>
+														onSteer(item.id, activeReplyId),
+													)
+												}
+											>
+												<CornerDownRight className="size-3.5" />
+											</QueueActionButton>
+										)}
 									<QueueActionButton
 										disabled={reorderBusy || index === 0}
 										label={t('chatQueue.moveUp')}

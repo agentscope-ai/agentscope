@@ -19,3 +19,9 @@ class ListModelsRequest(BaseModel):
     provider: str = Field(
         description="The provider type, e.g. openai, dashscope, etc.",
     )
+    credential_id: str | None = Field(
+        default=None,
+        description=(
+            "Select a stored credential's model catalog when available."
+        ),
+    )

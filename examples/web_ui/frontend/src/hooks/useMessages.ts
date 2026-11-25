@@ -17,7 +17,7 @@ import { useState, useCallback, useRef, useEffect, useMemo, useLayoutEffect } fr
 import { toast } from 'sonner';
 
 import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
-import type { ChatQueueItem } from '@/api/chat';
+import type { CardQuote, ChatQueueItem } from '@/api/chat';
 import { useAudioManager } from '@/context/AudioContext';
 import {
 	getQueueMessages,
@@ -127,6 +127,7 @@ export function useMessages(
 		 * the session list to pick the new one up.
 		 */
 		onSessionUpdated?: () => void;
+		onToolLoginChanged?: () => void;
 		/** True when a dedicated realtime transport already plays PCM audio. */
 		isRealtimeAudioActive?: () => boolean;
 		/** Send a tool confirmation over the active realtime transport. */
@@ -262,6 +263,8 @@ export function useMessages(
 					optionsRef.current?.onTeamUpdated?.();
 				} else if (custom.name === 'state_updated' && custom.value) {
 					optionsRef.current?.onStateUpdated?.(custom.value as Record<string, unknown>);
+				} else if (custom.name === 'tool_login_changed') {
+					optionsRef.current?.onToolLoginChanged?.();
 				} else if (custom.name === 'session_updated') {
 					optionsRef.current?.onSessionUpdated?.();
 				} else if (custom.name === 'subagent_require_user_confirm') {
@@ -558,10 +561,14 @@ export function useMessages(
 	 * @param content - The message content blocks.
 	 */
 	const send = useCallback(
-		async (content: ContentBlock[]) => {
+		async (content: ContentBlock[], quote?: CardQuote) => {
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
-			const userMsg = UserMsg({ name: 'user', content });
+			const userMsg = UserMsg({
+				name: 'user',
+				content,
+				metadata: quote ? { row_card_reply: quote } : {},
+			});
 			const showInConversationImmediately = phase === 'idle' && pendingQueueCount === 0;
 			if (showInConversationImmediately) {
 				msgsRef.current = [...msgsRef.current, userMsg];

@@ -28,6 +28,7 @@ import {
 import * as mime from 'mime-types';
 import { memo, useEffect, useRef, useState } from 'react';
 
+import { RowResultCard, type SendCardReply } from './RowResultCard';
 import { renderToolCall } from './tool-renderers';
 import { countDiffStats, DiffStats, getResultDiff } from './tool-renderers/_shared';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
@@ -460,6 +461,8 @@ function summarizeToolGroup(calls: ToolCallWithResult[], t: TFunction) {
 
 interface MessageBubbleProps {
 	message: Msg;
+	onCardReply?: SendCardReply;
+	cardDisabled?: boolean;
 	onUserConfirm: (
 		toolCallBlock: ToolCallBlock,
 		confirm: boolean,
@@ -485,7 +488,7 @@ interface MessageBubbleProps {
  * When `content` is empty and the message is still running, the bubble
  * body is omitted entirely so only the bottom status row renders.
  */
-function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
+function ASMessageBubbleComponent({ message, onCardReply, cardDisabled }: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
 
@@ -530,6 +533,9 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 	return (
 		<Message align={isUser ? 'end' : 'start'} data-role={message.role}>
 			<MessageContent className="gap-1">
+				{isUser && Boolean(message.metadata?.row_card_reply) && (
+					<span className="text-xs text-muted-foreground">{t('rowCard.quoted')}</span>
+				)}
 				{blocks
 					.filter((block) => block.type !== 'data')
 					.map((block, index) =>
@@ -551,6 +557,19 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 								</BubbleContent>
 							</Bubble>
 						),
+					)}
+				{message.role === 'assistant' &&
+					onCardReply &&
+					message.content.map((block) =>
+						block.type === 'tool_result' && block.name.startsWith('query_recent_') ? (
+							<RowResultCard
+								key={block.id}
+								messageId={message.id}
+								result={block}
+								onSend={onCardReply}
+								disabled={Boolean(cardDisabled || isRunning)}
+							/>
+						) : null,
 					)}
 				{message.finished_reason === ReplyFinishedReason.ERROR && (
 					<Alert
