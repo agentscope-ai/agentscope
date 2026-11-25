@@ -1144,6 +1144,56 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_reconnect_forgets_the_previous_response(self) -> None:
+        """A reopened session cannot cancel the closed session's reply.
+
+        The response id and tool-call bookkeeping belong to one session;
+        carrying them into the next one makes the first turn cancel a
+        reply the provider never started there.
+        """
+        model = DashScopeRealtimeModel(
+            "qwen3.5-omni-flash-realtime",
+            CRED,
+        )
+        model._parse(
+            {"type": "response.created", "response": {"id": "r1"}},
+        )
+        model._parse(
+            {
+                "type": "response.output_item.added",
+                "item": {
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "name": "weather",
+                },
+            },
+        )
+        model._parse(
+            {
+                "type": "response.function_call_arguments.delta",
+                "call_id": "c1",
+                "delta": "{}",
+            },
+        )
+        socket = _OpenSocket()
+
+        with patch(
+            "websockets.connect",
+            new=AsyncMock(return_value=socket),
+        ):
+            await model.connect(instructions="test")
+        await model.request_response()
+        await asyncio.sleep(0)
+
+        self.assertListEqual(
+            [json.loads(payload)["type"] for payload in socket.sent],
+            ["session.update", "response.create"],
+        )
+        self.assertEqual(model._item_id, "")
+        self.assertDictEqual(model._tool_args, {})
+        self.assertDictEqual(model._tool_names, {})
+        await model.close()
+
     async def test_connect_surfaces_session_setup_error(self) -> None:
         """An invalid session update fails connect with provider detail."""
         socket = _OpenSocket(
