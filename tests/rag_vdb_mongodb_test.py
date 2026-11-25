@@ -159,15 +159,7 @@ class _FakeMongoCollection:
         matched = [
             doc
             for doc in self._docs.values()
-            if all(
-                _read_dotted(doc, key)
-                == (
-                    value["$eq"]
-                    if isinstance(value, dict) and "$eq" in value
-                    else value
-                )
-                for key, value in filter_doc.items()
-            )
+            if self._matches_match_stage(doc, filter_doc)
         ]
         return _FakeFindCursor(matched)
 
@@ -257,11 +249,20 @@ class _FakeMongoCollection:
         match: dict[str, Any],
     ) -> bool:
         for key, expected in match.items():
+            if key == "$and":
+                if not all(
+                    _FakeMongoCollection._matches_match_stage(doc, clause)
+                    for clause in expected
+                ):
+                    return False
+                continue
+            value = _read_dotted(doc, key)
+            if isinstance(expected, dict) and "$nin" in expected:
+                if value in expected["$nin"]:
+                    return False
+                continue
             if isinstance(expected, dict) and "$eq" in expected:
                 expected = expected["$eq"]
-            value = doc
-            for part in key.split("."):
-                value = value[part]
             if value != expected:
                 return False
         return True
@@ -636,22 +637,14 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_legacy_index_search_stops_at_candidate_limit(self) -> None:
+    async def test_legacy_index_search_finds_published_chunks(self) -> None:
         store = MongoDBStore(
             uri="mongodb://mock",
             database="test-db",
             filter_fields=["chunk.metadata.tenant"],
         )
-        await store.create_collection("kb", dimensions=1)
+        await store.create_collection("kb", dimensions=2)
         collection = self._fake_client["test-db"]["kb"]
-
-        def hit(document_id: str, score: float) -> dict:
-            record = _make_record("text", [1.0], document_id)
-            return {
-                "score": score,
-                "document_id": document_id,
-                "chunk": record.chunk.model_dump(),
-            }
 
         def search(stage: dict) -> list[dict]:
             limit = stage["limit"]
@@ -659,25 +652,91 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
             limits.append(limit)
             return ranked[:limit]
 
-        staged = hit("~doc", 1.0)
-        published = [hit(f"live-{i}", 0.9) for i in range(5)]
-        for staged_count in (5_120, 9_998, 10_000):
-            with self.subTest(staged_count=staged_count):
+        hidden = _make_record("staged", [1.0, 0.0], "~doc")
+        staged = {"score": 1.0, "document_id": "~doc", "chunk": hidden.chunk}
+        for staged_count, visible_count in [
+            (5_120, 5),
+            (9_998, 5),
+            (10_000, 5),
+            (10_000, 2),
+            (10_000, 0),
+        ]:
+            with self.subTest(staged=staged_count, visible=visible_count):
+                scope = {"tenant": f"{staged_count}-{visible_count}"}
+                hidden.chunk.metadata.update(scope)
+                records = [
+                    _make_record("live", [0.8, 0.6], f"live-{i}")
+                    for i in range(visible_count)
+                ]
+                for record in records:
+                    record.chunk.metadata.update(scope)
+                await store.insert("kb", [hidden, *records])
+                published = [
+                    {
+                        "score": 0.9,
+                        "document_id": record.document_id,
+                        "chunk": record.chunk.model_dump(),
+                    }
+                    for record in records
+                ]
                 ranked = [staged] * staged_count + published
                 limits: list[int] = []
 
                 with patch.object(collection, "_vector_search", search):
                     results = await store.search_excluding(
                         "kb",
-                        [1.0],
+                        [1.0, 0.0],
                         5,
-                        None,
+                        scope,
                         exclude_document_ids={"~doc"},
                     )
                 self.assertEqual(limits[-1], 10_000)
                 self.assertEqual(
                     _dump_results(results),
-                    published[: 10_000 - staged_count],
+                    published,
+                )
+
+    async def test_legacy_index_exact_search_scores(self) -> None:
+        for metric, middle, far, expected in [
+            ("cosine", [3.0, 4.0], [-1.0, 0.0], 0.8),
+            ("dotProduct", [0.6, 0.8], [-1.0, 0.0], 0.8),
+            ("euclidean", [4.0, 4.0], [-10.0, 0.0], 1 / 6),
+        ]:
+            with self.subTest(metric=metric):
+                store = MongoDBStore(
+                    uri="mongodb://mock",
+                    database="test-db",
+                    distance=metric,
+                    filter_fields=["chunk.metadata.tenant"],
+                )
+                await store.create_collection(metric, dimensions=2)
+                query = [1.0, 0.0]
+                records = [
+                    _make_record("staged", query, "~doc", i, 2)
+                    for i in range(2)
+                ]
+                lowest = _make_record("far", far, "far")
+                second = _make_record("mid", middle, "middle")
+                first = _make_record("near", query, "nearest")
+                await store.insert(metric, [*records, lowest, second, first])
+                with patch.object(store, "_max_search_limit", 2):
+                    results = await store.search_excluding(
+                        metric,
+                        query,
+                        2,
+                        None,
+                        exclude_document_ids={"~doc"},
+                    )
+                self.assertEqual(
+                    results,
+                    [
+                        VectorSearchResult(
+                            score=score,
+                            document_id=record.document_id,
+                            chunk=record.chunk,
+                        )
+                        for record, score in [(first, 1.0), (second, expected)]
+                    ],
                 )
 
     async def test_search_candidate_limits(self) -> None:

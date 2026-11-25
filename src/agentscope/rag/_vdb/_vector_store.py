@@ -280,6 +280,24 @@ class VectorStoreBase(ABC):
         exclude_document_ids: set[str],
     ) -> list[VectorSearchResult]:
         """Find the top eligible hits with legacy vector-store interfaces."""
+        visible, _ = await self._search_excluding_window(
+            collection,
+            query_vector,
+            top_k,
+            metadata_filter,
+            exclude_document_ids,
+        )
+        return visible
+
+    async def _search_excluding_window(
+        self,
+        collection: str,
+        query_vector: list[float],
+        top_k: int,
+        metadata_filter: dict[str, Any] | None,
+        exclude_document_ids: set[str],
+    ) -> tuple[list[VectorSearchResult], int]:
+        """Return eligible hits and the final unfiltered result count."""
         limit = top_k
         while True:
             hits = await self.search(
@@ -296,7 +314,7 @@ class VectorStoreBase(ABC):
                 or len(hits) < limit
                 or limit == self._max_search_limit
             ):
-                return visible[:top_k]
+                return visible[:top_k], len(hits)
             limit *= 2
             if self._max_search_limit is not None:
                 limit = min(limit, self._max_search_limit)

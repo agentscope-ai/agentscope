@@ -13,6 +13,8 @@ through the constructor arguments:
   (MongoDB 7.0+ with Vector Search enabled)
 """
 import asyncio
+import heapq
+import math
 import time
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -366,12 +368,21 @@ class MongoDBStore(VectorStoreBase):
         if exclude_document_ids:
             if "document_id" not in self._filter_fields:
                 # An existing Atlas index may only cover custom metadata.
-                return await super().search_excluding(
+                hits, window_size = await self._search_excluding_window(
                     collection,
                     query_vector,
                     top_k,
                     metadata_filter,
-                    exclude_document_ids=exclude_document_ids,
+                    exclude_document_ids,
+                )
+                if len(hits) == top_k or window_size < self._max_search_limit:
+                    return hits
+                return await self._exact_search_excluding(
+                    collection,
+                    query_vector,
+                    top_k,
+                    filter_expr,
+                    exclude_document_ids,
                 )
             condition = {"document_id": {"$nin": sorted(exclude_document_ids)}}
             if filter_expr:
@@ -414,6 +425,58 @@ class MongoDBStore(VectorStoreBase):
         return results
 
     search_excluding = search
+
+    async def _exact_search_excluding(
+        self,
+        collection: str,
+        query_vector: list[float],
+        top_k: int,
+        filter_expr: dict[str, Any] | None,
+        exclude_document_ids: set[str],
+    ) -> list[VectorSearchResult]:
+        """Rank eligible vectors beyond a saturated legacy index window."""
+        query = {
+            **(filter_expr or {}),
+            "document_id": {"$nin": sorted(exclude_document_ids)},
+        }
+        cursor = self._col(collection).find(
+            query,
+            projection={"document_id": 1, "vector": 1, "chunk": 1},
+        )
+        best: list[tuple[float, int, dict]] = []
+        query_norm = math.hypot(*query_vector)
+        sequence = 0
+        async for doc in cursor:
+            vector = doc.get("vector")
+            if not vector or len(vector) != len(query_vector):
+                continue
+            if self._distance == "euclidean":
+                score = 1 / (1 + math.dist(vector, query_vector))
+            else:
+                dot = sum(x * y for x, y in zip(vector, query_vector))
+                if self._distance == "cosine":
+                    norm = query_norm * math.hypot(*vector)
+                    if not norm:
+                        continue
+                    dot = max(-1.0, min(1.0, dot / norm))
+                score = (1 + dot) / 2
+
+            # Keep earlier ties first without comparing BSON documents.
+            entry = (score, -sequence, doc)
+            sequence += 1
+            if len(best) < top_k:
+                heapq.heappush(best, entry)
+            else:
+                heapq.heappushpop(best, entry)
+
+        return [
+            VectorSearchResult(
+                score=score,
+                document_id=doc["document_id"],
+                chunk=Chunk.model_validate(doc["chunk"]),
+            )
+            for score, _, doc in sorted(best, reverse=True)
+        ]
 
     @staticmethod
     def _build_metadata_filter(
