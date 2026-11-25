@@ -177,7 +177,9 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                 elif isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
 
-                elif isinstance(block, DataBlock):
+                elif isinstance(block, DataBlock) and self._accepts_media(
+                    msg.role,
+                ):
                     formatted = self._format_openai_data_block(block)
                     if formatted is not None:
                         content_blocks.append(formatted)
