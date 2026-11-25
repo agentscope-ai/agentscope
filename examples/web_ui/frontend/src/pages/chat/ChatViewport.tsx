@@ -212,6 +212,7 @@ function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
 export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatViewportProps) {
 	const { t } = useTranslation();
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
+	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
 	const { groups } = useAvailableModels();
 	const { groups: realtimeGroups } = useAvailableRealtimeModels();
 	const { groups: asrGroups, loading: asrModelsLoading } = useAvailableASRModels();
@@ -366,6 +367,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		subagentHitl,
 		interrupt,
 	} = useMessages(agentId, sessionId, {
+		sessionName: view?.session.config.name,
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
 		onSessionUpdated: handleSessionUpdated,
@@ -478,11 +480,6 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		},
 		[patchConfig],
 	);
-
-	// Declared above `panels` — the memo factory reads `view.team`
-	// eagerly on first render, so a later `const` would still be in
-	// the temporal dead zone.
-	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
 
 	const { status: workspaceStatus, refetch: refetchWorkspaceStatus } = useWorkspaceStatus(
 		agentId,
@@ -786,7 +783,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		asr: pipelineASR,
 		realtimeASR: !!pipelineASRCard?.realtime,
 		canStart: pipelineCanStart,
-		send: (blocks, observer) => send(blocks, observer, 'pipeline_voice'),
+		send: (blocks, observer) => send(blocks, 'pipeline_voice', observer),
 	});
 	const { onEvent: onPipelineEvent, stop: stopPipelineVoice, busy: pipelineBusy } = pipelineVoice;
 	useEffect(() => {

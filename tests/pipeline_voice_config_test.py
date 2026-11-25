@@ -1194,6 +1194,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         )
 
         async def save(**kwargs: object) -> SessionRecord:
+            await asyncio.sleep(0)
             self.session.config = kwargs["config"]
             return self.session
 
@@ -1249,9 +1250,12 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         bound = self.session.config.pipeline_voice_config.model_dump()
         asr = {**bound["asr_model_config"], "model": "new-asr"}
         changes = {"asr_model_config": asr, "chat_model_config": None}
-        saved = await update({"pipeline_voice_config": changes})
+        await asyncio.gather(
+            update({"pipeline_voice_config": {"asr_model_config": asr}}),
+            update({"pipeline_voice_config": {"chat_model_config": None}}),
+        )
         self.assertEqual(
-            saved.config.pipeline_voice_config.model_dump(),
+            self.session.config.pipeline_voice_config.model_dump(),
             {**bound, **changes},
         )
         with self.assertRaises(HTTPException) as stale:

@@ -13,6 +13,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 import type { GitStatus } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
+import { getBaseUrl, getUserId } from '@/api/client';
 import { ASMessageBubble, SteeringMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
 import { ClientToolsMenu } from '@/components/chat/ClientToolsMenu';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
@@ -92,7 +93,7 @@ interface ChatContentProps {
 	queueReorderDisabled: boolean;
 	activeReplyId: string | null;
 	disabled: boolean;
-	onSend: (content: ContentBlock[]) => Promise<void> | void;
+	onSend: (content: ContentBlock[], source?: 'continue') => Promise<void> | void;
 	onUserConfirm: (
 		toolCall: ToolCallBlock,
 		confirm: boolean,
@@ -209,6 +210,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onRefreshGit,
 }) => {
 	const { t, i18n } = useTranslation();
+	const draftKey = JSON.stringify([getBaseUrl(), getUserId(), agentId, sessionId]);
 	const { deferredItems, steeringMessages } = useMemo(() => {
 		const deferred: ChatQueueItem[] = [];
 		const steering: Pick<Msg, 'id' | 'content' | 'created_at'>[] = [];
@@ -375,20 +377,17 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 												<Button
 													size={'xs'}
 													onClick={() => {
+														const block: TextBlock = {
+															id: crypto.randomUUID(),
+															type: 'text',
+															text: t(
+																'chat.maxItersExceeded.continue',
+															),
+															created_at: new Date().toISOString(),
+															finished_at: new Date().toISOString(),
+														};
 														void Promise.resolve(
-															onSend([
-																{
-																	id: crypto.randomUUID(),
-																	type: 'text',
-																	text: t(
-																		'chat.maxItersExceeded.continue',
-																	),
-																	created_at:
-																		new Date().toISOString(),
-																	finished_at:
-																		new Date().toISOString(),
-																} as TextBlock,
-															]),
+															onSend([block], 'continue'),
 														).catch(() => {
 															// The send handler reports the failure.
 														});
@@ -478,7 +477,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				    edges parallel — a plain rectangle here would show the
 				    pill's corners cutting into it. */}
 					<TextInput
-						key={JSON.stringify([agentId, sessionId])}
+						key={draftKey}
+						draftKey={draftKey}
 						className="min-w-full max-w-full w-full rounded-[32px] bg-muted p-1"
 						onSend={handleSend}
 						disabled={disabled}

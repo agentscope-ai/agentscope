@@ -252,6 +252,8 @@
 	"chat": {
 		"ttsFailed": "语音生成失败，文字回复继续。",
 		"inputPlaceholder": "输入消息...",
+		"sendFailedInSession": "消息未能发送到「{{session}}」，可在该会话的草稿中重新发送。",
+		"continueFailedInSession": "未能继续「{{session}}」中的对话。请返回该会话，再次点击「继续」。",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
 		"askUser": {

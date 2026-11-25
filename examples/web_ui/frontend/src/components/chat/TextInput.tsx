@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/attachment.tsx';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAudioRecorder } from '@/hooks/useAudioRecorder';
+import { useChatDraft, type ProcessedFile } from '@/hooks/useChatDraft';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useRealtimeAudioRecorder } from '@/hooks/useRealtimeAudioRecorder';
 import { useTranslation } from '@/i18n/useI18n.ts';
@@ -45,19 +46,8 @@ import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
 import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
 import { cn } from '@/lib/utils';
 
-/**
- * Represents a file that has been selected and processed (or is being processed).
- */
-interface ProcessedFile {
-	/** Original file name for display */
-	name: string;
-	/** Processing status */
-	status: 'processing' | 'done';
-	/** The resulting ContentBlock after processing (available when status === 'done') */
-	block: ContentBlock | null;
-}
-
 interface TextInputProps {
+	draftKey: string;
 	onSend: (blocks: ContentBlock[], allowRetry?: () => void) => Promise<void> | void;
 	placeholder?: string;
 	autoComplete?: (input: string) => string | null;
@@ -158,6 +148,7 @@ const TEXTAREA_PADDING_X_PX = 12;
 export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 	(
 		{
+			draftKey,
 			onSend,
 			placeholder,
 			autoComplete,
@@ -185,8 +176,11 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 	) => {
 		const { t } = useTranslation();
 		const defaultPlaceholder = placeholder || t('chat.inputPlaceholder');
-		const [value, setValue] = useState('');
-		const [files, setFiles] = useState<ProcessedFile[]>([]);
+		const { draft, updateDraft } = useChatDraft(draftKey);
+		const { value, files } = draft;
+		const setValue = (text: string) => updateDraft((current) => ({ ...current, value: text }));
+		const setFiles = (change: (current: ProcessedFile[]) => ProcessedFile[]) =>
+			updateDraft((current) => ({ ...current, files: change(current.files) }));
 		const [isFocused, setIsFocused] = useState(false);
 		const [submitting, setSubmitting] = useState(false);
 		const submissionRef = useRef(0);
@@ -223,9 +217,10 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				toast.info(t('textInput.transcriptionEmpty'));
 				return;
 			}
-			setValue((current) =>
-				current.trimEnd() ? `${current.trimEnd()} ${transcript}` : transcript,
-			);
+			updateDraft((current) => ({
+				...current,
+				value: [current.value.trimEnd(), transcript].filter(Boolean).join(' '),
+			}));
 			requestAnimationFrame(() => textareaRef.current?.focus());
 		};
 
@@ -410,8 +405,6 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				}
 			});
 
-			const submittedValue = value;
-			const submittedFiles = files;
 			const submission = ++submissionRef.current;
 			const isCurrent = () => mountedRef.current && submissionRef.current === submission;
 			const release = () => {
@@ -420,16 +413,15 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			setSubmitting(true);
 			// Start a fresh draft immediately. If the request fails, merge the
 			// submitted draft back without erasing anything typed meanwhile.
-			setValue('');
-			setFiles([]);
+			updateDraft(() => ({ value: '', files: [] }));
 			try {
 				await onSend(blocks, release);
 			} catch {
-				if (!isCurrent()) return;
-				// The API layer reports the error; restore both the failed turn
-				// and any new draft content so neither is silently lost.
-				setValue((current) => (current ? `${submittedValue}\n${current}` : submittedValue));
-				setFiles((current) => [...submittedFiles, ...current]);
+				if (acceptsInput && !isCurrent()) return;
+				updateDraft((current) => ({
+					value: [value, current.value].filter(Boolean).join('\n'),
+					files: [...files, ...current.files],
+				}));
 			} finally {
 				release();
 			}
@@ -521,7 +513,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							(prev) =>
 								prev
 									.map((f) =>
-										f.name === file.name && f.status === 'processing'
+										f === placeholder
 											? block
 												? { ...f, status: 'done', block }
 												: null
@@ -533,11 +525,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					.catch(() => {
 						// Caller is responsible for error notification (e.g. toast).
 						// Just silently remove the entry here.
-						setFiles((prev) =>
-							prev.filter(
-								(f) => !(f.name === file.name && f.status === 'processing'),
-							),
-						);
+						setFiles((prev) => prev.filter((f) => f !== placeholder));
 					});
 			});
 		};
@@ -552,7 +540,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				>
 					{files.length > 0 && (
 						<AttachmentGroup className={'w-full max-w-full px-1 mt-1'}>
-							{files.map((file, index) => {
+							{files.map((file) => {
 								const isImage =
 									file.block &&
 									file.block.type === 'data' &&
@@ -592,7 +580,9 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 										<AttachmentActions>
 											<AttachmentAction
 												onClick={() =>
-													setFiles(files.filter((_, i) => i !== index))
+													setFiles((current) =>
+														current.filter((f) => f !== file),
+													)
 												}
 											>
 												<XIcon />

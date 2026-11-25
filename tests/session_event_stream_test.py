@@ -81,6 +81,68 @@ def _decode(frame: str | bytes) -> dict:
     return json.loads(frame.removeprefix("data: ").strip())
 
 
+class SessionHistoryValidationTest(IsolatedAsyncioTestCase):
+    """Validate durable history before delivering the first replay frame."""
+
+    @staticmethod
+    async def _frames(
+        bus: MessageBus,
+        after: str | None,
+        count: int = 0,
+    ) -> list[str | bytes]:
+        """Read the requested frames, or exhaust a rejected subscription."""
+        response = await stream_session_events(
+            session_id="s",
+            agent_id="a",
+            user_id="u",
+            storage=_Storage(),  # type: ignore[arg-type]
+            message_bus=bus,
+            after=after,
+            validate_history=True,
+            replay_notice=True,
+        )
+        async with aclosing(response.body_iterator) as stream:
+            if count:
+                return [await anext(stream) for _ in range(count)]
+            return [frame async for frame in stream]
+
+    async def test_reply_committed_between_history_and_subscription(
+        self,
+    ) -> None:
+        """A trimmed reply invalidates both empty and nonempty cursors."""
+        async with InMemoryMessageBus() as bus, asyncio.timeout(3):
+            start = await publish_session_event(bus, "s", {"type": "start"})
+            end = await publish_session_event(bus, "s", {"type": "end"})
+            await bus.registry_set(
+                MessageBusKeys.session_event_checkpoint("s"),
+                MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                end,
+            )
+            await bus.log_trim(MessageBusKeys.session_events("s"), end)
+            for after in (None, start):
+                self.assertEqual(
+                    await self._frames(bus, after),
+                    [": history-changed\n\n"],
+                )
+            self.assertEqual(
+                await self._frames(bus, end, 2),
+                [": history-current\n\n", ": replay-complete\n\n"],
+            )
+
+    async def test_active_reply_exceeds_replay_window(self) -> None:
+        """A truncated active reply must wait for a durable checkpoint."""
+        async with InMemoryMessageBus() as bus, asyncio.timeout(3):
+            with patch.object(MessageBusKeys, "SESSION_REPLAY_MAX_LEN", 2):
+                lock = MessageBusKeys.session_lock("s")
+                async with bus.acquire_lock(lock):
+                    for number in range(3):
+                        await publish_session_event(bus, "s", {"n": number})
+                    self.assertEqual(
+                        await self._frames(bus, None),
+                        [": history-pending\n\n"],
+                    )
+
+
 class SessionEventStreamTest(IsolatedAsyncioTestCase):
     """The session route changes from replay to live without a gap."""
 

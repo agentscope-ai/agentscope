@@ -919,6 +919,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             MessageBusKeys.chat_input_payloads(session_id),
         )
         await self.registry_drop(MessageBusKeys.chat_input_claim(session_id))
+        await self.registry_drop(MessageBusKeys.chat_submissions(session_id))
+        await self.registry_drop(
+            MessageBusKeys.chat_input_cancellations(session_id),
+        )
         await self.registry_del(
             MessageBusKeys.chat_input_pending_registry(),
             session_id,

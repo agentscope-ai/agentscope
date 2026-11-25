@@ -277,6 +277,13 @@ class InputResultTest(IsolatedAsyncioTestCase):
         )
         for state, expected in (
             (AgentState(reply_id="A", context=[parked]), "reply"),
+            (
+                AgentState(
+                    reply_id="A",
+                    context=[parked, UserMsg("user", "follow-up")],
+                ),
+                "reply",
+            ),
             (AgentState(reply_id="A"), "finished"),
             (AgentState(reply_id="B"), "finished"),
         ):

@@ -35,7 +35,6 @@ from .._bus_ops import (
 )
 from ..message_bus import MessageBus, MessageBusKeys
 from .._chat_input_store import INPUT_EXECUTION, get_submission
-from ._session import SessionService, SessionStatus
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
 from ..channel._approval import (
@@ -1048,10 +1047,7 @@ class ChatService:
                 # worker, only this exact parked reply can still resume.
                 finished = (
                     session.state.reply_id != reply_id
-                    or SessionService.derive_parked_status(
-                        session.state.context,
-                    )
-                    is SessionStatus.IDLE
+                    or not session.state.has_awaiting_tool_calls()
                 )
             return {
                 **identity,

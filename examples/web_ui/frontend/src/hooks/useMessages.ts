@@ -148,6 +148,7 @@ export function useMessages(
 	agentId: string | null,
 	sessionId: string | null,
 	options?: {
+		sessionName?: string | null;
 		/** Route playback, including deferred ownership or a pending block end. */
 		onVoiceEvent?: (event: AgentEvent) => VoicePlayback;
 		onStreamClosed?: () => void;
@@ -183,9 +184,12 @@ export function useMessages(
 	},
 ) {
 	const { t } = useTranslation();
+	const sessionName = options?.sessionName || sessionId;
 	// A new identity for each visit also rejects late responses after A -> B -> A.
 	const session = useMemo(() => ({ agentId, sessionId }), [agentId, sessionId]);
-	const pendingChatPosts = useRef(new Map<string, (queueId: string) => void>());
+	const pendingChatPosts = useRef(
+		new Map<string, { messageId: string; confirm: (queueId: string | null) => void }>(),
+	);
 	const externalSubmissionsRef = useRef(new Map<string, ExternalSubmission>());
 	const activeSessionRef = useRef<typeof session | null>(null);
 	useLayoutEffect(() => {
@@ -194,6 +198,7 @@ export function useMessages(
 		const externalSubmissions = externalSubmissionsRef.current;
 		return () => {
 			activeSessionRef.current = null;
+			// A pending POST still belongs to the session that submitted it.
 			chatPosts.clear();
 			for (const pending of externalSubmissions.values()) {
 				pending.reject(new Error('The session closed before the result was acknowledged.'));
@@ -342,9 +347,9 @@ export function useMessages(
 					startingQueueRef.current = value.queue_item_id ?? null;
 					setStartingInputId(startingQueueRef.current);
 					if (value.client_request_id && value.queue_item_id) {
-						pendingChatPosts.current.get(value.client_request_id)?.(
-							value.queue_item_id,
-						);
+						pendingChatPosts.current
+							.get(value.client_request_id)
+							?.confirm(value.queue_item_id);
 					}
 					const { item: startedItem, provisional } = startItem(value);
 					if (startedItem) {
@@ -577,12 +582,19 @@ export function useMessages(
 		let oldestVisible: string | null | undefined;
 		let savedHistory: Msg[] = [];
 		let savedCursor: string | null = null;
+		let waitingForCheckpoint: string | null | undefined;
+
+		const retry = () => {
+			retryTimer = setTimeout(() => void connect(true), retryDelay);
+			retryDelay = Math.min(retryDelay * 2, 15_000);
+		};
 
 		const connect = async (reconnecting: boolean) => {
 			if (controller.signal.aborted) return;
 			let connected = false;
 			try {
 				let eventCursor: string | null = null;
+				let restoreHistory: (() => void) | undefined;
 				const requests = new Map(reconnecting ? externalSubmissionsRef.current : []);
 				if (reconnecting || !takeFreshlyCreated(sessionId)) {
 					const options = {
@@ -636,52 +648,75 @@ export function useMessages(
 						pages.push(floor < 0 ? page.messages : page.messages.slice(floor));
 					}
 					const messages = pages.reverse().flat();
-					savedHistory = messages;
-					savedCursor = eventCursor;
-					const tail = messages.at(-1);
-					if (reconnecting) {
-						if (tail && !msgsRef.current.some((msg) => msg.id === tail.id)) {
-							audioManager?.stopAllPlayback();
+					if (pendingChatPosts.current.size) {
+						const saved = new Set(
+							messages.filter((m) => m.role === 'user').map((m) => m.id),
+						);
+						for (const post of pendingChatPosts.current.values()) {
+							if (saved.has(post.messageId)) post.confirm(null);
 						}
-						audioManager?.restoreCheckpoint(messages);
-						setSubagentHitl([]);
 					}
-					const restored = reconnecting
-						? restoreConversation(messages, controller.signal)
-						: messages;
-					if (controller.signal.aborted) return;
-					oldestVisible = messages[0]?.id ?? null;
-					for (const [id, request] of requests) {
-						if (externalSubmissionsRef.current.get(id) !== request) continue;
-						const reply = messages.find((msg) => msg.id === request.replyId);
-						for (const block of reply?.content ?? []) {
-							if (
-								block.type === 'tool_result' &&
-								block.state !== 'running' &&
-								settleToolResult(request, id, block.id, block.metadata)
-							) {
-								externalSubmissionsRef.current.delete(id);
-								requests.delete(id);
-								break;
+					if (waitingForCheckpoint === eventCursor && is_running) {
+						retry();
+						return;
+					}
+					waitingForCheckpoint = undefined;
+					restoreHistory = () => {
+						savedHistory = messages;
+						savedCursor = eventCursor;
+						const tail = messages.at(-1);
+						if (reconnecting) {
+							if (tail && !msgsRef.current.some((msg) => msg.id === tail.id)) {
+								audioManager?.stopAllPlayback();
+							}
+							audioManager?.restoreCheckpoint(messages);
+							setSubagentHitl([]);
+						}
+						const restored = reconnecting
+							? restoreConversation(messages, controller.signal)
+							: messages;
+						if (controller.signal.aborted) return;
+						oldestVisible = messages[0]?.id ?? null;
+						for (const [id, request] of requests) {
+							if (externalSubmissionsRef.current.get(id) !== request) continue;
+							const reply = messages.find((msg) => msg.id === request.replyId);
+							for (const block of reply?.content ?? []) {
+								if (
+									block.type === 'tool_result' &&
+									block.state !== 'running' &&
+									settleToolResult(request, id, block.id, block.metadata)
+								) {
+									externalSubmissionsRef.current.delete(id);
+									requests.delete(id);
+									break;
+								}
 							}
 						}
+						msgsRef.current = restored;
+						startingQueueRef.current = null;
+						replyQueueRef.current = null;
+						setStartingInputId(null);
+						clearInterruptTimer();
+						const parked = getPendingHitlCalls(messages)[0];
+						const active =
+							is_running &&
+							!parked &&
+							tail?.role === 'assistant' &&
+							!tail.finished_reason
+								? tail
+								: null;
+						currentReplyRef.current = parked
+							? (messages.find((message) => message.id === parked.replyId) ?? null)
+							: active;
+						setActiveReplyId(active?.id ?? null);
+						const starting = is_running && tail?.role !== 'assistant';
+						setPhase(active || parked || starting ? 'streaming' : 'idle');
+						setMsgs([...msgsRef.current]);
+					};
+					if (oldestVisible === undefined) {
+						restoreHistory();
+						restoreHistory = undefined;
 					}
-					msgsRef.current = restored;
-					startingQueueRef.current = null;
-					replyQueueRef.current = null;
-					setStartingInputId(null);
-					clearInterruptTimer();
-					const parked = getPendingHitlCalls(messages)[0];
-					const active =
-						is_running && !parked && tail?.role === 'assistant' && !tail.finished_reason
-							? tail
-							: null;
-					currentReplyRef.current = parked
-						? (messages.find((message) => message.id === parked.replyId) ?? null)
-						: active;
-					setActiveReplyId(active?.id ?? null);
-					setPhase(is_running || parked ? 'streaming' : 'idle');
-					setMsgs([...msgsRef.current]);
 				} else oldestVisible = null;
 				setLoadedKey(`${agentId}:${sessionId}`);
 				const finishReplay = () => {
@@ -697,14 +732,19 @@ export function useMessages(
 					agentId,
 					controller.signal,
 					eventCursor,
-					() => {
-						if (controller.signal.aborted) return;
-						connected = true;
-						setStreamConnected(true);
-						if (reconnecting) setError(null);
-					},
+					undefined,
 					{
 						silent: reconnecting,
+						onHistoryStatus: (status) => {
+							if (controller.signal.aborted) return;
+							if (status === 'pending') waitingForCheckpoint = eventCursor;
+							if (status !== 'current') return;
+							restoreHistory?.();
+							restoreHistory = undefined;
+							connected = true;
+							setStreamConnected(true);
+							if (reconnecting) setError(null);
+						},
 						onReplayComplete: requests.size ? finishReplay : undefined,
 					},
 				)) {
@@ -724,8 +764,7 @@ export function useMessages(
 				}
 			}
 			if (controller.signal.aborted) return;
-			retryTimer = setTimeout(() => void connect(true), retryDelay);
-			retryDelay = Math.min(retryDelay * 2, 15_000);
+			retry();
 		};
 		void connect(false);
 
@@ -755,8 +794,8 @@ export function useMessages(
 	const send = useCallback(
 		async (
 			content: ContentBlock[],
+			source: 'composer' | 'continue' | 'pipeline_voice' = 'composer',
 			observer?: VoiceSubmissionObserver,
-			mode: 'chat' | 'pipeline_voice' = 'chat',
 		) => {
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
@@ -790,8 +829,17 @@ export function useMessages(
 			}
 			const optimisticId = addOptimistic(userMsg, showInConversationImmediately);
 			const requestId = observer ? undefined : crypto.randomUUID();
+			const postController = requestId ? new AbortController() : undefined;
 			const startReceipt = requestId
-				? new Promise<string>((resolve) => pendingChatPosts.current.set(requestId, resolve))
+				? new Promise<string | null>((resolve) => {
+						pendingChatPosts.current.set(requestId, {
+							messageId: userMsg.id,
+							confirm: (queueId) => {
+								resolve(queueId);
+								postController?.abort();
+							},
+						});
+					})
 				: undefined;
 			try {
 				const post = chatApi
@@ -800,11 +848,15 @@ export function useMessages(
 							agent_id: agentId,
 							session_id: sessionId,
 							input: userMsg,
-							mode,
+							mode: source === 'pipeline_voice' ? 'pipeline_voice' : 'chat',
 							submission_id: observer?.submissionId,
 							client_request_id: requestId,
 						},
-						{ ...observer?.scope, signal: observer?.signal, silent: true },
+						{
+							...observer?.scope,
+							signal: observer?.signal ?? postController?.signal,
+							silent: true,
+						},
 					)
 					.then((response) => response.queue_item_id);
 				// Either channel can confirm this exact submission first.
@@ -814,17 +866,24 @@ export function useMessages(
 				if (queueId) confirmQueue(queueId);
 				observer?.accepted(queueId);
 			} catch (e) {
+				if (activeSessionRef.current !== session) {
+					if (!observer) {
+						const key =
+							source === 'continue'
+								? 'chat.continueFailedInSession'
+								: 'chat.sendFailedInSession';
+						toast.error(t(key, { session: sessionName }), {
+							description: e instanceof Error ? e.message : undefined,
+						});
+					}
+					throw e;
+				}
 				// Voice cancellation tracks its own submission receipt.
 				if (
 					observer?.keepPendingOnPostError?.() ||
 					(observer?.isCurrent && !observer.isCurrent())
 				)
 					throw e;
-				if (activeSessionRef.current !== session) {
-					// Voice cancellation outlives the viewport and still needs the outcome.
-					if (observer) throw e;
-					return;
-				}
 				// The server never accepted this input. Remove the
 				// optimistic queue row and restore the caller's draft.
 				rollbackOptimistic(optimisticId, userMsg.id);
@@ -851,6 +910,8 @@ export function useMessages(
 			addOptimistic,
 			acceptOptimistic,
 			rollbackOptimistic,
+			sessionName,
+			t,
 		],
 	);
 

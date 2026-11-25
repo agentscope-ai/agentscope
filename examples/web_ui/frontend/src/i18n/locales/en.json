@@ -252,6 +252,8 @@
 	"chat": {
 		"ttsFailed": "Speech generation failed. Text replies will continue.",
 		"inputPlaceholder": "Type a message...",
+		"sendFailedInSession": "Message to “{{session}}” failed. You can resend it from the draft in that chat.",
+		"continueFailedInSession": "Couldn’t continue the conversation in “{{session}}”. Return to that chat and click Continue again.",
 		"confirmToolCall": "Allow this action?",
 		"subagentConfirmTitle": "{{name}} requests confirmation",
 		"askUser": {

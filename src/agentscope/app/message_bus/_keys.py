@@ -173,6 +173,11 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         """Per-session distributed-lock key."""
         return cls._SESSION_LOCK.format(sid=session_id)
 
+    @classmethod
+    def session_config_lock(cls, session_id: str) -> str:
+        """Serialize partial updates to the same session configuration."""
+        return f"agentscope:session:config:lock:{session_id}"
+
     # ------------------------------------------------------------------
     # SOP run lock
     # ------------------------------------------------------------------

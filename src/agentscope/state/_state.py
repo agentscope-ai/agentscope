@@ -312,17 +312,16 @@ class AgentState(BaseModel):
     """The context that allow the middlewares to store/get data across
     different replies."""
 
-    def get_reply_message(self, name: str) -> Msg | None:
+    def get_reply_message(self, name: str | None = None) -> Msg | None:
         """Find this agent's current reply, even after later messages.
 
         Args:
-            name (`str`):
-                Author of the assistant reply to find.
+            name (`str | None`):
+                Optionally restrict the current reply to its author.
 
         Returns:
             `Msg | None`:
-                The assistant message matching both ``name`` and the current
-                ``reply_id``, or ``None`` if it has not been created.
+                The matching current reply, or ``None`` if absent.
         """
         return next(
             (
@@ -330,7 +329,7 @@ class AgentState(BaseModel):
                 for message in reversed(self.context)
                 if message.id == self.reply_id
                 and message.role == "assistant"
-                and message.name == name
+                and (name is None or message.name == name)
             ),
             None,
         )
@@ -360,16 +359,15 @@ class AgentState(BaseModel):
                 ),
             )
 
-    def has_awaiting_tool_calls(self, name: str) -> bool:
+    def has_awaiting_tool_calls(self, name: str | None = None) -> bool:
         """Whether the current reply written by ``name`` has
         any tool call still awaiting an outside response — an
         ``ASKING`` user confirmation or a ``SUBMITTED`` external
         execution with no matching tool result yet.
 
         Args:
-            name (`str`):
-                Only messages authored by this agent name are inspected;
-                observed messages from other agents are ignored.
+            name (`str | None`):
+                Optionally restrict the current reply to its author.
 
         Returns:
             `bool`:
@@ -377,15 +375,17 @@ class AgentState(BaseModel):
         """
         return bool(self.get_awaiting_tool_calls(name))
 
-    def get_awaiting_tool_calls(self, name: str) -> list[ToolCallBlock]:
+    def get_awaiting_tool_calls(
+        self,
+        name: str | None = None,
+    ) -> list[ToolCallBlock]:
         """Get the current reply's tool calls still awaiting an
         outside response — an ``ASKING`` user confirmation or a
         ``SUBMITTED`` external execution with no matching tool result yet.
 
         Args:
-            name (`str`):
-                Only messages authored by this agent name are inspected;
-                observed messages from other agents are ignored.
+            name (`str | None`):
+                Optionally restrict the current reply to its author.
 
         Returns:
             `list[ToolCallBlock]`:

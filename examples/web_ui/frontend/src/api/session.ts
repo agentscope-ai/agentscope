@@ -155,15 +155,17 @@ export const sessionApi = {
 		onConnected?: () => void,
 		options?: Pick<ApiRequestOptions, 'baseUrl' | 'userId' | 'silent'> & {
 			onReplayComplete?: () => void;
+			onHistoryStatus?: (status: 'current' | 'changed' | 'pending') => void;
 		},
 	): AsyncGenerator<AgentEvent> {
-		const { onReplayComplete, ...requestOptions } = options ?? {};
+		const { onReplayComplete, onHistoryStatus, ...requestOptions } = options ?? {};
 		const res = await client.stream(`/sessions/${sessionId}/stream`, {
 			method: 'GET',
 			params: {
 				agent_id: agentId,
 				...(after != null && { after }),
-				...(onReplayComplete && { replay_notice: 'true' }),
+				...((onReplayComplete || onHistoryStatus) && { replay_notice: 'true' }),
+				...(onHistoryStatus && { validate_history: 'true' }),
 			},
 			signal,
 			...requestOptions,
@@ -174,6 +176,7 @@ export const sessionApi = {
 		const decoder = new TextDecoder();
 		const fragments: string[] = [];
 		let finishReplay = onReplayComplete;
+		let checkHistory = onHistoryStatus;
 		let legacyDeadline: ReturnType<typeof setTimeout> | undefined;
 		const complete = () => {
 			clearTimeout(legacyDeadline);
@@ -193,6 +196,16 @@ export const sessionApi = {
 						fragments.push(line);
 						line = fragments.join('');
 						fragments.length = 0;
+					}
+					if (checkHistory && (line.startsWith(':') || line.startsWith('data: '))) {
+						const comment = line.trimEnd();
+						if (comment === ': history-changed' || comment === ': history-pending') {
+							checkHistory(comment === ': history-changed' ? 'changed' : 'pending');
+							return;
+						}
+						// Older servers begin directly with replay data or a heartbeat.
+						checkHistory('current');
+						checkHistory = undefined;
 					}
 					if (line.startsWith('data: ')) {
 						const json = line.slice(6).trim();

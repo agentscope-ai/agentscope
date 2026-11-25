@@ -398,22 +398,23 @@ class SessionService:
             *(self.cancel_session_run(sid) for sid in all_sids),
         )
         async with AsyncExitStack() as locks:
-            # Match approval creation and run persistence. Ordered locking
-            # also covers worker sessions removed by the storage cascade.
-            deadline = (
-                asyncio.get_running_loop().time() + self._DELETE_LOCK_WAIT_SECS
-            )
+            # Serialize deletion with config PATCH, approvals and runs,
+            # including worker sessions removed by the storage cascade.
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self._DELETE_LOCK_WAIT_SECS
             try:
                 for sid in sorted(set(all_sids)):
-                    await locks.enter_async_context(
-                        self._bus.acquire_lock_bounded(
-                            MessageBusKeys.session_lock(sid),
-                            timeout_secs=max(
-                                0.0,
-                                deadline - asyncio.get_running_loop().time(),
+                    for key in (
+                        MessageBusKeys.session_config_lock(sid),
+                        MessageBusKeys.session_lock(sid),
+                    ):
+                        remaining = deadline - loop.time()
+                        await locks.enter_async_context(
+                            self._bus.acquire_lock_bounded(
+                                key,
+                                timeout_secs=max(0.0, remaining),
                             ),
-                        ),
-                    )
+                        )
             except TimeoutError as exc:
                 raise SessionBusyError(
                     "The session is still busy. "

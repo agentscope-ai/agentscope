@@ -601,6 +601,30 @@ async def update_session(
             referenced credential / KB is not visible to the caller;
             409 if a chat run is currently active on the session.
     """
+    async with message_bus.acquire_lock(
+        MessageBusKeys.session_config_lock(session_id),
+    ):
+        return await _patch_session_config(
+            session_id,
+            body,
+            agent_id,
+            user_id,
+            storage,
+            access,
+            message_bus,
+        )
+
+
+async def _patch_session_config(
+    session_id: str,
+    body: UpdateSessionRequest,
+    agent_id: str,
+    user_id: str,
+    storage: StorageBase,
+    access: ResourceAccessService,
+    message_bus: MessageBus,
+) -> SessionRecord:
+    """Merge a PATCH into the latest record under the config lock."""
     existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
         raise HTTPException(
@@ -934,6 +958,28 @@ class _SessionEventReplay:
         self.pending.update(rows)
         return rows
 
+    async def read_initial(self) -> None:
+        """Read all pages up to the live subscription or the end of the log."""
+        rows = await self.read()
+        while rows and rows[-1][0] not in self.queued:
+            rows = await self.read()
+
+    async def history_status(self, session_id: str) -> str:
+        """Check the durable cursor after buffering the initial replay."""
+        full = len(self.pending) >= MessageBusKeys.SESSION_REPLAY_MAX_LEN
+        running = full and await self.bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        )
+        cursor = await self.bus.registry_get(
+            MessageBusKeys.session_event_checkpoint(session_id),
+            MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+        )
+        if cursor != self.cursor:
+            return "changed"
+        # A full log can start mid-reply. The next checkpoint contains the
+        # missing prefix, while the retained suffix alone cannot restore it.
+        return "pending" if running else "current"
+
     def advance(self, entry_id: str) -> None:
         """Retain recent IDs for late notifications after a checkpoint trim."""
         if self.cursor is not None:
@@ -1083,6 +1129,7 @@ async def stream_session_events(
     storage: StorageBase = Depends(get_storage),
     message_bus: MessageBus = Depends(get_message_bus),
     replay_notice: bool = False,
+    validate_history: bool = False,
 ) -> StreamingResponse:
     """Subscribe to a session's live event stream.
 
@@ -1112,6 +1159,8 @@ async def stream_session_events(
             Injected message bus (replay + live subscription).
         replay_notice (`bool`):
             Send an SSE comment when the initial replay is complete.
+        validate_history (`bool`):
+            Verify the client's history cursor, including an empty cursor.
 
     Returns:
         `StreamingResponse`:
@@ -1142,15 +1191,9 @@ async def stream_session_events(
 
         async def replay_snapshot(
             *,
-            initial: bool = False,
+            notify: bool = False,
         ) -> AsyncGenerator[str, None]:
             """Merge a fixed log snapshot with pending live notifications."""
-            notify = initial and replay_notice
-            rows = await replay.read()
-            # A short page does not imply end of history. On connection,
-            # read until the subscription takes over or the log is empty.
-            while initial and rows and rows[-1][0] not in replay.queued:
-                rows = await replay.read()
             last_id = next(reversed(replay.pending), None)
             if last_id is None and not notify:
                 return
@@ -1228,7 +1271,13 @@ async def stream_session_events(
                 ready.wait(),
                 timeout=_SUBSCRIBE_TIMEOUT_SECS,
             )
-            async for frame in replay_snapshot(initial=True):
+            await replay.read_initial()
+            if validate_history:
+                history = await replay.history_status(session_id)
+                yield f": history-{history}\n\n"
+                if history != "current":
+                    return
+            async for frame in replay_snapshot(notify=replay_notice):
                 yield frame
 
             # Inject pending subagent HITL cards projected onto this
@@ -1278,6 +1327,7 @@ async def stream_session_events(
                     except asyncio.TimeoutError:
                         continue
                 else:
+                    await replay.read()
                     async for frame in replay_snapshot():
                         yield frame
                     next_check = loop.time() + _HEARTBEAT_INTERVAL_SECS
