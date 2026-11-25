@@ -15,7 +15,9 @@ the four branches below cover the whole inbox→context pipeline:
 - empty context → a fresh ``AssistantMsg`` is appended.
 
 Each non-empty drain must also yield one ``HintBlockEvent`` per hint so
-the SSE stream renders them.
+the SSE stream renders them. A completed background tool arrives as a
+``ToolResultBlock`` instead: it is injected the same way and yields a
+``ToolResultEndEvent`` carrying its final state.
 """
 import uuid
 from contextlib import asynccontextmanager
@@ -32,6 +34,8 @@ from agentscope.message import (
     HintBlock,
     SystemMsg,
     TextBlock,
+    ToolResultBlock,
+    ToolResultState,
 )
 
 
@@ -500,6 +504,66 @@ class TestInboxMiddlewareYieldsHintBlockEvents(IsolatedAsyncioTestCase):
                     "block_id": h2.id,
                     "source": "bob",
                     "hint": "b",
+                },
+            ],
+        )
+
+
+class TestInboxMiddlewareToolResultBlocks(IsolatedAsyncioTestCase):
+    """A completed background tool arrives as a ``ToolResultBlock``:
+    it is injected into context like a hint, and yields a
+    ``ToolResultEndEvent`` carrying its final state."""
+
+    async def test_tool_result_injected_and_event_yielded(self) -> None:
+        """A tool_result payload lands in context and yields one
+        ToolResultEndEvent."""
+        bus = _FakeBus()
+        agent = _make_agent(
+            name="A",
+            session_id="s",
+            reply_id="rid-tr",
+            context=[],
+        )
+        block = ToolResultBlock(
+            id="call_1",
+            name="slow_tool",
+            output=[TextBlock(text="done")],
+            state=ToolResultState.SUCCESS,
+            metadata={
+                "background_task_id": "task-1",
+                "tool_name": "slow_tool",
+                "tool_state": "offloaded",
+                "offloaded_at": 123.0,
+            },
+        )
+        key = MessageBus._INBOX_KEY.format(sid="s")
+        bus._queues.setdefault(key, []).append(
+            (bus._alloc_id(), block.model_dump(mode="json")),
+        )
+        mw = InboxMiddleware(bus)
+
+        events = await _drain(
+            mw.on_reasoning(agent, {}, _noop_next_handler),
+        )
+
+        self.assertEqual(len(agent.state.context), 1)
+        self.assertEqual(agent.state.context[0].content, [block])
+        self.assertEqual(
+            [e.model_dump(mode="json") for e in events],
+            [
+                {
+                    "type": "TOOL_RESULT_END",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "metadata": {
+                        "background_task_id": "task-1",
+                        "tool_name": "slow_tool",
+                        "tool_state": "offloaded",
+                        "offloaded_at": 123.0,
+                    },
+                    "reply_id": "rid-tr",
+                    "tool_call_id": "call_1",
+                    "state": "success",
                 },
             ],
         )

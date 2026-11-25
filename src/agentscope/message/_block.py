@@ -199,6 +199,11 @@ class ToolResultState(StrEnum):
     INTERRUPTED = "interrupted"
     DENIED = "denied"
     RUNNING = "running"
+    OFFLOADED = "offloaded"
+    """The tool is still running in the background; this placeholder is
+    not a final result. See ``ToolOffloadMiddleware``: an offloaded
+    tool call keeps its ``ToolResultBlock`` in this state until the
+    real result is delivered, so the call still counts as unfinished."""
 
 
 class ToolResultBlock(BaseModel):
