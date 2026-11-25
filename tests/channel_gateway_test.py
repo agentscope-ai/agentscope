@@ -21,7 +21,11 @@ from agentscope.app._bus_ops import (
     has_pending_inbox_or_release,
     register_inbox_consumer,
 )
-from agentscope.app.channel import ChannelClients, ChannelTypeRegistry
+from agentscope.app.channel import (
+    ChannelClients,
+    ChannelTypeRegistry,
+    FeishuChannel,
+)
 from agentscope.app.channel._dingtalk._channel import DingTalkChannel
 from agentscope.app.channel._base import (
     ChannelBase,
@@ -630,8 +634,6 @@ class FeishuPostParseTest(IsolatedAsyncioTestCase):
     """Feishu rich-text ``post`` flattens to ordered text + data blocks."""
 
     async def test_mixed_text_image_link(self) -> None:
-        from agentscope.app.channel._feishu._channel import FeishuChannel
-
         channel = FeishuChannel(
             "c",
             FeishuChannel.Credentials(app_id="a", app_secret="s"),
@@ -669,6 +671,38 @@ class FeishuPostParseTest(IsolatedAsyncioTestCase):
         self.assertTrue(
             any(isinstance(b, TextBlock) and "link" in b.text for b in blocks),
         )
+
+    async def test_code_block_is_kept(self) -> None:
+        """Code retains its whitespace and position relative to prose."""
+        channel = FeishuChannel(
+            "c",
+            FeishuChannel.Credentials(app_id="a", app_secret="s"),
+            FeishuChannel.Config(),
+        )
+        code = "    first()\n    second()\n"
+        snippet = [{"tag": "code_block", "language": "python", "text": code}]
+        intro = [{"tag": "text", "text": "Explain:"}]
+        outro = [{"tag": "text", "text": "Why?"}]
+        for rows, expected in (
+            ([snippet], [code]),
+            ([intro, snippet, outro], ["Explain:", code, "Why?"]),
+            ([[{"tag": "code_block", "text": "  \n"}]], []),
+        ):
+            with self.subTest(rows=rows):
+                blocks = await channel._parse_post({"content": rows}, "m1")
+                self.assertEqual(
+                    [block.model_dump() for block in blocks],
+                    [
+                        {
+                            "type": "text",
+                            "text": text,
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        }
+                        for text in expected
+                    ],
+                )
 
 
 class _AwaitingStorage:
