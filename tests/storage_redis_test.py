@@ -2201,3 +2201,35 @@ class TestRecordKeyTTL(IsolatedAsyncioTestCase):
         self.assertEqual(result, (record.model_dump_json(), AnyValue()))
         self.assertGreater(result[1], 0)
         self.assertLessEqual(result[1], 60)
+
+
+class TestExternalConnectionPool(IsolatedAsyncioTestCase):
+    """An externally supplied pool must decode responses.
+
+    The record helpers compare raw Redis strings: the MCP / skill name
+    index returns the id that owns a name and the platform-bot index
+    returns a channel id. With a pool that hands back ``bytes`` those
+    comparisons never match, so re-upserting an unchanged record is
+    rejected as a name clash and lookups by name return nothing.
+    """
+
+    async def test_rejects_pool_that_returns_bytes(self) -> None:
+        """A bytes pool would break the name and bot indexes."""
+        fake = fakeredis.aioredis.FakeRedis(decode_responses=False)
+        try:
+            storage = RedisStorage(connection_pool=fake.connection_pool)
+            with self.assertRaisesRegex(ValueError, "decode_responses"):
+                async with storage:
+                    pass
+        finally:
+            await fake.aclose()
+
+    async def test_accepts_pool_that_decodes_responses(self) -> None:
+        """A decoding pool still enters and yields a client."""
+        fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        try:
+            storage = RedisStorage(connection_pool=fake.connection_pool)
+            async with storage:
+                self.assertIsNotNone(storage.get_client())
+        finally:
+            await fake.aclose()
