@@ -34,14 +34,21 @@ def _report(text: str = "已完成，见 main.py") -> Msg:
     )
 
 
-def _verdict(result: str, message: str = "") -> Msg:
+def _verdict(
+    result: str,
+    message: str = "",
+    issues: list[dict[str, Any]] | None = None,
+) -> Msg:
     """A verifier's final message carrying a structured verdict."""
+    structured_output: dict[str, Any] = {"result": result, "message": message}
+    if issues is not None:
+        structured_output["issues"] = issues
     return Msg(
         name="verifier",
         content=[],
         role="assistant",
         finished_reason=ReplyFinishedReason.COMPLETED,
-        structured_output={"result": result, "message": message},
+        structured_output=structured_output,
     )
 
 
@@ -148,6 +155,37 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
             "缺 requirements.txt",
             executor.received[1].get_text_content(),
         )
+
+    async def test_structured_issues_reach_the_executor(self) -> None:
+        """A refused verdict with enumerated issues feeds each one back to
+        the executor with its severity and fix suggestion."""
+        executor = StubAgent("executor", [[_report()], [_report()]])
+        verifier = StubAgent(
+            "verifier",
+            [
+                [
+                    _verdict(
+                        "fail",
+                        "两处未达标",
+                        issues=[
+                            "[critical] 缺 requirements.txt - 补上依赖清单",
+                            "[minor] 没有重试逻辑 - 请求失败后重试三次",
+                        ],
+                    ),
+                ],
+                [_verdict("pass")],
+            ],
+        )
+        pipe = GoalPipeline(executor, verifier)
+
+        await self._run(pipe, self.query)
+
+        feedback = executor.received[1].get_text_content()
+        self.assertIn("两处未达标", feedback)
+        self.assertIn("- [critical] 缺 requirements.txt", feedback)
+        self.assertIn("补上依赖清单", feedback)
+        self.assertIn("- [minor] 没有重试逻辑", feedback)
+        self.assertIn("请求失败后重试三次", feedback)
 
     async def test_resets_verifier_conversation_between_refused_rounds(
         self,
