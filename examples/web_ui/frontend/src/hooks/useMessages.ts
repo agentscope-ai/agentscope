@@ -880,7 +880,7 @@ export function useMessages(
 				}
 				// Voice cancellation tracks its own submission receipt.
 				if (
-					observer?.keepPendingOnPostError?.() ||
+					observer?.keepPendingOnPostError?.(e) ||
 					(observer?.isCurrent && !observer.isCurrent())
 				)
 					throw e;

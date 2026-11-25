@@ -7,6 +7,7 @@ from ...model import ChatModelBase
 from ...realtime import RealtimeModelBase
 from ..._logging import logger
 
+REPLY_PIPELINE_VOICE = "_agentscope_pipeline_voice"
 REPLY_CHAT_CONFIG = "_agentscope_chat_config"
 
 

@@ -33,7 +33,7 @@ export interface VoiceSubmissionObserver {
 	submissionId: string;
 	signal: AbortSignal;
 	isCurrent: () => boolean;
-	keepPendingOnPostError: () => boolean;
+	keepPendingOnPostError: (error: unknown) => boolean;
 	submitted: (
 		id: string,
 		clearPending: (beforeClaim: boolean) => void,
@@ -76,6 +76,10 @@ interface VoiceObserver {
 const ASR_SAMPLE_RATE = 16_000;
 const PRE_SPEECH_PAD_MS = 300;
 
+function isSubmissionRejected(error: unknown): boolean {
+	return error instanceof ApiError && [400, 401, 403, 404, 422, 429].includes(error.status);
+}
+
 /** One browser-owned, half-duplex conversation; Chat owns persistence and tools. */
 export class PipelineVoiceSession {
 	private readonly options: PipelineVoiceOptions;
@@ -83,7 +87,6 @@ export class PipelineVoiceSession {
 	private readonly player: PipelineAudioPlayer;
 	private readonly abort = new AbortController();
 	private vad: MicVAD | null = null;
-	private vadCreation: Promise<MicVAD> | null = null;
 	private vadStart: Promise<void> | null = null;
 	private stream: MediaStream | null = null;
 	private asr: BrowserRealtimeASRTransport | null = null;
@@ -170,7 +173,7 @@ export class PipelineVoiceSession {
 			});
 			const { MicVAD } = await import('@ricky0123/vad-web');
 			if (this.stopped) return;
-			this.vadCreation = MicVAD.new({
+			const vad = await MicVAD.new({
 				model: 'v5',
 				startOnLoad: false,
 				audioContext: this.context,
@@ -230,8 +233,11 @@ export class PipelineVoiceSession {
 					void this.submitSpeech(audio);
 				},
 			});
-			this.vad = await this.vadCreation;
-			if (this.stopped) return;
+			if (this.stopped) {
+				await vad.destroy();
+				return;
+			}
+			this.vad = vad;
 			await this.listen();
 		} catch (error) {
 			this.fail(error);
@@ -513,22 +519,21 @@ export class PipelineVoiceSession {
 				track.onended = null;
 				track.stop();
 			});
-			this.cleanupPromise = (async () => {
-				try {
-					// Creation/start may still be using the shared audio context.
-					const vad = this.vadCreation
-						? await this.vadCreation.catch(() => null)
-						: this.vad;
-					await this.vadStart?.catch(() => undefined);
-					await vad?.destroy();
-				} catch (error) {
-					this.reportError(error);
-				} finally {
-					await this.context.close().catch((error) => this.reportError(error));
-				}
-				this.cleanupDone = true;
-				this.maybeFinishStop();
-			})();
+			// A stalled VAD startup must not hold the microphone or the next session.
+			const vad = this.vad;
+			if (vad) {
+				void Promise.resolve(this.vadStart)
+					.catch(() => undefined)
+					.then(() => vad.destroy())
+					.catch((error) => this.reportError(error));
+			}
+			this.cleanupPromise = this.context
+				.close()
+				.catch((error) => this.reportError(error))
+				.then(() => {
+					this.cleanupDone = true;
+					this.maybeFinishStop();
+				});
 		}
 		return Promise.all([this.cleanupPromise, this.cancelTurn(true)]).then(() => undefined);
 	}
@@ -642,8 +647,15 @@ export class PipelineVoiceSession {
 		if (this.receiptLookup) return this.receiptLookup;
 		const attempt = this.submissionAttempt;
 		if (!attempt || !this.userMessageId || !this.submissionId) return Promise.resolve();
-		const lookup = this.options
-			.inputResult(this.userMessageId, this.submissionId, this.abort.signal)
+		const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(5_000)]);
+		const aborted = new Promise<never>((_, reject) => {
+			signal.throwIfAborted();
+			signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+		});
+		const lookup = Promise.race([
+			this.options.inputResult(this.userMessageId, this.submissionId, signal),
+			aborted,
+		])
 			.then((result) => {
 				if (
 					this.submissionAttempt !== attempt ||
@@ -828,13 +840,14 @@ export class PipelineVoiceSession {
 							signal,
 							isCurrent: () =>
 								this.submissionAttempt === attempt && !attempt.terminal,
-							keepPendingOnPostError: () =>
+							keepPendingOnPostError: (error) =>
 								attempt.terminal ||
 								(this.submissionAttempt === attempt &&
 									(this.inputStarted ||
 										!!this.replyId ||
 										this.pendingQueueEvents.length > 0 ||
-										!!this.queueId)),
+										!!this.queueId ||
+										(!!this.userMessageId && !isSubmissionRejected(error)))),
 							submitted: (id, clearPending, acceptedQueue) => {
 								if (this.submissionAttempt !== attempt || signal.aborted) return;
 								this.userMessageId = id;
@@ -854,7 +867,12 @@ export class PipelineVoiceSession {
 			} catch (error) {
 				if (this.submissionAttempt !== attempt || attempt.terminal) return;
 				// A targeted receipt can confirm acceptance even if the POST was lost.
-				if (!this.stopped && !this.queueId && this.pendingQueueEvents.length) {
+				if (
+					!this.stopped &&
+					!this.inputStarted &&
+					!this.queueId &&
+					(this.pendingQueueEvents.length || !isSubmissionRejected(error))
+				) {
 					await this.lookupQueueItem();
 					if (this.submissionAttempt !== attempt || attempt.terminal) return;
 				}
@@ -862,8 +880,7 @@ export class PipelineVoiceSession {
 				// Only explicit rejection, without acceptance/execution evidence, proves
 				// no turn exists. Network errors, timeouts and 5xx remain ambiguous.
 				if (
-					error instanceof ApiError &&
-					[400, 401, 403, 404, 422, 429].includes(error.status) &&
+					isSubmissionRejected(error) &&
 					!accepted &&
 					!this.queueId &&
 					!this.inputStarted &&

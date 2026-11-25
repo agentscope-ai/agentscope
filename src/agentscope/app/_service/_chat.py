@@ -91,7 +91,7 @@ from .._client_external_tool import (
     ClientExternalToolDefinition,
 )
 from ._access import ResourceAccessService
-from ._model import get_model, REPLY_CHAT_CONFIG
+from ._model import get_model, REPLY_CHAT_CONFIG, REPLY_PIPELINE_VOICE
 from ._tts_model import (
     build_reply_tts_model,
     resolve_tts_voice_profile,
@@ -1519,18 +1519,30 @@ class ChatService:
                         session_id,
                         session_record.state.reply_id,
                     )
-                    if previous and REPLY_CHAT_CONFIG in previous.metadata:
-                        reply_models = ChatModelSnapshot.model_validate(
-                            previous.metadata[REPLY_CHAT_CONFIG],
+                    if previous is not None:
+                        voice_reply = (
+                            previous.metadata.get(REPLY_PIPELINE_VOICE)
+                            or REPLY_SUBMISSION in previous.metadata
                         )
-                    if previous and REPLY_TTS_CONFIG in previous.metadata:
-                        initial_is_snapshot = True
-                        saved = previous.metadata[REPLY_TTS_CONFIG]
-                        initial_tts = (
-                            TTSModelConfig.model_validate(saved)
-                            if saved is not None
-                            else None
-                        )
+                        saved_models = previous.metadata.get(REPLY_CHAT_CONFIG)
+                        if saved_models is not None and (
+                            voice_reply
+                            or session_record.config.chat_model_config is None
+                        ):
+                            reply_models = ChatModelSnapshot.model_validate(
+                                saved_models,
+                            )
+                        if (
+                            voice_reply
+                            and REPLY_TTS_CONFIG in previous.metadata
+                        ):
+                            initial_is_snapshot = True
+                            saved = previous.metadata[REPLY_TTS_CONFIG]
+                            initial_tts = (
+                                TTSModelConfig.model_validate(saved)
+                                if saved is not None
+                                else None
+                            )
 
                 async def create_tts(
                     config: TTSModelConfig,
@@ -1797,6 +1809,10 @@ class ChatService:
             ).strip()
             pending_bindings: deque[Msg] = deque()
             restore_chat_models = False
+            pipeline_reply = (
+                pipeline_chat_config is not None
+                or pipeline_tts_config is not None
+            )
             await register_inbox_consumer(self._message_bus, session_id)
             try:
                 while True:
@@ -1862,19 +1878,26 @@ class ChatService:
                                         id=event.reply_id,
                                         name=event.name,
                                         content=[],
-                                        metadata={
-                                            REPLY_CHAT_CONFIG: (
-                                                reply_models.model_dump(
-                                                    mode="json",
-                                                )
-                                            ),
-                                            REPLY_TTS_CONFIG: (
-                                                event.metadata.get(
-                                                    REPLY_TTS_CONFIG,
-                                                )
-                                            ),
-                                        },
                                     )
+                                    # Inbox replies may borrow the active LLM
+                                    # when no ordinary model is configured.
+                                    metadata = reply_msg.metadata
+                                    if (
+                                        pipeline_reply
+                                        or default_models is None
+                                    ):
+                                        metadata[
+                                            REPLY_CHAT_CONFIG
+                                        ] = reply_models.model_dump(
+                                            mode="json",
+                                        )
+                                    if pipeline_reply:
+                                        metadata[REPLY_PIPELINE_VOICE] = True
+                                        metadata[
+                                            REPLY_TTS_CONFIG
+                                        ] = event.metadata.get(
+                                            REPLY_TTS_CONFIG,
+                                        )
                                     if submission_id is not None:
                                         reply_msg.metadata[
                                             REPLY_SUBMISSION
@@ -2148,6 +2171,7 @@ class ChatService:
                     if agent.state.has_awaiting_tool_calls(agent.name):
                         break
                     input_msg = None
+                    pipeline_reply = False
                     restore_chat_models = True
 
             finally:

@@ -31,7 +31,10 @@ from agentscope.app._router._schema import ChatRequest, UpdateSessionRequest
 from agentscope.app._router._session import update_session
 from agentscope.app._router._chat import chat
 from agentscope.app._service import ChatService
-from agentscope.app._service._model import REPLY_CHAT_CONFIG
+from agentscope.app._service._model import (
+    REPLY_CHAT_CONFIG,
+    REPLY_PIPELINE_VOICE,
+)
 from agentscope.app._service._tts_model import (
     build_reply_tts_model,
     validate_tts_model_config,
@@ -56,9 +59,11 @@ from agentscope.app.storage import (
     VoiceProfileRecord,
 )
 from agentscope.event import (
+    ConfirmResult,
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
+    ExternalExecutionResultEvent,
     ReplyEndEvent,
     ReplyStartEvent,
     UserConfirmResultEvent,
@@ -682,6 +687,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             reply.metadata,
             {
+                REPLY_PIPELINE_VOICE: True,
                 REPLY_TTS_CONFIG: original,
                 REPLY_CHAT_CONFIG: models.model_dump(mode="json"),
             },
@@ -711,15 +717,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             "session-1",
             "ordinary-reply",
         )
-        self.assertEqual(
-            ordinary.metadata,
-            {
-                REPLY_TTS_CONFIG: None,
-                REPLY_CHAT_CONFIG: ChatModelSnapshot(
-                    primary=self.session.config.chat_model_config,
-                ).model_dump(mode="json"),
-            },
-        )
+        self.assertEqual(ordinary.metadata, {})
         self.assertEqual(
             [agent.models_used for agent in self.agents],
             [
@@ -730,18 +728,42 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         )
         self.assertIsNone(self.session.config.tts_model_config)
 
-    async def test_silent_resume_and_enabled_ordinary_chat(self) -> None:
-        """A silent reply stays silent when ordinary TTS is enabled later."""
-        await self._run(UserMsg("user", "silent", id="silent"))
+    async def test_ordinary_resume_uses_live_models_and_tts(self) -> None:
+        """Ordinary replies use live settings on each tool continuation."""
+        primary = self.session.config.chat_model_config
+        await self._run(UserMsg("user", "ordinary", id="ordinary"))
+        reply_id = "ordinary-reply"
+        reply = await self.storage.get_message("user-1", "session-1", reply_id)
+        # Earlier builds also attached voice snapshots to ordinary replies.
+        reply.metadata.update(
+            {
+                REPLY_CHAT_CONFIG: ChatModelSnapshot(
+                    primary=primary,
+                ).model_dump(mode="json"),
+                REPLY_TTS_CONFIG: None,
+            },
+        )
+        await self.storage.upsert_message("user-1", "session-1", reply)
+        updated = primary.model_copy(update={"model": "replacement"})
+        fallback = primary.model_copy(update={"model": "backup"})
+        self.session.config.chat_model_config = updated
+        self.session.config.fallback_chat_model_config = fallback
         self.session.config.tts_model_config = _tts("ordinary")
         await self._run(
-            UserConfirmResultEvent(
-                reply_id="silent-reply",
-                confirm_results=[],
+            UserConfirmResultEvent(reply_id=reply_id, confirm_results=[]),
+        )
+        self.session.config.tts_model_config = None
+        await self._run(
+            ExternalExecutionResultEvent(
+                reply_id=reply_id,
+                execution_results=[],
             ),
         )
-        self.create_tts.assert_not_awaited()
-        await self._run(UserMsg("user", "speaking", id="speaking"))
+        await self._run(UserMsg("user", "next", id="next"))
+        self.assertEqual(
+            [agent.models_used for agent in self.agents],
+            [[(primary, None)]] + [[(updated, fallback)]] * 3,
+        )
         self.assertEqual(
             [c.args[1] for c in self.create_tts.await_args_list],
             [_tts("ordinary")],
@@ -766,6 +788,18 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             pipeline_chat_config=models,
             pipeline_tts_config=speech,
         )
+        # Older Web UI voice replies have a submission binding only.
+        reply = await self.storage.get_message(
+            "user-1",
+            "session-1",
+            "follow-reply",
+        )
+        del reply.metadata[REPLY_PIPELINE_VOICE]
+        reply.metadata[REPLY_SUBMISSION] = {
+            "submission_id": "voice-id",
+            "message_ids": ["follow"],
+        }
+        await self.storage.upsert_message("user-1", "session-1", reply)
         await self._run(
             UserConfirmResultEvent(
                 reply_id="follow-reply",
@@ -854,16 +888,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             "session-1",
             "inbox-reply",
         )
-        self.assertEqual(
-            reply.metadata,
-            {
-                REPLY_TTS_CONFIG: None,
-                REPLY_CHAT_CONFIG: ChatModelSnapshot(
-                    primary=primary,
-                    fallback=fallback,
-                ).model_dump(mode="json"),
-            },
-        )
+        self.assertEqual(reply.metadata, {})
 
     async def test_independent_llm_without_normal_model(self) -> None:
         """A voice model is sufficient even when ordinary chat is unset."""
@@ -886,17 +911,46 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             "session-1",
             "inbox-reply",
         )
-        self.assertEqual(
-            followup.metadata,
-            {
-                REPLY_CHAT_CONFIG: models.model_dump(mode="json"),
-                REPLY_TTS_CONFIG: None,
-            },
-        )
         self.session.config.pipeline_voice_config.chat_model_config = None
         with self.assertRaises(HTTPException) as error:
             await self.service.pipeline_snapshot(self.session)
         self.assertEqual(error.exception.status_code, 422)
+
+        tool = ToolCallBlock(id="tool", name="ask", input="{}", state="asking")
+        followup.content = [tool]
+        followup.finished_reason = None
+        confirm = UserConfirmResultEvent(
+            reply_id=followup.id,
+            confirm_results=[ConfirmResult(confirmed=True, tool_call=tool)],
+        )
+        ordinary = voice.model_copy(update={"model": "ordinary"})
+        for current in (None, ordinary):
+            with self.subTest(current=current):
+                await self.storage.upsert_message(
+                    "user-1",
+                    "session-1",
+                    followup,
+                )
+                self.session.state.context = [followup.model_copy(deep=True)]
+                self.session.config.chat_model_config = current
+                self.session.config.tts_model_config = _tts("ordinary")
+                self.create_tts.reset_mock()
+                await self._run(confirm)
+                self.assertEqual(
+                    self.agents[-1].models_used,
+                    [(current or voice, None)],
+                )
+                self.assertEqual(
+                    [
+                        (c.args[1], c.kwargs["use_snapshot"])
+                        for c in self.create_tts.await_args_list
+                    ],
+                    [(_tts("ordinary"), False)],
+                )
+        self.assertEqual(
+            followup.metadata,
+            {REPLY_CHAT_CONFIG: models.model_dump(mode="json")},
+        )
 
     async def test_inaccessible_voice_model_is_rejected(self) -> None:
         """Snapshotting does not bypass credential access checks."""
@@ -1082,8 +1136,7 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             pipeline_chat_config=models,
             pipeline_tts_config=speech,
         )
-        # Ordinary chat resolves the profile on reply start and records
-        # that effective config for its own later tool continuation.
+        # Ordinary chat resolves the profile again on continuation.
         self.session.config.tts_model_config = (
             self.session.config.pipeline_voice_config.tts_model_config
         )
@@ -1097,7 +1150,10 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         )
         old = ("c", "gpt-4o-mini-tts", {"id": "voice-old"})
         updated = ("new-c", "tts-1", "alloy")
-        self.assertEqual(observed, [old, old, updated, updated, updated])
+        self.assertEqual(
+            observed,
+            [old, old, updated, updated, ("new-c", "tts-1", "nova")],
+        )
 
     async def test_pipeline_follows_updated_voice_profile(self) -> None:
         """Submission refreshes bindings without weakening session writes."""

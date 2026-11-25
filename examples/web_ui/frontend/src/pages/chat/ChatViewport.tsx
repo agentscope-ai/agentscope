@@ -15,7 +15,7 @@ import {
 	UsersRound,
 	X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import type {
@@ -24,7 +24,6 @@ import type {
 	PermissionMode,
 	PipelineVoiceConfig,
 	RealtimeModelConfig,
-	SessionRecord,
 	SessionKnowledgeConfig,
 	TTSModelConfig,
 	UpdateSessionRequest,
@@ -211,7 +210,7 @@ function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
  */
 export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatViewportProps) {
 	const { t } = useTranslation();
-	const { sessions, refetch: refetchSessions } = useSessions(agentId);
+	const { sessions, refetch: refetchSessions, update: updateSession } = useSessions(agentId);
 	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
 	const { groups } = useAvailableModels();
 	const { groups: realtimeGroups } = useAvailableRealtimeModels();
@@ -223,7 +222,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	);
 	const [selectedTTSModel, setSelectedTTSModel] = useState<TTSModelConfig | null>(null);
 	const [selectedASRModel, setSelectedASRModel] = useState<ASRModelConfig | null>(null);
-	const [pipelineConfig, setPipelineConfig] = useState<PipelineVoiceConfig | null>(null);
+	const pipelineConfig = view?.session.config.pipeline_voice_config ?? null;
 	const [selectedRealtimeModel, setSelectedRealtimeModel] = useState<RealtimeModelConfig | null>(
 		null,
 	);
@@ -234,6 +233,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
 	const [configPending, setConfigPending] = useState(false);
+	const configWrite = useRef<symbol | null>(null);
+	useLayoutEffect(() => {
+		setConfigPending(false);
+		return () => {
+			configWrite.current = null;
+		};
+	}, [agentId, sessionId]);
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
 	// Persisted so leaving and returning to /chat keeps the same panels.
@@ -456,20 +462,21 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	 * @param apply - Mirrors the change into local state on success.
 	 */
 	const patchConfig = useCallback(
-		async (body: UpdateSessionRequest, apply: (session: SessionRecord) => void) => {
+		async (body: UpdateSessionRequest, apply?: () => void) => {
 			if (!sessionId || !agentId) return;
+			const write = Symbol();
+			configWrite.current = write;
 			setConfigPending(true);
 			try {
-				const session = await sessionApi.update(sessionId, agentId, body);
-				apply(session);
-				await refetchSessions();
+				await updateSession(sessionId, body);
+				if (configWrite.current === write) apply?.();
 			} catch {
 				// Toast already shown; local state deliberately untouched.
 			} finally {
-				setConfigPending(false);
+				if (configWrite.current === write) setConfigPending(false);
 			}
 		},
-		[sessionId, agentId, refetchSessions],
+		[sessionId, agentId, updateSession],
 	);
 
 	const handleKnowledgeConfigChange = useCallback(
@@ -690,7 +697,6 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
 		setSelectedTTSModel(null);
-		setPipelineConfig(null);
 		setSelectedASRModel(null);
 		setSelectedRealtimeModel(null);
 		setSelectedKnowledgeConfig(null);
@@ -895,7 +901,6 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		setSelectedFallbackModel(view.session.config.fallback_chat_model_config ?? null);
 		setSelectedTTSModel(view.session.config.tts_model_config ?? null);
 		setSelectedASRModel(view.session.config.asr_model_config ?? null);
-		setPipelineConfig(view.session.config.pipeline_voice_config ?? null);
 		setSelectedRealtimeModel(view.session.config.realtime_model_config ?? null);
 		setSelectedKnowledgeConfig(view.session.config.knowledge_config ?? null);
 	}, [view, groups, sessionId, agentId]);
@@ -960,9 +965,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 
 	/** Update pipeline speech settings without changing ordinary chat. */
 	const handlePipelineChange = async (patch: Partial<PipelineVoiceConfig>) => {
-		await patchConfig({ pipeline_voice_config: patch }, (session) =>
-			setPipelineConfig(session.config.pipeline_voice_config ?? null),
-		);
+		await patchConfig({ pipeline_voice_config: patch });
 	};
 
 	/** Persist the model used by browser realtime voice mode. */
@@ -1004,8 +1007,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	/**
 	 * Persist a new working directory.
 	 *
-	 * Nothing local mirrors it — the value is read straight off the
-	 * session view, which `patchConfig` refetches on success.
+	 * The displayed directory comes from the session list cache.
 	 *
 	 * @param next - Directory relative to the workspace root, or `null`
 	 *   for the root itself.
@@ -1015,12 +1017,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		// stays open on it, so the toast would be a duplicate and the
 		// swallowed rejection would let the dialog close as if it worked.
 		if (!sessionId || !agentId) return;
+		const write = Symbol();
+		configWrite.current = write;
 		setConfigPending(true);
 		try {
-			await sessionApi.update(sessionId, agentId, { cwd: next }, { silent: true });
-			await refetchSessions();
+			await updateSession(sessionId, { cwd: next }, { silent: true });
 		} finally {
-			setConfigPending(false);
+			if (configWrite.current === write) setConfigPending(false);
 		}
 	};
 
