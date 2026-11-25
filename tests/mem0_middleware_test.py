@@ -20,6 +20,8 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from typing import Any
 
+from pydantic import BaseModel
+
 from utils import MockModel
 
 from agentscope.agent import Agent
@@ -27,7 +29,13 @@ from agentscope.event import (
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
 )
-from agentscope.message import HintBlock, Msg, TextBlock, UserMsg
+from agentscope.message import (
+    HintBlock,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    UserMsg,
+)
 from agentscope.middleware import Mem0Middleware
 from agentscope.middleware._longterm_memory._mem0._utils import (
     _extract_memory_texts,
@@ -378,6 +386,52 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         self.assertNotIn("add_memory", all_names)
 
         self.assertEqual(reply.get_text_content(), "hi alice")
+
+    async def test_structured_reply_is_written_to_memory_as_json(self) -> None:
+        """Persist the structured payload instead of its status text."""
+
+        class Availability(BaseModel):
+            seats_available: int
+
+        fake = _FakeAsyncMem0Client()
+        mw = Mem0Middleware(
+            client=fake,
+            user_id="alice",
+            mode="static_control",
+        )
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="structured_call_1",
+                            name="GenerateStructuredOutput",
+                            input='{"seats_available": 13}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="agent_under_test",
+            system_prompt="base system prompt",
+            model=self.model,
+            toolkit=self.toolkit,
+            middlewares=[mw],
+        )
+
+        reply = await agent.reply(
+            UserMsg("user", "How many seats remain?"),
+            structured_schema=Availability,
+        )
+
+        self.assertEqual(reply.structured_output, {"seats_available": 13})
+        self.assertEqual(
+            fake.add_calls[0]["messages"][1]["content"],
+            '{"seats_available": 13}',
+        )
+
 
     async def test_memory_message_lands_after_user_message(self) -> None:
         """Mirroring AgentScope 1.x's ReActAgent placement: the memory
