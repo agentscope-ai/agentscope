@@ -1145,7 +1145,12 @@ class TestVolcengineAudio(IsolatedAsyncioTestCase):
             self.assertEqual(await formatter.format([msg]), expected)
 
     async def test_audio_filtering(self) -> None:
-        """Configured input types still filter audio; unknown formats fail."""
+        """Configured input types filter audio; unencodable ones skip.
+
+        A media type that passes admission but that Ark cannot encode
+        is skipped with a warning like every other unencodable block
+        (issue #2736), instead of raising out of ``format()``.
+        """
         for formatter_class in (
             VolcengineChatFormatter,
             VolcengineMultiAgentFormatter,
@@ -1172,5 +1177,115 @@ class TestVolcengineAudio(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(await formatter.format([msg]), [])
 
-            with self.assertRaisesRegex(TypeError, "audio/ogg"):
-                await formatter_class(input_types=["audio/*"]).format([msg])
+            with self.assertLogs("as", level="WARNING") as logs:
+                skipped = await formatter_class(
+                    input_types=["audio/*"],
+                ).format([msg])
+            self.assertEqual(skipped, [])
+            self.assertIn("audio/ogg", "\n".join(logs.output))
+
+    async def test_unencodable_audio_does_not_drop_the_reply(self) -> None:
+        """One unencodable audio block must not sink the whole message.
+
+        Admission matches ``input_types`` with fnmatch, the encoder only
+        knows ``_AUDIO_FORMATS``; a format that passes the first and
+        misses the second used to raise ``TypeError`` out of
+        ``format()``, taking the rest of the conversation with it.
+        """
+        text = TextBlock(text="Listen to this.")
+        for media_type in ("audio/ogg", "audio/flac", "audio/webm"):
+            for formatter_class in (
+                VolcengineChatFormatter,
+                VolcengineMultiAgentFormatter,
+            ):
+                formatter = formatter_class(
+                    input_types=["text/plain", "image/*", "audio/*"],
+                )
+                with self.subTest(
+                    media_type=media_type,
+                    formatter=formatter_class.__name__,
+                ):
+                    expected = await formatter.format(
+                        [UserMsg(name="user", content=[text])],
+                    )
+                    with self.assertLogs("as", level="WARNING") as logs:
+                        actual = await formatter.format(
+                            [
+                                UserMsg(
+                                    name="user",
+                                    content=[
+                                        text,
+                                        DataBlock(
+                                            source=Base64Source(
+                                                data="T0dH",
+                                                media_type=media_type,
+                                            ),
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        )
+                    self.assertEqual(actual, expected)
+                    self.assertIn(media_type, "\n".join(logs.output))
+
+    async def test_mixed_case_audio_skips_on_every_platform(self) -> None:
+        """``fnmatch`` ignores case on Windows; skipping must not differ."""
+        text = TextBlock(text="Listen to this.")
+        for formatter_class in (
+            VolcengineChatFormatter,
+            VolcengineMultiAgentFormatter,
+        ):
+            formatter = formatter_class()
+            with self.subTest(formatter=formatter_class.__name__):
+                expected = await formatter.format(
+                    [UserMsg(name="user", content=[text])],
+                )
+                with self.assertLogs("as", level="WARNING") as logs:
+                    actual = await formatter.format(
+                        [
+                            UserMsg(
+                                name="user",
+                                content=[
+                                    text,
+                                    DataBlock(
+                                        source=Base64Source(
+                                            data="T0dH",
+                                            media_type="audio/MPEG",
+                                        ),
+                                    ),
+                                ],
+                            ),
+                        ],
+                    )
+                self.assertEqual(actual, expected)
+                self.assertIn("audio/MPEG", "\n".join(logs.output))
+
+    async def test_unencodable_tool_audio_is_skipped(self) -> None:
+        """Audio promoted from a tool result takes the same skip path."""
+        formatter = VolcengineChatFormatter(
+            input_types=["text/plain", "image/*", "audio/*"],
+        )
+        msg = AssistantMsg(
+            name="assistant",
+            content=[
+                ToolCallBlock(id="call_1", name="record", input="{}"),
+                ToolResultBlock(
+                    id="call_1",
+                    name="record",
+                    output=[
+                        TextBlock(text="saved"),
+                        DataBlock(
+                            source=Base64Source(
+                                data="T0dH",
+                                media_type="audio/ogg",
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.SUCCESS,
+                ),
+            ],
+        )
+        with self.assertLogs("as", level="WARNING") as logs:
+            res = await formatter.format([msg])
+        self.assertNotIn("input_audio", repr(res))
+        self.assertIn("audio/ogg", "\n".join(logs.output))
