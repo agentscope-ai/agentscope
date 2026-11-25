@@ -221,8 +221,10 @@ class ToolBase(ABC):
                 return self.call(**kwargs)
             return await self.call(**kwargs)
 
+        # Keep the private cursor separate from tool arguments named "index".
         async def execute_chain(
             index: int = 0,
+            /,
             **chain_kwargs: Any,
         ) -> AsyncGenerator[ToolChunk, None]:
             """Execute the tool middleware chain."""

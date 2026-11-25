@@ -33,6 +33,7 @@ from ..deps import (
     get_knowledge_parsers,
     get_resource_access_service,
 )
+from ._media_types import INLINE_MEDIA_TYPES
 from ._schema import (
     ChunkerInfo,
     DocumentDownloadTokenResponse,
@@ -744,25 +745,6 @@ async def search_knowledge_base(
     return SearchKnowledgeBaseResponse(results=results, total=len(results))
 
 
-# The media types a browser may render inline. Anything else (notably
-# text/html and image/svg+xml, which can run script) is forced to an
-# attachment so a crafted upload cannot XSS the app origin. Raster
-# image formats are enumerated rather than matched by ``image/``
-# prefix precisely so that SVG never slips through.
-_INLINE_MEDIA_TYPES = frozenset(
-    {
-        "text/plain",
-        "text/markdown",
-        "application/pdf",
-        "image/png",
-        "image/jpeg",
-        "image/gif",
-        "image/webp",
-        "image/bmp",
-    },
-)
-
-
 # Preview tokens outlive a download capability on purpose: a PDF
 # viewer embedded in an <iframe> re-requests the file as the reader
 # pages through it, and a 60-second window would 401 mid-read.
@@ -957,7 +939,7 @@ async def read_knowledge_document(
     media_type = (data.content_type or "").split(";")[
         0
     ].strip().lower() or "application/octet-stream"
-    inline = not download and media_type in _INLINE_MEDIA_TYPES
+    inline = not download and media_type in INLINE_MEDIA_TYPES
     disposition = "inline" if inline else "attachment"
     # Encode "/" too: it is not allowed in RFC 5987 filename* values.
     filename = quote(data.filename or "download", safe="")

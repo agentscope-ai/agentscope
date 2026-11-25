@@ -251,16 +251,32 @@ class KnowledgeBase:
         await self.ensure_collection()
         response = await self._embedding_model(queries)
 
-        results_per_query = await asyncio.gather(
-            *(
-                self._search_vector(vector, top_k)
-                for vector in response.embeddings
-            ),
-        )
+        tasks = [
+            asyncio.create_task(self._search_vector(vector, top_k))
+            for vector in response.embeddings
+        ]
+        try:
+            for completed in asyncio.as_completed(tasks):
+                await completed
+        except BaseException as search_error:
+            for task in tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            cleanup = asyncio.gather(*tasks, return_exceptions=True)
+            cancellation = None
+            # A caller may cancel again while a store is releasing resources.
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError as exc:
+                    cancellation = exc
+            if cancellation is not None:
+                raise cancellation from search_error
+            raise
 
         best: dict[tuple[str, int], VectorSearchResult] = {}
-        for results in results_per_query:
-            for result in results:
+        for task in tasks:
+            for result in task.result():
                 if (
                     score_threshold is not None
                     and result.score < score_threshold

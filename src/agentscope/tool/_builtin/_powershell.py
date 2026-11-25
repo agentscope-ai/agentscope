@@ -5,7 +5,14 @@ import base64
 import os
 from typing import AsyncGenerator, Any, List
 
-from ._backend import BackendBase, LocalBackend, _normalize_newlines
+from ._backend import (
+    BackendBase,
+    DEFAULT_MAX_OUTPUT_CHARS,
+    LocalBackend,
+    _format_command_failure,
+    _normalize_newlines,
+    _truncate_output,
+)
 from .._base import ToolBase, ToolMiddlewareBase
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
@@ -97,6 +104,7 @@ are easier for the user to review and authorize:
         cwd: str | os.PathLike[str] | None = None,
         middlewares: List[ToolMiddlewareBase] | None = None,
         backend: BackendBase | None = None,
+        max_output_chars: int | None = DEFAULT_MAX_OUTPUT_CHARS,
     ) -> None:
         """Initialize the PowerShell tool.
 
@@ -108,11 +116,25 @@ are easier for the user to review and authorize:
             backend (`BackendBase | None`, optional):
                 Backend used for subprocess execution. Defaults to the
                 host-local backend.
+            max_output_chars (`int | None`, defaults to \
+            `DEFAULT_MAX_OUTPUT_CHARS`):
+                Characters of output returned to the agent. Longer output
+                is cut, with a notice that gives the original length.
+                ``None`` returns the whole output and leaves the limit to
+                the agent's ``ContextConfig.tool_result_limit``, which
+                offloads the rest to the workspace when an offloader is
+                set.
         """
         super().__init__(middlewares=middlewares)
         self._cwd = os.fspath(cwd) if cwd is not None else None
         self._backend = backend or LocalBackend()
         self._executable: str | None = None
+        if max_output_chars is not None and max_output_chars <= 0:
+            raise ValueError(
+                "max_output_chars must be a positive integer or None, "
+                f"got {max_output_chars}.",
+            )
+        self.max_output_chars = max_output_chars
 
     async def _resolve_executable(self) -> str:
         """Prefer PowerShell 6+ and cache the first available executable."""
@@ -267,15 +289,12 @@ are easier for the user to review and authorize:
             return
 
         if not result.ok():
-            error_result = f"Command failed: {command}\n"
-            if stdout:
-                error_result += f"\nStdout:\n{stdout}"
-            if stderr:
-                error_result += f"\nStderr:\n{stderr}"
-            if len(error_result) > 30000:
-                error_result = (
-                    error_result[:30000] + "\n... (output truncated)"
-                )
+            error_result = _format_command_failure(
+                command,
+                stdout,
+                stderr,
+                self.max_output_chars,
+            )
             yield ToolChunk(
                 content=[TextBlock(text=error_result)],
                 state=ToolResultState.ERROR,
@@ -288,8 +307,7 @@ are easier for the user to review and authorize:
             if output:
                 output += "\n"
             output += stderr
-        if len(output) > 30000:
-            output = output[:30000] + "\n... (output truncated)"
+        output = _truncate_output(output, self.max_output_chars)
         yield ToolChunk(
             content=[TextBlock(text=output)],
             state=ToolResultState.RUNNING,

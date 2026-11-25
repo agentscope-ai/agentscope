@@ -327,6 +327,64 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
         self.assertIsNone(agent.state.task_id)
         await agent.aclose()
 
+    async def test_empty_status_update_keeps_streamed_text_open(self) -> None:
+        """A status update without a message does not split streamed text."""
+        client = _FakeClient(
+            [
+                [
+                    types.StreamResponse(
+                        artifact_update=types.TaskArtifactUpdateEvent(
+                            task_id="task-1",
+                            context_id="context-1",
+                            artifact=types.Artifact(
+                                artifact_id="artifact-1",
+                                parts=[types.Part(text="first ")],
+                            ),
+                        ),
+                    ),
+                    types.StreamResponse(
+                        status_update=types.TaskStatusUpdateEvent(
+                            task_id="task-1",
+                            context_id="context-1",
+                            status=types.TaskStatus(
+                                state=types.TaskState.TASK_STATE_WORKING,
+                            ),
+                        ),
+                    ),
+                    types.StreamResponse(
+                        artifact_update=types.TaskArtifactUpdateEvent(
+                            task_id="task-1",
+                            context_id="context-1",
+                            artifact=types.Artifact(
+                                artifact_id="artifact-1",
+                                parts=[types.Part(text="second")],
+                            ),
+                            append=True,
+                            last_chunk=True,
+                        ),
+                    ),
+                    types.StreamResponse(
+                        status_update=types.TaskStatusUpdateEvent(
+                            task_id="task-1",
+                            context_id="context-1",
+                            status=types.TaskStatus(
+                                state=types.TaskState.TASK_STATE_COMPLETED,
+                            ),
+                        ),
+                    ),
+                ],
+            ],
+        )
+        agent = A2AAgent(self.card, client=client)
+
+        msg = await agent.reply(UserMsg(name="user", content="draw"))
+
+        self.assertEqual(
+            [(block.type, block.text) for block in msg.content],
+            [("text", "first second")],
+        )
+        await agent.aclose()
+
     async def test_task_snapshot_yields_artifacts_then_status(self) -> None:
         """A full Task snapshot is reduced in the order it presents data."""
         client = _FakeClient(
