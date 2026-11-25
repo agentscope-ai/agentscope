@@ -381,6 +381,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
         """
         from sqlalchemy import select
 
+        from ._mappers import _as_aware_utc
+
         record.updated_at = _utcnow()
         # The record default uses machine-local ``datetime.now()``;
         # anchor it to UTC for the INSERT branch.  On conflict the DB
@@ -412,6 +414,10 @@ class AsyncSQLAlchemyStorage(StorageBase):
                     )
                 ).scalar_one()
             await sess.commit()
+        # The columns hold naive UTC; hand the caller the same instants
+        # with the offset restored, like the read paths do.
+        record.created_at = _as_aware_utc(record.created_at)
+        record.updated_at = _as_aware_utc(record.updated_at)
         return record
 
     # ------------------------------------------------------------------

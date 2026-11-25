@@ -23,8 +23,14 @@ its own. They exist to be queried and indexed, never to be read back.
 
 Both functions are dialect-agnostic — they only touch pydantic and
 plain Python dicts.  All dialect specifics live in :mod:`_storage`.
+
+The ``created_at`` / ``updated_at`` columns hold tz-naive UTC (see
+:mod:`_storage`), so :func:`_as_aware_utc` re-attaches that offset
+wherever a stored value becomes a record field: a bare value would be
+serialised without an offset and every client would have to guess the
+timezone it is in.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, TypeVar
 
 from .._model._base import _RecordBase
@@ -34,6 +40,23 @@ if TYPE_CHECKING:
 
 
 R = TypeVar("R", bound=_RecordBase)
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    """Return *value* with the UTC offset the column stores it under.
+
+    Args:
+        value (`datetime`):
+            A timestamp read from a ``created_at`` / ``updated_at``
+            column (tz-naive UTC), or already-aware value.
+
+    Returns:
+        `datetime`:
+            The same instant, timezone-aware in UTC.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 def _walk(dump: dict, path: str) -> object | None:
@@ -104,7 +127,8 @@ def _to_record(
     Merges the promoted columns back into ``payload`` and delegates
     to :meth:`~pydantic.BaseModel.model_validate` so any
     ``mode='before'`` validators on the record (legacy-shape
-    migrators, defaults, etc.) still fire.
+    migrators, defaults, etc.) still fire.  ``created_at`` /
+    ``updated_at`` are returned timezone-aware in UTC.
 
     Args:
         row (`_JsonRecordMixin`):
@@ -118,8 +142,8 @@ def _to_record(
     """
     obj: dict = dict(row.payload or {})
     obj["id"] = row.id
-    obj["created_at"] = row.created_at
-    obj["updated_at"] = row.updated_at
+    obj["created_at"] = _as_aware_utc(row.created_at)
+    obj["updated_at"] = _as_aware_utc(row.updated_at)
     for field in row.__class__.get_indexed_fields():
         obj[field] = getattr(row, field)
     paths = row.__class__.get_index_paths()

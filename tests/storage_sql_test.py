@@ -79,6 +79,21 @@ from agentscope.message import AssistantMsg, UserMsg
 from agentscope.sop import SOPPhase, SOPRunState, SOPStepRunState
 
 
+def _round_trip_dump(record: Any) -> dict:
+    """Dump *record* with timestamps compared as instants.
+
+    ``upsert_*`` normalises the caller's record to naive UTC, while a
+    record read back carries the UTC offset (columns store naive UTC,
+    reads restore it), so the same instant appears in two shapes.
+    """
+    dump = record.model_dump()
+    for field in ("created_at", "updated_at"):
+        value = dump.get(field)
+        if isinstance(value, datetime) and value.tzinfo is not None:
+            dump[field] = value.replace(tzinfo=None)
+    return dump
+
+
 def _channel_record(
     channel_id: str,
     user_id: str = "user-1",
@@ -319,8 +334,9 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             listed[0].model_dump(mode="json", exclude_defaults=True),
             {
                 "id": record_id,
-                "updated_at": now.isoformat(),
-                "created_at": now.isoformat(),
+                # The columns hold naive UTC and reads restore the offset.
+                "updated_at": f"{now.isoformat()}Z",
+                "created_at": f"{now.isoformat()}Z",
                 "user_id": "user-1",
                 "data": {
                     "id": data_id,
@@ -455,6 +471,52 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             session.id,
         )
         self.assertEqual(fetched.team_id, "team-9")
+
+    async def test_session_timestamps_carry_utc_offset(self) -> None:
+        """Record timestamps come back timezone-aware in UTC.
+
+        The columns hold tz-naive UTC, and the session endpoints serve
+        the record's values as-is: without the offset ``created_at`` /
+        ``updated_at`` serialise as ``2026-11-24T07:44:08`` and a
+        browser reads that as its own local time, eight hours off in
+        Asia/Shanghai.
+        """
+        agent = _agent_record("user-1")
+        await self.storage.upsert_agent("user-1", agent)
+        created = await self.storage.upsert_session(
+            user_id="user-1",
+            agent_id=agent.id,
+            config=_session_config(),
+        )
+        patched = await self.storage.upsert_session(
+            user_id="user-1",
+            agent_id=agent.id,
+            config=_session_config(),
+            session_id=created.id,
+        )
+
+        records = [
+            created,
+            patched,
+            await self.storage.get_session("user-1", agent.id, created.id),
+            (await self.storage.list_sessions("user-1", agent.id))[0],
+        ]
+        for record in records:
+            for field in ("created_at", "updated_at"):
+                value = getattr(record, field)
+                self.assertEqual(value.tzinfo, timezone.utc, field)
+                self.assertEqual(value.utcoffset().total_seconds(), 0, field)
+                self.assertTrue(
+                    record.model_dump(mode="json")[field].endswith("Z"),
+                    field,
+                )
+        # The offset is presentation only — the stored instants are the
+        # same, and the update still keeps the creation time.
+        self.assertEqual(patched.created_at, created.created_at)
+        self.assertEqual(
+            records[2].created_at,
+            records[3].created_at,
+        )
 
     async def test_update_session_state_missing_raises(self) -> None:
         """Updating an absent session raises :class:`KeyError`."""
@@ -1978,10 +2040,10 @@ class VoiceProfileSQLTest(IsolatedAsyncioTestCase):
             )
             await storage.upsert_voice_profile("owner", record)
             self.assertEqual(
-                (
-                    await storage.get_voice_profile("owner", record.id)
-                ).model_dump(),
-                record.model_dump(),
+                _round_trip_dump(
+                    await storage.get_voice_profile("owner", record.id),
+                ),
+                _round_trip_dump(record),
             )
 
     async def test_migrations_alone_support_voice_profile_crud(self) -> None:
@@ -2014,17 +2076,17 @@ class VoiceProfileSQLTest(IsolatedAsyncioTestCase):
                 record.id,
             )
             self.assertEqual(
-                (
-                    await storage.get_voice_profile("owner", record.id)
-                ).model_dump(),
-                record.model_dump(),
+                _round_trip_dump(
+                    await storage.get_voice_profile("owner", record.id),
+                ),
+                _round_trip_dump(record),
             )
             self.assertEqual(
                 [
-                    item.model_dump()
+                    _round_trip_dump(item)
                     for item in await storage.list_voice_profiles("owner")
                 ],
-                [record.model_dump()],
+                [_round_trip_dump(record)],
             )
             self.assertIsNone(
                 await storage.get_voice_profile("other", record.id),
@@ -2039,10 +2101,10 @@ class VoiceProfileSQLTest(IsolatedAsyncioTestCase):
             await storage.upsert_voice_profile("owner", record)
             self.assertEqual(record.created_at, original_created)
             self.assertEqual(
-                (
-                    await storage.get_voice_profile("owner", record.id)
-                ).model_dump(),
-                record.model_dump(),
+                _round_trip_dump(
+                    await storage.get_voice_profile("owner", record.id),
+                ),
+                _round_trip_dump(record),
             )
             with self.assertRaises(PermissionError):
                 await storage.upsert_voice_profile(
@@ -2054,10 +2116,10 @@ class VoiceProfileSQLTest(IsolatedAsyncioTestCase):
                     ),
                 )
             self.assertEqual(
-                (
-                    await storage.get_voice_profile("owner", record.id)
-                ).model_dump(),
-                record.model_dump(),
+                _round_trip_dump(
+                    await storage.get_voice_profile("owner", record.id),
+                ),
+                _round_trip_dump(record),
             )
             self.assertTrue(
                 await storage.delete_voice_profile("owner", record.id),
@@ -2088,10 +2150,10 @@ class VoiceProfileSQLTest(IsolatedAsyncioTestCase):
             )
             await storage.upsert_voice_profile("owner", profile)
             self.assertEqual(
-                (
-                    await storage.get_voice_profile("owner", profile.id)
-                ).model_dump(),
-                profile.model_dump(),
+                _round_trip_dump(
+                    await storage.get_voice_profile("owner", profile.id),
+                ),
+                _round_trip_dump(profile),
             )
             self.assertEqual(
                 (await storage.get_agent("owner", agent.id)).model_dump(),
@@ -2214,12 +2276,12 @@ class VoiceProfileSQLTest(IsolatedAsyncioTestCase):
             expected = records[0]
         self.assertEqual(
             [
-                item.model_dump()
+                _round_trip_dump(item)
                 for item in await storage.list_voice_profiles(
                     "owner-a",
                 )
             ],
-            [expected.model_dump()],
+            [_round_trip_dump(expected)],
         )
         self.assertEqual(
             await storage.list_voice_profiles("owner-b"),
