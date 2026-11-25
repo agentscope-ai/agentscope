@@ -857,7 +857,7 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
             "credential": DashScopeCredential(api_key="test"),
             "model": "qwen3-tts-flash-realtime",
             "stream": True,
-            "max_retries": 1,
+            "max_retries": 0,
             "retry_delay": 0.0,
         }
         defaults.update(kwargs)
@@ -1042,11 +1042,22 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
                 )
                 self.mock_client.commit.assert_called_once()
 
+    async def test_synthesize_with_zero_retries_attempts_once(self) -> None:
+        """Disabling retries still sends the first synthesis request."""
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(max_retries=0, stream=False) as model:
+                self._mock_synthesize_callback(model)
+                await model.synthesize(text="Hello")
+
+                self.mock_client.append_text.assert_called_once_with("Hello")
+                self.mock_client.commit.assert_called_once()
+                self.mock_client.finish.assert_called_once()
+
     async def test_synthesize_no_audio_raises_after_retries(self) -> None:
         """RuntimeError after max_retries with no audio received."""
         with patch.dict("sys.modules", self.mock_modules):
             async with self._make_model(
-                max_retries=1,
+                max_retries=0,
                 retry_delay=0.0,
             ) as model:
                 model._callback.finish_event = Mock()
@@ -1202,7 +1213,7 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
         clients = self._use_session_bound_clients(ConnectionError)
 
         with patch.dict("sys.modules", self.mock_modules):
-            async with self._make_model(stream=False, max_retries=2) as model:
+            async with self._make_model(stream=False, max_retries=1) as model:
                 await model.push("Hello")
                 clients[0].closed = True
                 await model.push(" world")
@@ -1407,7 +1418,7 @@ class TestDashScopeCosyVoiceRealtimeMode(
                 realtime=True,
             ),
             "stream": True,
-            "max_retries": 1,
+            "max_retries": 0,
             "retry_delay": 0.0,
         }
         defaults.update(kwargs)
@@ -1471,7 +1482,7 @@ class TestDashScopeCosyVoiceRealtimeMode(
         with patch.dict("sys.modules", self.mock_modules):
             async with self._make_model(
                 cold_start_length=3,
-                max_retries=2,
+                max_retries=1,
                 stream=False,
             ) as model:
                 model._callback.get_audio_response = Mock(
@@ -1755,11 +1766,23 @@ class TestDashScopeCosyVoiceRealtimeMode(
                 self.assertTrue(chunks[0].is_last)
                 self.mock_synthesizer.streaming_complete.assert_not_called()
 
+    async def test_synthesize_with_zero_retries_attempts_once(self) -> None:
+        """Disabling retries still sends the first synthesis request."""
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(max_retries=0, stream=False) as model:
+                self._mock_synthesize_callback(model)
+                await model.synthesize(text="Hello")
+
+                self.mock_synthesizer.streaming_call.assert_called_once_with(
+                    "Hello",
+                )
+                self.mock_synthesizer.streaming_complete.assert_called_once()
+
     async def test_synthesize_no_audio_raises_after_retries(self) -> None:
         """RuntimeError after max_retries with no audio received."""
         with patch.dict("sys.modules", self.mock_modules):
             async with self._make_model(
-                max_retries=1,
+                max_retries=0,
                 retry_delay=0.0,
             ) as model:
                 model._callback.finish_event = Mock()
@@ -1773,7 +1796,7 @@ class TestDashScopeCosyVoiceRealtimeMode(
         """RuntimeError when finish_event.wait times out."""
         with patch.dict("sys.modules", self.mock_modules):
             async with self._make_model(
-                max_retries=1,
+                max_retries=0,
                 retry_delay=0.0,
             ) as model:
                 model._callback.finish_event = Mock()
