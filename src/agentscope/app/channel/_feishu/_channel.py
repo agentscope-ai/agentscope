@@ -597,9 +597,10 @@ class FeishuChannel(ChannelBase):
                         element.get("text") or element.get("href") or "",
                     )
                 elif tag == "code_block":
-                    # The block's text is the user's content; keep it
-                    # separate from the surrounding prose.
-                    parts.append(f"\n{element.get('text') or ''}\n")
+                    _flush()
+                    code = element.get("text") or ""
+                    if code.strip():
+                        blocks.append(TextBlock(text=code))
                 elif tag in ("img", "media"):
                     key = element.get("image_key") or element.get("file_key")
                     if not key:
