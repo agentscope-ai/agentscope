@@ -362,6 +362,32 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
                 manifest = middleware._format_manifest(headers)
                 self.assertEqual(manifest, f"- {tag}tea.md (unknown){detail}")
 
+    async def test_discovery_resolves_entries_under_a_relative_workdir(
+        self,
+    ) -> None:
+        """A relative workdir finds the memory files just like an absolute
+        one does."""
+        memory_dir = os.path.join(self.temp_dir, "Memory")
+        _write_memory_file(memory_dir, "tea.md", "desc", "user", "Body")
+        _write_memory_file(memory_dir, "sub/deep.md", "deep", "project", "B")
+
+        previous = os.getcwd()
+        os.chdir(self.temp_dir)
+        try:
+            middleware = AgenticMemoryMiddleware(workdir=".")
+            # pylint: disable-next=protected-access
+            headers = await middleware._list_md_files()
+        finally:
+            os.chdir(previous)
+
+        self.assertEqual(
+            sorted((h.filename, h.description, h.type) for h in headers),
+            [
+                (os.path.join("sub", "deep.md"), "deep", "project"),
+                ("tea.md", "desc", "user"),
+            ],
+        )
+
     async def test_retrieval_input_skips_messages_without_text_blocks(
         self,
     ) -> None:
