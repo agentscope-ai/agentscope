@@ -130,7 +130,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
       are not delivered.
 
     The bus owns its own connection pool by default; an external pool
-    may be supplied for tests or for sharing a pool across services.
+    may be supplied for tests or for sharing a pool across services,
+    and must decode responses to text like the internal one does.
     """
 
     def __init__(
@@ -156,8 +157,9 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             password (`str | None`, optional):
                 Redis password if required by the server.
             connection_pool (`ConnectionPool | None`, optional):
-                An externally managed connection pool. When provided
-                the pool is used as-is and **not** closed by
+                An externally managed connection pool, created with
+                ``decode_responses=True``. When provided the pool
+                is used as-is and **not** closed by
                 :meth:`aclose` — the caller retains ownership of its
                 lifecycle. When omitted a pool is created from
                 *host*/*port*/*db*/*password* on :meth:`__aenter__`
@@ -208,6 +210,22 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
 
         if self._external_pool is not None:
             pool = self._external_pool
+            # Every read path below assumes text: stream field
+            # maps are indexed by ``"payload"``, pub/sub frames
+            # are matched on ``message.get("type")``, and lock
+            # tokens are compared as strings. A pool left at the
+            # redis default (bytes) makes each of those lookups
+            # miss — and ``queue_drain`` deletes an entry in the
+            # same script that reads it, so the entry would be
+            # gone before the bus could decode it.
+            if not getattr(pool, "connection_kwargs", {}).get(
+                "decode_responses",
+            ):
+                raise ValueError(
+                    "RedisMessageBus needs an external pool created "
+                    "with decode_responses=True; a pool that returns "
+                    "bytes would silently drop queued entries.",
+                )
         else:
             self._owned_pool = aioredis.ConnectionPool(
                 host=self._host,

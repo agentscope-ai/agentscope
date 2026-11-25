@@ -1137,6 +1137,40 @@ class TestBackgroundTaskRegistryHelpers(IsolatedAsyncioTestCase):
         self.assertEqual(received, ["task-X"])
 
 
+class TestExternalConnectionPool(IsolatedAsyncioTestCase):
+    """An externally supplied pool must decode responses.
+
+    Every read path in :class:`RedisMessageBus` indexes stream field
+    maps and pub/sub frames by ``str`` keys and compares lock tokens
+    as text. A pool left at the redis default
+    (``decode_responses=False``) makes each of those lookups miss —
+    and ``queue_drain`` removes an entry in the same script that reads
+    it, so the entry is deleted before it can be decoded.
+    """
+
+    async def test_rejects_pool_that_returns_bytes(self) -> None:
+        """A bytes pool would silently drop drained entries."""
+        fr = fakeredis.aioredis.FakeRedis(decode_responses=False)
+        try:
+            bus = RedisMessageBus(connection_pool=fr.connection_pool)
+            with self.assertRaisesRegex(ValueError, "decode_responses"):
+                async with bus:
+                    pass
+        finally:
+            await fr.aclose()
+
+    async def test_accepts_pool_that_decodes_responses(self) -> None:
+        """A decoding pool still enters and yields a client."""
+        fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        try:
+            async with RedisMessageBus(
+                connection_pool=fr.connection_pool,
+            ) as bus:
+                self.assertIsNotNone(bus.get_client())
+        finally:
+            await fr.aclose()
+
+
 class TestBaseClassIsAbstract(IsolatedAsyncioTestCase):
     """``MessageBus`` itself cannot be instantiated."""
 
