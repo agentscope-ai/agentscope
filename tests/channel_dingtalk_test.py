@@ -1805,6 +1805,25 @@ class DingTalkOpenAPITest(IsolatedAsyncioTestCase):
             {"title": "AgentScope", "text": "**hello**"},
         )
 
+    async def test_send_text_reports_an_undelivered_recipient(self) -> None:
+        """batchSend answers 200 when a user id is invalid or throttled.
+
+        The ids it could not reach are listed in the body instead of a
+        ``code``; reporting success would tell the model the reply was
+        delivered when nobody received it.
+        """
+        api, _ = _openapi(
+            {
+                "processQueryKey": "query-key",
+                "invalidStaffIdList": ["user-1"],
+                "flowControlledStaffIdList": [],
+            },
+        )
+
+        sent = await api.send_text("user:user-1", "hello")
+
+        self.assertFalse(sent)
+
     async def test_search_users_resolves_profile_details(self) -> None:
         api, http = _openapi(
             {"list": ["user-1", "user-2"]},
