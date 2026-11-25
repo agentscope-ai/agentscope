@@ -63,6 +63,8 @@ class MongoDBStore(VectorStoreBase):
 
     """
 
+    _max_search_limit: int = 10_000
+
     def __init__(
         self,
         uri: str,
@@ -355,8 +357,11 @@ class MongoDBStore(VectorStoreBase):
             `ValueError`:
                 If ``top_k`` exceeds MongoDB's 10,000-candidate ANN limit.
         """
-        if top_k > 10_000:
-            raise ValueError("top_k cannot exceed MongoDB's 10000 ANN limit")
+        if top_k > self._max_search_limit:
+            raise ValueError(
+                f"top_k cannot exceed MongoDB's {self._max_search_limit} "
+                "ANN limit",
+            )
         filter_expr = self._build_metadata_filter(metadata_filter)
         if exclude_document_ids:
             if "document_id" not in self._filter_fields:
@@ -380,7 +385,7 @@ class MongoDBStore(VectorStoreBase):
             "index": self._index_name,
             "path": "vector",
             "queryVector": query_vector,
-            "numCandidates": min(10_000, max(100, top_k * 20)),
+            "numCandidates": min(self._max_search_limit, max(100, top_k * 20)),
             "limit": top_k,
         }
         if filter_expr is not None:

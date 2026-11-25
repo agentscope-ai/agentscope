@@ -112,6 +112,9 @@ class VectorStoreBase(ABC):
     thread safety internally.
     """
 
+    _max_search_limit: int | None = None
+    """Largest result window the backend accepts for a single search."""
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -288,9 +291,15 @@ class VectorStoreBase(ABC):
             visible = [
                 h for h in hits if h.document_id not in exclude_document_ids
             ]
-            if len(visible) >= top_k or len(hits) < limit:
+            if (
+                len(visible) >= top_k
+                or len(hits) < limit
+                or limit == self._max_search_limit
+            ):
                 return visible[:top_k]
             limit *= 2
+            if self._max_search_limit is not None:
+                limit = min(limit, self._max_search_limit)
 
     # ------------------------------------------------------------------
     # Document listing

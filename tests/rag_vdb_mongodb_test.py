@@ -636,6 +636,50 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_legacy_index_search_stops_at_candidate_limit(self) -> None:
+        store = MongoDBStore(
+            uri="mongodb://mock",
+            database="test-db",
+            filter_fields=["chunk.metadata.tenant"],
+        )
+        await store.create_collection("kb", dimensions=1)
+        collection = self._fake_client["test-db"]["kb"]
+
+        def hit(document_id: str, score: float) -> dict:
+            record = _make_record("text", [1.0], document_id)
+            return {
+                "score": score,
+                "document_id": document_id,
+                "chunk": record.chunk.model_dump(),
+            }
+
+        def search(stage: dict) -> list[dict]:
+            limit = stage["limit"]
+            self.assertGreater(limit, limits[-1] if limits else 0)
+            limits.append(limit)
+            return ranked[:limit]
+
+        staged = hit("~doc", 1.0)
+        published = [hit(f"live-{i}", 0.9) for i in range(5)]
+        for staged_count in (5_120, 9_998, 10_000):
+            with self.subTest(staged_count=staged_count):
+                ranked = [staged] * staged_count + published
+                limits: list[int] = []
+
+                with patch.object(collection, "_vector_search", search):
+                    results = await store.search_excluding(
+                        "kb",
+                        [1.0],
+                        5,
+                        None,
+                        exclude_document_ids={"~doc"},
+                    )
+                self.assertEqual(limits[-1], 10_000)
+                self.assertEqual(
+                    _dump_results(results),
+                    published[: 10_000 - staged_count],
+                )
+
     async def test_search_candidate_limits(self) -> None:
         """Search caps candidates while preserving the requested limit."""
         await self.store.create_collection("kb-1", dimensions=3)
