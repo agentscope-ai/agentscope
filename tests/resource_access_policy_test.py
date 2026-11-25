@@ -497,3 +497,88 @@ class ResourceAccessServiceTest(IsolatedAsyncioTestCase):
             (ctx.exception.status_code, ctx.exception.detail),
             (404, "Credential 'missing' not found."),
         )
+
+
+class _MixedPolicy(ResourceAccessPolicyBase):
+    """Reach one agent twice: a group READ grant and a direct EDIT one.
+
+    Policies list refs per grant, so a resource shared to a group and
+    also to the viewer directly produces two refs for one id.
+    """
+
+    async def list_accessible(
+        self,
+        viewer_id: str,
+        kind: ResourceKind,
+        storage: StorageBase,
+    ) -> list[ResourceRef]:
+        if viewer_id == "viewer" and kind == ResourceKind.AGENT:
+            return [
+                ResourceRef(
+                    kind=ResourceKind.AGENT,
+                    owner_id="owner",
+                    resource_id="agent-1",
+                ),
+                ResourceRef(
+                    kind=ResourceKind.AGENT,
+                    owner_id="owner",
+                    resource_id="agent-1",
+                    permission=ResourcePermission.EDIT,
+                ),
+            ]
+        return []
+
+
+class ResourceAccessRefPrecedenceTest(IsolatedAsyncioTestCase):
+    """One resource reached by two refs uses its strongest grant."""
+
+    async def asyncSetUp(self) -> None:
+        """Create the service backed by the mixed-grant policy."""
+        self.storage = cast(StorageBase, _FakeStorage())
+        self.service = ResourceAccessService(
+            storage=self.storage,
+            policy=_MixedPolicy(),
+        )
+
+    async def test_edit_grant_wins_over_an_earlier_read_ref(self) -> None:
+        """A later EDIT ref must not be hidden behind a READ one."""
+        owner_id, record = await self.service.resolve_for_edit(
+            "viewer",
+            ResourceKind.AGENT,
+            "agent-1",
+        )
+        self.assertEqual((owner_id, record.id), ("owner", "agent-1"))
+
+    async def test_detail_view_reports_the_edit_grant(self) -> None:
+        """``editable`` must agree with what ``resolve_for_edit`` does."""
+        view = await self.service.get_resource(
+            "viewer",
+            ResourceKind.AGENT,
+            "agent-1",
+        )
+        self.assertTrue(view.editable)
+
+    async def test_list_view_reports_the_edit_grant(self) -> None:
+        """The list endpoint shows the same permission as the detail."""
+        views = await self.service.list_resource(
+            "viewer",
+            ResourceKind.AGENT,
+        )
+        self.assertEqual(
+            [(view.id, view.editable) for view in views],
+            [("agent-1", True)],
+        )
+
+    async def test_read_only_grant_still_forbids_editing(self) -> None:
+        """A viewer with only a READ ref is still rejected with 403."""
+        service = ResourceAccessService(
+            storage=self.storage,
+            policy=_SharingPolicy(),
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            await service.resolve_for_edit(
+                "viewer",
+                ResourceKind.AGENT,
+                "agent-1",
+            )
+        self.assertEqual(ctx.exception.status_code, 403)
