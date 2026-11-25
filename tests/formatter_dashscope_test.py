@@ -1363,3 +1363,52 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_chat_formatter_uppercase_media_types(self) -> None:
+        """Mixed-case MIME types are matched case-insensitively."""
+        fmt = DashScopeChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="IMAGE/PNG",
+                        ),
+                    ),
+                    DataBlock(
+                        source=Base64Source(
+                            data="YQ==",
+                            media_type="AUDIO/MPEG",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": (
+                                    f"data:image/png;base64,{self.image_b64}"
+                                ),
+                            },
+                        },
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "data:;base64,YQ==",
+                                "format": "mp3",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
