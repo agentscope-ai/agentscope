@@ -25,6 +25,7 @@ from ..._base import MiddlewareBase
 from ...._logging import logger
 from ....event import ReplyStartEvent
 from ....message import AssistantMsg, HintBlock, Msg
+from ....types import ReplyFinishedReason
 from ._tools import _build_memory_tools
 from ._utils import (
     _extract_memory_texts,
@@ -361,7 +362,15 @@ class Mem0Middleware(MiddlewareBase):
                     final_msg = item
                 yield item
         finally:
-            if query_text and final_msg is not None:
+            # An interrupted reply ends with the agent's canned
+            # interruption message, not an answer to the query, so the
+            # exchange is not written back.
+            if (
+                query_text
+                and final_msg is not None
+                and final_msg.finished_reason
+                != ReplyFinishedReason.INTERRUPTED
+            ):
                 assistant_text = final_msg.get_text_content()
                 if assistant_text:
                     await self._dispatch_write(
