@@ -13,10 +13,11 @@ from ._download_token import (
     sign_download_token,
     verify_download_token,
 )
+from ._git_isolation import isolated_git_argv
 from ..storage import SessionRecord, StorageBase
 from ..workspace_manager import WorkspaceManagerBase
 from ..._logging import logger
-from ...tool import BackendBase
+from ...tool import BackendBase, LocalBackend
 from ...workspace import WorkspaceBase
 
 #: Ceilings on one upload. Peak memory is a chunk per concurrent
@@ -33,8 +34,14 @@ _TAR_BLOCK = 512
 # a wedged sandbox does not hold the request open.
 _GIT_TIMEOUT_SECS = 5.0
 
-_GIT_STATUS_ARGV: tuple[str, ...] = (
-    "git",
+#: The executable alone, for backends whose git runs inside the sandbox
+#: — see :meth:`WorkspaceService._read_git` for why that one needs no
+#: isolation. Host-local repositories get a longer prefix instead.
+_GIT_PLAIN: tuple[str, ...] = ("git",)
+
+#: Arguments after the executable. Kept apart from it so the same
+#: invocation runs under either prefix.
+_GIT_STATUS_ARGS: tuple[str, ...] = (
     # ``git status`` otherwise refreshes and rewrites the index, taking
     # ``.git/index.lock`` — which the agent's own Bash may be holding.
     "--no-optional-locks",
@@ -49,8 +56,7 @@ _GIT_STATUS_ARGV: tuple[str, ...] = (
     "--ignore-submodules=all",
 )
 
-_GIT_SHORTSTAT_ARGV: tuple[str, ...] = (
-    "git",
+_GIT_SHORTSTAT_ARGS: tuple[str, ...] = (
     "--no-optional-locks",
     "diff",
     "--shortstat",
@@ -503,11 +509,18 @@ class WorkspaceService:
     ) -> GitStatus | None:
         """Summarise the git state of ``cwd``, or return ``None``.
 
-        Two argv invocations rather than one shell line: ``exec_shell``
-        runs argv directly, so chaining would mean wrapping in
-        ``/bin/sh``, which a Windows ``LocalBackend`` does not have.
-        Keeping them apart also means a failing ``diff`` still leaves
-        the branch on screen.
+        A repository's own config can name programs that even a
+        read-only ``git status`` runs (``core.fsmonitor``, filter
+        drivers), so where git runs decides how it is invoked:
+
+        - **Host** (:class:`LocalBackend`): through a shadow git
+          directory that never loads the repository's config — see
+          :mod:`._git_isolation`. Anything else would let whoever
+          wrote that file run code on the host merely because a
+          session pointed at the directory.
+        - **Sandbox** (every other backend): plain ``git``. It runs
+          where the agent's own shell already does, so nothing the
+          config makes it run gains a privilege the agent lacks.
 
         Never raises. A directory that is not a repository is the
         ordinary case, and the backends disagree on how they report
@@ -524,9 +537,52 @@ class WorkspaceService:
             `GitStatus | None`: The summary, or ``None`` when git had
             nothing to say.
         """
+        if not isinstance(backend, LocalBackend):
+            return await self._summarise_git(backend, cwd, _GIT_PLAIN)
+
+        try:
+            async with isolated_git_argv(
+                backend,
+                cwd,
+                timeout=_GIT_TIMEOUT_SECS,
+            ) as git:
+                if git is None:
+                    # No checkout above cwd, or one whose layout cannot
+                    # be mirrored; either way there is nothing safe to
+                    # run.
+                    return None
+                return await self._summarise_git(backend, cwd, git)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.debug("isolated git failed in %s: %s", cwd, exc)
+            return None
+
+    async def _summarise_git(
+        self,
+        backend: BackendBase,
+        cwd: str,
+        git: tuple[str, ...],
+    ) -> GitStatus | None:
+        """Run ``status`` then ``diff`` under ``git`` and combine them.
+
+        Two argv invocations rather than one shell line: ``exec_shell``
+        runs argv directly, so chaining would mean wrapping in
+        ``/bin/sh``, which a Windows ``LocalBackend`` does not have.
+        Keeping them apart also means a failing ``diff`` still leaves
+        the branch on screen.
+
+        Args:
+            backend (`BackendBase`): Runs the commands.
+            cwd (`str`): Absolute directory to inspect.
+            git (`tuple[str, ...]`): The executable and any global
+                options that precede the subcommand.
+
+        Returns:
+            `GitStatus | None`: The summary, or ``None`` when git had
+            nothing to say.
+        """
         try:
             status_result = await backend.exec_shell(
-                list(_GIT_STATUS_ARGV),
+                [*git, *_GIT_STATUS_ARGS],
                 cwd=cwd,
                 timeout=_GIT_TIMEOUT_SECS,
             )
@@ -553,7 +609,7 @@ class WorkspaceService:
 
         try:
             diff_result = await backend.exec_shell(
-                list(_GIT_SHORTSTAT_ARGV),
+                [*git, *_GIT_SHORTSTAT_ARGS],
                 cwd=cwd,
                 timeout=_GIT_TIMEOUT_SECS,
             )
