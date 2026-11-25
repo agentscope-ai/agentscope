@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock
 
 from utils import AnyString
 from agentscope.tool import ExecResult, Glob, LocalBackend
+from agentscope.tool._builtin._grep import VCS_DIRECTORIES_TO_EXCLUDE
+from agentscope.tool._builtin._scripts import _glob_helper
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -161,6 +163,57 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test1.py", content)
         self.assertIn("test2.py", content)
         self.assertIn("test3.py", content)
+
+    async def test_vcs_metadata_is_not_walked(self) -> None:
+        """A broad pattern reports project files, not the object store.
+
+        A checkout stamps every file with the same mtime while ``.git``
+        holds many more files than the project does, so walking it fills
+        the result budget before a single source file is reached.
+        """
+        objects = Path(self.temp_dir, ".git", "objects", "aa")
+        objects.mkdir(parents=True)
+        for index in range(5):
+            (objects / f"{index:040x}").write_text(
+                "blob",
+                encoding="utf-8",
+            )
+
+        chunk = await self.glob_tool(
+            pattern="**/*",
+            path=self.temp_dir,
+            head_limit=0,
+        )
+
+        paths = chunk.content[0].text.splitlines()
+        self.assertIn(os.path.join(self.temp_dir, "test1.py"), paths)
+        self.assertIn(os.path.join(self.temp_dir, "subdir", "test3.py"), paths)
+        self.assertListEqual(
+            [path for path in paths if f"{os.sep}.git{os.sep}" in path],
+            [],
+        )
+
+    async def test_a_pattern_naming_a_vcs_directory_still_matches(
+        self,
+    ) -> None:
+        """Asking for a path inside one is not the same as walking into it."""
+        config = Path(self.temp_dir, ".git", "config")
+        config.parent.mkdir(parents=True)
+        config.write_text("[core]\n", encoding="utf-8")
+
+        chunk = await self.glob_tool(
+            pattern="**/.git/config",
+            path=self.temp_dir,
+        )
+
+        self.assertEqual(chunk.content[0].text, str(config))
+
+    def test_vcs_list_matches_the_grep_exclusion(self) -> None:
+        """The helper runs without agentscope, so its copy must not drift."""
+        self.assertListEqual(
+            list(_glob_helper.VCS_DIRECTORIES),
+            list(VCS_DIRECTORIES_TO_EXCLUDE),
+        )
 
     async def test_current_directory_segments(self) -> None:
         """Standalone dot segments do not change the matched files."""
