@@ -112,3 +112,45 @@ class TestWorkspaceBaseSkillInstall(IsolatedAsyncioTestCase):
                 await workspace.add_skill_archive(stream(), "tar", "demo")
 
             self.assertEqual(await workspace.list_skills(), [])
+
+
+class TestWorkspaceBaseSkillSeed(IsolatedAsyncioTestCase):
+    """``skill_paths`` reach the seed template without losing entries."""
+
+    @staticmethod
+    def _write_skill(root: str, name: str) -> str:
+        """Write ``<root>/demo`` with *name* in its front matter."""
+        path = os.path.join(root, "demo")
+        os.makedirs(path)
+        with open(os.path.join(path, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write(f"---\nname: {name}\ndescription: d\n---\n\nBody.\n")
+        return path
+
+    async def test_seed_keeps_same_named_skill_directories(self) -> None:
+        """Two source dirs named ``demo`` both reach the seed template.
+
+        The seed is a tar archive, and a tar member is identified by its
+        name: seeding both under ``demo`` makes the extractor overwrite
+        the first skill with the second, so one of them disappears
+        without a word.
+        """
+        with tempfile.TemporaryDirectory() as workdir:
+            with tempfile.TemporaryDirectory() as src:
+                first = self._write_skill(os.path.join(src, "one"), "one")
+                second = self._write_skill(os.path.join(src, "two"), "two")
+                workspace = _BareWorkspace(workdir)
+                workspace.skill_paths = [first, second]
+
+                await workspace._setup_skills()
+
+                backend = workspace.get_backend()
+                seed = workspace._skill_seed_dir
+                seeded = []
+                for entry in await backend.list_dir(seed):
+                    skill_md = backend.join_path(seed, entry, "SKILL.md")
+                    if await backend.file_exists(skill_md):
+                        raw = await backend.read_file(skill_md)
+                        seeded.append(raw.decode("utf-8"))
+                self.assertEqual(len(seeded), 2)
+                self.assertTrue(any("name: one" in text for text in seeded))
+                self.assertTrue(any("name: two" in text for text in seeded))
