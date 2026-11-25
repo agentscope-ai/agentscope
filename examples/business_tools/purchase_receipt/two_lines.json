@@ -1,0 +1,10 @@
+{
+  "data": {
+    "order": {"companyId": 4036401, "supplierId": 4036401, "billType": "采购入库单", "billDate": "2026-11-21"},
+    "details": [
+      {"materialId": 4036401, "warehouseId": 4036401, "expectPcs": 10, "inPcs": 9, "factoryPricePcs": 3, "totalLoadingFee": 2},
+      {"materialId": 4036402, "warehouseId": 4036401, "expectPcs": 4, "inPcs": 3, "factoryPricePcs": 5, "totalLoadingFee": 1}
+    ],
+    "payments": []
+  }
+}

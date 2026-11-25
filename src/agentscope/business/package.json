@@ -1,0 +1,10 @@
+{
+  "name": "agentscope-business-tool-extractor",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@vue/compiler-sfc": "3.5.38",
+    "quickjs-emscripten": "0.31.0",
+    "typescript": "6.0.2"
+  }
+}

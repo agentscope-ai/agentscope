@@ -516,6 +516,8 @@ class Msg(BaseModel):
                         b.state = ToolCallState.ASKING
                         # Record the suggestions
                         b.suggested_rules = tool_call.suggested_rules
+                        b.confirmation_message = tool_call.confirmation_message
+                        b.confirmation_id = tool_call.confirmation_id
 
             case EventType.USER_CONFIRM_RESULT:
                 for result in event.confirm_results:

@@ -155,11 +155,11 @@ class RegisteredTool:
 
 # The function types that can be registered as tools in AgentScope.
 Function: TypeAlias = (
-    # Sync function
-    Callable[..., ToolChunk]
+    # Plain return values are normalized by FunctionTool.
+    Callable[..., dict | str | ToolChunk]
     |
     # Async function
-    Callable[..., Awaitable[ToolChunk]]
+    Callable[..., Awaitable[dict | str | ToolChunk]]
     |
     # Sync generator function
     Callable[..., Generator[ToolChunk, None, None]]

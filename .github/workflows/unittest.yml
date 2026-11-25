@@ -28,11 +28,67 @@ jobs:
       run: |
         uv pip install -q -e .[dev]
         uv pip install coverage pytest
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+    - name: Install the business fixture parser
+      working-directory: src/agentscope/business
+      run: pnpm install --frozen-lockfile
     - name: Run tests with coverage
       env:
         GRPC_VERBOSITY: ERROR
       run: |
-        coverage run -m pytest tests -v
+        coverage run -m pytest tests -v --junitxml="${{ runner.temp }}/unittest.xml"
+    - name: Require both business parser suites to run
+      shell: python
+      run: |
+        import os
+        from pathlib import Path
+        from xml.etree import ElementTree
+
+        report = ElementTree.parse(Path(os.environ["RUNNER_TEMP"]) / "unittest.xml")
+        required = {"business_tool_test.BusinessToolTest": 7, "business_workflow_test.WorkflowTest": 9}
+        for suite, minimum in required.items():
+            cases = [case for case in report.iter("testcase")
+                     if case.get("classname", "").split(".")[-2:] == suite.split(".")]
+            names = {case.attrib["name"] for case in cases}
+            skipped = [case.attrib["name"] for case in cases if case.find("skipped") is not None]
+            if skipped or len(names) < minimum:
+                raise SystemExit(f"{suite}: expected at least {minimum} tests, found {len(names)}, skipped {skipped}")
+            print(f"{suite}: {len(names)} passed")
+    - name: Require source catalog acceptance cases
+      shell: python
+      run: |
+        import os
+        from pathlib import Path
+        from xml.etree import ElementTree
+
+        report = ElementTree.parse(Path(os.environ["RUNNER_TEMP"]) / "unittest.xml")
+        expected = {
+            "source_catalog_test.SourceCatalogTest": {
+                "test_source_only_catalog_and_verifiable_citations",
+                "test_runtime_and_unresolved_policy_are_reported",
+                "test_revision_change_and_deleted_rule",
+                "test_permission_revocation_and_unavailable_ids",
+                "test_manifest_boundaries_and_source_is_never_executed",
+                "test_catalog_export_and_ambiguous_backend",
+                "test_chat_exposes_only_two_read_tools_and_renders_evidence",
+            },
+            "source_catalog_variant_test.SourceCatalogVariantTest": {
+                "test_renamed_route_and_delegated_rule",
+                "test_deployment_policy_is_unknown",
+            },
+        }
+        for suite, required in expected.items():
+            passed = {c.get("name") for c in report.iter("testcase")
+                      if c.get("classname", "").split(".")[-2:] == suite.split(".")
+                      and all(c.find(tag) is None for tag in ("skipped", "failure", "error"))}
+            if required - passed:
+                raise SystemExit(f"{suite}: missing passes for {sorted(required - passed)}")
+            print(f"{suite}: {len(required)} required cases passed")
     - name: Generate coverage report
       run: |
         coverage report -m

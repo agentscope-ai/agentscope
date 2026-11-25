@@ -226,7 +226,7 @@ Documentation = "https://docs.agentscope.io/"
 Repository = "https://github.com/agentscope-ai/agentscope"
 
 [tool.setuptools]
-packages = { find = { where = ["src"] } }
+packages = { find = { where = ["src"], exclude = ["agentscope.business.node_modules*"] } }
 include-package-data = true
 
 [tool.setuptools.package-data]
@@ -241,6 +241,7 @@ include-package-data = true
     "_models/*.yaml",
     "_cosyvoice_models/*.yaml",
 ]
+"agentscope.business" = ["*.mjs", "package.json", "pnpm-lock.yaml"]
 "agentscope.workspace._docker" = ["Dockerfile*.template"]
 # The Alembic scaffolding for the SQL storage backend lives in the
 # data-only ``_alembic/`` subtree (no ``__init__.py`` — Alembic loads

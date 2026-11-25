@@ -6,10 +6,11 @@ from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
-from utils import AnyString, MockModel
+from utils import AnyString, MockModel, track_hint_counts
 
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.model import ChatResponse
+from agentscope.state import AgentState
 from agentscope.tool import (
     ToolBase,
     Toolkit,
@@ -1534,9 +1535,13 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
     async def test_external_resumptions_enforce_iteration_budget(self) -> None:
         """Each resumed round counts toward the iteration budget."""
         self.agent.toolkit = Toolkit(tools=[MockExternalConcurrentTool()])
-        for max_iters in (1, 2):
-            with self.subTest(max_iters=max_iters):
+        for max_iters, auto_continue in ((1, False), (2, False), (1, True)):
+            with self.subTest(
+                max_iters=max_iters,
+                auto_continue=auto_continue,
+            ):
                 self.agent.react_config.max_iters = max_iters
+                self.agent.react_config.auto_continue = auto_continue
                 tool_calls = [
                     ToolCallBlock(
                         id=call_id,
@@ -1546,7 +1551,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     for call_id in (
                         self.tool_call_id_1,
                         self.tool_call_id_2,
-                    )[:max_iters]
+                    )[: 2 if auto_continue else max_iters]
                 ]
                 self.model.set_responses(
                     [
@@ -1587,7 +1592,12 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                                 ],
                             ),
                         )
-                        is_final = index == max_iters
+                        is_final = index == len(tool_calls)
+                        reason = (
+                            "completed"
+                            if auto_continue
+                            else "exceed_max_iters"
+                        )
                         self.assertEqual(
                             (
                                 result.finished_reason,
@@ -1595,15 +1605,16 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                                 self.model.cnt,
                             ),
                             (
-                                "exceed_max_iters" if is_final else None,
+                                reason if is_final else None,
                                 index + 1 if is_final else index,
                                 index + 1,
                             ),
                         )
-                    self.assertEqual(
-                        model_call.call_args.kwargs["tool_choice"].mode,
-                        "none",
-                    )
+                    choice = model_call.call_args.kwargs["tool_choice"]
+                    if auto_continue:
+                        self.assertIsNone(choice)
+                    else:
+                        self.assertEqual(choice.mode, "none")
 
     async def test_partial_external_resumption_counts_round_once(self) -> None:
         """Partial results count only when the last tool call completes."""
@@ -1656,6 +1667,66 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 ),
                 (None, 0, 1) if index == 0 else ("completed", 2, 2),
             )
+
+    async def test_total_cap_survives_a_parked_parallel_round(self) -> None:
+        """Total cap survives a parked parallel round."""
+        self.agent.react_config.auto_continue = True
+        self.agent.react_config.max_total_iters = 4
+        self.agent.toolkit = Toolkit(tools=[MockExternalConcurrentTool()])
+        calls = [
+            ToolCallBlock(
+                id=f"external-{i}",
+                name=self.concurrent_tool_name,
+                input=self.tool_input_1,
+            )
+            for i in range(4)
+        ]
+        self.model.set_responses(
+            [
+                ChatResponse(content=calls[:1], is_last=True),
+                ChatResponse(content=calls[1:3], is_last=True),
+                ChatResponse(content=calls[3:], is_last=True),
+                self.final_mock_responses,
+            ],
+        )
+        reminders = self.enterContext(
+            track_hint_counts(self.model, "3 rounds remain"),
+        )
+        await self.agent.reply(UserMsg("user", "run"))
+        reply_id = self.agent.state.reply_id
+        for i, call in enumerate(calls):
+            # Each HTTP resumption may run on a fresh worker with only the
+            # persisted state. The second round receives its results
+            # separately.
+            snapshot = json.loads(self.agent.state.model_dump_json())
+            if i == 0:
+                # Resume a snapshot from before the reminder was introduced.
+                del snapshot["reply_context"]["total_iters_reminder_sent"]
+            if i == 1:
+                # Older snapshots start from their saved iteration count.
+                del snapshot["reply_context"]["total_iters"]
+            self.agent.state = AgentState.model_validate(snapshot)
+            self.assertEqual(
+                self.agent.state.reply_context.total_iters,
+                (0, 1, 1, 2)[i],
+            )
+            result = await self.agent.reply(
+                ExternalExecutionResultEvent(
+                    reply_id=reply_id,
+                    execution_results=[
+                        ToolResultBlock(
+                            id=call.id,
+                            name=call.name,
+                            output="ok",
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            )
+            self.assertEqual(self.model.cnt, (2, 2, 3, 4)[i])
+        self.assertEqual(result.finished_reason, "exceed_max_iters")
+        self.assertEqual(self.agent.state.reply_context.total_iters, 4)
+        self.assertEqual(reminders, [0, 1, 0, 0])
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

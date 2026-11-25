@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """The utility module for unit tests in agentscope."""
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, AsyncGenerator, Type
+from unittest.mock import patch
 
 from pydantic import BaseModel
 
@@ -150,6 +153,29 @@ class MockModel(ChatModelBase):
     ) -> StructuredResponse:
         """Mock the API call with structured output."""
         return self.mock_structured_response
+
+
+@contextmanager
+def track_hint_counts(model: MockModel, text: str) -> Iterator[list[int]]:
+    """Count matching hints in each model call before history changes."""
+    counts: list[int] = []
+    call_api = model._call_api  # pylint: disable=protected-access
+
+    async def record(
+        *args: Any,
+        messages: list[Msg],
+        **kwargs: Any,
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        count = sum(
+            isinstance(block.hint, str) and text in block.hint
+            for msg in messages
+            for block in msg.get_content_blocks("hint")
+        )
+        counts.append(count)
+        return await call_api(*args, messages=messages, **kwargs)
+
+    with patch.object(model, "_call_api", side_effect=record):
+        yield counts
 
 
 def compare_by_printing(a: Any, b: Any) -> None:

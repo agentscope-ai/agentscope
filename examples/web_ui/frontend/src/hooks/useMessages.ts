@@ -127,6 +127,7 @@ export function useMessages(
 		 * the session list to pick the new one up.
 		 */
 		onSessionUpdated?: () => void;
+		onToolLoginChanged?: () => void;
 		/** True when a dedicated realtime transport already plays PCM audio. */
 		isRealtimeAudioActive?: () => boolean;
 		/** Send a tool confirmation over the active realtime transport. */
@@ -262,6 +263,8 @@ export function useMessages(
 					optionsRef.current?.onTeamUpdated?.();
 				} else if (custom.name === 'state_updated' && custom.value) {
 					optionsRef.current?.onStateUpdated?.(custom.value as Record<string, unknown>);
+				} else if (custom.name === 'tool_login_changed') {
+					optionsRef.current?.onToolLoginChanged?.();
 				} else if (custom.name === 'session_updated') {
 					optionsRef.current?.onSessionUpdated?.();
 				} else if (custom.name === 'subagent_require_user_confirm') {

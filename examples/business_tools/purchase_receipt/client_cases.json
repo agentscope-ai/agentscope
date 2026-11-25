@@ -1,0 +1,4612 @@
+{
+  "pageSha256": "3a103c6dca0ef362b3c94eea1d58ea424e361f87f62e968897ad353b4f590454",
+  "cases": [
+    {
+      "name": "base",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:30:57",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:30:57",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253458504-7fa8f4c1",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253458504-1f4c8559",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/purchase/order",
+        "body": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "验收供应商",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": 4036401,
+            "teamName": "验收团队",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": 0,
+            "forkliftTotalAmount": 0,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": 53,
+            "factoryDiscountAmount": 53,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": 0,
+            "paidAmount": 0,
+            "unpaidAmount": 0,
+            "totalFreePay": 0,
+            "truckFreight": null,
+            "damageTotalAmount": 0,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": 0,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:30:57",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:30:57",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253458504-7fa8f4c1",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 32,
+              "factoryDeduction": 32,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 32,
+              "freightPer": 0,
+              "inUnitPrice": 3.555556,
+              "inPriceWithFee": 3.555556,
+              "inFinalPrice": 3.555556,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253458504-1f4c8559",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 21,
+              "factoryDeduction": 21,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 21,
+              "freightPer": 0,
+              "inUnitPrice": 7,
+              "inPriceWithFee": 7,
+              "inFinalPrice": 7,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            }
+          ],
+          "payments": []
+        }
+      },
+      "reads": [
+        "/purchase/order/918"
+      ],
+      "message": "新增成功"
+    },
+    {
+      "name": "quantity",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:30:59",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:30:59",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253460528-ac4225fc",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 5,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253460528-e8332942",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/purchase/order",
+        "body": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "验收供应商",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": 4036401,
+            "teamName": "验收团队",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": 0,
+            "forkliftTotalAmount": 0,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": 58,
+            "factoryDiscountAmount": 58,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": 0,
+            "paidAmount": 0,
+            "unpaidAmount": 0,
+            "totalFreePay": 0,
+            "truckFreight": null,
+            "damageTotalAmount": 0,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": 0,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:30:59",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:30:59",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253460528-ac4225fc",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 32,
+              "factoryDeduction": 32,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 32,
+              "freightPer": 0,
+              "inUnitPrice": 3.555556,
+              "inPriceWithFee": 3.555556,
+              "inFinalPrice": 3.555556,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 5,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253460528-e8332942",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 26,
+              "factoryDeduction": 26,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 26,
+              "freightPer": 0,
+              "inUnitPrice": 8.666667,
+              "inPriceWithFee": 8.666667,
+              "inFinalPrice": 8.666667,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            }
+          ],
+          "payments": []
+        }
+      },
+      "reads": [
+        "/purchase/order/918"
+      ],
+      "message": "新增成功"
+    },
+    {
+      "name": "rounding",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:01",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:01",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253462298-7f903df5",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5.00125,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253462298-281ff80d",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/purchase/order",
+        "body": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "验收供应商",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": 4036401,
+            "teamName": "验收团队",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": 0,
+            "forkliftTotalAmount": 0,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": 53.01,
+            "factoryDiscountAmount": 53.01,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": 0,
+            "paidAmount": 0,
+            "unpaidAmount": 0,
+            "totalFreePay": 0,
+            "truckFreight": null,
+            "damageTotalAmount": 0,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": 0,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:01",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:01",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253462298-7f903df5",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 32,
+              "factoryDeduction": 32,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 32,
+              "freightPer": 0,
+              "inUnitPrice": 3.555556,
+              "inPriceWithFee": 3.555556,
+              "inFinalPrice": 3.555556,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5.00125,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253462298-281ff80d",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 21.01,
+              "factoryDeduction": 21.01,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 21.01,
+              "freightPer": 0,
+              "inUnitPrice": 7.003333,
+              "inPriceWithFee": 7.003333,
+              "inFinalPrice": 7.003333,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            }
+          ],
+          "payments": []
+        }
+      },
+      "reads": [
+        "/purchase/order/918"
+      ],
+      "message": "新增成功"
+    },
+    {
+      "name": "edited",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:03",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:03",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253464168-f7ca8783",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 6,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253464168-6db17c73",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/purchase/order",
+        "body": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "验收供应商",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": 4036401,
+            "teamName": "验收团队",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": 0,
+            "forkliftTotalAmount": 0,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": 57,
+            "factoryDiscountAmount": 57,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": 0,
+            "paidAmount": 0,
+            "unpaidAmount": 0,
+            "totalFreePay": 0,
+            "truckFreight": null,
+            "damageTotalAmount": 0,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": 0,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:03",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:03",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253464168-f7ca8783",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 32,
+              "factoryDeduction": 32,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 32,
+              "freightPer": 0,
+              "inUnitPrice": 3.555556,
+              "inPriceWithFee": 3.555556,
+              "inFinalPrice": 3.555556,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 6,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253464168-6db17c73",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 25,
+              "factoryDeduction": 25,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 25,
+              "freightPer": 0,
+              "inUnitPrice": 8.333333,
+              "inPriceWithFee": 8.333333,
+              "inFinalPrice": 8.333333,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            }
+          ],
+          "payments": []
+        }
+      },
+      "reads": [
+        "/purchase/order/918"
+      ],
+      "message": "新增成功"
+    },
+    {
+      "name": "piecework",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:05",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:05",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253466064-02d28d02",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "packSpec": 10,
+              "damagePcs": 2,
+              "damageSelectPrice": 1.25,
+              "freight": 7,
+              "weightPer": 9,
+              "inQty": 2,
+              "inboxFeePer": 4,
+              "inboxCheckError": 1,
+              "forkliftCheckError": 1,
+              "workers": [
+                {
+                  "workerName": "甲",
+                  "isActive": 1,
+                  "inboxPercent": 1,
+                  "damagePickPercent": 1,
+                  "__attachmentKey": "purchase-worker-1795253466064-1379723f",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false,
+                  "landingQty": 0,
+                  "landingPcs": 0,
+                  "landingAmount": 0
+                }
+              ],
+              "forklifts": [
+                {
+                  "driverName": "乙",
+                  "isActive": 1,
+                  "forkliftPercent": 1,
+                  "__attachmentKey": "purchase-forklift-1795253466064-a01964d4",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false
+                }
+              ],
+              "batches": [
+                {
+                  "rowNo": 1,
+                  "inPcs": 3,
+                  "inQty": 0.3,
+                  "colorNo": "A",
+                  "inboundType": "入筐",
+                  "frameNo": "F",
+                  "__attachmentKey": "purchase-batch-1795253466064-8545439c",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false
+                }
+              ],
+              "__attachmentKey": "purchase-detail-1795253466064-065dc4e1",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/purchase/order",
+        "body": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "验收供应商",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": 4036401,
+            "teamName": "验收团队",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": 3.58,
+            "forkliftTotalAmount": 1.08,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": 53,
+            "factoryDiscountAmount": 53,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": 0,
+            "paidAmount": 0,
+            "unpaidAmount": 0,
+            "totalFreePay": 0,
+            "truckFreight": null,
+            "damageTotalAmount": 10,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": 0.0036,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:05",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:05",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253466064-02d28d02",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 32,
+              "factoryDeduction": 32,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 32,
+              "freightPer": 0,
+              "inUnitPrice": 3.555556,
+              "inPriceWithFee": 3.555556,
+              "inFinalPrice": 3.555556,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "packSpec": 10,
+              "damagePcs": 2,
+              "damageSelectPrice": 1.25,
+              "freight": 7,
+              "weightPer": 9,
+              "inQty": 2,
+              "inboxFeePer": 4,
+              "inboxCheckError": 1,
+              "forkliftCheckError": 1,
+              "workers": [
+                {
+                  "workerName": "甲",
+                  "isActive": 1,
+                  "inboxPercent": 1,
+                  "damagePickPercent": 1,
+                  "__attachmentKey": "purchase-worker-1795253466064-1379723f",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false,
+                  "landingQty": 0,
+                  "landingPcs": 0,
+                  "landingAmount": 0,
+                  "inboxAmount": 1.08,
+                  "damagePickFee": 2.5,
+                  "handlingAmount": 3.58,
+                  "inboxPcs": 3,
+                  "inboxQty": 0
+                }
+              ],
+              "forklifts": [
+                {
+                  "driverName": "乙",
+                  "isActive": 1,
+                  "forkliftPercent": 1,
+                  "__attachmentKey": "purchase-forklift-1795253466064-a01964d4",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false,
+                  "forkliftPcs": 3,
+                  "forkliftQty": 0,
+                  "headerForkliftPercent": 0.9,
+                  "forkliftAmount": 1.08
+                }
+              ],
+              "batches": [
+                {
+                  "rowNo": 1,
+                  "inPcs": 3,
+                  "inQty": 0.3,
+                  "colorNo": "A",
+                  "inboundType": "入筐",
+                  "frameNo": "F",
+                  "__attachmentKey": "purchase-batch-1795253466064-8545439c",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false,
+                  "inUnitPrice": 7,
+                  "inPriceWithFee": 10.886667,
+                  "inFinalPrice": 10.886667,
+                  "warehouseId": null,
+                  "warehouseName": ""
+                }
+              ],
+              "__attachmentKey": "purchase-detail-1795253466064-065dc4e1",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 3.6,
+              "damageAmount": 10,
+              "damageSelectAmount": 2.5,
+              "payableAmount": 21,
+              "factoryDeduction": 21,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 3.58,
+              "forkliftAmount": 1.08,
+              "workerFee": 4.66,
+              "inCostAmount": 28,
+              "freightPer": 3.888889,
+              "inUnitPrice": 7,
+              "inPriceWithFee": 10.886667,
+              "inFinalPrice": 10.886667,
+              "colorNo": ""
+            }
+          ],
+          "payments": []
+        }
+      },
+      "reads": [
+        "/purchase/order/918"
+      ],
+      "message": "新增成功"
+    },
+    {
+      "name": "payment",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:07",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:07",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253467934-0de2ecb3",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253467935-682d259c",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": [
+            {
+              "paymentAmount": 5,
+              "freeAmount": 1,
+              "__attachmentKey": "purchase-payment-1795253467935-b06aeeb2",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ]
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/purchase/order",
+        "body": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "验收供应商",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": 4036401,
+            "teamName": "验收团队",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": 0,
+            "forkliftTotalAmount": 0,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": 53,
+            "factoryDiscountAmount": 53,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": 0,
+            "paidAmount": 5,
+            "unpaidAmount": -6,
+            "totalFreePay": 1,
+            "truckFreight": null,
+            "damageTotalAmount": 0,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": 0,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:07",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:07",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253467934-0de2ecb3",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 32,
+              "factoryDeduction": 32,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 32,
+              "freightPer": 0,
+              "inUnitPrice": 3.555556,
+              "inPriceWithFee": 3.555556,
+              "inFinalPrice": 3.555556,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253467935-682d259c",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 21,
+              "factoryDeduction": 21,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 21,
+              "freightPer": 0,
+              "inUnitPrice": 7,
+              "inPriceWithFee": 7,
+              "inFinalPrice": 7,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            }
+          ],
+          "payments": [
+            {
+              "paymentAmount": 5,
+              "freeAmount": 1,
+              "__attachmentKey": "purchase-payment-1795253467935-b06aeeb2",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ]
+        }
+      },
+      "reads": [
+        "/purchase/order/918"
+      ],
+      "message": "新增成功"
+    },
+    {
+      "name": "empty",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:09",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:09",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": null,
+      "reads": [],
+      "message": "请至少添加一行明细"
+    },
+    {
+      "name": "bad-payment",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:10",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:10",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253471344-c663eb29",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253471344-a50a7cb8",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": [
+            {
+              "paymentAmount": 0,
+              "freeAmount": 0,
+              "__attachmentKey": "purchase-payment-1795253471344-93ec0866",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ]
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": null,
+      "reads": [],
+      "message": "第1条付款子单字段【付款金额】和【免付金额】不能同时为0"
+    },
+    {
+      "name": "no-color",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:12",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:12",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253472896-b7679cb9",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "batches": [
+                {
+                  "inPcs": 3,
+                  "warehouseId": 4036401,
+                  "__attachmentKey": "purchase-batch-1795253472896-3fca6ca2",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false
+                }
+              ],
+              "__attachmentKey": "purchase-detail-1795253472896-936ed79c",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": null,
+      "reads": [],
+      "message": "第2条采购子单的第1条货物批次字段【产品色号】不能为空"
+    },
+    {
+      "name": "closed",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 1,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:13",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:13",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253474452-0c9aa79e",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253474452-c071bb27",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": null,
+      "reads": [],
+      "message": "当前单据已审核、已结案或已作废，不能再修改"
+    },
+    {
+      "name": "approved",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 2,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:15",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:15",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253475981-cbe95737",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253475981-3e671406",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": null,
+      "reads": [],
+      "message": "当前单据已审核、已结案或已作废，不能再修改"
+    },
+    {
+      "name": "void",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 4,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:16",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:16",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "__attachmentKey": "purchase-detail-1795253477526-d8c734e7",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "__attachmentKey": "purchase-detail-1795253477526-32086818",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {},
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": null,
+      "reads": [],
+      "message": "当前单据已审核、已结案或已作废，不能再修改"
+    },
+    {
+      "name": "required-header",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:18",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:18",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "remark1": "首行检查通过",
+              "__attachmentKey": "purchase-detail-1795253479077-d64b8beb",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "batches": [
+                {
+                  "rowNo": 1,
+                  "colorNo": "A",
+                  "inPcs": 3,
+                  "inQty": 0.3,
+                  "frameNo": "F",
+                  "inboundType": "入筐",
+                  "__attachmentKey": "purchase-batch-1795253479077-76dca615",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false
+                }
+              ],
+              "__attachmentKey": "purchase-detail-1795253479077-3b4c9257",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {
+            "purchase.order": {
+              "remark": {
+                "moduleCode": "purchase.order",
+                "fieldKey": "remark",
+                "fieldLabel": "到货说明",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            },
+            "purchase.order.detail": {
+              "remark1": {
+                "moduleCode": "purchase.order.detail",
+                "fieldKey": "remark1",
+                "fieldLabel": "验收依据",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              },
+              "remark2": {
+                "moduleCode": "purchase.order.detail",
+                "fieldKey": "remark2",
+                "fieldLabel": "仅审核填写",
+                "isRequired": 0,
+                "auditRequired": 1,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            },
+            "purchase.order.batch": {
+              "warehouseLocation": {
+                "moduleCode": "purchase.order.batch",
+                "fieldKey": "warehouseLocation",
+                "fieldLabel": "存放位置",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            }
+          },
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [
+                {
+                  "columnKey": "remark",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.detail": [
+                {
+                  "columnKey": "remark1",
+                  "canView": 1,
+                  "canEdit": 1
+                },
+                {
+                  "columnKey": "remark2",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.batch": [
+                {
+                  "columnKey": "warehouseLocation",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": null,
+      "reads": [],
+      "message": "请输入到货说明"
+    },
+    {
+      "name": "required-detail",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "按验收要求入库",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:19",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:19",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "remark1": "首行检查通过",
+              "__attachmentKey": "purchase-detail-1795253480657-4b3b1dce",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "batches": [
+                {
+                  "rowNo": 1,
+                  "colorNo": "A",
+                  "inPcs": 3,
+                  "inQty": 0.3,
+                  "frameNo": "F",
+                  "inboundType": "入筐",
+                  "__attachmentKey": "purchase-batch-1795253480657-b00d4565",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false
+                }
+              ],
+              "__attachmentKey": "purchase-detail-1795253480657-1457b23b",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {
+            "purchase.order": {
+              "remark": {
+                "moduleCode": "purchase.order",
+                "fieldKey": "remark",
+                "fieldLabel": "到货说明",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            },
+            "purchase.order.detail": {
+              "remark1": {
+                "moduleCode": "purchase.order.detail",
+                "fieldKey": "remark1",
+                "fieldLabel": "验收依据",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              },
+              "remark2": {
+                "moduleCode": "purchase.order.detail",
+                "fieldKey": "remark2",
+                "fieldLabel": "仅审核填写",
+                "isRequired": 0,
+                "auditRequired": 1,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            },
+            "purchase.order.batch": {
+              "warehouseLocation": {
+                "moduleCode": "purchase.order.batch",
+                "fieldKey": "warehouseLocation",
+                "fieldLabel": "存放位置",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            }
+          },
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [
+                {
+                  "columnKey": "remark",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.detail": [
+                {
+                  "columnKey": "remark1",
+                  "canView": 1,
+                  "canEdit": 1
+                },
+                {
+                  "columnKey": "remark2",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.batch": [
+                {
+                  "columnKey": "warehouseLocation",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": null,
+      "reads": [],
+      "message": "第2条子单字段【验收依据】不能为空（保存时必填）"
+    },
+    {
+      "name": "required-batch",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "按验收要求入库",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:21",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:21",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "remark1": "首行检查通过",
+              "__attachmentKey": "purchase-detail-1795253482231-fd7fb752",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "batches": [
+                {
+                  "rowNo": 1,
+                  "colorNo": "A",
+                  "inPcs": 3,
+                  "inQty": 0.3,
+                  "frameNo": "F",
+                  "inboundType": "入筐",
+                  "__attachmentKey": "purchase-batch-1795253482231-3bc3a49c",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false
+                }
+              ],
+              "remark1": "次行检查通过",
+              "__attachmentKey": "purchase-detail-1795253482231-2043f641",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {
+            "purchase.order": {
+              "remark": {
+                "moduleCode": "purchase.order",
+                "fieldKey": "remark",
+                "fieldLabel": "到货说明",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            },
+            "purchase.order.detail": {
+              "remark1": {
+                "moduleCode": "purchase.order.detail",
+                "fieldKey": "remark1",
+                "fieldLabel": "验收依据",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              },
+              "remark2": {
+                "moduleCode": "purchase.order.detail",
+                "fieldKey": "remark2",
+                "fieldLabel": "仅审核填写",
+                "isRequired": 0,
+                "auditRequired": 1,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            },
+            "purchase.order.batch": {
+              "warehouseLocation": {
+                "moduleCode": "purchase.order.batch",
+                "fieldKey": "warehouseLocation",
+                "fieldLabel": "存放位置",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            }
+          },
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [
+                {
+                  "columnKey": "remark",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.detail": [
+                {
+                  "columnKey": "remark1",
+                  "canView": 1,
+                  "canEdit": 1
+                },
+                {
+                  "columnKey": "remark2",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.batch": [
+                {
+                  "columnKey": "warehouseLocation",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": null,
+      "reads": [],
+      "message": "第2条子单的第1条批次明细字段【存放位置】不能为空（保存时必填）"
+    },
+    {
+      "name": "required-complete",
+      "input": {
+        "data": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": null,
+            "teamName": "",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": null,
+            "forkliftTotalAmount": null,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": null,
+            "factoryDiscountAmount": 0,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": null,
+            "paidAmount": null,
+            "unpaidAmount": null,
+            "totalFreePay": null,
+            "truckFreight": null,
+            "damageTotalAmount": null,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": null,
+            "remark": "按验收要求入库",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:23",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:23",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "remark1": "首行检查通过",
+              "__attachmentKey": "purchase-detail-1795253483803-11ade8cf",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "batches": [
+                {
+                  "rowNo": 1,
+                  "colorNo": "A",
+                  "inPcs": 3,
+                  "inQty": 0.3,
+                  "frameNo": "F",
+                  "inboundType": "入筐",
+                  "warehouseLocation": "A-01",
+                  "__attachmentKey": "purchase-batch-1795253483803-757c0b97",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false
+                }
+              ],
+              "remark1": "次行检查通过",
+              "__attachmentKey": "purchase-detail-1795253483803-30c7b522",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false
+            }
+          ],
+          "payments": []
+        },
+        "editorState": {
+          "materialList": [
+            {
+              "id": 4036401,
+              "materialCode": "QA0",
+              "materialName": "验收材料0",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            },
+            {
+              "id": 4036402,
+              "materialCode": "QA1",
+              "materialName": "验收材料1",
+              "companyId": 4036401,
+              "teamId": 4036401,
+              "teamName": "验收团队",
+              "supplierId": 4036401,
+              "supplierName": "验收供应商",
+              "packageSpec": 10,
+              "hasColor": "无色号",
+              "defaultWarehouseId": 4036401,
+              "series": ""
+            }
+          ],
+          "teamList": [
+            {
+              "id": 4036401,
+              "teamName": "验收团队",
+              "companyId": 4036401
+            }
+          ],
+          "companyList": [
+            {
+              "id": 4036401,
+              "companyName": "验收公司"
+            }
+          ],
+          "paymentDisplayBaseline": {
+            "paidAmount": 0,
+            "totalFreePay": 0
+          },
+          "__fieldConfiguration": {
+            "purchase.order": {
+              "remark": {
+                "moduleCode": "purchase.order",
+                "fieldKey": "remark",
+                "fieldLabel": "到货说明",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            },
+            "purchase.order.detail": {
+              "remark1": {
+                "moduleCode": "purchase.order.detail",
+                "fieldKey": "remark1",
+                "fieldLabel": "验收依据",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              },
+              "remark2": {
+                "moduleCode": "purchase.order.detail",
+                "fieldKey": "remark2",
+                "fieldLabel": "仅审核填写",
+                "isRequired": 0,
+                "auditRequired": 1,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            },
+            "purchase.order.batch": {
+              "warehouseLocation": {
+                "moduleCode": "purchase.order.batch",
+                "fieldKey": "warehouseLocation",
+                "fieldLabel": "存放位置",
+                "isRequired": 1,
+                "auditRequired": 0,
+                "visible": 1,
+                "isCollapsed": 0
+              }
+            }
+          },
+          "__columnConfiguration": {
+            "configs": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "permissions": {
+              "purchase.order": [
+                {
+                  "columnKey": "remark",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.detail": [
+                {
+                  "columnKey": "remark1",
+                  "canView": 1,
+                  "canEdit": 1
+                },
+                {
+                  "columnKey": "remark2",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.batch": [
+                {
+                  "columnKey": "warehouseLocation",
+                  "canView": 1,
+                  "canEdit": 1
+                }
+              ],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "hiddenColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            },
+            "readonlyColumns": {
+              "purchase.order": [],
+              "purchase.order.detail": [],
+              "purchase.order.batch": [],
+              "purchase.order.worker": [],
+              "purchase.order.forklift": [],
+              "purchase.order.payment": []
+            }
+          }
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/purchase/order",
+        "body": {
+          "order": {
+            "id": null,
+            "billNo": "",
+            "billType": "采购入库单",
+            "billDate": "2026-11-21",
+            "supplierId": 4036401,
+            "supplierCode": "",
+            "supplierName": "验收供应商",
+            "supplierPhone": "",
+            "supplierType": "",
+            "warehouseId": null,
+            "warehouseName": "",
+            "buyerId": null,
+            "buyerName": "",
+            "inventoryKeeperId": null,
+            "inventoryKeeperName": "",
+            "departmentId": null,
+            "departmentName": "",
+            "companyId": 4036401,
+            "companyName": "",
+            "teamId": 4036401,
+            "teamName": "验收团队",
+            "landingPercent": 0.9,
+            "inboxPercent": 0.9,
+            "forkliftPercent": 0.9,
+            "landingCheckError": "是",
+            "inboxCheckError": "是",
+            "forkliftCheckError": "是",
+            "landingTotalAmount": 0,
+            "forkliftTotalAmount": 0,
+            "factoryDiscountPercent": null,
+            "factoryAddPercent": null,
+            "factoryRebatePercent": null,
+            "goodsTotalAmount": 53,
+            "factoryDiscountAmount": 53,
+            "actualFactoryAmount": null,
+            "totalQty": null,
+            "totalAmount": 0,
+            "paidAmount": 0,
+            "unpaidAmount": 0,
+            "totalFreePay": 0,
+            "truckFreight": null,
+            "damageTotalAmount": 0,
+            "supplierBalance": null,
+            "prepaidBalance": null,
+            "totalWeight": 0,
+            "remark": "按验收要求入库",
+            "tailNote": "",
+            "billStatus": 0,
+            "closedStatus": 0,
+            "customField1": "",
+            "customField2": "",
+            "customField3": "",
+            "customField4": "",
+            "customField5": "",
+            "customField6": "",
+            "customField7": "",
+            "customField8": "",
+            "customField9": "",
+            "customField10": "",
+            "approveStatus": 0,
+            "createdBy": 1,
+            "createdByName": "admin",
+            "createdTime": "2026-11-21 17:31:23",
+            "updatedBy": 1,
+            "updatedByName": "admin",
+            "updatedTime": "2026-11-21 17:31:23",
+            "approverId": null,
+            "approverName": "",
+            "approveTime": null,
+            "finalApproverId": null,
+            "finalApproverName": "",
+            "finalApproveTime": "",
+            "_approvalStatus": null,
+            "_approvalRecordId": null,
+            "_approvalStepName": ""
+          },
+          "details": [
+            {
+              "materialId": 4036401,
+              "warehouseId": 4036401,
+              "expectPcs": 10,
+              "inPcs": 9,
+              "factoryPricePcs": 3,
+              "totalLoadingFee": 2,
+              "remark1": "首行检查通过",
+              "__attachmentKey": "purchase-detail-1795253483803-11ade8cf",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 32,
+              "factoryDeduction": 32,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 32,
+              "freightPer": 0,
+              "inUnitPrice": 3.555556,
+              "inPriceWithFee": 3.555556,
+              "inFinalPrice": 3.555556,
+              "colorNo": "",
+              "batches": [],
+              "workers": [],
+              "forklifts": []
+            },
+            {
+              "materialId": 4036402,
+              "warehouseId": 4036401,
+              "expectPcs": 4,
+              "inPcs": 3,
+              "factoryPricePcs": 5,
+              "totalLoadingFee": 1,
+              "batches": [
+                {
+                  "rowNo": 1,
+                  "colorNo": "A",
+                  "inPcs": 3,
+                  "inQty": 0.3,
+                  "frameNo": "F",
+                  "inboundType": "入筐",
+                  "warehouseLocation": "A-01",
+                  "__attachmentKey": "purchase-batch-1795253483803-757c0b97",
+                  "__attachmentItems": [],
+                  "__attachmentsDirty": false,
+                  "inUnitPrice": 7,
+                  "inPriceWithFee": 7,
+                  "inFinalPrice": 7,
+                  "warehouseId": null,
+                  "warehouseName": ""
+                }
+              ],
+              "remark1": "次行检查通过",
+              "__attachmentKey": "purchase-detail-1795253483803-30c7b522",
+              "__attachmentItems": [],
+              "__attachmentsDirty": false,
+              "totalWeight": 0,
+              "damageAmount": 0,
+              "damageSelectAmount": 0,
+              "payableAmount": 21,
+              "factoryDeduction": 21,
+              "factoryRebateAmount": 0,
+              "handlingAmount": 0,
+              "forkliftAmount": 0,
+              "workerFee": 0,
+              "inCostAmount": 21,
+              "freightPer": 0,
+              "inUnitPrice": 7,
+              "inPriceWithFee": 7,
+              "inFinalPrice": 7,
+              "colorNo": "",
+              "workers": [],
+              "forklifts": []
+            }
+          ],
+          "payments": []
+        }
+      },
+      "reads": [
+        "/purchase/order/918"
+      ],
+      "message": "新增成功"
+    }
+  ]
+}

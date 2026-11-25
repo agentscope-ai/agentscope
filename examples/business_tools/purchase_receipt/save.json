@@ -1,0 +1,14 @@
+{
+  "entry": "api/business.js#purchaseOrderApi.save",
+  "httpClient": "@/utils/request",
+  "derive": [
+    {"each": "data.details", "source": "views/purchase/PurchaseOrderView.vue#calcDetailRow", "assignment": "record.payableAmount"},
+    {"each": "data.details", "source": "views/purchase/PurchaseOrderView.vue#calcDetailRow", "assignment": "record.factoryDeduction"}
+  ],
+  "success": {"field": "code", "equals": 200},
+  "responseCorrection": {
+    "status": "200", "schemaPath": ["properties", "data"],
+    "schema": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "string", "pattern": "^[1-9][0-9]*$"}]},
+    "reason": "采购入库单新增成功时返回单据 ID。ERP OpenAPI 中共用的 RObject 将 data 标成 object。"
+  }
+}

@@ -746,7 +746,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             key (`str`):
                 Pub/Sub channel name.
             on_ready (`Callable[[], None] | None`, optional):
-                Called once after ``SUBSCRIBE`` has been issued (and
+                Called once after Redis acknowledges ``SUBSCRIBE`` (and
                 before any payload is yielded). Lets callers block on
                 a "subscription is live" event so they can publish
                 immediately after starting a subscriber without losing
@@ -761,12 +761,10 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         pubsub = self._client.pubsub()
         try:
             await pubsub.subscribe(key)
-            if on_ready is not None:
-                on_ready()
             while True:
                 try:
                     message = await pubsub.get_message(
-                        ignore_subscribe_messages=True,
+                        ignore_subscribe_messages=on_ready is None,
                         timeout=self._SUBSCRIBE_POLL_TIMEOUT_SECS,
                     )
                 except redis_exceptions.TimeoutError:
@@ -777,6 +775,10 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     continue
                 if message is None:
                     # No payload within the poll window — keep waiting.
+                    continue
+                if message.get("type") == "subscribe" and on_ready is not None:
+                    on_ready()
+                    on_ready = None
                     continue
                 if message.get("type") != "message":
                     # Skip ``subscribe`` ack and similar control frames.

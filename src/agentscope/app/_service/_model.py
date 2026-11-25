@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Model service: builds a ChatModelBase from stored credential + config."""
 from ._access import ResourceAccessService
+from ._model_catalog import list_local_models
 from ..storage import ChatModelConfig, RealtimeModelConfig
-from ...credential import CredentialFactory
-from ...model import ChatModelBase
+from ...credential import CredentialFactory, OpenAICredential
+from ...model import ChatModelBase, OpenAIChatModel
 from ...realtime import RealtimeModelBase
 from ..._logging import logger
 
@@ -65,6 +66,12 @@ async def get_model(
         if config.parameters
         else None
     )
+    local_cards = None
+    if (
+        isinstance(credential, OpenAICredential)
+        and model_cls is OpenAIChatModel
+    ):
+        local_cards = await list_local_models(credential)
     model = model_cls(
         credential=credential,
         model=config.model,
@@ -72,10 +79,11 @@ async def get_model(
     )
 
     # Override the context size and the formatter's input types with the
-    # built-in model card's when one matches; custom models have no card,
+    # selected catalog's card when one matches; custom models may have no card,
     # so keep the defaults.
     try:
-        for card in model_cls.list_models():
+        cards = model_cls.list_models() if local_cards is None else local_cards
+        for card in cards:
             if card.name == config.model:
                 model.context_size = card.context_size
                 model.formatter.input_types = card.input_types

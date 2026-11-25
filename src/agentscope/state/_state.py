@@ -50,6 +50,9 @@ class ToolContext(BaseModel):
     """The names of the activated tool groups, each group contains a set of
     tools."""
 
+    selected_business_tools: list[str] = Field(default_factory=list)
+    """Business schemas selected by the latest search in this session."""
+
     async def get_cache(
         self,
         file_path: str,
@@ -207,6 +210,20 @@ class ReplyContext(BaseModel):
     """The current iteration of the agent's reasoning-acting loop in this
     reply."""
 
+    total_iters: int = Field(
+        default_factory=lambda data: data["cur_iter"],
+        ge=0,
+    )
+    """Completed rounds, including rounds re-opened by middleware. Older
+    reply snapshots start from their saved iteration count."""
+
+    total_iters_reminder_sent: bool = False
+    """Whether this reply has received its three-round reminder."""
+
+    extra_iters: int = 0
+    """The latest successful tool round, persisted across HITL so the reply
+    has a full iteration budget after that round."""
+
     structured_schema: Type[BaseModel] | dict | None = None
     """The reply's structured output requirement, a pydantic model class in
     process and serialized as its JSON schema dict."""
@@ -221,6 +238,11 @@ class ReplyContext(BaseModel):
 
     structured_output: dict | None = None
     """The structured output generated within this reply."""
+
+    def finish_iteration(self) -> None:
+        """Count a completed round once all its tool calls have results."""
+        self.cur_iter += 1
+        self.total_iters += 1
 
 
 class AgentState(BaseModel):

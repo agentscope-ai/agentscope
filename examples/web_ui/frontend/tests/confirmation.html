@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<title>Confirmation keyboard test</title>
+	</head>
+	<body>
+		<textarea aria-label="Chat"></textarea>
+		<div id="root"></div>
+		<script type="module">
+			import { createElement } from 'react';
+			import { createRoot } from 'react-dom/client';
+			import '/src/i18n/index.ts';
+			import { ConfirmCard } from '/src/components/chat/ConfirmCard.tsx';
+
+			window.decisions = [];
+			const cards = ['create_ticket', 'add_contact'].map((name) =>
+				createElement(ConfirmCard, {
+					key: name,
+					toolCall: { id: name, name, input: '{}' },
+					onUserConfirm: async (approved) => window.decisions.push([name, approved]),
+				}),
+			);
+			createRoot(document.querySelector('#root')).render(cards);
+		</script>
+	</body>
+</html>
