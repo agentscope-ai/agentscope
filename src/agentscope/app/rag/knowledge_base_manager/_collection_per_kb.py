@@ -25,7 +25,14 @@ from ..._service._embedding import build_embedding_model
 from ...storage import KnowledgeBaseRecord, KnowledgeBaseData
 
 if TYPE_CHECKING:
-    from ...storage import ChunkerConfig, EmbeddingModelConfig
+    from ..._service import ResourceAccessService
+    from ...storage import (
+        ChunkerConfig,
+        CredentialRecord,
+        EmbeddingModelConfig,
+        StorageBase,
+    )
+    from ....rag import VectorStoreBase
 
 
 class CollectionPerKbManager(KnowledgeBaseManagerBase):
@@ -36,6 +43,69 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
     created at :meth:`create_knowledge_base` time and dropped at
     :meth:`delete_knowledge_base` time.
     """
+
+    def __init__(
+        self,
+        storage: "StorageBase",
+        vector_store: "VectorStoreBase",
+        resource_access_service: "ResourceAccessService | None" = None,
+    ) -> None:
+        """Initialize the manager and its credential access resolver.
+
+        Args:
+            storage (`StorageBase`):
+                Storage for knowledge bases and credentials.
+            vector_store (`VectorStoreBase`):
+                Vector store shared by the managed collections.
+            resource_access_service (`ResourceAccessService | None`):
+                Resolver used as the KB owner for shared credentials.
+                ``create_app`` binds its resolver during startup. Standalone
+                managers, including dedicated workers, must supply one to
+                use shared credentials; without it only owned credentials
+                are available.
+        """
+        super().__init__(storage, vector_store)
+        self._resource_access_service = resource_access_service
+
+    def bind_resource_access_service(
+        self,
+        service: "ResourceAccessService",
+    ) -> None:
+        """Bind the application's credential resolver before serving requests.
+
+        Args:
+            service (`ResourceAccessService`):
+                Resolver carrying the current application's access policy.
+        """
+        self._resource_access_service = service
+
+    async def _resolve_credential(
+        self,
+        user_id: str,
+        credential_id: str,
+    ) -> "CredentialRecord":
+        """Resolve a credential using the KB owner's current permission."""
+        if self._resource_access_service is not None:
+            from fastapi import HTTPException
+
+            try:
+                return await self._resource_access_service.resolve_credential(
+                    user_id,
+                    credential_id,
+                )
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                raise KnowledgeBaseNotFoundError(
+                    f"Credential {credential_id!r} not found.",
+                ) from exc
+
+        credential = await self._storage.get_credential(user_id, credential_id)
+        if credential is None:
+            raise KnowledgeBaseNotFoundError(
+                f"Credential {credential_id!r} not found.",
+            )
+        return credential
 
     async def get_dimension_policy(self) -> DimensionPolicy:
         """Return :attr:`DimensionPolicyKind.ANY` — every KB picks freely.
@@ -76,6 +146,12 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
             `KnowledgeBaseRecord`:
                 The newly persisted record.
         """
+        # Validate before allocating a collection or persisting a KB. A
+        # selection can be stale if sharing was revoked since the picker read.
+        await self._resolve_credential(
+            user_id,
+            embedding_model_config.credential_id,
+        )
         record = KnowledgeBaseRecord(
             user_id=user_id,
             data=KnowledgeBaseData(
@@ -184,21 +260,13 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
                 f"Knowledge base {knowledge_base_id!r} not found.",
             )
 
-        # KB manager is an owner-internal path: the credential lives
-        # under the same owner as the knowledge base, so we read it
-        # directly from storage rather than routing through the access
-        # service (which is only relevant when the viewer differs from
-        # the owner).
-        credential_record = await self._storage.get_credential(
+        # The credential may belong to another user who shared it to the
+        # KB owner. Recheck that grant for every runtime, including when a
+        # different viewer searches a shared KB or a worker indexes it.
+        credential_record = await self._resolve_credential(
             record.user_id,
             record.data.embedding_model_config.credential_id,
         )
-        if credential_record is None:
-            raise KnowledgeBaseNotFoundError(
-                f"Credential "
-                f"{record.data.embedding_model_config.credential_id!r} for "
-                f"knowledge base {knowledge_base_id!r} not found.",
-            )
         embedding_model = build_embedding_model(
             credential_record=credential_record,
             config=record.data.embedding_model_config,
