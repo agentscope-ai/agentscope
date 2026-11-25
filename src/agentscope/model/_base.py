@@ -102,7 +102,12 @@ def _structured_content(
         source = field.serialization_alias
         source = name if source is None else source
         supplied = key if key in inputs else name
-        if field.is_required() and (field.exclude or source not in content):
+        restore_excluded = field.exclude and (
+            field.is_required()
+            or supplied in inputs
+            or (arguments is None and name in model.model_fields_set)
+        )
+        if restore_excluded or (field.is_required() and source not in content):
             if supplied not in inputs:
                 return arguments
             updates[key] = inputs[supplied]
@@ -888,7 +893,11 @@ class ChatModelBase:
                 normalized = _structured_content(
                     validated,
                     structured_output,
-                    validated.model_dump(mode="json", by_alias=True),
+                    validated.model_dump(
+                        mode="json",
+                        by_alias=True,
+                        round_trip=True,
+                    ),
                 )
                 if normalized is not None:
                     structured_output = normalized

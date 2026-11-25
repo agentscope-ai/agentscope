@@ -12,6 +12,8 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    Json,
+    computed_field,
     field_validator,
     model_serializer,
 )
@@ -1714,6 +1716,50 @@ class StructuredOutputValidationTest(IsolatedAsyncioTestCase):
             {**arguments, "labels": ["local"]},
         )
         Report.model_validate(result.content)
+
+    async def test_defaulted_excluded_field_preserves_input(self) -> None:
+        """Restore explicit excluded values and leave omitted defaults out."""
+
+        class City(BaseModel):
+            """Give the excluded reference a default and a tool-input alias."""
+
+            ref: str = Field(default="unknown", alias="refId", exclude=True)
+
+        class Report(BaseModel):
+            """Exercise direct and container recovery in the same response."""
+
+            primary: City
+            cities: list[City]
+
+        for city in ({"refId": "P"}, {}):
+            with self.subTest(city=city):
+                arguments = {"primary": city, "cities": [city]}
+                result = await self._generate_report(
+                    Report,
+                    json.dumps(arguments),
+                )
+                self.assertDictEqual(result.content, arguments)
+                restored = Report.model_validate(result.content)
+                expected = city.get("refId", "unknown")
+                self.assertEqual(restored.primary.ref, expected)
+                self.assertEqual(restored.cities[0].ref, expected)
+
+    async def test_json_field_round_trips(self) -> None:
+        """Keep JSON fields valid as inputs and omit computed fields."""
+
+        class Report(BaseModel):
+            """Accept a JSON string and compute its item count."""
+
+            payload: Json[list[int]]
+
+            @computed_field
+            def count(self) -> int:
+                """Return the number of parsed items."""
+                return len(self.payload)
+
+        result = await self._generate_report(Report, '{"payload":"[1, 2]"}')
+        self.assertDictEqual(result.content, {"payload": "[1,2]"})
+        self.assertEqual(Report.model_validate(result.content).payload, [1, 2])
 
     async def test_dict_serializer_omits_required_field(self) -> None:
         """Restore a required argument omitted by a model serializer."""
