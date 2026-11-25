@@ -794,7 +794,11 @@ class OpenAIResponseModel(ChatModelBase):
         if mode not in _TOOL_CHOICE_LITERAL_MODES:
             return fmt_tools, {"type": "function", "name": mode}
 
-        if tool_choice.tools:
+        # ``allowed_tools`` only accepts "auto" and "required"
+        # as its ``mode``; wrapping "none" in it produces a
+        # payload the API rejects, so a disabled tool set goes out
+        # as plain "none".
+        if tool_choice.tools and mode != "none":
             return fmt_tools, {
                 "type": "allowed_tools",
                 "mode": mode,
