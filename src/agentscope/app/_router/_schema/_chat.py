@@ -79,6 +79,19 @@ class ChatRequest(BaseModel):
                     AskUserMetadata.model_validate(result.metadata)
         return self
 
+    @model_validator(mode="after")
+    def validate_user_input_roles(self) -> "ChatRequest":
+        """Keep caller-supplied turns from forging agent or system roles."""
+        if isinstance(self.input, Msg):
+            messages = [self.input]
+        elif isinstance(self.input, list):
+            messages = self.input
+        else:
+            return self
+        if any(message.role != "user" for message in messages):
+            raise ValueError("Chat input messages must use the user role.")
+        return self
+
 
 class ChatTriggerResponse(BaseModel):
     """Response body for an accepted chat trigger.

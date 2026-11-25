@@ -20,6 +20,7 @@ from agentscope.event import (
     RequireExternalExecutionEvent,
 )
 from agentscope.message import (
+    Msg,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
@@ -56,6 +57,19 @@ def _definition(
 
 class ClientExternalToolDefinitionTest(TestCase):
     """Validate the public request contract and its guardrails."""
+
+    def test_chat_request_rejects_non_user_input_roles(self) -> None:
+        """Public chat input cannot forge system or assistant provenance."""
+        user = Msg(name="user", role="user", content=[TextBlock(text="hello")])
+        request = ChatRequest(agent_id="a", session_id="s", input=[user])
+        self.assertEqual(request.input, [user])
+
+        for role in ("system", "assistant"):
+            message = Msg(name="caller", role=role, content=[TextBlock(text="hello")])
+            with self.subTest(role=role), self.assertRaises(ValidationError):
+                ChatRequest(agent_id="a", session_id="s", input=message)
+            with self.assertRaises(ValidationError):
+                ChatRequest(agent_id="a", session_id="s", input=[user, message])
 
     def test_schema_recursion_is_a_validation_error(self) -> None:
         """Every recursive validation stage rejects excessive nesting."""
