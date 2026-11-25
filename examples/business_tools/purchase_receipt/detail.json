@@ -1,0 +1,11 @@
+{
+  "entry": "api/business.js#purchaseOrderApi.getById",
+  "httpClient": "@/utils/request",
+  "success": {"field": "code", "equals": 200},
+  "responseCorrection": {
+    "status": "200",
+    "schemaPath": ["properties", "data", "allOf", 0, "properties", "order", "allOf", 0, "properties", "actualFactoryAmount"],
+    "schema": {"type": ["number", "null"]},
+    "reason": "未审核的采购入库单可以没有实际厂家扣款。Vue 表单以 null 初始化，ERP 详情接口也返回 null。"
+  }
+}

@@ -139,10 +139,24 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
             {
                 "reply_id": self.agent.state.reply_id,
                 "cur_iter": 1,
+                "total_iters": 1,
+                "total_iters_reminder_sent": False,
+                "extra_iters": 0,
                 "structured_schema": WeatherReport.model_json_schema(),
                 "structured_output": {"city": "Hangzhou", "temperature": 25.0},
             },
         )
+
+    async def test_structured_reply_uses_its_own_budget(self) -> None:
+        self.agent.react_config.auto_continue = True
+        self.agent.react_config.max_total_iters = 1
+        self.model.set_responses([self.text_response, self.structured_tool_call])
+        result = await self.agent.reply(
+            UserMsg("user", "Weather?"), structured_schema=WeatherReport,
+        )
+        self.assertEqual(result.finished_reason, "completed")
+        self.assertEqual(result.structured_output["city"], "Hangzhou")
+        self.assertEqual(self.model.cnt, 2)
 
     async def test_structured_reply_preserves_accumulated_usage(self) -> None:
         """A structured reply exposes usage from every model call."""

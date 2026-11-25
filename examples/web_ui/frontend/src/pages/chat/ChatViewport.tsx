@@ -29,6 +29,7 @@ import { asrApi, sessionApi } from '@/api';
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
+import { ToolLoginDialog } from '@/components/dialog/ToolLoginDialog';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
 import { BackgroundTasksPanel } from '@/components/panel/BackgroundTasksPanel';
 import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
@@ -90,6 +91,8 @@ interface ChatViewportProps {
 	 * workspace drive every control rendered here.
 	 */
 	sessionId: string | null;
+	onStartSession?: (model: ChatModelConfig) => Promise<void>;
+	startingSession: boolean;
 	/**
 	 * Optional hook invoked when a server-side change to this session
 	 * or its team arrives on the SSE stream. The outer page owns the
@@ -190,7 +193,13 @@ function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
  *   session is selected yet.
  * @returns The right-side main JSX of the chat page.
  */
-export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatViewportProps) {
+export function ChatViewport({
+	agentId,
+	sessionId,
+	onStartSession,
+	startingSession,
+	onSessionsChanged,
+}: ChatViewportProps) {
 	const { t } = useTranslation();
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
@@ -305,6 +314,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		[sessionId],
 	);
 
+	const [toolLoginChange, setToolLoginChange] = useState(0);
 	const realtimeVoice = useRealtimeVoice(agentId, sessionId);
 	const voiceBusy = realtimeVoice.state === 'active' || realtimeVoice.state === 'connecting';
 	const {
@@ -331,6 +341,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
 		onSessionUpdated: handleSessionUpdated,
+		onToolLoginChanged: () => setToolLoginChange((count) => count + 1),
 		isRealtimeAudioActive: () => voiceBusy,
 		sendRealtimeUserConfirm: realtimeVoice.userConfirm,
 		sendRealtimeExternalExecutionResult: realtimeVoice.externalExecutionResult,
@@ -817,6 +828,10 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	 */
 	const handleLlmChange = async (config: ChatModelConfig | null) => {
 		if (!config) return;
+		if (!sessionId) {
+			await onStartSession?.(config);
+			return;
+		}
 		await patchConfig({ chat_model_config: config }, () => setSelectedModel(config));
 	};
 
@@ -992,8 +1007,11 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										className="max-w-full font-mono text-muted-foreground hover:text-foreground"
 										value={selectedModel}
 										onChange={handleLlmChange}
+									selectOnClose={!sessionId}
 										onAddCredential={() => setCredentialOpen(true)}
-										disabled={configPending || voiceBusy}
+									disabled={
+										configPending || voiceBusy || startingSession || (!sessionId && !onStartSession)
+									}
 									/>
 									<ModelParametersPopover
 										selectedModel={selectedModel}
@@ -1282,6 +1300,9 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 						</Tabs>
 					</SheetContent>
 				</Sheet>
+			)}
+			{agentId && sessionId && (
+				<ToolLoginDialog key={agentId + ":" + sessionId} agentId={agentId} sessionId={sessionId} change={toolLoginChange} />
 			)}
 			<CreateCredentialDialog open={credentialOpen} onOpenChange={setCredentialOpen} />
 		</>

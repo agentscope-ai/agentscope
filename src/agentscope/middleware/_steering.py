@@ -111,7 +111,8 @@ class SteeringMiddleware(MiddlewareBase):
         # Its late inputs stay pending and become unconsumed at reply end.
         if (
             terminal_messages
-            and agent.state.cur_iter < agent.react_config.max_iters
+            and agent.state.cur_iter < agent.reply_iteration_limit
+            and agent.remaining_total_iters != 1
         ):
             consumed = False
             async for event in self._consume(agent):

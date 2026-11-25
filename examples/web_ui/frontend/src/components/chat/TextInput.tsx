@@ -195,6 +195,12 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			};
 		}, []);
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
+		const hasAutoFocused = useRef(false);
+		useEffect(() => {
+			if (disabled || hasAutoFocused.current || !textareaRef.current) return;
+			textareaRef.current.focus();
+			hasAutoFocused.current = true;
+		}, [disabled]);
 		const fileInputRef = useRef<HTMLInputElement>(null);
 		const measureRef = useRef<HTMLSpanElement>(null);
 		const ghostColumnRef = useRef<HTMLDivElement>(null);
@@ -656,7 +662,6 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 									paddingBottom: `${TEXTAREA_PADDING_Y_PX}px`,
 									overflowY: 'auto',
 								}}
-								autoFocus={true}
 							/>
 
 							{/* Autocomplete overlay — its padding and line-height mirror the

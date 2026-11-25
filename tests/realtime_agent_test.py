@@ -2332,7 +2332,12 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
 
     async def test_denied_tool_reports_denial(self) -> None:
         """A refused prompt sends a denial to the provider, runs nothing."""
-        events, model = await self._run_tool_scenario(AskTool(), confirm=False)
+        denied = []
+        tool = AskTool()
+        tool.bind_confirmation = lambda *_: ("operation-c1", "Confirm this operation")
+        tool.confirmation_denials = {tool.name: denied.append}
+        events, model = await self._run_tool_scenario(tool, confirm=False)
+        self.assertEqual(denied, ["operation-c1"])
 
         self.assertListEqual(
             events,

@@ -1,4 +1,5 @@
 import { ChevronDown, PlusCircle, Ban } from 'lucide-react';
+import { useRef } from 'react';
 
 import type { ChatModelConfig } from '@/api';
 import { Button } from '@/components/ui/button';
@@ -28,6 +29,8 @@ interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onC
 	 */
 	onChange?: (value: ChatModelConfig | null) => void;
 	onAddCredential?: () => void;
+	/** Wait for the menu to release focus before applying the model selection. */
+	selectOnClose?: boolean;
 	/** Override the trigger label shown when no model is selected. */
 	placeholder?: string;
 	/**
@@ -43,6 +46,7 @@ export function LlmSelect({
 	value,
 	onChange,
 	onAddCredential,
+	selectOnClose = false,
 	placeholder,
 	allowClear = false,
 	clearLabel,
@@ -51,6 +55,7 @@ export function LlmSelect({
 }: Props) {
 	const { groups, loading } = useAvailableModels();
 	const { t } = useTranslation();
+	const pendingSelection = useRef<ChatModelConfig | null>(null);
 	// Credentials whose model list failed to load come back with an empty
 	// `models` array; drop them so they don't render empty submenus
 	const groupEntries = Object.entries(groups)
@@ -64,13 +69,18 @@ export function LlmSelect({
 		model: string,
 		modelClass: string,
 	) => {
-		onChange?.({
+		const config: ChatModelConfig = {
 			type,
 			credential_id: credentialId,
 			model,
 			model_class: modelClass,
 			parameters: {},
-		});
+		};
+		if (selectOnClose) {
+			pendingSelection.current = config;
+		} else {
+			onChange?.(config);
+		}
 	};
 
 	const displayLabel = (() => {
@@ -104,7 +114,15 @@ export function LlmSelect({
 					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" className="min-w-48 max-h-72 overflow-y-auto">
+			<DropdownMenuContent
+				align="start"
+				className="min-w-48 max-h-72 overflow-y-auto"
+				onCloseAutoFocus={() => {
+					const config = pendingSelection.current;
+					pendingSelection.current = null;
+					if (config) onChange?.(config);
+				}}
+			>
 				{!loading && !hasOptions ? (
 					<div className="px-2 py-3 text-center text-sm text-muted-foreground">
 						<p className="font-medium">{t('llm-select.empty.title')}</p>
@@ -117,7 +135,9 @@ export function LlmSelect({
 							<DropdownMenuGroup key={type}>
 								{idx > 0 && <DropdownMenuSeparator />}
 								<DropdownMenuLabel>
-									{type.replace(/_credential$/, '')}
+									{isSingle
+										? credentialLabel(usable[0].credential)
+										: type.replace(/_credential$/, '')}
 								</DropdownMenuLabel>
 								{isSingle
 									? usable[0].models.map((m) => (

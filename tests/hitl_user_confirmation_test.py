@@ -4,10 +4,11 @@
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
-from utils import AnyString, MockModel
+from utils import AnyString, MockModel, track_hint_counts
 
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.model import ChatResponse
+from agentscope.state import AgentState
 from agentscope.tool import (
     ToolBase,
     Toolkit,
@@ -1766,6 +1767,11 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         """A tool round is not counted while one confirmed call is pending."""
         name_a = self.concurrent_tool_name
         name_b = "mock_user_confirm_concurrent_tool_b"
+        self.agent.react_config.auto_continue = True
+        self.agent.react_config.max_total_iters = 3
+        reminders = self.enterContext(
+            track_hint_counts(self.model, "3 rounds remain"),
+        )
         self.agent.toolkit = Toolkit(
             tools=[
                 MockUserConfirmConcurrentTool(),
@@ -1818,6 +1824,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         # The first call has run, but the round isn't over while the second
         # one is still awaiting confirmation
         self.assertEqual(self.agent.state.cur_iter, 0)
+        self.assertEqual(reminders, [1])
+        self.agent.state = AgentState.model_validate_json(
+            self.agent.state.model_dump_json(),
+        )
+        # With a higher cap on resume the next inference again has three
+        # rounds left. The persisted delivery flag suppresses a second hint.
+        self.agent.react_config.max_total_iters = 4
 
         completed = await self.agent.reply(
             UserConfirmResultEvent(
@@ -1836,18 +1849,22 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(completed.finished_reason, "completed")
         self.assertEqual(self.model.cnt, 2)
+        self.assertEqual(reminders, [1, 0])
         # One tool round plus the final reasoning
         self.assertEqual(self.agent.state.cur_iter, 2)
 
     async def test_confirmation_resumption_counts_round_once(self) -> None:
         """Denied and approved rounds each count once toward the budget."""
         self.agent.toolkit = Toolkit(tools=[MockUserConfirmConcurrentTool()])
-        for confirmed, max_iters, finished_reason in (
-            (False, 1, "exceed_max_iters"),
-            (True, 2, "completed"),
+        for confirmed, max_iters, total_cap, finished_reason in (
+            (False, 1, None, "exceed_max_iters"),
+            (True, 2, None, "completed"),
+            (True, 10, 2, "exceed_max_iters"),
         ):
-            with self.subTest(confirmed=confirmed):
+            with self.subTest(confirmed=confirmed, total_cap=total_cap):
                 self.agent.react_config.max_iters = max_iters
+                self.agent.react_config.max_total_iters = total_cap
+                self.agent.react_config.auto_continue = total_cap is not None
                 tool_call = ToolCallBlock(
                     id=self.tool_call_id_1,
                     name=self.concurrent_tool_name,
@@ -1890,7 +1907,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         ),
                         (finished_reason, 2, 2),
                     )
-                    if not confirmed:
+                    if not confirmed or total_cap is not None:
                         self.assertEqual(
                             model_call.call_args.kwargs["tool_choice"].mode,
                             "none",

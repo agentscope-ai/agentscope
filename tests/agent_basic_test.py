@@ -3,8 +3,10 @@
 import base64
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
-from utils import AnyString, MockModel
+from pydantic import ValidationError
+from utils import AnyString, MockModel, track_hint_counts
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
 from agentscope.event import DataBlockStartEvent
@@ -909,7 +911,8 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
     async def test_max_iters_counts_reasoning_acting_round_once(self) -> None:
         """A tool round consumes one iteration before final reasoning."""
         self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
-        self.agent.react_config = ReActConfig(max_iters=2)
+        # The optional total cap only applies to auto-continued text replies.
+        self.agent.react_config = ReActConfig(max_iters=2, max_total_iters=1)
         self.model.set_responses(
             [
                 ChatResponse(
@@ -947,6 +950,143 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
             tool_results[0].output[0].text,
             "Sequential result: x",
         )
+
+    async def test_auto_continue_accepts_repeated_success(self) -> None:
+        """Successful calls can pass the former ceiling in the same reply."""
+        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
+        self.agent.react_config = ReActConfig(max_iters=2, auto_continue=True)
+        rounds = 12
+        calls = [
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id=f"tool_call_{index}",
+                        name="mock_sequential_tool",
+                        input='{"input": "same"}',
+                    ),
+                ],
+                is_last=True,
+            )
+            for index in range(rounds)
+        ]
+        final = ChatResponse(content=[TextBlock(text="done")], is_last=True)
+        self.model.set_responses([*calls, final])
+        reminders = self.enterContext(
+            track_hint_counts(self.model, "3 rounds remain"),
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        self.assertEqual(msg.finished_reason, ReplyFinishedReason.COMPLETED)
+        self.assertEqual(self.agent.reply_iteration_limit, rounds + 2)
+        self.assertEqual(self.model.cnt, rounds + 1)
+        self.assertEqual(reminders, [0] * (rounds + 1))
+        reply = self.agent.state.get_reply_message(self.agent.name)
+        self.assertEqual(len(reply.get_content_blocks("tool_result")), rounds)
+
+    async def test_auto_continue_stops_after_tool_errors(self) -> None:
+        """Only a successful tool round refreshes the iteration budget."""
+        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
+        self.agent.react_config = ReActConfig(max_iters=2, auto_continue=True)
+        calls = [
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id=f"tool_call_{index}",
+                        name=name,
+                        input='{"input": "x"}',
+                    ),
+                ],
+                is_last=True,
+            )
+            for index, name in enumerate(
+                ("mock_sequential_tool", "unknown_tool", "unknown_tool"),
+            )
+        ]
+        final = ChatResponse(content=[TextBlock(text="Summary")], is_last=True)
+        self.model.set_responses([*calls, final])
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        self.assertEqual(
+            msg.finished_reason,
+            ReplyFinishedReason.EXCEED_MAX_ITERS,
+        )
+        self.assertEqual(self.agent.reply_iteration_limit, 3)
+        self.assertEqual(self.model.cnt, 4)
+
+    async def test_total_cap_includes_summary_and_resets_per_reply(self) -> None:
+        self.agent.react_config = ReActConfig(
+            max_iters=1, auto_continue=True, max_total_iters=3,
+        )
+        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
+        calls = [
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id=f"call-{i}",
+                        name="mock_sequential_tool",
+                        input='{"input":"x"}',
+                    ),
+                ],
+                is_last=True,
+            )
+            for i in range(2)
+        ]
+        text = ChatResponse(content=[TextBlock(text="summary")], is_last=True)
+        self.model.set_responses([*calls, text, text])
+        reminders = self.enterContext(
+            track_hint_counts(self.model, "3 rounds remain"),
+        )
+        with patch.object(
+            MockModel, "__call__", wraps=self.model.__call__,
+        ) as infer:
+            result = await self.agent.reply(UserMsg("user", "continue"))
+            self.assertEqual(
+                result.finished_reason, ReplyFinishedReason.EXCEED_MAX_ITERS,
+            )
+            self.assertEqual(result.get_content_blocks("text")[0].text, "summary")
+            self.assertEqual(self.agent.state.reply_context.total_iters, 3)
+            self.assertEqual(infer.call_count, 3)
+            self.assertIsNone(infer.call_args_list[1].kwargs["tool_choice"])
+            self.assertEqual(infer.call_args.kwargs["tool_choice"].mode, "none")
+            next_reply = await self.agent.reply(UserMsg("user", "new question"))
+            self.assertEqual(
+                next_reply.finished_reason, ReplyFinishedReason.COMPLETED,
+            )
+            self.assertEqual(self.agent.state.reply_context.total_iters, 1)
+            self.assertIsNone(infer.call_args.kwargs["tool_choice"])
+        self.assertEqual(reminders, [1, 0, 0, 1])
+
+    async def test_one_round_cap_denies_tools_in_summary(self) -> None:
+        self.agent.react_config = ReActConfig(
+            auto_continue=True, max_total_iters=1,
+        )
+        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
+        call = ToolCallBlock(
+            id="unexpected", name="mock_sequential_tool", input='{"input":"x"}',
+        )
+        self.model.set_responses([ChatResponse(content=[call], is_last=True)])
+        reminders = self.enterContext(
+            track_hint_counts(self.model, "3 rounds remain"),
+        )
+        with patch.object(MockSequentialTool, "__call__") as execute:
+            result = await self.agent.reply(UserMsg("user", "finish"))
+            execute.assert_not_called()
+        self.assertEqual(
+            result.finished_reason, ReplyFinishedReason.EXCEED_MAX_ITERS,
+        )
+        self.assertEqual(self.model.cnt, 1)
+        self.assertEqual(reminders, [0])
+        self.assertFalse(
+            self.agent.state.get_unfinished_tool_calls(self.agent.name),
+        )
+
+    def test_total_cap_accepts_only_positive_integers_or_none(self) -> None:
+        self.assertIsNone(ReActConfig().max_total_iters)
+        for value in (0, -1, 2.5, True):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                ReActConfig(max_total_iters=value)
 
     async def test_thinking_only_response_continues_reasoning(self) -> None:
         """A thinking-only response should not end with an empty reply."""

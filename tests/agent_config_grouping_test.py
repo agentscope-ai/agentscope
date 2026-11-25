@@ -405,6 +405,31 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
             ).chat_config.model_dump(mode="json"),
         )
 
+    def test_auto_continue_cap_can_be_set_and_cleared(self) -> None:
+        config = {"auto_continue": True, "max_total_iters": 7}
+        created = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={"name": "ann", "chat_config": {"react_config": config}},
+        )
+        self.assertEqual(created.status_code, 201)
+        path = "/agent/" + created.json()["agent_id"]
+        stored, = self.client.get("/agent/", headers=HEADERS).json()["agents"]
+        self.assertEqual(
+            stored["data"]["chat_config"]["react_config"]["max_total_iters"], 7,
+        )
+        updated = self.client.patch(
+            path,
+            headers=HEADERS,
+            json={"chat_config": {"react_config": {
+                "auto_continue": True, "max_total_iters": None,
+            }}},
+        )
+        self.assertEqual(updated.status_code, 200)
+        react_config = updated.json()["data"]["chat_config"]["react_config"]
+        self.assertTrue(react_config["auto_continue"])
+        self.assertIsNone(react_config["max_total_iters"])
+
     def test_schema_exposes_the_grouped_sections(self) -> None:
         """The form schema carries the sections inside ``chat_config``."""
         schema = self.client.get("/agent/schema/v2").json()["schema"]

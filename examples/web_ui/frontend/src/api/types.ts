@@ -46,6 +46,8 @@ export interface ContextConfig {
 
 export interface ReActConfig {
 	max_iters?: number;
+	auto_continue?: boolean;
+	max_total_iters?: number | null;
 	stop_on_reject?: boolean;
 }
 

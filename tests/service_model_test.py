@@ -4,6 +4,12 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from agentscope.app._router._model import model_router
+from agentscope.app.deps import get_current_user_id, get_resource_access_service
 from agentscope.app._service._model import get_model
 from agentscope.app.storage import ChatModelConfig
 from agentscope.credential import CredentialFactory, OpenAICredential
@@ -152,6 +158,55 @@ class OpenAICredentialModelTest(IsolatedAsyncioTestCase):
 
 class GetModelContextSizeTest(IsolatedAsyncioTestCase):
     """The factory must forward the model card's ``context_size``."""
+
+    async def test_credential_catalog_uses_host_identity_and_runtime_limits(self):
+        app = FastAPI()
+        app.include_router(model_router)
+        owner = AsyncMock(return_value=SimpleNamespace(data={
+            "type": "openai_credential", "api_key": "fixture",
+            "base_url": "http://localhost:8000/v1",
+        }))
+        access = SimpleNamespace(resolve_credential=owner)
+        app.dependency_overrides[get_resource_access_service] = lambda: access
+        catalog = httpx.Response(
+            200, request=httpx.Request("GET", "http://localhost:8000/v1/models"),
+            json={"data": [{"id": "local-vision", "model_type": "vlm", "max_model_len": 8192}]},
+        )
+        public = {"provider": "openai_credential"}
+        private = {**public, "credential_id": "my-credential"}
+        with TestClient(app) as client, patch.object(httpx.AsyncClient, "get", return_value=catalog):
+            self.assertEqual(client.get("/model/", params=public).status_code, 200)
+            self.assertIn(client.get("/model/", params=private).status_code, (401, 422))
+            owner.assert_not_awaited()
+            app.dependency_overrides[get_current_user_id] = lambda: "signed-in-user"
+            result = client.get("/model/", params=private).json()["models"][0]
+            owner.assert_awaited_once_with("signed-in-user", "my-credential")
+            self.assertEqual(result["context_size"], 8192)
+            self.assertIn("image/*", result["input_types"])
+            model = await get_model("signed-in-user", ChatModelConfig(
+                type="openai_credential", credential_id="my-credential",
+                model=result["name"], model_class=result["model_class"], parameters={},
+            ), access)
+            try:
+                self.assertEqual(model.context_size, result["context_size"])
+                self.assertEqual(model.formatter.input_types, result["input_types"])
+            finally:
+                await model.client.close()
+
+    async def test_local_server_without_catalog_keeps_custom_chat_model(self):
+        access = SimpleNamespace(resolve_credential=AsyncMock(return_value=SimpleNamespace(data={
+            "type": "openai_credential", "api_key": "fixture",
+            "base_url": "http://localhost:8000/v1",
+        })))
+        with patch.object(httpx.AsyncClient, "get", return_value=httpx.Response(404)):
+            model = await get_model("user", ChatModelConfig(
+                type="openai_credential", credential_id="local",
+                model="custom", parameters={},
+            ), access)
+        try:
+            self.assertEqual(model.model, "custom")
+        finally:
+            await model.client.close()
 
     async def test_uses_card_context_size(self) -> None:
         """A matching card's value wins over the class default."""

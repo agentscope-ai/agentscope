@@ -31,6 +31,7 @@ from .._bus_ops import (
     register_inbox_consumer,
 )
 from ..message_bus import MessageBus, MessageBusKeys
+from ..tool_login import tool_login_scope
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
 from ..channel._approval import (
@@ -367,16 +368,17 @@ class ChatService:
                 Internal queue caller already saved this initial input.
         """
         try:
-            await self._run_impl(
-                user_id,
-                session_id,
-                agent_id,
-                input_msg,
-                client_external_tools=client_external_tools,
-                client_builtin_tools=client_builtin_tools,
-                sop_dispatch=sop_dispatch,
-                input_persisted=input_persisted,
-            )
+            with tool_login_scope(user_id, agent_id, session_id):
+                await self._run_impl(
+                    user_id,
+                    session_id,
+                    agent_id,
+                    input_msg,
+                    client_external_tools=client_external_tools,
+                    client_builtin_tools=client_builtin_tools,
+                    sop_dispatch=sop_dispatch,
+                    input_persisted=input_persisted,
+                )
         except Exception as e:
             logger.exception(
                 "ChatService.run failed for user_id=%s session_id=%s "

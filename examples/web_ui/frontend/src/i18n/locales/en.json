@@ -249,6 +249,11 @@
 		"copyMarkdown": "Copy Markdown source"
 	},
 	"chat": {
+		"toolLogin": {
+			"cancel": "Cancel operation",
+			"working": "Signing in…",
+			"submitError": "Could not submit the login form."
+		},
 		"ttsFailed": "Speech generation failed. Text replies will continue.",
 		"inputPlaceholder": "Type a message...",
 		"confirmToolCall": "Allow this action?",
@@ -331,6 +336,13 @@
 			"description": "Controls the reasoning and action loop behaviour.",
 			"max-iters": {
 				"label": "Max iterations"
+			},
+			"auto-continue": {
+				"label": "Auto-continue"
+			},
+			"max-total-iters": {
+				"label": "Total iteration limit for auto-continue",
+				"description": "Applies to auto-continued text replies and includes the final summary. Leave blank for no total limit."
 			},
 			"stop-on-reject": {
 				"label": "Stop on reject"

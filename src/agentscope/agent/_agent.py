@@ -984,6 +984,20 @@ class Agent:
                 # Set before yielding so the suspended loop can observe it.
                 if isinstance(item, ReplyEndEvent):
                     self._receive_reply_end = True
+                elif (
+                    isinstance(item, Msg)
+                    and item.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS
+                    and not self._receive_reply_end
+                    and self.remaining_total_iters == 0
+                ):
+                    # A continuation middleware swallowed the end, but the
+                    # hard budget is spent. Stream consumers still need it.
+                    self._receive_reply_end = True
+                    yield ReplyEndEvent(
+                        session_id=self.state.session_id,
+                        reply_id=item.id,
+                        finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
+                    )
                 yield item
 
     async def _close_unfinished_tool_calls(
@@ -1127,7 +1141,7 @@ class Agent:
                     yield evt
                 # Count the round if this event completed its last tool call.
                 if not self.state.get_unfinished_tool_calls(self.name):
-                    self.state.cur_iter += 1
+                    self.state.reply_context.finish_iteration()
             else:
                 await self._handle_incoming_messages(msgs)
                 # Update the context with the incoming message and state
@@ -1159,7 +1173,7 @@ class Agent:
                 )
 
             # =================================================================
-            # Step 3: Enter the reasoning-acting loop until reaching max_iters
+            # Step 3: Enter the reasoning-acting loop until reaching its limit
             #  or no more tool calls to execute
             # =================================================================
             final_msg: Msg | None = None
@@ -1185,7 +1199,7 @@ class Agent:
 
                         # Exit unless a middleware swallowed the ReplyEndEvent
                         # to force another reasoning-acting round
-                        if self._receive_reply_end:
+                        if self._receive_reply_end or self.remaining_total_iters == 0:
                             yield exit_msg
                             return
 
@@ -1205,6 +1219,7 @@ class Agent:
                     case Reasoning(hint=hint, tool_choice=tool_choice):
                         made_progress = True
                         final_msg = None
+                        final_total_round = self.remaining_total_iters == 1
                         if hint:
                             self.state.append_context(self.name, [hint])
 
@@ -1237,6 +1252,17 @@ class Agent:
                         if interrupted:
                             # Handled by the CancelledError branch below
                             raise asyncio.CancelledError()
+
+                        if final_total_round:
+                            # Even a provider that ignores tool_choice="none"
+                            # must not start a tool or park on the summary round.
+                            for call in self.state.get_unfinished_tool_calls(self.name):
+                                async for evt in self._handle_error_tool_call(
+                                    call,
+                                    "The final iteration is reserved for a text summary.",
+                                    state=ToolResultState.DENIED,
+                                ):
+                                    yield evt
 
                     case Acting(tool_calls=tool_calls):
                         made_progress = True
@@ -1293,7 +1319,7 @@ class Agent:
                 # or Acting that parked some of them on a user confirmation
                 # or an external execution, leaves the round unfinished
                 if not self.state.get_unfinished_tool_calls(self.name):
-                    self.state.cur_iter += 1
+                    self.state.reply_context.finish_iteration()
 
         except asyncio.CancelledError:
             # Handle the CancelledError within the _reply_impl for the
@@ -1753,6 +1779,23 @@ class Agent:
         # Get the input arguments for the chat model, including messages and
         # tools
         kwargs = await self._prepare_model_input()
+        reply = self.state.reply_context
+        if (
+            self.remaining_total_iters == 3
+            and not reply.total_iters_reminder_sent
+        ):
+            # The countdown belongs to this inference only. A parked reply
+            # keeps the delivery flag, without replaying a stale countdown.
+            hint = HintBlock(
+                hint=(
+                    "<system-reminder>3 rounds remain in this reply, including "
+                    "this round. The last is reserved for a text-only summary. "
+                    "Use at most two rounds for tools and prioritize verifying "
+                    "outstanding results. Finish sooner if ready.</system-reminder>"
+                ),
+            )
+            kwargs["messages"].append(AssistantMsg(self.name, [hint]))
+            reply.total_iters_reminder_sent = True
 
         # Call the chat model
         res = await self._call_model(
@@ -2010,7 +2053,7 @@ class Agent:
                                 self._engine.add_rule(rule)
 
                     else:
-                        # Update the state to deny and handling
+                        self.toolkit.deny_confirmation(tool_call)
                         async for evt in self._handle_error_tool_call(
                             tool_call,
                             message=(
@@ -2564,6 +2607,11 @@ class Agent:
             tool,
             parsed_input,
         )
+        if tool.needs_bound_confirmation(decision, tool_call):
+            decision = PermissionDecision(
+                behavior=PermissionBehavior.ASK, bypass_immune=True,
+                message="Confirm this operation.",
+            )
 
         # ===================================================================
         # Step 3: Handle the permission and execute the tool call if allowed
@@ -2604,6 +2652,17 @@ class Agent:
                 # batch can be de-duplicated against them.
                 kept_rules.extend(decision.suggested_rules or [])
 
+            try:
+                tool.prepare_confirmation(
+                    tool_call, decision, self.state.session_id, self.state.reply_id,
+                    parsed_input,
+                )
+            except Exception as error:
+                async for evt in self._handle_error_tool_call(
+                    tool_call, str(error), state=ToolResultState.ERROR,
+                ):
+                    yield evt
+                return
             # Set the state of the tool call to "ask"
             # **Note** the update must be done before yielding the event
             self._update_tool_call_state(
@@ -2611,7 +2670,6 @@ class Agent:
                 ToolCallState.ASKING,
             )
 
-            tool_call.suggested_rules = decision.suggested_rules or []
             yield RequireUserConfirmEvent(
                 reply_id=self.state.reply_id,
                 tool_calls=[tool_call],
@@ -3381,9 +3439,7 @@ class Agent:
             await self.toolkit.add_tool(self._compression_tool)
 
         # Get the tools schemas
-        tools = await self.toolkit.get_tool_schemas(
-            self.state.tool_context.activated_groups,
-        )
+        tools = await self.toolkit.get_tool_schemas(state=self.state)
 
         return {
             "messages": messages,
@@ -3634,6 +3690,24 @@ class Agent:
 
         self.state.append_context(self.name, persisted_blocks)
 
+        reply_context = self.state.reply_context
+        if (
+            self.react_config.auto_continue
+            and reply_context.structured_schema is None
+            and any(
+                isinstance(block, ToolResultBlock)
+                and block.state == ToolResultState.SUCCESS
+                and block.metadata.get("tool_state") != "running"
+                for block in persisted_blocks
+            )
+        ):
+            # Tool results are saved before the current round is counted.
+            # Keep the new budget even if the reply parks on another tool.
+            reply_context.extra_iters = max(
+                reply_context.extra_iters,
+                reply_context.cur_iter + 1,
+            )
+
         if msg_usage is not None:
             reply = self.state.get_reply_message(self.name)
             assert reply is not None
@@ -3654,6 +3728,26 @@ class Agent:
             return None
         return last_msg.usage.model_copy()
 
+    @property
+    def reply_iteration_limit(self) -> int:
+        """The refreshable iteration limit for the current reply."""
+        return (
+            self.react_config.max_iters + self.state.reply_context.extra_iters
+        )
+
+    @property
+    def remaining_total_iters(self) -> int | None:
+        """Remaining rounds including the summary, or None if uncapped."""
+        context = self.state.reply_context
+        cap = self.react_config.max_total_iters
+        if (
+            cap is None
+            or not self.react_config.auto_continue
+            or context.structured_schema is not None
+        ):
+            return None
+        return max(0, cap - context.total_iters)
+
     def _next_action(
         self,
         final_msg: Msg | None = None,
@@ -3665,6 +3759,7 @@ class Agent:
         # Step 1: Check executable and awaiting tool calls
         # ===========================================================
         awaiting_tool_calls = self.state.get_awaiting_tool_calls(self.name)
+        max_iters = self.reply_iteration_limit
 
         last_msg = self._get_last_msg()
         if last_msg is not None:
@@ -3746,8 +3841,7 @@ class Agent:
             # Allow extra grace iterations for structured generation
             if (
                 self.state.cur_iter
-                >= self.react_config.max_iters
-                + self.react_config.structured_output_grace_iters
+                >= max_iters + self.react_config.structured_output_grace_iters
             ):
                 # Deprecated but still emitted for backward compatibility;
                 # suppressed since the warning targets consumers
@@ -3778,7 +3872,7 @@ class Agent:
                     ),
                 )
 
-            if self.state.cur_iter >= self.react_config.max_iters:
+            if self.state.cur_iter >= max_iters:
                 # Must call the structured output tool and return the
                 # structured output
                 tool_choice = ToolChoice(
@@ -3813,12 +3907,16 @@ class Agent:
         # Step 3: Exit with the final message, or continue reasoning
         # ===========================================================
 
+        remaining = self.remaining_total_iters
+        stop_limit = (
+            self.react_config.max_total_iters if remaining == 0 else max_iters
+        )
         # The last reasoning produced a text-only final message
         if final_msg is not None:
             # In the normal flow, ``cur_iter == max_iters + 1`` here means
             # this text came from the one forced finalization call.
             exceeded_max_iters = (
-                self.state.cur_iter > self.react_config.max_iters
+                self.state.cur_iter > max_iters or remaining == 0
             )
             finished_reason = (
                 ReplyFinishedReason.EXCEED_MAX_ITERS
@@ -3829,10 +3927,8 @@ class Agent:
 
             if exceeded_max_iters:
                 logger.warning(
-                    "Agent %s exceeds the max iteration numbers %d. "
-                    "Stop the react loop.",
-                    self.name,
-                    self.react_config.max_iters,
+                    "Agent %s reached its iteration limit (%d).",
+                    self.name, stop_limit,
                 )
                 final_msg.finished_reason = finished_reason
                 # Deprecated but still emitted for backward compatibility;
@@ -3858,17 +3954,24 @@ class Agent:
                 exit_msg=final_msg,
             )
 
-        # At equality, the regular iteration budget is exhausted, but the
-        # one forced finalization call has not run yet.
-        if self.state.cur_iter == self.react_config.max_iters:
+        # Reserve one summary round inside the hard cap. The rolling budget
+        # can also trigger an earlier summary.
+        if remaining == 1 or (
+            remaining != 0 and self.state.cur_iter == max_iters
+        ):
+            limit_notice = (
+                f"This is the final round of the {self.react_config.max_total_iters} "
+                "total iterations allowed for this reply."
+                if remaining == 1
+                else f"You have reached the maximum of {max_iters} reasoning-acting iterations."
+            )
             return Reasoning(
                 hint=HintBlock(
                     hint=(
-                        f"<system-reminder>You have reached the maximum of "
-                        f"{self.react_config.max_iters} reasoning-acting "
-                        f"iterations. Summarize the work and findings so far "
-                        f"and return the final answer as text. Do not call "
-                        f"any tools.</system-reminder>"
+                        f"<system-reminder>{limit_notice} "
+                        "Summarize the work and findings so far "
+                        "and return the final answer as text. Do not call "
+                        "any tools.</system-reminder>"
                     ),
                     source='{"label": "System", "sublabel": '
                     '"Max Iterations Reached"}',
@@ -3878,12 +3981,10 @@ class Agent:
 
         # Equality returned above, so reaching this check means the forced
         # finalization call also failed to produce a final message.
-        if self.state.cur_iter >= self.react_config.max_iters:
+        if remaining == 0 or self.state.cur_iter >= max_iters:
             logger.warning(
-                "Agent %s exceeds the max iteration numbers %d. "
-                "Stop the react loop.",
-                self.name,
-                self.react_config.max_iters,
+                "Agent %s reached its iteration limit (%d).",
+                self.name, stop_limit,
             )
 
             # Deprecated but still emitted for backward compatibility;
@@ -3906,8 +4007,12 @@ class Agent:
                 exit_msg=AssistantMsg(
                     id=self.state.reply_id,
                     name=self.name,
-                    content="The maximum reasoning-acting iterations are "
-                    "exceeded.",
+                    content=(
+                        "The reply reached its total iteration limit before "
+                        "the model produced a final answer."
+                        if remaining == 0
+                        else "The maximum reasoning-acting iterations are exceeded."
+                    ),
                     usage=self._get_reply_usage(),
                     finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
                 ),
