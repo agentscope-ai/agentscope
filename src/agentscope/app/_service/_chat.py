@@ -856,15 +856,20 @@ class ChatService:
                 The run's team identity; a worker's leader is told the
                 run never happened.
             worker_name (`str | None`, optional):
-                Display name used in that notification. Defaults to
-                ``agent_id`` when the agent record never loaded.
+                The agent's display name, used for the synthesized
+                reply and for the notification to its leader. Defaults
+                to ``agent_id`` when the agent record never loaded.
         """
         try:
+            # A real reply is named with the agent's display name, so the
+            # synthesized one must be too: it shares the transcript with
+            # them, and an id there reads as a second, unknown participant.
+            name = worker_name or agent_id
             reply_id = _generate_id()
             start_event = ReplyStartEvent(
                 session_id=session_id,
                 reply_id=reply_id,
-                name=agent_id,
+                name=name,
             )
             end_event = ReplyEndEvent(
                 session_id=session_id,
@@ -875,7 +880,7 @@ class ChatService:
 
             reply_msg = AssistantMsg(
                 id=reply_id,
-                name=agent_id,
+                name=name,
                 content=[],
             )
             checkpoint_cursor = ""
