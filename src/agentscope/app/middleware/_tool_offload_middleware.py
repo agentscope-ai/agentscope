@@ -310,7 +310,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         item = None
 
         # ----------------------------------------------------------------
-        # Timeout path: spawn deliverer, register drain_task, yield synthetic
+        # Timeout path: register drain_task, spawn deliverer, yield synthetic
         # ----------------------------------------------------------------
         session_id = agent.state.session_id
         tool_name = tool_call.name
@@ -323,6 +323,9 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             session_id,
             agent.name,
         )
+
+        # Fall back to the tool call id if no placeholder can be yielded.
+        notification_id = tool_call.id
 
         async def _deliver_when_done() -> None:
             """Wait for the offloaded tool to finish, then push its
@@ -374,7 +377,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     hint=(
                         f"<system-notification>"
                         f"Tool '{tool_name}' running in background "
-                        f"(id={tool_call_id}) has {outcome} with no output."
+                        f"(id={notification_id}) has {outcome} with no output."
                         f"</system-notification>"
                     ),
                     source=hint_source,
@@ -390,7 +393,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 prefix = (
                     f"<system-notification>"
                     f"Tool '{tool_name}' running in background "
-                    f"(id={tool_call_id}) has {outcome}.\n\n"
+                    f"(id={notification_id}) has {outcome}.\n\n"
                     f"Result:\n\n"
                 )
 
@@ -433,16 +436,21 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 payload=hint.model_dump(mode="json"),
             )
 
-        asyncio.create_task(_deliver_when_done())
-        task_id = await self._bg_manager.register_task(
-            asyncio_task=drain_task,
-            session_id=session_id,
-            agent_id=self._agent_id,
-            user_id=self._user_id,
-            tool_name=tool_name,
-            summary=_make_summary(tool_name, tool_call.input),
-            execution_started_at=execution_started_at,
-        )
+        try:
+            task_id = await self._bg_manager.register_task(
+                asyncio_task=drain_task,
+                session_id=session_id,
+                agent_id=self._agent_id,
+                user_id=self._user_id,
+                tool_name=tool_name,
+                summary=_make_summary(tool_name, tool_call.input),
+                execution_started_at=execution_started_at,
+            )
+            notification_id = task_id
+        finally:
+            # Deliver completed results even if registration fails or is
+            # cancelled. The drain task retains any result produced earlier.
+            asyncio.create_task(_deliver_when_done())
 
         logger.info(
             "Synthetic ToolResponse yielded for offloaded tool '%s': "

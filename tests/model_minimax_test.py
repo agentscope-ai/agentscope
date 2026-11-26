@@ -4,7 +4,10 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
 from agentscope.credential import MiniMaxCredential
-from agentscope.formatter import MiniMaxChatFormatter
+from agentscope.formatter import (
+    MiniMaxChatFormatter,
+    MiniMaxMultiAgentFormatter,
+)
 from agentscope.message import (
     Base64Source,
     DataBlock,
@@ -157,6 +160,60 @@ class MiniMaxTest(IsolatedAsyncioTestCase):
                     ],
                 },
             ],
+        )
+
+    async def test_format_video_extra_params(self) -> None:
+        """DataBlock extra params are forwarded to video blocks, like the
+        image and PDF blocks inherited from the Anthropic formatter."""
+        formatter = MiniMaxChatFormatter()
+        msgs = [
+            Msg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="AAAA",
+                            media_type="video/mp4",
+                        ),
+                        cache_control={"type": "ephemeral"},
+                    ),
+                ],
+                role="user",
+            ),
+        ]
+
+        self.assertListEqual(
+            await formatter.format(msgs),
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "video",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "video/mp4",
+                                "data": "AAAA",
+                            },
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                    ],
+                },
+            ],
+        )
+
+        multi_agent_res = await MiniMaxMultiAgentFormatter().format(msgs)
+        self.assertIn(
+            {
+                "type": "video",
+                "source": {
+                    "type": "base64",
+                    "media_type": "video/mp4",
+                    "data": "AAAA",
+                },
+                "cache_control": {"type": "ephemeral"},
+            },
+            multi_agent_res[0]["content"],
         )
 
     def test_model_cards(self) -> None:

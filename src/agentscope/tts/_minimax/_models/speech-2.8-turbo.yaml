@@ -1,6 +1,9 @@
 name: speech-2.8-turbo
 label: MiniMax Speech 2.8 Turbo
 status: active
+# Release date source: https://platform.minimax.io/docs/release-notes/models
+release_date: 2026-01-23
+voice_cloning: true
 
 input_types:
   - text/plain

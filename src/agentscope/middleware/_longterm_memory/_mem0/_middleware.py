@@ -275,6 +275,9 @@ class Mem0Middleware(MiddlewareBase):
         self._threshold = threshold
         self._scope_search_by_agent = scope_search_by_agent
         self._await_write = await_write
+        # The event loop only keeps a weak reference to a task, so write
+        # tasks are anchored here until they finish.
+        self._background_writes: set[asyncio.Task[None]] = set()
         self._memory_section_header = memory_section_header
         self._memory_section_intro = memory_section_intro
         self._tool_instructions = tool_instructions
@@ -738,4 +741,6 @@ class Mem0Middleware(MiddlewareBase):
                         e,
                     )
 
-            asyncio.create_task(_bg())
+            task = asyncio.create_task(_bg())
+            self._background_writes.add(task)
+            task.add_done_callback(self._background_writes.discard)

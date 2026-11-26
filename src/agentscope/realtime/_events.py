@@ -155,3 +155,5 @@ class ModelErrorEvent(ModelEvent):
 
     code: str = ""
     message: str = ""
+    response: ResponseDoneEvent | None = None
+    """The terminal response when the error is scoped to one reply."""

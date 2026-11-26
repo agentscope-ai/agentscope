@@ -380,6 +380,9 @@ class SandboxedWorkspaceBase(WorkspaceBase):
     ) -> None:
         """Deregister an MCP by name, closing it on the gateway.
 
+        Gateway failures propagate without removing the local instance
+        or declaration, so callers can retry the removal.
+
         Args:
             name (`str`):
                 MCP name to remove. Unknown names log a warning and
@@ -391,7 +394,10 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
         Raises:
             `RuntimeError`:
-                If the gateway is not attached.
+                If the gateway is not attached or rejects the removal.
+            `Exception`:
+                Underlying gateway request exceptions propagate unchanged,
+                including backend I/O errors such as `OSError`.
         """
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
@@ -406,12 +412,14 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                     session_id,
                 )
                 return
-            instance = self._mcp_instances.get(
+            live = self._mcp_instances.get(
                 (agent_id, session_id),
                 {},
-            ).pop(name, None)
-            if instance is not None:
-                await self._close_mcp_instance(instance)
+            )
+            instance = live.get(name)
+            if instance is not None and instance.is_connected:
+                await instance.close(ignore_errors=False)
+            live.pop(name, None)
             self._mcp_specs[(agent_id, session_id)] = [
                 m for m in specs if m.name != name
             ]

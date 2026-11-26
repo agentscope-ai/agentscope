@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from ..deps import (
+    get_allowed_stdio_commands,
     get_current_user_id,
     get_skill_hubs,
     get_storage,
@@ -29,6 +30,7 @@ from .._service._workspace import SkillUploadError, UploadManifest
 from ..storage import MCPRecord, StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
+from ._media_types import WORKSPACE_INLINE_MEDIA_TYPES
 from ._schema import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
@@ -47,6 +49,24 @@ workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
 # ---------------------------------------------------------------------------
 # MCP endpoints
 # ---------------------------------------------------------------------------
+
+
+def _stdio_rejection_reason(
+    client: MCPClient,
+    allowed: frozenset[str] | None,
+) -> str | None:
+    """Return the reason a stdio client cannot be added to the workspace."""
+    config = client.mcp_config
+    if (
+        allowed is not None
+        and config.type == "stdio_mcp"
+        and config.command not in allowed
+    ):
+        return (
+            f"Stdio MCP command {config.command!r} is not in "
+            "this service's allowed stdio commands."
+        )
+    return None
 
 
 @workspace_router.get("/mcp")
@@ -103,6 +123,7 @@ async def add_mcp(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_service: WorkspaceService = Depends(get_workspace_service),
+    allowed: frozenset[str] | None = Depends(get_allowed_stdio_commands),
 ) -> None:
     """Add an MCP client to the session's workspace.
 
@@ -111,7 +132,22 @@ async def add_mcp(
     existing record of the same name is left alone: the library is where
     that MCP is defined, and adding it to a second workspace must not
     silently redefine it.
+
+    A stdio MCP makes the server spawn ``command`` as a local process. When
+    the app was created with ``allowed_stdio_commands``, any other command
+    is refused before anything is started or stored.
+
+    Raises:
+        `HTTPException`: 403 if a stdio ``command`` is not in the
+            configured allowlist, or 409 if the name is already taken.
     """
+    rejection = _stdio_rejection_reason(mcp, allowed)
+    if rejection is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=rejection,
+        )
+
     workspace = await workspace_service.resolve(
         user_id,
         agent_id,
@@ -145,14 +181,16 @@ async def add_mcps_from_library(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_service: WorkspaceService = Depends(get_workspace_service),
+    allowed: frozenset[str] | None = Depends(get_allowed_stdio_commands),
 ) -> AddFromLibraryResponse:
     """Put MCPs the user has already installed into this workspace.
 
     The rendered config never leaves the server, so the client sends ids
     rather than configs — it has no way to reconstruct one.
 
-    Adding is per-MCP: one that fails to connect does not cancel the
-    rest, and the response says which ones landed.
+    Entries already in the workspace are skipped. For new entries, a
+    disallowed stdio command or a connection failure is reported in
+    ``failed`` and the remaining entries are processed.
     """
     workspace = await workspace_service.resolve(
         user_id,
@@ -176,6 +214,10 @@ async def add_mcps_from_library(
             continue
         if record.client.name in present:
             # Already there: not an error, just nothing to do.
+            continue
+        rejection = _stdio_rejection_reason(record.client, allowed)
+        if rejection is not None:
+            failed[record.client.name] = rejection
             continue
         try:
             await workspace.add_mcp(
@@ -465,6 +507,24 @@ async def get_workspace_status(
     )
 
 
+def _workspace_token_scope(
+    agent_id: str,
+    session_id: str,
+    path: str,
+) -> str:
+    """Return the capability scope for one workspace file download.
+
+    Binds ``agent_id``, ``session_id``, and ``path`` under a dedicated
+    ``workspace/`` namespace so a token minted for one session cannot be
+    replayed against another session or against other capability endpoints
+    sharing ``download_secret``.
+    """
+    encoded_agent = quote(agent_id, safe="")
+    encoded_session = quote(session_id, safe="")
+    encoded_path = quote(path, safe="")
+    return f"workspace/{encoded_agent}/{encoded_session}/{encoded_path}"
+
+
 @workspace_router.post("/files/download-token")
 async def create_download_token(
     agent_id: str = Query(...),
@@ -497,7 +557,7 @@ async def create_download_token(
     # has not been read yet to supply.
     token, expires_at = workspace_service.sign_download_token(
         user_id,
-        path,
+        _workspace_token_scope(agent_id, session_id, path),
     )
     return DownloadTokenResponse(token=token, expires_at=expires_at)
 
@@ -534,7 +594,10 @@ async def read_workspace_file(
     """
     if token is not None:
         try:
-            user_id = workspace_service.verify_download_token(token, path)
+            user_id = workspace_service.verify_download_token(
+                token,
+                _workspace_token_scope(agent_id, session_id, path),
+            )
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -569,20 +632,28 @@ async def read_workspace_file(
             detail="Requested path is a directory, not a file.",
         )
 
+    media_type = (
+        mimetypes.guess_type(basename)[0] or "application/octet-stream"
+    )
+
     headers: dict[str, str] = {}
     # Lets the browser show real download progress instead of a
     # spinner of unknown length; omitted when the backend cannot stat.
     if entry.size_bytes is not None:
         headers["Content-Length"] = str(entry.size_bytes)
-    if download:
+    # Only the preview whitelist may render inline; a scriptable type
+    # (text/html, image/svg+xml, ...) is forced to a download so a crafted
+    # file cannot run in the app origin.
+    if download or media_type not in WORKSPACE_INLINE_MEDIA_TYPES:
         headers[
             "Content-Disposition"
         ] = f"attachment; filename*=UTF-8''{quote(basename)}"
+    # The declared type is authoritative — never let the browser sniff a
+    # scriptable type out of the bytes.
+    headers["X-Content-Type-Options"] = "nosniff"
 
     return StreamingResponse(
         backend.read_stream(target),
-        media_type=(
-            mimetypes.guess_type(basename)[0] or "application/octet-stream"
-        ),
+        media_type=media_type,
         headers=headers,
     )

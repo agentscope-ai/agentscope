@@ -8,6 +8,7 @@ import json
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, call, patch
+from urllib.parse import parse_qs, urlsplit
 
 from agentscope.credential import DashScopeCredential
 from agentscope.realtime import (
@@ -422,6 +423,18 @@ class DashScopeCardsTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Invalid DashScope"):
             _realtime_url("not-a-url", "model-x")
+
+    def test_adapter_encodes_realtime_model_name(self) -> None:
+        """Model names remain a single query value after URL encoding."""
+        for model in ("qwen-plus&injected=1#fragment+%", "模型 v1"):
+            with self.subTest(model=model):
+                url = _realtime_url(WORKSPACE_BASE_URL, model)
+                self.assertTrue(url.isascii())
+                self.assertNotIn(" ", url)
+                self.assertEqual(
+                    parse_qs(urlsplit(url).query),
+                    {"model": [model]},
+                )
 
     def test_credential_maps_card_back_to_class(self) -> None:
         """The service-layer lookup: card.model_type -> class, no scan."""
@@ -1130,6 +1143,56 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
                 },
             },
         )
+
+    async def test_reconnect_forgets_the_previous_response(self) -> None:
+        """A reopened session cannot cancel the closed session's reply.
+
+        The response id and tool-call bookkeeping belong to one session;
+        carrying them into the next one makes the first turn cancel a
+        reply the provider never started there.
+        """
+        model = DashScopeRealtimeModel(
+            "qwen3.5-omni-flash-realtime",
+            CRED,
+        )
+        model._parse(
+            {"type": "response.created", "response": {"id": "r1"}},
+        )
+        model._parse(
+            {
+                "type": "response.output_item.added",
+                "item": {
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "name": "weather",
+                },
+            },
+        )
+        model._parse(
+            {
+                "type": "response.function_call_arguments.delta",
+                "call_id": "c1",
+                "delta": "{}",
+            },
+        )
+        socket = _OpenSocket()
+
+        with patch(
+            "websockets.connect",
+            new=AsyncMock(return_value=socket),
+        ):
+            await model.connect(instructions="test")
+        await model.request_response()
+        await asyncio.sleep(0)
+
+        self.assertListEqual(
+            [json.loads(payload)["type"] for payload in socket.sent],
+            ["session.update", "response.create"],
+        )
+        self.assertEqual(model._item_id, "")
+        self.assertDictEqual(model._tool_args, {})
+        self.assertDictEqual(model._tool_names, {})
+        await model.close()
 
     async def test_connect_surfaces_session_setup_error(self) -> None:
         """An invalid session update fails connect with provider detail."""

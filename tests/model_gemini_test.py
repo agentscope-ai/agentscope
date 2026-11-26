@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import httpx2
-from google.genai.types import HttpOptions, ThinkingConfig
+from google.genai.types import FunctionDeclaration, HttpOptions, ThinkingConfig
 from pydantic import BaseModel, Field
 
 from utils import AnyString
@@ -37,7 +37,7 @@ from agentscope.model import GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
 from agentscope._utils._common import _flatten_json_schema
 from agentscope.credential import GeminiCredential
-from agentscope.tool import ToolChoice
+from agentscope.tool import FunctionTool, ToolChoice
 
 A = AnyString()
 
@@ -1000,6 +1000,37 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_usage_uses_candidate_counts_without_total(self) -> None:
+        """Candidate and thought counts suffice when total is missing."""
+        resp = _mock_completion([_make_part(text="hello")])
+        resp.usage_metadata = SimpleNamespace(
+            prompt_token_count=10,
+            candidates_token_count=5,
+            tool_use_prompt_token_count=0,
+            thoughts_token_count=2,
+            total_token_count=None,
+            cached_content_token_count=0,
+        )
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=resp,
+        )
+
+        result = await self.model([])
+
+        self.assertIsNotNone(result.usage)
+        self.assertEqual(
+            dict(result.usage),
+            {
+                "input_tokens": 10,
+                "output_tokens": 7,
+                "time": result.usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 0,
+                "type": "chat",
+                "metadata": None,
+            },
+        )
+
     async def test_usage_fallback_excludes_tool_use_tokens(self) -> None:
         """Usage fallback excludes tool-use tokens from output."""
         resp = _mock_completion([_make_part(text="hello")])
@@ -1654,6 +1685,7 @@ class TestGeminiFormatTools(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+# pylint: disable-next=too-many-public-methods
 class TestGeminiSchemaUtils(unittest.TestCase):
     """Tests for _sanitize_schema_for_gemini and _flatten_json_schema."""
 
@@ -1747,7 +1779,7 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
-    def test_sanitize_rejects_ambiguous_type_array_with_anyof(
+    def test_sanitize_rejects_conjunctive_anyof_constraints(
         self,
     ) -> None:
         """Existing anyOf constraints are not overwritten silently."""
@@ -1765,6 +1797,32 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                     ],
                 },
             )
+
+        constraints: list[dict[str, Any]] = [
+            {"anyOf": [{"type": "string", "enum": ["auto"]}]},
+            {"type": ["string", "integer", "null"]},
+        ]
+        for constraint in constraints:
+            with self.subTest(constraint=constraint):
+                schema = {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "oneOf": [
+                                {"type": "string", "enum": ["auto"]},
+                                {"type": "string", "enum": ["manual"]},
+                            ],
+                            **constraint,
+                        },
+                    },
+                }
+                original = copy.deepcopy(schema)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "both oneOf and anyOf",
+                ):
+                    _sanitize_schema_for_gemini(schema)
+                self.assertEqual(schema, original)
 
     def test_sanitize_inlines_annotated_null_anyof(self) -> None:
         """Annotated null schemas in anyOf are treated as null branches."""
@@ -1824,6 +1882,133 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_sanitize_converts_oneof_from_discriminated_union(self) -> None:
+        """A discriminated union's `oneOf` becomes `anyOf` for Gemini."""
+
+        class Cat(BaseModel):
+            """Cat variant of the discriminated union."""
+
+            kind: Literal["cat"]
+            meow: str
+
+        class Dog(BaseModel):
+            """Dog variant of the discriminated union."""
+
+            kind: Literal["dog"]
+            bark: str
+
+        class Pet(BaseModel):
+            """Tool parameters containing a discriminated union."""
+
+            pet: Annotated[Cat | Dog, Field(discriminator="kind")]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Pet.model_json_schema()),
+        )
+        pet = result["properties"]["pet"]
+        self.assertNotIn("oneOf", pet)
+        self.assertNotIn("discriminator", pet)
+        self.assertIn("anyOf", pet)
+        FunctionDeclaration(name="pet", parameters=result)
+
+    def test_sanitize_converts_prefix_items_to_items(self) -> None:
+        """A fixed-length tuple's `prefixItems` becomes an `items` schema."""
+
+        class Args(BaseModel):
+            """A fixed-length pair."""
+
+            pair: tuple[int, str]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Args.model_json_schema()),
+        )
+        self.assertEqual(
+            result,
+            {
+                "type": "object",
+                "title": "Args",
+                "description": "A fixed-length pair.",
+                "properties": {
+                    "pair": {
+                        "type": "array",
+                        "title": "Pair",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                            "anyOf": [{"type": "integer"}, {"type": "string"}],
+                        },
+                    },
+                },
+                "required": ["pair"],
+            },
+        )
+        FunctionDeclaration(name="pair", parameters=result)
+
+    def test_sanitize_prefix_items_tail(self) -> None:
+        """Preserve the tail and length constraints of tuple schemas."""
+        integer = {"type": "integer"}
+        string = {"type": "string"}
+        union = {"anyOf": [integer, string]}
+        cases: list[tuple[dict[str, object], dict[str, object]]] = [
+            ({"items": False}, {"maxItems": 1, "items": integer}),
+            (
+                {"items": False, "maxItems": 0},
+                {"maxItems": 0, "items": integer},
+            ),
+            (
+                {"items": False, "maxItems": 2},
+                {"maxItems": 1, "items": integer},
+            ),
+            ({"items": True}, {"items": {}}),
+            ({"items": {}}, {"items": {}}),
+            ({}, {"items": {}}),
+            ({"maxItems": 2}, {"maxItems": 2, "items": {}}),
+            ({"items": string}, {"items": union}),
+        ]
+        for tail, expected in cases:
+            with self.subTest(tail=tail):
+                result = _sanitize_schema_for_gemini(
+                    {"type": "array", "prefixItems": [integer], **tail},
+                )
+                self.assertEqual(result, {"type": "array", **expected})
+                FunctionDeclaration(
+                    name="series",
+                    parameters={
+                        "type": "object",
+                        "properties": {"values": result},
+                    },
+                )
+
+    def test_sanitize_removes_deprecated_and_pattern_properties(self) -> None:
+        """Keywords Gemini's Schema lacks are removed from tool parameters."""
+
+        class Args(BaseModel):
+            """Tool parameters using a deprecated field and a patterned map."""
+
+            old: int = Field(default=0, deprecated=True)
+            headers: dict[Annotated[str, Field(pattern=r"^x-")], str]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Args.model_json_schema()),
+        )
+        self.assertEqual(
+            result,
+            {
+                "title": "Args",
+                "description": (
+                    "Tool parameters using a deprecated field and a patterned "
+                    "map."
+                ),
+                "type": "object",
+                "properties": {
+                    "old": {"default": 0, "title": "Old", "type": "integer"},
+                    "headers": {"title": "Headers", "type": "object"},
+                },
+                "required": ["headers"],
+            },
+        )
+        FunctionDeclaration(name="args", parameters=result)
+
     def test_sanitize_converts_const_to_enum(self) -> None:
         """`const` is converted into a single-value `enum` for Gemini."""
         self.assertEqual(
@@ -1853,6 +2038,52 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_sanitize_removes_keywords_rejected_by_gemini_schema(
+        self,
+    ) -> None:
+        """Validation keywords that Gemini's Schema model does not declare
+        are removed, so the SDK accepts the function declaration."""
+
+        def search(
+            query: Annotated[str, Field(examples=["agentscope"])],
+            labels: set[str],
+            top_k: Annotated[int, Field(gt=0, lt=100, multiple_of=5)] = 5,
+        ) -> str:
+            """Search documents.
+
+            Args:
+                query: The search query.
+                labels: Only return documents with these labels.
+                top_k: How many results to return.
+            """
+            return f"{query} {sorted(labels)} {top_k}"
+
+        parameters = _sanitize_schema_for_gemini(
+            FunctionTool(search).input_schema,
+        )
+
+        self.assertEqual(
+            parameters["properties"],
+            {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only return documents with these labels.",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "How many results to return.",
+                },
+            },
+        )
+        # The SDK forbids unknown schema keys, so this raises if any is left.
+        FunctionDeclaration(name="search", parameters=parameters)
+
     def test_flatten_resolves_ref_and_removes_defs(self) -> None:
         """$ref inlined with extra keys merged; $defs removed."""
         self.assertEqual(
@@ -1873,6 +2104,60 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                 },
             },
         )
+
+    def test_flatten_boolean_schema_definition(self) -> None:
+        """True preserves sibling keywords; false remains rejecting."""
+        for keyword in ("$defs", "definitions"):
+            for definition in (True, False):
+                with self.subTest(keyword=keyword, definition=definition):
+                    constraints = {
+                        "type": "integer",
+                        "minimum": 1,
+                        "enum": [1, 2],
+                    }
+                    schema = {
+                        keyword: {
+                            "Anything": definition,
+                            "Count": constraints,
+                        },
+                        "properties": {
+                            "plain": {"$ref": f"#/{keyword}/Anything"},
+                            "value": {
+                                "$ref": f"#/{keyword}/Anything",
+                                "description": "Any value",
+                            },
+                            "count": {
+                                "$ref": f"#/{keyword}/Anything",
+                                **constraints,
+                            },
+                            "items": {
+                                "$ref": f"#/{keyword}/Anything",
+                                "type": "array",
+                                "items": {"$ref": f"#/{keyword}/Count"},
+                            },
+                        },
+                    }
+                    original = copy.deepcopy(schema)
+                    self.assertEqual(
+                        _flatten_json_schema(schema),
+                        {
+                            "properties": {
+                                "plain": {} if definition else False,
+                                "value": (
+                                    {"description": "Any value"}
+                                    if definition
+                                    else False
+                                ),
+                                "count": constraints if definition else False,
+                                "items": (
+                                    {"type": "array", "items": constraints}
+                                    if definition
+                                    else False
+                                ),
+                            },
+                        },
+                    )
+                    self.assertEqual(schema, original)
 
     def test_flatten_escaped_definition_names(self) -> None:
         """JSON Pointer escapes are decoded once and in the correct order."""

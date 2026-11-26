@@ -5,8 +5,6 @@ The token count is approximated as ``len(text.encode("utf-8")) // 4``,
 which avoids a hard dependency on any tokenizer library while staying
 within the right order of magnitude for most LLM tokenizers.
 """
-from bisect import bisect_right
-from itertools import accumulate
 from typing import Any
 
 from pydantic import Field, model_validator
@@ -184,57 +182,35 @@ class ApproxTokenChunker(ChunkerBase):
             `list[str]`:
                 The text pieces, in document order.
         """
-        if self._approx_count_tokens(text) <= self.chunk_size:
+        encoded = text.encode("utf-8")
+        if len(encoded) // 4 <= self.chunk_size:
             return [text]
-
-        # Cumulative UTF-8 byte length after each character, so that
-        # the byte length of text[i:j] == byte_offsets[j] - byte_offsets[i]
-        byte_offsets = [0, *accumulate(len(c.encode("utf-8")) for c in text)]
 
         chunk_bytes = self.chunk_size * 4
         overlap_bytes = self.overlap * 4
 
         pieces: list[str] = []
         start = 0
-        while start < len(text):
-            # The largest end such that the slice fits the byte budget
-            end = (
-                bisect_right(
-                    byte_offsets,
-                    byte_offsets[start] + chunk_bytes,
-                )
-                - 1
-            )
-            # Always make progress, even for characters whose UTF-8
-            # encoding exceeds the budget on their own
-            end = max(end, start + 1)
-            pieces.append(text[start:end])
-
-            if end >= len(text):
+        while start < len(encoded):
+            end = min(start + chunk_bytes, len(encoded))
+            if end == len(encoded):
+                pieces.append(encoded[start:end].decode("utf-8"))
                 break
 
-            # Step back by the overlap budget, ensuring forward progress
-            next_start = (
-                bisect_right(
-                    byte_offsets,
-                    byte_offsets[end] - overlap_bytes,
-                )
-                - 1
-            )
-            start = max(next_start, start + 1)
+            # A continuation byte (10xxxxxx) is inside a code point.
+            # A window of at least four bytes always fits one whole point.
+            while encoded[end] & 0xC0 == 0x80:
+                end -= 1
+            pieces.append(encoded[start:end].decode("utf-8"))
+
+            next_start = max(start, end - overlap_bytes)
+            while encoded[next_start] & 0xC0 == 0x80:
+                next_start -= 1
+            if next_start == start:
+                # Rounding the overlap back can leave us at the same point.
+                next_start += 1
+                while encoded[next_start] & 0xC0 == 0x80:
+                    next_start += 1
+            start = next_start
 
         return pieces
-
-    @staticmethod
-    def _approx_count_tokens(text: str) -> int:
-        """The approx count of tokens.
-
-        Args:
-            text (`str`):
-                The text to be counted.
-
-        Returns:
-            `int`:
-                The approx count of tokens.
-        """
-        return len(text.encode("utf-8")) // 4

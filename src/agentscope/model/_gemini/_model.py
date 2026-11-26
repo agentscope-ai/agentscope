@@ -111,8 +111,17 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
 
     - ``$schema``: removed entirely.
     - ``additionalProperties``: removed entirely.
+    - ``patternProperties``: removed entirely, because Gemini's ``Schema``
+      has no equivalent for pattern-keyed objects.
+    - ``exclusiveMinimum``, ``exclusiveMaximum``, ``multipleOf``,
+      ``uniqueItems``, ``examples`` and ``deprecated``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
+    - ``oneOf``: converted to ``anyOf`` for discriminated unions.
+      An existing ``anyOf`` raises ``ValueError`` rather than dropping
+      conjunctive constraints.
+    - ``prefixItems``: converted to a single ``items`` schema that admits
+      both positional elements and any permitted trailing elements.
     - ``type`` arrays containing ``"null"``: simplified to the single
       non-null type or converted to ``anyOf`` for multiple non-null
       types, matching nullable JSON Schema emitted by Pydantic and
@@ -169,11 +178,62 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     # Remove additionalProperties — not supported by Gemini
     schema.pop("additionalProperties", None)
 
+    # Gemini tool schemas do not support pattern-based property names.
+    schema.pop("patternProperties", None)
+
+    # Remove validation keywords that Gemini's Schema model does not declare;
+    # the SDK rejects the whole request on any of them. Pydantic emits them
+    # for e.g. `Field(gt=0)`, `set[str]` and `Field(deprecated=True)`. The
+    # agent still validates tool arguments against the original schema.
+    for keyword in (
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "uniqueItems",
+        "examples",
+        "deprecated",
+    ):
+        schema.pop(keyword, None)
+
     # Convert `const` into an equivalent single-value `enum` — Gemini's
     # Schema model does not support the `const` keyword.
     if "const" in schema:
         const_value = schema.pop("const")
         schema.setdefault("enum", [const_value])
+
+    # Gemini lacks `oneOf`; discriminated unions can use `anyOf` because
+    # their branches are mutually exclusive.
+    schema.pop("discriminator", None)
+    if "oneOf" in schema:
+        if "anyOf" in schema:
+            raise ValueError(
+                "Cannot safely sanitize Gemini schema with both oneOf "
+                "and anyOf.",
+            )
+        schema["anyOf"] = schema.pop("oneOf")
+
+    # Gemini uses one item schema for every position in the array.
+    prefix_items = schema.pop("prefixItems", None)
+    if isinstance(prefix_items, list) and prefix_items:
+        prefix_length = len(prefix_items)
+        tail = schema.get("items", True)
+        max_items = schema.get("maxItems", float("inf"))
+        if tail is False:
+            max_items = min(max_items, prefix_length)
+            schema["maxItems"] = max_items
+
+        has_tail = max_items > prefix_length
+        if has_tail and (tail is True or tail == {}):
+            # A positional restriction cannot constrain an unrestricted tail.
+            schema["items"] = {}
+        else:
+            candidates = prefix_items + [tail] if has_tail else prefix_items
+            elements = [
+                _sanitize_schema_for_gemini(item) for item in candidates
+            ]
+            schema["items"] = (
+                elements[0] if len(elements) == 1 else {"anyOf": elements}
+            )
 
     # Simplify anyOf that only differs by a null type, e.g. Optional[X]
     if "anyOf" in schema and isinstance(schema["anyOf"], list):
@@ -738,7 +798,7 @@ class GeminiChatModel(ChatModelBase):
             return None
         prompt_tokens = usage_metadata.prompt_token_count
         total_tokens = usage_metadata.total_token_count
-        if prompt_tokens is not None and total_tokens is not None:
+        if prompt_tokens is not None:
             tool_use_tokens = (
                 getattr(
                     usage_metadata,
@@ -757,9 +817,12 @@ class GeminiChatModel(ChatModelBase):
                 output_tokens = candidates_tokens + (
                     getattr(usage_metadata, "thoughts_token_count", 0) or 0
                 )
-            else:
+            elif total_tokens is not None:
                 # Fallback for SDK versions without the candidate count.
                 output_tokens = total_tokens - input_tokens
+            else:
+                # Neither count can describe the generated tokens.
+                return None
             return ChatUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,

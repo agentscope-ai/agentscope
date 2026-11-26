@@ -131,8 +131,10 @@ class ModelCard(BaseModel):
         if "max_tokens" in properties and "output_size" in config:
             properties["max_tokens"]["maximum"] = config["output_size"]
 
-        # Apply parameter_overrides with simple dict merge
-        overrides = config.get("parameter_overrides", {})
+        # A bare YAML key means no overrides.
+        overrides = config.get("parameter_overrides")
+        if overrides is None:
+            overrides = {}
         for param_name, override in overrides.items():
             if override is None:
                 # null means remove
@@ -152,11 +154,16 @@ class ModelCard(BaseModel):
                         **override,
                     }
 
-        # Build final parameter schema
+        # Keep required fields consistent with the filtered properties.
+        required = [
+            name
+            for name in base_schema.get("required", [])
+            if name in properties
+        ]
         final_schema = {
             "type": "object",
             "properties": properties,
-            "required": base_schema.get("required", []),
+            "required": required,
         }
         if "$defs" in base_schema:
             final_schema["$defs"] = copy.deepcopy(base_schema["$defs"])
@@ -173,5 +180,7 @@ class ModelCard(BaseModel):
             context_size=config["context_size"],
             output_size=config["output_size"],
             parameter_schema=final_schema,
-            parameters_overrides=config.get("parameter_overrides", {}),
+            parameters_overrides={
+                k: v for k, v in overrides.items() if v is not None
+            },
         )

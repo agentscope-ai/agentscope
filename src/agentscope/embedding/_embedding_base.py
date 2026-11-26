@@ -256,7 +256,19 @@ class EmbeddingModelBase(Generic[InputT]):
                 self.model,
             )
 
-        # Dispatch all batches concurrently, each with retry.
+        return await self._call_batches(batches, **kwargs)
+
+    async def _call_batches(
+        self,
+        batches: list[list[Any]],
+        /,
+        **kwargs: Any,
+    ) -> EmbeddingResponse:
+        """Run batches concurrently and finish their cleanup before returning.
+
+        Subclasses with content-aware batching can share the same retry,
+        cancellation, and response-merging behavior as the base class.
+        """
         tasks = [
             asyncio.create_task(self._call_with_retry(batch, **kwargs))
             for batch in batches
