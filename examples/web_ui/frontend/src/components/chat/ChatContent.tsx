@@ -17,7 +17,7 @@ import { useFileChanges } from './artifacts/useFileChanges';
 import { WorkspaceFilesDrawer } from './artifacts/WorkspaceFilesDrawer';
 import type { GitStatus } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
-import { getUserId } from '@/api/client';
+import { getBaseUrl, getUserId } from '@/api/client';
 import { ASMessageBubble, SteeringMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
 import { ClientToolsMenu } from '@/components/chat/ClientToolsMenu';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
@@ -40,7 +40,7 @@ import {
 	MessageScrollerViewport,
 } from '@/components/ui/message-scroller.tsx';
 import { Spinner } from '@/components/ui/spinner';
-import type { ReplyPhase } from '@/hooks/useMessages';
+import { UnacknowledgedToolSubmission, type ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
 import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
@@ -97,7 +97,7 @@ interface ChatContentProps {
 	queueReorderDisabled: boolean;
 	activeReplyId: string | null;
 	disabled: boolean;
-	onSend: (content: ContentBlock[]) => Promise<void> | void;
+	onSend: (content: ContentBlock[], source?: 'continue') => Promise<void> | void;
 	onUserConfirm: (
 		toolCall: ToolCallBlock,
 		confirm: boolean,
@@ -108,8 +108,12 @@ interface ChatContentProps {
 		toolCall: ToolCallBlock,
 		result: ClientExternalToolResult,
 		replyId: string,
+		onUnconfirmed?: (error: Error) => void,
 	) => Promise<void>;
-	onExternalExecutionResult: (event: ExternalExecutionResultEvent) => Promise<void>;
+	onExternalExecutionResult: (
+		event: ExternalExecutionResultEvent,
+		onUnconfirmed?: (error: Error) => void,
+	) => Promise<void>;
 	autoComplete?: (input: string) => string | null;
 	className?: string;
 	/** Called when the user clicks the stop button. */
@@ -122,6 +126,7 @@ interface ChatContentProps {
 	voiceState?: RealtimeConnectionState;
 	onVoiceToggle?: () => void;
 	voiceDisabled?: boolean;
+	voiceDisabledReason?: string;
 	/** Audio media types accepted by the selected ASR model. */
 	asrInputTypes?: string[];
 	/** Transcribes one completed browser recording. */
@@ -160,6 +165,13 @@ interface ChatContentProps {
 	onRefreshGit?: () => void | Promise<void>;
 }
 
+/** Release the form for a manual retry while the hook still listens for its receipt. */
+function waitForReceiptOrRetry(submit: (allowRetry: (error: Error) => void) => Promise<void>) {
+	return new Promise<void>((resolve, reject) => {
+		submit(reject).then(resolve, reject);
+	});
+}
+
 const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
 	loading = false,
@@ -184,6 +196,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	voiceState,
 	onVoiceToggle,
 	voiceDisabled,
+	voiceDisabledReason,
 	asrInputTypes,
 	onTranscribe,
 	asrRealtime,
@@ -202,7 +215,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 }) => {
 	const { t, i18n } = useTranslation();
 	const inputRef = useRef<TextInputRef>(null);
-	const scope = JSON.stringify([getUserId(), agentId, sessionId]);
+	const scope = JSON.stringify([getBaseUrl(), getUserId(), agentId, sessionId]);
 	const fileChanges = useFileChanges(msgs, scope, loading);
 	const [fileView, setFileView] = useState<
 		| { scope: string; kind: 'preview'; artifact: FileArtifact }
@@ -281,7 +294,14 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				pendingExternalToolRegistration.canCompose(pendingExternalTool.toolCall),
 			));
 
-	const handleSend = async (content: ContentBlock[]) => {
+	const submitClientToolResult = (result: ClientExternalToolResult) => {
+		if (!pendingExternalTool) return Promise.resolve();
+		const { toolCall, replyId } = pendingExternalTool;
+		return waitForReceiptOrRetry((retry) =>
+			onClientExternalToolResult(toolCall, result, replyId, retry),
+		);
+	};
+	const handleSend = async (content: ContentBlock[], allowRetry?: () => void) => {
 		const pending = pendingExternalTool;
 		if (!pending || !acceptsInput) {
 			await onSend(content);
@@ -290,7 +310,12 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 
 		const result = pendingExternalToolRegistration?.composerResult?.(content, pending.toolCall);
 		if (result === null || result === undefined) return;
-		await onClientExternalToolResult(pending.toolCall, result, pending.replyId);
+		try {
+			await onClientExternalToolResult(pending.toolCall, result, pending.replyId, allowRetry);
+		} catch (error) {
+			// The question already has an answer. Keep the draft for the next question.
+			if (!(error instanceof UnacknowledgedToolSubmission)) throw error;
+		}
 	};
 
 	// On an empty session the prompt and the input centre together, so every box
@@ -406,20 +431,17 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 												<Button
 													size={'xs'}
 													onClick={() => {
+														const block: TextBlock = {
+															id: crypto.randomUUID(),
+															type: 'text',
+															text: t(
+																'chat.maxItersExceeded.continue',
+															),
+															created_at: new Date().toISOString(),
+															finished_at: new Date().toISOString(),
+														};
 														void Promise.resolve(
-															onSend([
-																{
-																	id: crypto.randomUUID(),
-																	type: 'text',
-																	text: t(
-																		'chat.maxItersExceeded.continue',
-																	),
-																	created_at:
-																		new Date().toISOString(),
-																	finished_at:
-																		new Date().toISOString(),
-																} as TextBlock,
-															]),
+															onSend([block], 'continue'),
 														).catch(() => {
 															// The send handler reports the failure.
 														});
@@ -465,13 +487,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 								<PendingExternalToolComponent
 									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
 									toolCall={pendingExternalTool.toolCall}
-									onSubmit={(result) =>
-										onClientExternalToolResult(
-											pendingExternalTool.toolCall,
-											result,
-											pendingExternalTool.replyId,
-										)
-									}
+									onSubmit={submitClientToolResult}
 									onCancel={onInterrupt}
 									cancelling={phase === 'interrupting'}
 								/>
@@ -479,13 +495,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 								<ManualClientToolCard
 									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
 									toolCall={pendingExternalTool.toolCall}
-									onSubmit={(result) =>
-										onClientExternalToolResult(
-											pendingExternalTool.toolCall,
-											result,
-											pendingExternalTool.replyId,
-										)
-									}
+									onSubmit={submitClientToolResult}
 									onCancel={onInterrupt}
 									cancelling={phase === 'interrupting'}
 								/>
@@ -494,7 +504,11 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
 									replyId={pendingExternalTool.replyId}
 									toolCall={pendingExternalTool.toolCall}
-									onResult={onExternalExecutionResult}
+									onResult={(event) =>
+										waitForReceiptOrRetry((retry) =>
+											onExternalExecutionResult(event, retry),
+										)
+									}
 								/>
 							)
 						) : (
@@ -517,8 +531,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				    edges parallel — a plain rectangle here would show the
 				    pill's corners cutting into it. */}
 					<TextInput
-						key={JSON.stringify([agentId, sessionId])}
+						key={scope}
 						ref={inputRef}
+						draftKey={scope}
 						className="min-w-full max-w-full w-full rounded-[32px] bg-muted p-1"
 						onSend={handleSend}
 						disabled={disabled}
@@ -532,6 +547,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						voiceState={voiceState}
 						onVoiceToggle={onVoiceToggle}
 						voiceDisabled={voiceDisabled}
+						voiceDisabledReason={voiceDisabledReason}
 						asrInputTypes={asrInputTypes}
 						onTranscribe={onTranscribe}
 						asrRealtime={asrRealtime}

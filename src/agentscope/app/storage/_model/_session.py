@@ -168,6 +168,21 @@ class ASRModelConfig(BaseModel):
     """Provider-specific speech recognition parameters."""
 
 
+class PipelineVoiceConfig(BaseModel):
+    """Voice models; an unset chat model follows ordinary chat settings."""
+
+    asr_model_config: ASRModelConfig | None = None
+    chat_model_config: ChatModelConfig | None = None
+    tts_model_config: TTSModelConfig | None = None
+
+
+class ChatModelSnapshot(BaseModel):
+    """Effective primary and fallback models bound to one reply."""
+
+    primary: ChatModelConfig
+    fallback: ChatModelConfig | None = None
+
+
 class RealtimeModelConfig(BaseModel):
     """The realtime voice model configuration class."""
 
@@ -336,6 +351,9 @@ class SessionConfig(BaseModel):
 
     asr_model_config: ASRModelConfig | None = None
     """The ASR model config. None means speech input is not enabled."""
+
+    pipeline_voice_config: PipelineVoiceConfig | None = None
+    """Speech configuration used only by pipeline voice inputs."""
 
     realtime_model_config: RealtimeModelConfig | None = None
     """The realtime voice model config. None disables voice mode."""

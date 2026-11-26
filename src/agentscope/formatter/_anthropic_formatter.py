@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Anthropic formatter module."""
 import base64
-import fnmatch
 from abc import ABC
 from typing import Any
 
@@ -290,19 +289,18 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                 ``type`` and ``source``, or None if the media type is not
                 supported.
         """
-        source = block.source
-        media_type = source.media_type
-
-        # Check if media type is supported
-        if not any(
-            fnmatch.fnmatch(media_type, pattern)
-            for pattern in self.supported_input_media_types
-        ):
+        # Normalize the MIME type (lowercase, matched case-insensitively)
+        # before deciding what the block is.
+        supported = self._get_supported_tool_result_block(block)
+        if supported is None:
             logger.warning(
                 "Media type %s is not supported, skipped.",
-                media_type,
+                block.source.media_type,
             )
             return None
+        block = supported
+        source = block.source
+        media_type = source.media_type
 
         # Anthropic supports images and PDF documents
         if media_type.startswith("image/"):
@@ -448,9 +446,11 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
         formatted_msgs = []
         start_index = 0
         if len(msgs) > 0 and msgs[0].role == "system":
-            formatted_msgs.append(
-                await self._format_system_message(msgs[0]),
-            )
+            system_msg = await self._format_system_message(msgs[0])
+            # Anthropic rejects empty text blocks with a 400, so drop an
+            # empty system prompt as the chat formatter does.
+            if system_msg["content"][0]["text"]:
+                formatted_msgs.append(system_msg)
             start_index = 1
 
         is_first_agent_message = True

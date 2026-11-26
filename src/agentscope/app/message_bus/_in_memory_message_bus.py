@@ -25,7 +25,11 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from typing import Callable, Self
 
-from ._base import MessageBus
+from ._base import (
+    MessageBus,
+    RegisterSubscriptionBarrier,
+    _stream_cursor_precedes,
+)
 
 
 class InMemoryMessageBus(
@@ -323,6 +327,27 @@ class InMemoryMessageBus(
             del log[: len(log) - max_len]
         return entry_id
 
+    async def log_append_with_previous(
+        self,
+        key: str,
+        payload: dict,
+        *,
+        max_len: int,
+    ) -> tuple[str, str | None]:
+        """Capture the tail before appending and trimming the log."""
+        log = self._logs.get(key)
+        previous = log[-1][0] if log else ""
+        entry_id = await self.log_append(key, payload, max_len=max_len)
+        if type(self).log_append is InMemoryMessageBus.log_append:
+            return entry_id, previous
+        # An overridden append may yield. Only trust the observed adjacency.
+        log = self._logs.get(key)
+        if log and len(log) >= 2 and log[-1][0] == entry_id:
+            return entry_id, log[-2][0]
+        return entry_id, None
+
+    log_cursor_precedes = staticmethod(_stream_cursor_precedes)
+
     async def log_read(
         self,
         key: str,
@@ -415,6 +440,7 @@ class InMemoryMessageBus(
         key: str,
         *,
         on_ready: Callable[[], None] | None = None,
+        on_barrier: RegisterSubscriptionBarrier | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Yield broadcast payloads for ``key`` until the consumer
         closes the generator.
@@ -425,6 +451,8 @@ class InMemoryMessageBus(
             on_ready (`Callable[[], None] | None`, optional):
                 Called once after the subscription is established and
                 before any payload is yielded.
+            on_barrier (optional):
+                Register an ordered flush operation for this subscription.
 
         Yields:
             `dict`:
@@ -432,7 +460,17 @@ class InMemoryMessageBus(
         """
         q: asyncio.Queue[dict | None] = asyncio.Queue()
         self._subscribers[key].add(q)
+        marker: dict = {}
+        flushed = asyncio.Event()
+
+        async def flush() -> None:
+            flushed.clear()
+            q.put_nowait(marker)
+            await flushed.wait()
+
         try:
+            if on_barrier is not None:
+                on_barrier(flush)
             if on_ready is not None:
                 on_ready()
             while True:
@@ -440,6 +478,9 @@ class InMemoryMessageBus(
                 if item is None:
                     # Sentinel from aclose() — shut down gracefully.
                     break
+                if item is marker:
+                    flushed.set()
+                    continue
                 yield item
         finally:
             self._subscribers[key].discard(q)
@@ -594,6 +635,10 @@ class InMemoryMessageBus(
                 ``True`` if the field is present.
         """
         return field in self._registries.get(namespace, {})
+
+    async def registry_has_entries(self, namespace: str) -> bool:
+        """Check for entries without copying the registry."""
+        return bool(self._registries.get(namespace))
 
     async def registry_getall(
         self,

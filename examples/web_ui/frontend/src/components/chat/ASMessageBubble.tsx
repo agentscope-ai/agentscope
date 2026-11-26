@@ -325,9 +325,9 @@ function AudioInlineControl({ block }: { block: DataBlock }) {
 		const el = audioRef.current;
 		if (!el) return;
 		if (el.paused) {
-			replayController?.play(el);
 			try {
-				await el.play();
+				if (replayController) await replayController.play(el);
+				else await el.play();
 			} catch (err) {
 				console.error('Audio playback failed', err);
 			}
@@ -337,15 +337,21 @@ function AudioInlineControl({ block }: { block: DataBlock }) {
 		}
 	};
 
+	const replayHint = replayController?.blocked
+		? t('messageBubble.replayAfterPipelineVoice')
+		: undefined;
 	return (
 		<>
 			<button
 				type="button"
 				onClick={toggle}
+				disabled={replayController?.blocked}
+				title={replayHint}
 				aria-label={
-					isPlaying ? t('messageBubble.pauseAudio') : t('messageBubble.playAudio')
+					replayHint ??
+					(isPlaying ? t('messageBubble.pauseAudio') : t('messageBubble.playAudio'))
 				}
-				className="ml-1 inline-flex cursor-pointer items-center transition-opacity hover:opacity-70"
+				className="ml-1 inline-flex cursor-pointer items-center transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-50"
 			>
 				{isPlaying ? (
 					<AudioWave isPlaying className="size-3" />

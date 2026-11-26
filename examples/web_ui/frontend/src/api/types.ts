@@ -36,6 +36,12 @@ export interface RealtimeModelConfig {
 	parameters: Record<string, unknown>;
 }
 
+export interface PipelineVoiceConfig {
+	chat_model_config?: ChatModelConfig | null;
+	asr_model_config: ASRModelConfig | null;
+	tts_model_config: TTSModelConfig | null;
+}
+
 export interface ContextConfig {
 	trigger_ratio?: number;
 	reserve_ratio?: number;
@@ -168,6 +174,7 @@ export interface SessionConfig {
 	tts_model_config: TTSModelConfig | null;
 	/** ASR model configuration. null means speech input is not enabled. */
 	asr_model_config: ASRModelConfig | null;
+	pipeline_voice_config?: PipelineVoiceConfig | null;
 	/** Realtime voice model configuration. null disables voice mode. */
 	realtime_model_config: RealtimeModelConfig | null;
 	/** Knowledge bases attached to this session + KB middleware parameters. */
@@ -209,6 +216,7 @@ export interface CreateSessionRequest {
 	tts_model_config?: TTSModelConfig | null;
 	/** Optional ASR model. Omit (or pass null) for no speech input. */
 	asr_model_config?: ASRModelConfig | null;
+	pipeline_voice_config?: PipelineVoiceConfig | null;
 	/** Optional realtime voice model. Omit (or pass null) for none. */
 	realtime_model_config?: RealtimeModelConfig | null;
 	/** Optional knowledge base attachment. Omit (or null) for none. */
@@ -242,6 +250,7 @@ export interface UpdateSessionRequest {
 	tts_model_config?: TTSModelConfig | null;
 	/** New ASR model, or null to disable speech input. */
 	asr_model_config?: ASRModelConfig | null;
+	pipeline_voice_config?: Partial<PipelineVoiceConfig> | null;
 	/** New realtime voice model, or null to disable voice mode. */
 	realtime_model_config?: RealtimeModelConfig | null;
 	/**
@@ -534,6 +543,9 @@ export interface ClientExternalToolDefinition {
 }
 
 export interface ChatRequest {
+	mode?: 'chat' | 'pipeline_voice';
+	client_request_id?: string;
+	submission_id?: string;
 	agent_id: string;
 	session_id: string;
 	input: Msg | Msg[] | UserConfirmResultEvent | ExternalExecutionResultEvent | null;

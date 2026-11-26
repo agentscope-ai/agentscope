@@ -26,6 +26,8 @@ from fastapi import FastAPI, HTTPException, status
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
+from agentscope.app._router._asr import _realtime_token_scope
+from agentscope.app._router._knowledge_base import _document_token_path
 from agentscope.app._router._workspace import (
     create_download_token,
     list_workspace_directory,
@@ -34,7 +36,11 @@ from agentscope.app._router._workspace import (
     save_workspace_text,
     workspace_router,
 )
-from agentscope.app._service import WorkspaceService
+from agentscope.app._service import (
+    WorkspaceService,
+    sign_download_token,
+    verify_download_token,
+)
 from agentscope.app._service._workspace import (
     MAX_EDIT_BYTES,
     TextFileSaveRequest,
@@ -675,11 +681,17 @@ class WorkspaceFileEndpointTests(_WorkspaceEndpointTestBase):
 
     async def test_tampered_token_raises_401(self) -> None:
         """An edited signature must not pass."""
-        token, _ = self._service.sign_download_token("u", "notes.txt")
+        minted = await create_download_token(
+            agent_id="a",
+            session_id="s",
+            path="notes.txt",
+            user_id="u",
+            workspace_service=self._service,
+        )
         # Edit the signature's first character, not its last: a 32-byte
         # digest ends on a base64 char carrying only 4 significant bits,
         # so editing that one can decode back to the same digest.
-        expiry, user, signature = token.split(".")
+        expiry, user, signature = minted.token.split(".")
         tampered = ("A" if signature[0] != "A" else "B") + signature[1:]
         with self.assertRaises(HTTPException) as ctx:
             await self._read(
@@ -692,6 +704,119 @@ class WorkspaceFileEndpointTests(_WorkspaceEndpointTestBase):
             ctx.exception.status_code,
             status.HTTP_401_UNAUTHORIZED,
         )
+
+    async def test_token_is_bound_to_its_session_and_agent(self) -> None:
+        """A token minted for one session cannot be replayed on another."""
+        storage = _FakeStorage(
+            [
+                _make_session(agent_id="a", session_id="s1"),
+                _make_session(agent_id="a", session_id="s2"),
+                _make_session(agent_id="other-agent", session_id="s1"),
+            ],
+        )
+        service = WorkspaceService(storage, self._wm, SECRET)
+        minted = await create_download_token(
+            agent_id="a",
+            session_id="s1",
+            path="notes.txt",
+            user_id="u",
+            workspace_service=service,
+        )
+
+        for target_agent, target_session in (
+            ("a", "s2"),
+            ("other-agent", "s1"),
+        ):
+            with self.subTest(
+                agent_id=target_agent,
+                session_id=target_session,
+            ):
+                with self.assertRaises(HTTPException) as ctx:
+                    await read_workspace_file(
+                        agent_id=target_agent,
+                        session_id=target_session,
+                        path="notes.txt",
+                        download=True,
+                        token=minted.token,
+                        x_user_id=None,
+                        workspace_service=service,
+                    )
+                self.assertEqual(
+                    ctx.exception.status_code,
+                    status.HTTP_401_UNAUTHORIZED,
+                )
+
+    async def test_token_scope_separates_slash_containing_ids(self) -> None:
+        """Percent-encoding prevents slash-boundary collisions across ids."""
+        storage = _FakeStorage(
+            [
+                _make_session(agent_id="a/b", session_id="c"),
+                _make_session(agent_id="a", session_id="b/c"),
+            ],
+        )
+        service = WorkspaceService(storage, self._wm, SECRET)
+        minted = await create_download_token(
+            agent_id="a/b",
+            session_id="c",
+            path="notes.txt",
+            user_id="u",
+            workspace_service=service,
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            await read_workspace_file(
+                agent_id="a",
+                session_id="b/c",
+                path="notes.txt",
+                download=True,
+                token=minted.token,
+                x_user_id=None,
+                workspace_service=service,
+            )
+        self.assertEqual(
+            ctx.exception.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+
+    async def test_token_cannot_cross_kb_or_asr_endpoints(self) -> None:
+        """Workspace tokens stay isolated from KB and ASR tokens."""
+        kb_scope = _document_token_path("kb-1", "doc-1")
+        asr_scope = _realtime_token_scope("cred-1", "paraformer")
+
+        ws_kb = await create_download_token(
+            agent_id="a",
+            session_id="s",
+            path=kb_scope,
+            user_id="u",
+            workspace_service=self._service,
+        )
+        with self.assertRaises(ValueError):
+            verify_download_token(SECRET, ws_kb.token, kb_scope)
+
+        ws_asr = await create_download_token(
+            agent_id="a",
+            session_id="s",
+            path=asr_scope,
+            user_id="u",
+            workspace_service=self._service,
+        )
+        with self.assertRaises(ValueError):
+            verify_download_token(SECRET, ws_asr.token, asr_scope)
+
+        for label, scope in (("kb", kb_scope), ("asr", asr_scope)):
+            with self.subTest(foreign_token=label):
+                foreign_token, _ = sign_download_token(SECRET, "u", scope)
+                with self.assertRaises(HTTPException) as ctx:
+                    await self._read(
+                        path=scope,
+                        download=True,
+                        token=foreign_token,
+                        x_user_id=None,
+                    )
+                self.assertEqual(
+                    ctx.exception.status_code,
+                    status.HTTP_401_UNAUTHORIZED,
+                )
 
 
 class _WorkspaceTextFixture(_WorkspaceEndpointTestBase):

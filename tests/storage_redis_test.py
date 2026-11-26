@@ -361,6 +361,50 @@ class TestSession(IsolatedAsyncioTestCase):
         records = await self.storage.list_sessions(self.user_id, "agent-B")
         self.assertEqual(records, [])
 
+    async def test_tied_sessions_list_in_a_total_order(self) -> None:
+        """Sessions sharing a ``created_at`` still come back in one order.
+
+        The index is a Set, so falling back to its iteration order for
+        ties left the listing (and the ``sessions[0]`` callers that read
+        the first row as "the newest") depending on Redis' hash order,
+        which shifts as the set is rewritten. SQL breaks these ties on
+        the id; this must agree with it.
+        """
+        for session_id in ("s2", "s3", "s1"):
+            await self.storage.upsert_session(
+                self.user_id,
+                self.agent_id,
+                make_session_config(self.workspace_id),
+                session_id=session_id,
+            )
+        await self._tie_created_at(("s2", "s3", "s1"))
+
+        records = await self.storage.list_sessions(
+            self.user_id,
+            self.agent_id,
+        )
+        self.assertEqual([r.id for r in records], ["s3", "s2", "s1"])
+
+    async def _tie_created_at(self, session_ids: tuple[str, ...]) -> None:
+        """Rewrite the stored sessions so they share one ``created_at``.
+
+        ``upsert_session`` builds the record itself, so the timestamp can
+        only be set on the stored JSON — the same shape MySQL produces
+        when its whole-second ``DateTime`` collapses a burst.
+        """
+        fixed = DateTime(2026, 1, 1, 12, 0, 0)
+        for session_id in session_ids:
+            key = self.storage._key(
+                self.storage.key_config.session,
+                user_id=self.user_id,
+                session_id=session_id,
+            )
+            record = SessionRecord.model_validate_json(
+                await self.storage._client.get(key),
+            )
+            record.created_at = fixed
+            await self.storage._client.set(key, record.model_dump_json())
+
 
 class TestMessage(IsolatedAsyncioTestCase):
     """Tests for message persistence: upsert_message, get_message and
@@ -1938,6 +1982,29 @@ class TestSOP(IsolatedAsyncioTestCase):
             },
             {waiting.id, other.id},
         )
+
+    async def test_tied_runs_list_in_a_total_order(self) -> None:
+        """Runs sharing a ``created_at`` come back in one order too.
+
+        Same tie as the session listing above: the run index is a Set,
+        and SQL breaks the tie on the id.
+        """
+        fixed = DateTime(2026, 1, 1, 12, 0, 0)
+        for run_id in ("r2", "r3", "r1"):
+            await self.storage.upsert_sop_run(
+                self.user_id,
+                SOPRunRecord(
+                    id=run_id,
+                    created_at=fixed,
+                    user_id=self.user_id,
+                    sop_id="sop-1",
+                    definition=SOPData(name="a", steps=[_A_STEP]),
+                    state=SOPRunState(steps=[SOPStepRunState()]),
+                ),
+            )
+
+        records = await self.storage.list_sop_runs(self.user_id)
+        self.assertEqual([r.id for r in records], ["r3", "r2", "r1"])
 
     async def test_update_run_writes_state_and_sessions(self) -> None:
         """The hot path rewrites what moves and keeps the snapshot."""

@@ -596,8 +596,20 @@ class FeishuChannel(ChannelBase):
                     parts.append(
                         element.get("text") or element.get("href") or "",
                     )
+                elif tag == "code_block":
+                    _flush()
+                    code = element.get("text") or ""
+                    if code.strip():
+                        blocks.append(TextBlock(text=code))
                 elif tag in ("img", "media"):
-                    key = element.get("image_key") or element.get("file_key")
+                    if tag == "img":
+                        key = element.get("image_key") or element.get(
+                            "file_key",
+                        )
+                    else:
+                        key = element.get("file_key") or element.get(
+                            "image_key",
+                        )
                     if not key:
                         continue
                     _flush()
@@ -1377,7 +1389,11 @@ class FeishuChannel(ChannelBase):
             `DataBlock | None`: The downloaded block, or ``None`` on error.
         """
         content = json.loads(getattr(message, "content", None) or "{}")
-        key = content.get("image_key") or content.get("file_key") or ""
+        # For videos, file_key identifies the clip and image_key its cover.
+        if msg_type == "image":
+            key = content.get("image_key") or content.get("file_key")
+        else:
+            key = content.get("file_key") or content.get("image_key")
         if not key:
             return None
         default_mime = {
