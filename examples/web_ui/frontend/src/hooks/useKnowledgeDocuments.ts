@@ -23,10 +23,11 @@ export function useKnowledgeDocuments(knowledgeBaseId: string | null) {
 		documents: listed ?? emptyDocuments,
 	});
 	const documents = useMemo(
-		() => listed?.map((doc) => {
-			const polled = statuses[doc.id];
-			return polled && polled.updated_at > doc.updated_at ? polled : doc;
-		}) ?? null,
+		() =>
+			listed?.map((doc) => {
+				const polled = statuses[doc.id];
+				return polled && polled.updated_at > doc.updated_at ? polled : doc;
+			}) ?? null,
 		[listed, statuses],
 	);
 	// Starts true when there is something to fetch, so the first render
