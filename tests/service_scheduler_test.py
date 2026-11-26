@@ -23,27 +23,41 @@ import json
 import tempfile
 from contextlib import AsyncExitStack
 from datetime import datetime
+from types import SimpleNamespace
+from typing import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 
 from utils import AnyString, FakeWorkspaceManager
 
+from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app import create_app
 from agentscope.app._manager import SchedulerManager
+from agentscope.app._router._schedule import update_schedule
+from agentscope.app._router._schema._schedule import UpdateScheduleRequest
+from agentscope.app._service import ChatService
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
     ChatModelConfig,
+    AgentData,
+    AgentRecord,
     RedisStorage,
     ScheduleData,
     ScheduleRecord,
     ScheduleOrigin,
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
-from agentscope.permission import PermissionMode
-from agentscope.message import ToolResultState
+from agentscope.permission import (
+    AdditionalWorkingDirectory,
+    PermissionBehavior,
+    PermissionMode,
+    PermissionRule,
+)
+from agentscope.message import ToolResultState, UserMsg
+from agentscope.state import AgentState
 
 
 def _make_storage(
@@ -252,6 +266,217 @@ class TestSchedulerFireStatefulMode(_SchedulerFireTestBase):
                     "input": None,
                 },
             ],
+        )
+
+
+class TestSchedulerRunPermissions(_SchedulerFireTestBase):
+    """Existing scheduled sessions use the latest mode at run time."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await self.storage.upsert_agent(
+            "u",
+            AgentRecord(
+                id="a",
+                user_id="u",
+                data=AgentData(
+                    name="agent",
+                    context_config=ContextConfig(),
+                    react_config=ReActConfig(),
+                ),
+            ),
+        )
+        self.observed: list[AgentState] = []
+        self.running = asyncio.Event()
+        self.release = asyncio.Event()
+        self.release.set()
+        owner = self
+
+        class _Agent:
+            """Capture the state assembled by the real chat service."""
+
+            def __init__(
+                self,
+                *,
+                name: str,
+                state: AgentState,
+                **_: object,
+            ) -> None:
+                self.name = name
+                self.state = state
+
+            async def reply_stream(
+                self,
+                inputs: object,
+            ) -> AsyncGenerator[object, None]:
+                """Wait on demand without calling an external model."""
+                del inputs
+                owner.observed.append(self.state.model_copy(deep=True))
+                owner.running.set()
+                await owner.release.wait()
+                for event in []:
+                    yield event
+
+        workspace_manager = FakeWorkspaceManager()
+        workspace_manager.get_workspace = AsyncMock(
+            return_value=SimpleNamespace(workdir="/workspace"),
+        )
+        self.chat = ChatService(
+            storage=self.storage,
+            workspace_manager=workspace_manager,
+            scheduler_manager=self.manager,
+            background_task_manager=object(),
+            message_bus=self.bus,
+            resource_access_service=SimpleNamespace(
+                resolve_agent=self.storage.get_agent,
+            ),
+            custom_agent_cls=_Agent,
+        )
+        for name in ("get_model", "get_toolkit"):
+            self.enterContext(
+                patch(
+                    f"agentscope.app._service._chat.{name}",
+                    new=AsyncMock(return_value=object()),
+                ),
+            )
+
+    async def _prepare_session(self, record: ScheduleRecord) -> str:
+        """Persist the schedule and fire it to create its real session."""
+        await self.storage.upsert_schedule("u", record)
+        await self.manager._build_trigger(record)()
+        session = (await self.storage.list_sessions("u", "a"))[0]
+        # The fake agent does not execute inbox middleware.
+        await self.bus.inbox_drain(session.id, max_count=10)
+        return session.id
+
+    async def _update_mode(
+        self,
+        record: ScheduleRecord,
+        mode: PermissionMode,
+    ) -> None:
+        """Use the actual PATCH handler to change the saved schedule."""
+        await update_schedule(
+            record.id,
+            UpdateScheduleRequest(permission_mode=mode),
+            user_id="u",
+            storage=self.storage,
+            scheduler=self.manager,
+        )
+
+    async def test_stateful_run_applies_mode_without_losing_state(
+        self,
+    ) -> None:
+        """Both permission transitions retain history, rules and dirs."""
+        record = _make_record(stateful=True)
+        record.data.permission_mode = PermissionMode.BYPASS
+        session_id = await self._prepare_session(record)
+        session = await self.storage.get_session("u", "a", session_id)
+        session.state.context.append(UserMsg(name="user", content="history"))
+        session.state.permission_context.deny_rules["Bash"] = [
+            PermissionRule(
+                tool_name="Bash",
+                rule_content="rm",
+                behavior=PermissionBehavior.DENY,
+                source="session",
+            ),
+        ]
+        session.state.permission_context.working_directories[
+            "/project"
+        ] = AdditionalWorkingDirectory(path="/project", source="session")
+        await self.storage.update_session_state(
+            "u",
+            "a",
+            session_id,
+            session.state,
+        )
+        for mode in (PermissionMode.DEFAULT, PermissionMode.BYPASS):
+            with self.subTest(mode=mode):
+                await self._update_mode(record, mode)
+                await self.chat._run_impl("u", session_id, "a", None)
+                state = self.observed[-1]
+                self.assertEqual(state.permission_context.mode, mode)
+                self.assertEqual(state.context, session.state.context)
+                self.assertEqual(
+                    state.permission_context.deny_rules,
+                    session.state.permission_context.deny_rules,
+                )
+                self.assertEqual(
+                    state.permission_context.working_directories["/project"],
+                    session.state.permission_context.working_directories[
+                        "/project"
+                    ],
+                )
+
+    async def test_update_during_run_survives_old_state_persistence(
+        self,
+    ) -> None:
+        """A run saving its old mode cannot undo the next run's policy."""
+        record = _make_record(stateful=True)
+        record.data.permission_mode = PermissionMode.BYPASS
+        session_id = await self._prepare_session(record)
+        self.release.clear()
+        first = asyncio.create_task(
+            self.chat._run_impl("u", session_id, "a", None),
+        )
+        try:
+            await asyncio.wait_for(self.running.wait(), 2)
+            await self._update_mode(record, PermissionMode.DEFAULT)
+        finally:
+            self.release.set()
+            await asyncio.wait_for(first, 2)
+        await self.chat._run_impl("u", session_id, "a", None)
+        self.assertEqual(
+            [state.permission_context.mode for state in self.observed],
+            [PermissionMode.BYPASS, PermissionMode.DEFAULT],
+        )
+
+    async def test_explicit_user_turn_keeps_session_mode(self) -> None:
+        """A manual turn in a schedule session honors its session mode."""
+        record = _make_record(stateful=True)
+        session_id = await self._prepare_session(record)
+        await self._update_mode(record, PermissionMode.BYPASS)
+        await self.chat._run_impl(
+            "u",
+            session_id,
+            "a",
+            UserMsg(name="user", content="hello"),
+        )
+        self.assertEqual(
+            self.observed[-1].permission_context.mode,
+            PermissionMode.DONT_ASK,
+        )
+
+    async def test_non_stateful_session_keeps_original_mode(self) -> None:
+        """Historical one-off sessions retain their original permissions."""
+        record = _make_record(stateful=False)
+        session_id = await self._prepare_session(record)
+        await self._update_mode(record, PermissionMode.BYPASS)
+        await self.chat._run_impl("u", session_id, "a", None)
+        self.assertEqual(
+            self.observed[-1].permission_context.mode,
+            PermissionMode.DONT_ASK,
+        )
+
+    async def test_switch_to_stateful_preserves_old_one_off_session(
+        self,
+    ) -> None:
+        """Enabling stateful mode does not repurpose previous sessions."""
+        record = _make_record(stateful=False)
+        session_id = await self._prepare_session(record)
+        await update_schedule(
+            record.id,
+            UpdateScheduleRequest(
+                stateful=True,
+                permission_mode=PermissionMode.BYPASS,
+            ),
+            user_id="u",
+            storage=self.storage,
+            scheduler=self.manager,
+        )
+        await self.chat._run_impl("u", session_id, "a", None)
+        self.assertEqual(
+            self.observed[-1].permission_context.mode,
+            PermissionMode.DONT_ASK,
         )
 
 
