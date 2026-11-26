@@ -132,7 +132,11 @@ def _match_parts(
                     if regex.match(entry.name):
                         full_path = entry.path
                         if is_last:
-                            if entry.is_file(follow_symlinks=False):
+                            try:
+                                is_match = entry.is_file()
+                            except OSError:
+                                is_match = False
+                            if is_match:
                                 results.append(full_path)
                         elif entry.is_dir(follow_symlinks=False):
                             _match_parts(

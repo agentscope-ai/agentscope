@@ -4,10 +4,11 @@ import os
 import tempfile
 from pathlib import Path
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from utils import AnyString
 from agentscope.tool import ExecResult, Glob, LocalBackend
+from agentscope.tool._builtin._scripts import _glob_helper
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -537,3 +538,100 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         expected_pattern = os.path.abspath(cwd).rstrip("/") + "/**"
         suggestion_contents = [s.rule_content for s in suggestions]
         self.assertIn(expected_pattern, suggestion_contents)
+
+    async def test_glob_includes_symlinked_files(self) -> None:
+        """File symlinks should match leaf patterns just like '**'."""
+        target = os.path.join(self.temp_dir, "AGENTS.md")
+        with open(target, "w", encoding="utf-8"):
+            pass
+
+        link = os.path.join(self.temp_dir, "CLAUDE.md")
+        nested_link = os.path.join(self.temp_dir, "subdir", "LINKED.md")
+        broken_link = os.path.join(self.temp_dir, "BROKEN.md")
+        try:
+            os.symlink(target, link)
+            os.symlink(target, nested_link)
+            os.symlink(os.path.join(self.temp_dir, "missing.md"), broken_link)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"File symlinks are unavailable: {error}")
+
+        expected = sorted(
+            [
+                os.path.abspath(target),
+                os.path.abspath(link),
+                os.path.abspath(nested_link),
+            ],
+        )
+        for pattern in ("*.md", "**/*.md", "**"):
+            with self.subTest(pattern=pattern):
+                chunk = await self.glob_tool(
+                    pattern=pattern,
+                    path=self.temp_dir,
+                )
+                self.assertEqual(chunk.state, "running")
+                matched = sorted(
+                    os.path.abspath(line)
+                    for line in chunk.content[0].text.splitlines()
+                )
+                if pattern == "*.md":
+                    self.assertListEqual(
+                        matched,
+                        sorted(
+                            [os.path.abspath(target), os.path.abspath(link)],
+                        ),
+                    )
+                elif pattern == "**/*.md":
+                    self.assertListEqual(matched, expected)
+                else:
+                    for item in expected:
+                        self.assertIn(item, matched)
+
+    def test_glob_helper_follows_file_symlinks_on_last_segment(
+        self,
+    ) -> None:
+        """_match_parts follows file symlinks without traversing dir links."""
+        regular = MagicMock()
+        regular.name = "AGENTS.md"
+        regular.path = os.path.join(self.temp_dir, "AGENTS.md")
+        regular.is_file.return_value = True
+        regular.is_dir.return_value = False
+
+        file_symlink = MagicMock()
+        file_symlink.name = "CLAUDE.md"
+        file_symlink.path = os.path.join(self.temp_dir, "CLAUDE.md")
+        file_symlink.is_file.side_effect = (
+            lambda *, follow_symlinks=True: follow_symlinks
+        )
+        file_symlink.is_dir.return_value = False
+
+        dir_symlink = MagicMock()
+        dir_symlink.name = "linked_dir.md"
+        dir_symlink.path = os.path.join(self.temp_dir, "linked_dir.md")
+        dir_symlink.is_file.return_value = False
+        dir_symlink.is_dir.side_effect = (
+            lambda *, follow_symlinks=True: follow_symlinks
+        )
+
+        broken_symlink = MagicMock()
+        broken_symlink.name = "BROKEN.md"
+        broken_symlink.path = os.path.join(self.temp_dir, "BROKEN.md")
+        broken_symlink.is_file.return_value = False
+        broken_symlink.is_dir.return_value = False
+
+        scandir_cm = MagicMock()
+        scandir_cm.__enter__.return_value = [
+            regular,
+            file_symlink,
+            dir_symlink,
+            broken_symlink,
+        ]
+        scandir_cm.__exit__.return_value = False
+
+        with patch("os.scandir", return_value=scandir_cm):
+            for pattern in ("*.md", "**/*.md"):
+                with self.subTest(pattern=pattern):
+                    matches = _glob_helper.glob_match(pattern, self.temp_dir)
+                    self.assertListEqual(
+                        matches,
+                        [regular.path, file_symlink.path],
+                    )
