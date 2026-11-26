@@ -2,6 +2,7 @@
 """Session router — create, list, update, delete, stream, and get messages."""
 import asyncio
 import json
+from contextlib import AsyncExitStack
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -50,11 +51,13 @@ from ..storage import (
     TTSModelConfig,
     SessionConfig,
     SessionNaming,
+    ScheduleOrigin,
     SessionRecord,
     StorageBase,
     TeamRecord,
 )
-from ...message import ToolCallState
+from ...state._state import ScheduleSessionLimits
+from ._schema._session import ListedSession
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...event import CustomEvent
 from ..workspace_manager import WorkspaceManagerBase
@@ -217,9 +220,8 @@ async def list_sessions(
     the session participates in a team — the resolved team detail
     (leader agent + member agents with their session ids).
 
-    The record arrives trimmed: ``state.context``, ``state.summary``
-    and ``state.tool_context`` are cleared, since they hold the model's
-    conversation and every file it has read. Fetch a session's messages
+    The list exposes only effective permissions and tasks from runtime
+    state. Fetch a session's messages
     from ``GET /sessions/{id}/messages`` instead.
 
     Args:
@@ -273,7 +275,7 @@ async def list_sessions(
                     team_record,
                 )
         is_running = await message_bus.is_locked(
-            MessageBusKeys.session_lock(session.id),
+            MessageBusKeys.session_execution_lock(session.id),
         )
         # The live lease overrides the persisted tail tool-call states.
         session_status = (
@@ -283,7 +285,7 @@ async def list_sessions(
         )
         views.append(
             SessionView(
-                session=session,
+                session=ListedSession.from_record(session),
                 is_running=is_running,
                 status=session_status,
                 team=team_detail,
@@ -474,7 +476,7 @@ async def interrupt_session(
 
 @session_router.patch(
     "/{session_id}",
-    response_model=SessionRecord,
+    response_model=ListedSession,
     summary="Update a session",
 )
 async def update_session(
@@ -485,7 +487,7 @@ async def update_session(
     storage: StorageBase = Depends(get_storage),
     access: ResourceAccessService = Depends(get_resource_access_service),
     message_bus: MessageBus = Depends(get_message_bus),
-) -> SessionRecord:
+) -> ListedSession:
     """Update the configuration of an existing session.
 
     Rejected while a chat run holds the session: the agent snapshots
@@ -503,31 +505,53 @@ async def update_session(
             detect an in-flight run.
 
     Returns:
-        `SessionRecord`: The full session record after the update.
+        `ListedSession`: The saved configuration and public session state.
 
     Raises:
         `HTTPException`: 404 if the session does not exist, or if the
             referenced credential / KB is not visible to the caller;
             409 if a chat run is currently active on the session.
     """
-    existing = await storage.get_session(user_id, agent_id, session_id)
-    if existing is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session '{session_id}' not found.",
-        )
+    async with AsyncExitStack() as stack:
+        try:
+            await stack.enter_async_context(
+                message_bus.acquire_lock_bounded(
+                    MessageBusKeys.session_lock(session_id),
+                ),
+            )
+        except TimeoutError as exc:
+            if (
+                await storage.get_session(user_id, agent_id, session_id)
+                is None
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Session '{session_id}' not found.",
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot modify session configuration while the session "
+                "is running or another update is in progress.",
+            ) from exc
+        existing = await storage.get_session(user_id, agent_id, session_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Session '{session_id}' not found.",
+            )
+        saved = await _apply_session_patch(existing, body, access, storage)
+        return ListedSession.from_record(saved)
+    raise RuntimeError("Session lock suppressed a session update error")
 
-    # Checked after the 404 so a missing session reports as missing, and
-    # before the validation round trips below so we fail fast.
-    if await message_bus.is_locked(MessageBusKeys.session_lock(session_id)):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Cannot modify session configuration while the session "
-                "is running."
-            ),
-        )
 
+async def _apply_session_patch(
+    existing: SessionRecord,
+    body: UpdateSessionRequest,
+    access: ResourceAccessService,
+    storage: StorageBase,
+) -> SessionRecord:
+    """Merge a patch into the latest record while holding its session lock."""
+    user_id = existing.user_id
     await _ensure_credential_exists(access, user_id, body.chat_model_config)
     await _ensure_credential_exists(
         access,
@@ -553,15 +577,27 @@ async def update_session(
     )
 
     # ``None`` leaves the stored state untouched (see
-    # ``StorageBase.upsert_session``). ``permission_mode`` is the only
-    # request field living inside ``state``; every other field is a
-    # pure config write, and rewriting ``state`` for those would put
+    # ``StorageBase.upsert_session``). Permission settings live inside
+    # ``state``; every other field is a pure config write. Rewriting
+    # ``state`` for those would put
     # this handler's opening snapshot back over whatever the run has
     # persisted since.
     updated_state = None
-    if body.permission_mode is not None:
+    permission_fields = {
+        "permission_mode": "mode",
+        "read_only": "read_only",
+        "allow_workspace_edits": "allow_workspace_edits",
+        "interactive": "interactive",
+    }
+    permission_updates = {
+        target: getattr(body, source)
+        for source, target in permission_fields.items()
+        if getattr(body, source) is not None
+    }
+    if permission_updates:
         updated_ctx = existing.state.permission_context.model_copy(
-            update={"mode": body.permission_mode},
+            update=permission_updates,
+            deep=True,
         )
 
         updated_state = existing.state.model_copy(
@@ -570,13 +606,35 @@ async def update_session(
             },
         )
 
+        if isinstance(existing.origin, ScheduleOrigin):
+            limits = (
+                existing.state.schedule_session_limits
+                or ScheduleSessionLimits.from_context(
+                    existing.state.permission_context,
+                )
+            )
+            updated_state.schedule_session_limits = limits.model_copy(
+                update={
+                    key: value
+                    for key, value in permission_updates.items()
+                    if key in ScheduleSessionLimits.model_fields
+                },
+            )
+            schedule = await storage.get_schedule(
+                user_id,
+                existing.origin.schedule_id,
+            )
+            if schedule is not None:
+                schedule.apply_to_session(updated_state)
+            updated_state.permission_context.interactive = False
+
     # PATCH semantics: only fields explicitly present in the request body are
     # applied. ``exclude_unset=True`` lets clients distinguish "leave
     # unchanged" (omit) from "clear" (send ``null``) — required for clearing
     # ``fallback_chat_model_config``.
     config_updates = body.model_dump(
         exclude_unset=True,
-        exclude={"permission_mode"},
+        exclude=set(permission_fields),
     )
 
     # An explicit rename settles the name for good — auto-naming must
@@ -599,10 +657,10 @@ async def update_session(
 
     return await storage.upsert_session(
         user_id=user_id,
-        agent_id=agent_id,
+        agent_id=existing.agent_id,
         config=updated_config,
         state=updated_state,
-        session_id=session_id,
+        session_id=existing.id,
     )
 
 
@@ -704,7 +762,7 @@ async def list_messages(
         messages=messages,
         event_cursor=event_cursor,
         is_running=await message_bus.is_locked(
-            MessageBusKeys.session_lock(session_id),
+            MessageBusKeys.session_execution_lock(session_id),
         ),
         has_more=has_more,
     )
@@ -778,61 +836,6 @@ async def get_session_status(
 _HEARTBEAT_INTERVAL_SECS = 30
 _SUBSCRIBE_TIMEOUT_SECS = 5.0
 # Interval between SSE heartbeat comment frames (``:\\n\\n``).
-
-
-async def _worker_still_asking(
-    storage: StorageBase,
-    user_id: str,
-    worker_agent_id: str,
-    worker_session_id: str,
-    reply_id: str,
-) -> bool:
-    """Return whether a worker session is still parked on the ASKING
-    tool call identified by ``reply_id``.
-
-    This is the reconcile-on-read check (design §3.5): the worker
-    session's own ``state.context`` is the single source of truth for
-    "does this confirmation still need answering". A leader-side
-    pending projection whose worker has already resolved / cancelled
-    the call is a ghost and must not be replayed.
-
-    Mirrors the wakeup guard in
-    :meth:`ChatService._run_impl` — a request is "still asking" when
-    the tail ``AssistantMsg`` of the worker carries a tool call in
-    ``ASKING`` or ``SUBMITTED`` state for the matching ``reply_id``.
-
-    Args:
-        storage (`StorageBase`):
-            Application storage.
-        user_id (`str`):
-            The owner user id.
-        worker_agent_id (`str`):
-            The worker agent that owns the session.
-        worker_session_id (`str`):
-            The worker session to inspect.
-        reply_id (`str`):
-            The reply id the pending request belongs to.
-
-    Returns:
-        `bool`:
-            ``True`` if the worker is still awaiting confirmation for
-            ``reply_id``; ``False`` otherwise (resolved, cancelled, or
-            the session/record is gone).
-    """
-    session = await storage.get_session(
-        user_id,
-        worker_agent_id,
-        worker_session_id,
-    )
-    if session is None or not session.state.context:
-        return False
-    last_msg = session.state.context[-1]
-    if last_msg.role != "assistant" or last_msg.id != reply_id:
-        return False
-    return any(
-        tc.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
-        for tc in last_msg.get_content_blocks("tool_call")
-    )
 
 
 @session_router.get(
@@ -937,35 +940,38 @@ async def stream_session_events(
             # session as a team leader. These live in a durable registry,
             # outside the replay log.
             projection = SessionProjection(message_bus)
-            for payload in await projection.list(
-                session_id,
-                SubagentHitlProjector.KIND,
-            ):
-                if not await _worker_still_asking(
-                    storage,
-                    user_id,
-                    payload["worker_agent_id"],
-                    payload["worker_session_id"],
-                    payload["reply_id"],
-                ):
-                    await projection.delete(
-                        session_id,
-                        SubagentHitlProjector.KIND,
-                        SubagentHitlProjector.entry_id(
-                            payload["worker_session_id"],
-                            payload["reply_id"],
-                        ),
-                    )
-                    continue
+            pending = []
+            cards = await SubagentHitlProjector(storage).snapshot(
+                user_id,
+                existing,
+                await projection.list(session_id, SubagentHitlProjector.KIND),
+                message_bus,
+            )
+            for card in cards:
+                pending.append(
+                    {
+                        "worker_session_id": card["worker_session_id"],
+                        "reply_id": card["reply_id"],
+                        "request_id": card["event"]["id"],
+                    },
+                )
                 custom = CustomEvent(
                     name=SubagentHitlProjector.EVT_REQUIRE,
-                    value=payload,
+                    value=card,
                 )
                 data = json.dumps(
                     custom.model_dump(mode="json"),
                     ensure_ascii=False,
                 )
                 yield f"data: {data}\n\n"
+
+            # Cards above carry the full payload. Send their membership once
+            # so reconnecting clients can also remove cards closed offline.
+            snapshot = CustomEvent(
+                name="subagent_hitl_snapshot",
+                value={"pending": pending},
+            )
+            yield f"data: {snapshot.model_dump_json()}\n\n"
 
             while True:
                 try:

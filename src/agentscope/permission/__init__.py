@@ -6,6 +6,7 @@ from ._decision import PermissionDecision
 from ._engine import PermissionEngine
 from ._rule import PermissionRule
 from ._types import PermissionMode, PermissionBehavior
+from ._review import PermissionReview, PermissionReviewer
 
 __all__ = [
     "PermissionContext",
@@ -15,4 +16,6 @@ __all__ = [
     "PermissionRule",
     "PermissionMode",
     "PermissionBehavior",
+    "PermissionReview",
+    "PermissionReviewer",
 ]

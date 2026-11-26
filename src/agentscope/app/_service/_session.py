@@ -204,7 +204,7 @@ class SessionService:
         # persisted context is by definition a stale snapshot, and we
         # save a storage round-trip.
         if await self._bus.is_locked(
-            MessageBusKeys.session_lock(session_id),
+            MessageBusKeys.session_execution_lock(session_id),
         ):
             return SessionStatus.RUNNING
 
@@ -630,19 +630,22 @@ class SessionService:
             `bool`:
                 ``True`` if the schedule record existed and was deleted.
         """
-        for session in await self._storage.list_sessions_by_schedule(
-            user_id,
-            schedule_id,
+        async with self._bus.acquire_lock(
+            MessageBusKeys.schedule_lock(schedule_id),
         ):
-            await self.delete_session(
+            for session in await self._storage.list_sessions_by_schedule(
                 user_id,
-                session.agent_id,
-                session.id,
-            )
+                schedule_id,
+            ):
+                await self.delete_session(
+                    user_id,
+                    session.agent_id,
+                    session.id,
+                )
 
-        # storage.delete_schedule re-iterates the same sessions —
-        # idempotent no-ops; only schedule record + indexes remain.
-        return await self._storage.delete_schedule(user_id, schedule_id)
+            # storage.delete_schedule re-iterates the same sessions —
+            # idempotent no-ops; only schedule record + indexes remain.
+            return await self._storage.delete_schedule(user_id, schedule_id)
 
     # ------------------------------------------------------------------
     # Internals
@@ -697,6 +700,9 @@ class SessionService:
     async def _purge_session_bus(self, session_id: str) -> None:
         """Drop all per-session bus state for one session."""
         await purge_session_approvals(self._bus, session_id)
+        await self._bus.registry_drop(
+            MessageBusKeys.session_interrupts(session_id),
+        )
         await self._bus.log_trim(
             MessageBusKeys.session_events(session_id),
         )

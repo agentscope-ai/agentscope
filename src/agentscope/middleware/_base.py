@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Base middleware class for AgentScope middleware system."""
+from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Awaitable, Callable, TYPE_CHECKING
 
 from ..tool import ToolBase
@@ -167,6 +168,14 @@ class MiddlewareBase:  # pylint: disable=unused-argument
         )
         yield  # pylint: disable=unreachable
 
+    @asynccontextmanager
+    async def tool_dispatch_guard(
+        self,
+        agent: "Agent",
+    ) -> AsyncGenerator[Callable[[], bool], None]:
+        """Yield a pending-input check valid until dispatch is committed."""
+        yield lambda: False
+
     async def on_check_permission(
         self,
         agent: "Agent",
@@ -182,7 +191,8 @@ class MiddlewareBase:  # pylint: disable=unused-argument
         Middleware can delegate with ``next_handler(**input_kwargs)``, replace
         the returned decision, or return a decision without delegating. The
         chain receives copies of ``tool_call`` and ``tool_input``; changes to
-        these copies do not alter the eventual tool invocation.
+        these copies do not alter the eventual tool invocation. AUTO reviews
+        the original validated tool and arguments.
 
         .. note::
             Returning without calling ``next_handler`` bypasses the built-in
@@ -282,6 +292,19 @@ class MiddlewareBase:  # pylint: disable=unused-argument
         raise RuntimeError(
             f"{type(self).__name__} does not implement on_system_prompt",
         )
+
+    async def on_permission_prompt(
+        self,
+        agent: "Agent",
+        current_prompt: str,
+        untrusted_context: list[str],
+    ) -> str:
+        """Apply this middleware's configured instructions for approval.
+
+        Middleware that loads agent-writable content should append that
+        content to ``untrusted_context`` and return only application policy.
+        """
+        return await self.on_system_prompt(agent, current_prompt)
 
     async def list_tools(self) -> list[ToolBase]:
         """List available tools provided by this middleware. Optional to

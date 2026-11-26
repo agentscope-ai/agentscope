@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
 """Request / response schemas for the schedule router."""
+from datetime import datetime
+
 from pydantic import AwareDatetime, BaseModel, Field
 
 from ...storage import (
-    ScheduleRecord,
-    SessionRecord,
+    ScheduleSource,
     ChatModelConfig,
 )
 from ....permission import PermissionMode
+from ...storage._model._base import _RecordBase
+from ...storage._model._permission import AccessSettings
 
 
-class CreateScheduleRequest(BaseModel):
+class CreateScheduleRequest(AccessSettings):
     """Request body for creating a new schedule."""
 
     name: str = Field(description="Display name of the schedule.")
@@ -61,7 +64,7 @@ class CreateScheduleRequest(BaseModel):
     )
 
     permission_mode: PermissionMode = Field(
-        default=PermissionMode.DONT_ASK,
+        default=PermissionMode.AUTO,
         description="Permission level for the agent during "
         "scheduled execution.",
     )
@@ -115,19 +118,58 @@ class UpdateScheduleRequest(BaseModel):
         default=None,
         description="New permission mode.",
     )
+    read_only: bool | None = Field(
+        default=None,
+        description="Restrict execution to read-only operations.",
+    )
+    allow_workspace_edits: bool | None = Field(
+        default=None,
+        description="Grant edits within authorized working directories.",
+    )
+
+
+class ListedScheduleData(AccessSettings):
+    """Public configuration used by the task list and its detail drawer."""
+
+    name: str
+    description: str
+    enabled: bool
+    timezone: str
+    cron_expression: str
+    started_at: datetime
+    ended_at: datetime | None
+    chat_model_config: ChatModelConfig
+    stateful: bool
+    source: ScheduleSource
+    source_session_id: str
+
+
+class ListedSchedule(_RecordBase):
+    """Schedule metadata returned to the task list."""
+
+    user_id: str
+    agent_id: str
+    data: ListedScheduleData
 
 
 class ListSchedulesResponse(BaseModel):
     """Response body for listing schedules."""
 
-    schedules: list[ScheduleRecord] = Field(description="Schedule records.")
+    schedules: list[ListedSchedule] = Field(description="Schedule records.")
     total: int = Field(description="Total number of schedules.")
+
+
+class ScheduleSessionSummary(BaseModel):
+    """Link to an execution in the schedule history."""
+
+    id: str
+    created_at: datetime
 
 
 class ScheduleSessionsResponse(BaseModel):
     """Response body for listing execution sessions of a schedule."""
 
-    sessions: list[SessionRecord] = Field(
+    sessions: list[ScheduleSessionSummary] = Field(
         description="Sessions triggered by this schedule.",
     )
     total: int = Field(description="Total number of execution sessions.")

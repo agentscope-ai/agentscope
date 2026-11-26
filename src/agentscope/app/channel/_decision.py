@@ -21,7 +21,7 @@ async def _load_awaiting(
     user_id: str,
     agent_id: str,
     session_id: str,
-) -> tuple[list[ToolCallBlock], str]:
+) -> tuple[dict[str, tuple[ToolCallBlock, str | None]], str]:
     """Load a session's ASKING tool calls and its current reply id.
 
     Args:
@@ -41,12 +41,12 @@ async def _load_awaiting(
     )
     agent = await storage.get_agent(user_id=user_id, agent_id=agent_id)
     if session is None or agent is None:
-        return [], ""
-    asking = [
-        tc
+        return {}, ""
+    asking = {
+        tc.id: (tc, session.state.confirmation_request(agent.data.name, tc.id))
         for tc in session.state.get_awaiting_tool_calls(agent.data.name)
         if tc.state == ToolCallState.ASKING
-    ]
+    }
     return asking, session.state.reply_id
 
 
@@ -59,6 +59,7 @@ async def resume_after_decision(
     session_id: str,
     tool_call_id: str,
     approved: bool,
+    confirmation_id: str | None = None,
     expected_reply_id: str = "",
     approval_id: str = "",
 ) -> bool:
@@ -76,6 +77,7 @@ async def resume_after_decision(
         session_id (`str`): The derived session.
         tool_call_id (`str`): The awaiting tool call to answer.
         approved (`bool`): The user's decision.
+        confirmation_id: Prompt pinned by the server-side approval record.
         expected_reply_id (`str`): Reply pinned by the approval record.
         approval_id (`str`): Approval round used to make the claim one-shot.
 
@@ -90,8 +92,8 @@ async def resume_after_decision(
     )
     if expected_reply_id and reply_id != expected_reply_id:
         return False
-    tool_call = next((t for t in asking if t.id == tool_call_id), None)
-    if tool_call is None:
+    pending = asking.get(tool_call_id)
+    if pending is None or pending[1] != confirmation_id:
         return False
     claim_key = MessageBusKeys.channel_approval_claim(
         approval_id,
@@ -111,7 +113,11 @@ async def resume_after_decision(
             inputs=UserConfirmResultEvent(
                 reply_id=reply_id,
                 confirm_results=[
-                    ConfirmResult(confirmed=approved, tool_call=tool_call),
+                    ConfirmResult(
+                        confirmed=approved,
+                        tool_call=pending[0],
+                        request_id=confirmation_id,
+                    ),
                 ],
             ),
             signal=False,

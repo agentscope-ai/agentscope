@@ -51,10 +51,11 @@ function expandScheduleToEvents(
 
 export function SchedulePage() {
 	const { t } = useTranslation();
-	const { schedules, remove, refetch } = useSchedules();
+	const { schedules, initialLoading, create, update, remove } = useSchedules();
 	const [viewMode, setViewMode] = React.useState<'calendar' | 'list'>('calendar');
 	const [currentDate, setCurrentDate] = React.useState(new Date());
-	const [selectedSchedule, setSelectedSchedule] = React.useState<ScheduleRecord | null>(null);
+	const [selectedId, setSelectedId] = React.useState<string | null>(null);
+	const selectedSchedule = schedules.find((schedule) => schedule.id === selectedId) ?? null;
 	const [isCreateOpen, setIsCreateOpen] = React.useState(false);
 
 	const rangeStart = React.useMemo(
@@ -73,9 +74,7 @@ export function SchedulePage() {
 	}, [schedules, rangeStart, rangeEnd]);
 
 	const handleEventClick = (event: ScheduleEvent) => {
-		const scheduleId = event.id.split(':')[0];
-		const schedule = schedules.find((s) => s.id === scheduleId);
-		if (schedule) setSelectedSchedule(schedule);
+		setSelectedId(event.id.split(':')[0]);
 	};
 
 	return (
@@ -120,21 +119,28 @@ export function SchedulePage() {
 							onMonthChange={setCurrentDate}
 						/>
 					)}
-					{viewMode === 'list' && <ListTabPage />}
+					{viewMode === 'list' && (
+						<ListTabPage
+							schedules={schedules}
+							initialLoading={initialLoading}
+							onSelect={setSelectedId}
+						/>
+					)}
 				</div>
 			</main>
 
 			<ScheduleDetailDrawer
 				schedule={selectedSchedule}
 				open={!!selectedSchedule}
-				onOpenChange={(open) => !open && setSelectedSchedule(null)}
+				onOpenChange={(open) => !open && setSelectedId(null)}
 				onDelete={remove}
+				onUpdate={update}
 			/>
 
 			<CreateScheduleDialog
 				open={isCreateOpen}
 				onOpenChange={setIsCreateOpen}
-				onCreated={refetch}
+				onCreate={create}
 			/>
 		</div>
 	);

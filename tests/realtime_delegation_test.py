@@ -7,9 +7,12 @@ import json
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, call, patch
 
+from permission_review_test import _review, _tool
 from utils import MockModel
 
 from agentscope.agent import Agent, RealtimeAgent
+from agentscope.permission import PermissionBehavior, PermissionMode
+from agentscope.permission._evidence import ScheduleAuthorization
 from agentscope.credential import OpenAICredential
 from agentscope.event import (
     ConfirmResult,
@@ -53,6 +56,110 @@ def _create_live_agent(model: MockModel, toolkit: Toolkit) -> RealtimeAgent:
 
 class RealtimeDelegationDedupTest(IsolatedAsyncioTestCase):
     """Exercise concurrent approvals and external results with real Agents."""
+
+    async def test_live_schedule_changes_invalidate_delegated_review(
+        self,
+    ) -> None:
+        """A delegated reviewer follows both scope updates and removal."""
+        for clear in (True, False):
+            with self.subTest(clear=clear):
+                await self._assert_schedule_change(clear)
+
+    async def _assert_schedule_change(self, clear: bool) -> None:
+        live = _create_live_agent(MockModel(), Toolkit())
+        self.addAsyncCleanup(live.close)
+        live.state.permission_context.mode = PermissionMode.AUTO
+        scope = ScheduleAuthorization(
+            schedule_id="job",
+            user_id="user",
+            source="USER",
+            description="Edit draft",
+            authorized_description="Edit draft",
+        )
+        live.state.schedule_authorization = scope
+        with patch.object(live, "_schedule_client_delegation"):
+            live._start_client_delegation("task")
+        backend = live._delegations["task"].agent
+        assert backend is not None
+
+        async def review(request: dict) -> object:
+            self.assertEqual(
+                request["schedule_authorization"],
+                scope.model_dump(),
+            )
+            if clear:
+                live.state.schedule_authorization = None
+            else:
+                scope.description = "Inspect only"
+                scope.authorized_description = "Inspect only"
+            return _review()
+
+        backend._engine.reviewer = review
+        decision = await backend._check_permission(
+            ToolCallBlock(id="call", name="Change", input="{}"),
+            _tool(),
+            {},
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        current = backend.state.permission_review_context()
+        self.assertEqual(
+            current.get("schedule_authorization"),
+            live.state.schedule_authorization,
+        )
+
+    async def test_live_transcript_invalidates_delegated_review(self) -> None:
+        """New voice input must invalidate the backend reviewer result."""
+        live = _create_live_agent(MockModel(), Toolkit())
+        self.addAsyncCleanup(live.close)
+        live.state.permission_context.mode = PermissionMode.AUTO
+        with patch.object(live, "_schedule_client_delegation"):
+            live._start_client_delegation("task")
+        backend = live._delegations["task"].agent
+        assert backend is not None
+        reply = live._start_live_reply("user")
+
+        async def review(_request: dict) -> object:
+            live._emit_live_text("user", reply, "Stop the update.", 10)
+            return _review()
+
+        backend._engine.reviewer = review
+        decision = await backend._check_permission(
+            ToolCallBlock(id="call", name="Change", input="{}"),
+            _tool(),
+            {},
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+
+    async def test_parent_read_only_survives_review_and_sync(self) -> None:
+        """A backend approval cannot undo a concurrent parent restriction."""
+        live = _create_live_agent(MockModel(), Toolkit())
+        self.addAsyncCleanup(live.close)
+        live.state.permission_context.mode = PermissionMode.AUTO
+        with patch.object(live, "_schedule_client_delegation"):
+            live._start_client_delegation("task")
+        delegation = live._delegations["task"]
+        backend = delegation.agent
+        assert backend is not None
+
+        async def review(_request: dict) -> object:
+            live.state.permission_context = (
+                live.state.permission_context.model_copy(
+                    update={"read_only": True},
+                )
+            )
+            return _review()
+
+        backend._engine.reviewer = review
+        decision = await backend._check_permission(
+            ToolCallBlock(id="call", name="Change", input="{}"),
+            _tool(),
+            {},
+        )
+        live._sync_delegation_state(delegation)
+        self.assertEqual(
+            (decision.behavior, live.state.permission_context.read_only),
+            (PermissionBehavior.DENY, True),
+        )
 
     async def _start(
         self,
@@ -129,7 +236,12 @@ class RealtimeDelegationDedupTest(IsolatedAsyncioTestCase):
         return UserConfirmResultEvent(
             reply_id=reply.id,
             confirm_results=[
-                ConfirmResult(confirmed=True, tool_call=tc) for tc in calls
+                ConfirmResult(
+                    request_id=reply.confirmation_request(tc.id),
+                    confirmed=True,
+                    tool_call=tc,
+                )
+                for tc in calls
             ],
         )
 
@@ -293,11 +405,16 @@ class RealtimeDelegationErrorTest(IsolatedAsyncioTestCase):
                 if needs_confirmation:
                     await asyncio.gather(*list(live._tasks))
                     pending = backend.state.get_awaiting_tool_calls("Friday")
+                    request_id = backend.state.confirmation_request(
+                        "Friday",
+                        pending[0].id,
+                    )
                     await live.send(
                         UserConfirmResultEvent(
                             reply_id=backend.state.reply_id,
                             confirm_results=[
                                 ConfirmResult(
+                                    request_id=request_id,
                                     confirmed=True,
                                     tool_call=pending[0],
                                 ),

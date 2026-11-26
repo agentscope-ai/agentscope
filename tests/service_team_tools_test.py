@@ -19,9 +19,10 @@ from unittest import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
 
-from utils import AnyString, FakeWorkspaceManager
+from service_scheduler_test import _make_record as make_schedule
+from utils import AnyString, FakeWorkspaceManager, MockModel
 
-from agentscope.agent import ContextConfig, ReActConfig
+from agentscope.agent import Agent, ContextConfig, ReActConfig
 from agentscope.app._tool import (
     AgentCreate,
     AgentInvite,
@@ -48,7 +49,8 @@ from agentscope.app.storage import (
     SessionConfig,
     StorageBase,
 )
-from agentscope.message import ToolResultState
+from agentscope.event import ToolResultEndEvent
+from agentscope.message import ToolCallBlock, ToolResultState
 from agentscope.permission import (
     AdditionalWorkingDirectory,
     PermissionBehavior,
@@ -57,6 +59,7 @@ from agentscope.permission import (
     PermissionRule,
 )
 from agentscope.state import AgentState
+from agentscope.tool import FunctionTool, Toolkit
 
 
 def _make_storage(
@@ -354,6 +357,7 @@ class TestAgentCreate(_TeamToolsTestBase):
             hint_payload,
             {
                 "type": "hint",
+                "source_role": None,
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
@@ -383,9 +387,8 @@ class TestAgentCreate(_TeamToolsTestBase):
         leader_state: AgentState,
         template: SubAgentTemplate,
         worker_name: str = "worker",
-    ) -> PermissionContext:
-        """Run ``AgentCreate`` with the given template + leader state
-        and return the worker session's :class:`PermissionContext`."""
+    ) -> AgentState:
+        """Create a worker and reload its persisted session state."""
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
@@ -415,7 +418,7 @@ class TestAgentCreate(_TeamToolsTestBase):
             self.user_id,
             worker_agent_id,
         )
-        return worker_sessions[0].state.permission_context
+        return worker_sessions[0].state
 
     def _make_leader_state(self) -> AgentState:
         """Build a leader :class:`AgentState` with one of every kind of
@@ -423,7 +426,7 @@ class TestAgentCreate(_TeamToolsTestBase):
         each flag."""
         return AgentState(
             permission_context=PermissionContext(
-                mode=PermissionMode.ACCEPT_EDITS,
+                mode="accept_edits",
                 working_directories={
                     "/tmp/as-workspace": AdditionalWorkingDirectory(
                         path="/tmp/as-workspace",
@@ -449,11 +452,13 @@ class TestAgentCreate(_TeamToolsTestBase):
         :attr:`permission_context` is empty, so the worker effectively
         mirrors the leader."""
         leader_state = self._make_leader_state()
-        worker_context = await self._spawn_worker_with_template(
+        worker = await self._spawn_worker_with_template(
             leader_state,
             DEFAULT_SUB_AGENT_TEMPLATE,
         )
-        self.assertEqual(worker_context.mode, PermissionMode.ACCEPT_EDITS)
+        worker_context = worker.effective_permission_context
+        self.assertEqual(worker_context.mode, PermissionMode.ASK)
+        self.assertEqual(worker_context, leader_state.permission_context)
         self.assertIn("/tmp/as-workspace", worker_context.working_directories)
         self.assertEqual(
             worker_context.allow_rules["Bash"][0].rule_content,
@@ -470,23 +475,23 @@ class TestAgentCreate(_TeamToolsTestBase):
                 DEFAULT_SUB_AGENT_TEMPLATE.system_prompt_template
             ),
             permission_context=PermissionContext(
-                mode=PermissionMode.EXPLORE,
+                mode="explore",
             ),
             override_leader_mode=True,
         )
-        worker_context = await self._spawn_worker_with_template(
+        worker = await self._spawn_worker_with_template(
             leader_state,
             explorer,
         )
-        self.assertEqual(worker_context.mode, PermissionMode.EXPLORE)
+        worker_context = worker.effective_permission_context
+        self.assertEqual(worker_context.mode, PermissionMode.ASK)
+        self.assertTrue(worker_context.read_only)
         # Rules and dirs still inherited (defaults).
         self.assertIn("/tmp/as-workspace", worker_context.working_directories)
         self.assertIn("Bash", worker_context.allow_rules)
 
     async def test_extend_flags_off_isolate_template(self) -> None:
-        """``extend_*=False`` keeps the leader's rules and dirs out of
-        the worker; the template's own entries are the worker's
-        complete set."""
+        """Optional grants and directories stay isolated with flags off."""
         leader_state = self._make_leader_state()
         sandbox = SubAgentTemplate(
             type="sandbox",
@@ -511,10 +516,11 @@ class TestAgentCreate(_TeamToolsTestBase):
             extend_leader_permission_rules=False,
             extend_leader_working_directories=False,
         )
-        worker_context = await self._spawn_worker_with_template(
+        worker = await self._spawn_worker_with_template(
             leader_state,
             sandbox,
         )
+        worker_context = worker.effective_permission_context
         self.assertEqual(worker_context.mode, PermissionMode.BYPASS)
         self.assertEqual(worker_context.working_directories, {})
         self.assertNotIn("Bash", worker_context.allow_rules)
@@ -524,13 +530,105 @@ class TestAgentCreate(_TeamToolsTestBase):
             "template",
         )
 
+    async def test_created_worker_enforces_parent_denials(self) -> None:
+        """Direct, team, and scheduled restrictions survive template flags."""
+        calls = []
+
+        def inspect_fixture() -> str:
+            calls.append(True)
+            return "fixture"
+
+        tool = FunctionTool(inspect_fixture, is_read_only=True)
+        deny = PermissionRule(
+            tool_name=tool.name,
+            rule_content=None,
+            behavior=PermissionBehavior.DENY,
+            source="session",
+        )
+        grant = deny.model_copy(update={"behavior": PermissionBehavior.ALLOW})
+        ask = deny.model_copy(
+            update={
+                "behavior": PermissionBehavior.ASK,
+                "tool_name": "other",
+            },
+        )
+        denials = {tool.name: [deny]}
+        direct = self._make_leader_state()
+        direct.permission_context.deny_rules = denials
+        team = self._make_leader_state()
+        team.inherit_member_scope(direct)
+        scheduled = self._make_leader_state()
+        schedule = make_schedule()
+        schedule.data.deny_rules = denials
+        schedule.apply_to_session(scheduled, new_session=True)
+
+        for source, parent in (
+            ("direct", direct),
+            ("team", team),
+            ("schedule", scheduled),
+        ):
+            parent.permission_context.ask_rules = {"other": [ask]}
+            for extend in (False, True):
+                with self.subTest(source=source, extend=extend):
+                    calls.clear()
+                    local = PermissionContext(
+                        mode=PermissionMode.BYPASS,
+                        allow_rules={tool.name: [grant]},
+                    )
+                    template = DEFAULT_SUB_AGENT_TEMPLATE.model_copy(
+                        update={
+                            "permission_context": local,
+                            "override_leader_mode": True,
+                            "extend_leader_permission_rules": extend,
+                        },
+                    )
+                    worker = await self._spawn_worker_with_template(
+                        parent,
+                        template,
+                        worker_name=f"{source}-{int(extend)}",
+                    )
+                    agent = Agent(
+                        "worker",
+                        "Help",
+                        MockModel(),
+                        state=worker,
+                        toolkit=Toolkit(tools=[tool]),
+                    )
+                    call = ToolCallBlock(id="call", name=tool.name, input="{}")
+                    results = [
+                        event.state
+                        async for event in agent._execute_tool_call(call)
+                        if isinstance(event, ToolResultEndEvent)
+                    ]
+                    policy = worker.effective_permission_context
+                    self.assertEqual(
+                        (results, calls),
+                        ([ToolResultState.DENIED], []),
+                    )
+                    self.assertEqual(policy.deny_rules, denials)
+                    self.assertEqual(
+                        policy.ask_rules,
+                        {"other": [ask]} if extend else {},
+                    )
+                    expected_grants = dict(local.allow_rules)
+                    if extend:
+                        expected_grants.update(
+                            parent.permission_context.allow_rules,
+                        )
+                    self.assertEqual(policy.allow_rules, expected_grants)
+                    worker.permission_context = PermissionContext()
+                    self.assertEqual(
+                        worker.effective_permission_context.deny_rules,
+                        denials,
+                    )
+
     async def test_extend_rules_keeps_template_rules_first(self) -> None:
         """When merging rules for the same tool, the template's rules
         appear first in the list so the engine evaluates them before
         the leader's."""
         leader_state = AgentState(
             permission_context=PermissionContext(
-                mode=PermissionMode.DEFAULT,
+                mode=PermissionMode.ASK,
                 allow_rules={
                     "Bash": [
                         PermissionRule(
@@ -562,10 +660,11 @@ class TestAgentCreate(_TeamToolsTestBase):
                 },
             ),
         )
-        worker_context = await self._spawn_worker_with_template(
+        worker = await self._spawn_worker_with_template(
             leader_state,
             template,
         )
+        worker_context = worker.effective_permission_context
         bash_rules = worker_context.allow_rules["Bash"]
         self.assertEqual(
             [r.source for r in bash_rules],
@@ -600,10 +699,11 @@ class TestAgentCreate(_TeamToolsTestBase):
                 },
             ),
         )
-        worker_context = await self._spawn_worker_with_template(
+        worker = await self._spawn_worker_with_template(
             leader_state,
             template,
         )
+        worker_context = worker.effective_permission_context
         self.assertEqual(
             worker_context.working_directories["/tmp/shared"].source,
             "template",
@@ -1015,6 +1115,7 @@ class TestTeamSay(_TeamToolsTestBase):
             target_inbox[0][1],
             {
                 "type": "hint",
+                "source_role": None,
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "finished_at": AnyString(),

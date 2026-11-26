@@ -47,7 +47,7 @@ from agentscope.tool import (
 
 
 class PermissionEngineDefaultModeTest(IsolatedAsyncioTestCase):
-    """Tests for :attr:`PermissionMode.DEFAULT`.
+    """Tests for :attr:`PermissionMode.ASK`.
 
     DEFAULT is the most restrictive non-DONT_ASK mode: every operation
     requires explicit permission unless an allow rule matches or the
@@ -56,7 +56,7 @@ class PermissionEngineDefaultModeTest(IsolatedAsyncioTestCase):
     """
 
     async def asyncSetUp(self) -> None:
-        self.context = PermissionContext(mode=PermissionMode.DEFAULT)
+        self.context = PermissionContext(mode=PermissionMode.ASK)
         self.engine = PermissionEngine(self.context)
 
     async def test_default_write_with_no_rules_returns_ask(self) -> None:
@@ -212,7 +212,7 @@ class PermissionEngineDefaultModeTest(IsolatedAsyncioTestCase):
 
 
 class PermissionEngineExploreModeTest(IsolatedAsyncioTestCase):
-    """Tests for :attr:`PermissionMode.EXPLORE`.
+    """Tests for :attr:`PermissionMode.ASK`.
 
     EXPLORE is the read-only mode: an invocation is ALLOWed iff
     :meth:`ToolBase.check_read_only` returns True; everything else is
@@ -222,7 +222,7 @@ class PermissionEngineExploreModeTest(IsolatedAsyncioTestCase):
     """
 
     async def asyncSetUp(self) -> None:
-        self.context = PermissionContext(mode=PermissionMode.EXPLORE)
+        self.context = PermissionContext(mode="explore")
         self.engine = PermissionEngine(self.context)
 
     async def test_explore_read_tool_allows(self) -> None:
@@ -368,7 +368,7 @@ class PermissionEngineExploreModeTest(IsolatedAsyncioTestCase):
 
 
 class PermissionEngineAcceptEditsModeTest(IsolatedAsyncioTestCase):
-    """Tests for :attr:`PermissionMode.ACCEPT_EDITS`.
+    """Tests for :attr:`PermissionMode.ASK`.
 
     ACCEPT_EDITS auto-allows file edits within configured working
     directories; reads are auto-allowed unconditionally; other
@@ -377,7 +377,7 @@ class PermissionEngineAcceptEditsModeTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         self.context = PermissionContext(
-            mode=PermissionMode.ACCEPT_EDITS,
+            mode="accept_edits",
             working_directories={
                 "/tmp/project": AdditionalWorkingDirectory(
                     path="/tmp/project",
@@ -422,7 +422,7 @@ class PermissionEngineAcceptEditsModeTest(IsolatedAsyncioTestCase):
 
             # Case 1: working_dir given as real path, file via link
             context = PermissionContext(
-                mode=PermissionMode.ACCEPT_EDITS,
+                mode="accept_edits",
                 working_directories={
                     real_dir: AdditionalWorkingDirectory(
                         path=real_dir,
@@ -439,7 +439,7 @@ class PermissionEngineAcceptEditsModeTest(IsolatedAsyncioTestCase):
 
             # Case 2: working_dir given as link, file via real path
             context = PermissionContext(
-                mode=PermissionMode.ACCEPT_EDITS,
+                mode="accept_edits",
                 working_directories={
                     link_dir: AdditionalWorkingDirectory(
                         path=link_dir,
@@ -468,7 +468,7 @@ class PermissionEngineAcceptEditsModeTest(IsolatedAsyncioTestCase):
         """
         root = os.path.abspath(os.sep)
         context = PermissionContext(
-            mode=PermissionMode.ACCEPT_EDITS,
+            mode="accept_edits",
             working_directories={
                 root: AdditionalWorkingDirectory(path=root, source="test"),
             },
@@ -706,9 +706,8 @@ class PermissionEngineBypassModeTest(IsolatedAsyncioTestCase):
         sys.platform == "win32",
         "Bash tool is not supported on Windows",
     )
-    async def test_bypass_ask_rule_returns_ask(self) -> None:
-        """A user-configured ask rule represents explicit intent to be
-        prompted; BYPASS must not override it."""
+    async def test_bypass_ask_rule_is_approved(self) -> None:
+        """BYPASS approves pending requests, including explicit ASK rules."""
         self.engine.add_rule(
             PermissionRule(
                 tool_name="Bash",
@@ -721,7 +720,7 @@ class PermissionEngineBypassModeTest(IsolatedAsyncioTestCase):
             Bash(),
             {"command": "git push origin main"},
         )
-        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
     async def test_bypass_skips_dangerous_path_safety(self) -> None:
         """BYPASS skips the Write tool's dangerous-path safety check —
@@ -803,7 +802,7 @@ class PermissionEngineBypassModeTest(IsolatedAsyncioTestCase):
 
 
 class PermissionEngineDontAskModeTest(IsolatedAsyncioTestCase):
-    """Tests for :attr:`PermissionMode.DONT_ASK`.
+    """Tests for :attr:`PermissionMode.ASK`.
 
     DONT_ASK is used when no user is available to answer prompts
     (scheduled tasks, background runs). The invariant is "never return
@@ -812,7 +811,7 @@ class PermissionEngineDontAskModeTest(IsolatedAsyncioTestCase):
     """
 
     async def asyncSetUp(self) -> None:
-        self.context = PermissionContext(mode=PermissionMode.DONT_ASK)
+        self.context = PermissionContext(mode="dont_ask")
         self.engine = PermissionEngine(self.context)
 
     @unittest.skipIf(
@@ -900,7 +899,7 @@ class PermissionEngineDontAskModeTest(IsolatedAsyncioTestCase):
         within a configured working directory are auto-allowed (no user is
         available to grant them interactively)."""
         context = PermissionContext(
-            mode=PermissionMode.DONT_ASK,
+            mode="dont_ask",
             working_directories={
                 "/tmp/project": AdditionalWorkingDirectory(
                     path="/tmp/project",
@@ -926,7 +925,7 @@ class PermissionEngineDontAskModeTest(IsolatedAsyncioTestCase):
         """Edits outside the working directory cannot be granted without a
         user to ask, so they are refused (DONT_ASK never returns ASK)."""
         context = PermissionContext(
-            mode=PermissionMode.DONT_ASK,
+            mode="dont_ask",
             working_directories={
                 "/tmp/project": AdditionalWorkingDirectory(
                     path="/tmp/project",
@@ -949,7 +948,7 @@ class PermissionEngineDontAskModeTest(IsolatedAsyncioTestCase):
         """DONT_ASK auto-allows filesystem commands whose targets are all
         inside the working directory, and denies those that escape it."""
         context = PermissionContext(
-            mode=PermissionMode.DONT_ASK,
+            mode="dont_ask",
             working_directories={
                 "/tmp/project": AdditionalWorkingDirectory(
                     path="/tmp/project",
@@ -1022,7 +1021,7 @@ class PermissionEngineDontAskModeTest(IsolatedAsyncioTestCase):
         # Conversion records both the original safety reason and the
         # DONT_ASK conversion in the decision_reason.
         reason = (decision.decision_reason or "").lower()
-        self.assertIn("dont_ask", reason)
+        self.assertIn("unattended", reason)
         self.assertIn("safety", reason)
 
     @unittest.skipIf(

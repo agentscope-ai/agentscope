@@ -11,15 +11,20 @@ follow, and both are asserted here:
   ``state`` to storage at all, so the handler's opening snapshot can
   never land on top of what the run has persisted since.
 """
+import asyncio
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from typing import Any
-from unittest import IsolatedAsyncioTestCase
+from unittest import TestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app import create_app
+from agentscope.app._bus_ops import session_execution
 from agentscope.app.message_bus import MessageBusKeys, RedisMessageBus
 from agentscope.app.storage import (
     AgentData,
@@ -32,18 +37,24 @@ from agentscope.app.storage import (
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.credential import OpenAICredential
-from agentscope.permission import PermissionMode
-from agentscope.message import UserMsg
-from agentscope.state import Task
+from agentscope.permission import PermissionMode, PermissionRule
+from agentscope.permission._evidence import ScheduleAuthorization
+from agentscope.event import (
+    ConfirmResult,
+    RequireUserConfirmEvent,
+    UserConfirmResultEvent,
+)
+from agentscope.message import ToolCallBlock, UserMsg
+from agentscope.state import AgentState, Task
 from agentscope.state._state import ReadCacheEntry
 
 HEADERS = {"X-User-ID": "alice"}
 
 
-class SessionConfigPatchTest(IsolatedAsyncioTestCase):
+class SessionConfigPatchTest(TestCase):
     """Exercise the PATCH endpoint against a fakeredis-backed app."""
 
-    async def asyncSetUp(self) -> None:
+    def setUp(self) -> None:
         """Start an app and seed one agent with one session."""
         # enterContext binds the context manager to the test's lifetime;
         # pylint does not recognise the unittest-native helper.
@@ -57,23 +68,30 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         recorded_states: list[Any] = []
 
         class _Storage(RedisStorage):
+            _client = None
+
             async def __aenter__(self) -> Any:
                 self._client = redis
                 return self
 
             async def aclose(self) -> None:
+                """Release the fixture client."""
                 self._client = None
 
             async def upsert_session(self, *args: Any, **kwargs: Any) -> Any:
+                """Capture each state write before persisting it."""
                 recorded_states.append(kwargs.get("state"))
                 return await super().upsert_session(*args, **kwargs)
 
         class _Bus(RedisMessageBus):
+            _client = None
+
             async def __aenter__(self) -> Any:
                 self._client = redis
                 return self
 
             async def aclose(self) -> None:
+                """Release the fixture client."""
                 self._client = None
 
         self.recorded_states = recorded_states
@@ -86,8 +104,11 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         )
         self.client = self.enterContext(TestClient(app))
 
+        # The async Redis client belongs to the application event loop.
+        self.portal = self.client.portal
         storage = app.state.storage
-        self.agent_id = await storage.upsert_agent(
+        self.agent_id = self.portal.call(
+            storage.upsert_agent,
             "alice",
             AgentRecord(
                 user_id="alice",
@@ -110,7 +131,8 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         # Give the stored state something distinguishable, so a
         # clobbering write is visible rather than merely theoretical.
         self.storage = storage
-        record = await storage.get_session(
+        record = self.portal.call(
+            storage.get_session,
             "alice",
             self.agent_id,
             self.session_id,
@@ -137,11 +159,14 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
                 file_path="/w/a.py",
             ),
         ]
-        await storage.update_session_state(
-            user_id="alice",
-            agent_id=self.agent_id,
-            session_id=self.session_id,
-            state=record.state,
+        self.portal.call(
+            partial(
+                storage.update_session_state,
+                user_id="alice",
+                agent_id=self.agent_id,
+                session_id=self.session_id,
+                state=record.state,
+            ),
         )
         self.recorded_states.clear()
 
@@ -165,9 +190,10 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         # never offered a state to write".
         self.assertEqual(self.recorded_states, [None])
 
-    async def test_realtime_config_omission_and_explicit_null(self) -> None:
+    def test_realtime_config_omission_and_explicit_null(self) -> None:
         """Omission keeps realtime config while null clears it."""
-        record = await self.storage.get_session(
+        record = self.portal.call(
+            self.storage.get_session,
             "alice",
             self.agent_id,
             self.session_id,
@@ -178,13 +204,16 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
             model="qwen3.5-omni-plus-realtime",
             parameters={"voice": "Tina"},
         )
-        await self.storage.upsert_session(
-            user_id="alice",
-            agent_id=self.agent_id,
-            config=record.config.model_copy(
-                update={"realtime_model_config": realtime_config},
+        self.portal.call(
+            partial(
+                self.storage.upsert_session,
+                user_id="alice",
+                agent_id=self.agent_id,
+                config=record.config.model_copy(
+                    update={"realtime_model_config": realtime_config},
+                ),
+                session_id=self.session_id,
             ),
-            session_id=self.session_id,
         )
         self.recorded_states.clear()
 
@@ -212,9 +241,10 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_asr_config_omission_and_explicit_null(self) -> None:
+    def test_asr_config_omission_and_explicit_null(self) -> None:
         """Omission keeps ASR config while null disables speech input."""
-        record = await self.storage.get_session(
+        record = self.portal.call(
+            self.storage.get_session,
             "alice",
             self.agent_id,
             self.session_id,
@@ -225,13 +255,16 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
             model="qwen-audio-3.1-asr-flash",
             parameters={"language_hints": ["zh"]},
         )
-        await self.storage.upsert_session(
-            user_id="alice",
-            agent_id=self.agent_id,
-            config=record.config.model_copy(
-                update={"asr_model_config": asr_config},
+        self.portal.call(
+            partial(
+                self.storage.upsert_session,
+                user_id="alice",
+                agent_id=self.agent_id,
+                config=record.config.model_copy(
+                    update={"asr_model_config": asr_config},
+                ),
+                session_id=self.session_id,
             ),
-            session_id=self.session_id,
         )
         self.recorded_states.clear()
 
@@ -255,13 +288,15 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_voice_profile_and_realtime_configs_coexist(self) -> None:
+    def test_voice_profile_and_realtime_configs_coexist(self) -> None:
         """Create and update keep both voice configs and validate ownership."""
-        credential_id = await self.storage.upsert_credential(
+        credential_id = self.portal.call(
+            self.storage.upsert_credential,
             "alice",
             OpenAICredential(api_key="test-key"),
         )
-        profile_id = await self.storage.upsert_voice_profile(
+        profile_id = self.portal.call(
+            self.storage.upsert_voice_profile,
             "alice",
             VoiceProfileRecord(
                 user_id="alice",
@@ -303,7 +338,8 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
                     response = self._patch(configs)
                     self.assertEqual(response.status_code, 200)
                     session_id = self.session_id
-                record = await self.storage.get_session(
+                record = self.portal.call(
+                    self.storage.get_session,
                     "alice",
                     self.agent_id,
                     session_id,
@@ -318,7 +354,7 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
 
     def test_permission_mode_patch_writes_only_that_field(self) -> None:
         """``permission_mode`` is the one field that must carry state."""
-        response = self._patch({"permission_mode": "accept_edits"})
+        response = self._patch({"permission_mode": "ask"})
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(self.recorded_states), 1)
@@ -326,7 +362,7 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         self.assertIsNotNone(written)
         self.assertEqual(
             written.permission_context.mode,
-            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.ASK,
         )
         # Everything else in the state rides along untouched.
         self.assertEqual(
@@ -334,10 +370,103 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
             ["written by the run"],
         )
 
-    async def test_patch_rejected_while_the_session_runs(self) -> None:
+    def test_permission_patch_panel_reads_inherited_policy(self) -> None:
+        """PATCH and list expose the same effective policy and public state."""
+        args = ("alice", self.agent_id, self.session_id)
+        record = self.portal.call(self.storage.get_session, *args)
+        parent = AgentState()
+        rule = PermissionRule(
+            tool_name="Deploy",
+            rule_content=None,
+            behavior="deny",
+            source="user",
+        )
+        parent.permission_context.deny_rules = {"Deploy": [rule]}
+        parent.permission_context.read_only = True
+        parent.retain_authorization([UserMsg("user", "member-private")])
+        record.state.inherit_member_scope(parent)
+        record.state.retain_authorization([UserMsg("user", "archive-private")])
+        record.state.schedule_authorization = ScheduleAuthorization(
+            schedule_id="s",
+            user_id="alice",
+            source="USER",
+            description="schedule-private",
+            evidence=parent.authorization_evidence,
+        )
+        self.portal.call(
+            self.storage.update_session_state,
+            *args,
+            record.state,
+        )
+        response = self._patch({"permission_mode": "auto"})
+        self.assertEqual(response.status_code, 200)
+        for marker in (
+            "member-private",
+            "archive-private",
+            "schedule-private",
+        ):
+            self.assertNotIn(marker, response.text)
+        self.assertEqual(response.json(), self._listed()["session"])
+        record.state.permission_context.mode = PermissionMode.AUTO
+        self.assertEqual(
+            response.json()["state"],
+            {
+                "permission_context": (
+                    record.state.effective_permission_context.model_dump(
+                        mode="json",
+                    )
+                ),
+                "tasks_context": record.state.tasks_context.model_dump(),
+            },
+        )
+
+    def test_missing_confirmation_id_returns_fixable_http_error(self) -> None:
+        """Reject a malformed receipt before enqueueing or ending the reply."""
+        args = ("alice", self.agent_id, self.session_id)
+        record = self.portal.call(self.storage.get_session, *args)
+        call = ToolCallBlock(
+            id="tool",
+            name="edit",
+            input="{}",
+            state="asking",
+        )
+        record.state.append_context("ann", [call])
+        msg = record.state.get_reply_message("ann")
+        card = RequireUserConfirmEvent.issue(msg.id, call)
+        msg.set_confirmation_request(call.id, card.id)
+        self.portal.call(
+            self.storage.update_session_state,
+            *args,
+            record.state,
+        )
+        event = UserConfirmResultEvent(
+            reply_id=msg.id,
+            confirm_results=[
+                ConfirmResult(confirmed=True, tool_call=call),
+            ],
+        )
+        response = self.client.post(
+            "/chat/",
+            headers=HEADERS,
+            json={
+                "agent_id": self.agent_id,
+                "session_id": self.session_id,
+                "input": event.model_dump(mode="json"),
+            },
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("RequireUserConfirmEvent.id", response.json()["detail"])
+        self.assertEqual(
+            self.portal.call(self.storage.get_session, *args).state,
+            record.state,
+        )
+
+    def test_patch_rejected_while_the_session_runs(self) -> None:
         """Holding the run lock makes configuration read-only."""
         lock_key = MessageBusKeys.session_lock(self.session_id)
-        async with self.bus.acquire_lock(lock_key, ttl_secs=30):
+        with self.portal.wrap_async_context_manager(
+            self.bus.acquire_lock(lock_key, ttl_secs=30),
+        ):
             response = self._patch({"name": "after"})
 
         self.assertEqual(response.status_code, 409)
@@ -346,7 +475,7 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         # a status code applied after the fact.
         self.assertEqual(self.recorded_states, [])
 
-    async def test_missing_session_reports_404_not_409(self) -> None:
+    def test_missing_session_reports_404_not_409(self) -> None:
         """A missing session reports as missing even while locked.
 
         The lock key is derived from the requested id, so a caller that
@@ -354,7 +483,9 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         session that never existed.
         """
         lock_key = MessageBusKeys.session_lock("ghost")
-        async with self.bus.acquire_lock(lock_key, ttl_secs=30):
+        with self.portal.wrap_async_context_manager(
+            self.bus.acquire_lock(lock_key, ttl_secs=30),
+        ):
             response = self.client.patch(
                 "/sessions/ghost",
                 headers=HEADERS,
@@ -372,16 +503,62 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         make listing twenty sessions cost twenty transcripts to render a
         sidebar that shows a name and a date.
         """
-        listed = self.client.get(
+        args = ("alice", self.agent_id, self.session_id)
+        record = self.portal.call(self.storage.get_session, *args)
+        parent = AgentState()
+        parent.permission_context.read_only = True
+        parent.retain_authorization([UserMsg("user", "member-private")])
+        record.state.retain_authorization([UserMsg("user", "archive-private")])
+        record.state.inherit_member_scope(parent)
+        record.state.schedule_authorization = ScheduleAuthorization(
+            schedule_id="s",
+            user_id="alice",
+            source="USER",
+            description="schedule-private",
+            evidence=parent.authorization_evidence,
+        )
+        self.portal.call(
+            self.storage.update_session_state,
+            *args,
+            record.state,
+        )
+        response = self.client.get(
             "/sessions/",
             headers=HEADERS,
             params={"agent_id": self.agent_id},
-        ).json()["sessions"][0]
-
-        state = listed["session"]["state"]
-        self.assertEqual(state["context"], [])
-        self.assertEqual(state["summary"], "")
-        self.assertEqual(state["tool_context"]["read_file_cache"], [])
+        )
+        self.assertEqual(response.status_code, 200)
+        for marker in (
+            "member-private",
+            "archive-private",
+            "schedule-private",
+        ):
+            self.assertNotIn(marker, response.text)
+        listed = response.json()["sessions"][0]["session"]
+        state = listed.pop("state")
+        persisted = self.portal.call(self.storage.get_session, *args)
+        self.assertEqual(
+            listed,
+            persisted.model_dump(
+                mode="json",
+                include={
+                    "id",
+                    "created_at",
+                    "updated_at",
+                    "user_id",
+                    "agent_id",
+                    "origin",
+                    "team_id",
+                    "config",
+                },
+            ),
+        )
+        self.assertEqual(set(state), {"permission_context", "tasks_context"})
+        self.assertTrue(state["permission_context"]["read_only"])
+        self.assertEqual(
+            persisted.state,
+            record.state,
+        )
         # The two the UI actually seeds from must survive the trim.
         self.assertEqual(
             [task["subject"] for task in state["tasks_context"]["tasks"]],
@@ -404,14 +581,61 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         self.assertEqual(listed["status"], "idle")
         self.assertFalse(listed["is_running"])
 
-    async def test_running_session_reports_running(self) -> None:
-        """Holding the run lease is what makes a session ``running``."""
-        lock_key = MessageBusKeys.session_lock(self.session_id)
-        async with self.bus.acquire_lock(lock_key, ttl_secs=30):
-            listed = self._listed()
+    def _running_status(self) -> tuple:
+        """Read every HTTP projection that controls the chat UI."""
 
-        self.assertEqual(listed["status"], "running")
-        self.assertTrue(listed["is_running"])
+        def get(suffix: str) -> dict:
+            response = self.client.get(
+                f"/sessions/{self.session_id}/{suffix}",
+                headers=HEADERS,
+                params={"agent_id": self.agent_id},
+            )
+            self.assertEqual(response.status_code, 200)
+            return response.json()
+
+        listed = self._listed()
+        return (
+            listed["status"],
+            listed["is_running"],
+            get("status")["status"],
+            get("messages")["is_running"],
+        )
+
+    def test_running_session_reports_running(self) -> None:
+        """Chat and realtime share the same execution lease."""
+        with self.portal.wrap_async_context_manager(
+            session_execution(self.bus, self.session_id),
+        ):
+            self.assertEqual(
+                self._running_status(),
+                ("running", True, "running", True),
+            )
+
+    def test_all_status_reads_stay_idle_during_rename(self) -> None:
+        """A second client opening chat during a PATCH sees idle."""
+        entered, release = asyncio.Event(), asyncio.Event()
+        save = self.storage.upsert_session
+
+        async def wait_before_save(*args: Any, **kwargs: Any) -> Any:
+            entered.set()
+            await release.wait()
+            return await save(*args, **kwargs)
+
+        with patch.object(
+            self.storage,
+            "upsert_session",
+            wait_before_save,
+        ), ThreadPoolExecutor(1) as pool:
+            pending = pool.submit(self._patch, {"name": "renamed"})
+            try:
+                self.portal.call(asyncio.wait_for, entered.wait(), 3)
+                self.assertEqual(
+                    self._running_status(),
+                    ("idle", False, "idle", False),
+                )
+            finally:
+                self.portal.call(release.set)
+            self.assertEqual(pending.result(timeout=3).status_code, 200)
 
     def test_cwd_round_trips(self) -> None:
         """A relative cwd is stored and read back verbatim."""

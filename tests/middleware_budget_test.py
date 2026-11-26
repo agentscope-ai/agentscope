@@ -269,6 +269,7 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "hint",
+                            "source_role": None,
                             "hint": middleware.hint_message,
                             "id": AnyString(),
                             "source": '{"label": "System", "sublabel": '
@@ -680,12 +681,14 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             confirm_results=[
                 ConfirmResult(
-                    confirmed=True,
-                    tool_call=ToolCallBlock(
-                        id=tool_call_id,
-                        name="confirm_required",
-                        input=tool_input,
+                    request_id=agent.state.confirmation_request(
+                        agent.name,
+                        tool_call_id,
                     ),
+                    confirmed=True,
+                    tool_call=agent.state.get_awaiting_tool_calls(
+                        agent.name,
+                    )[0],
                 ),
             ],
         )

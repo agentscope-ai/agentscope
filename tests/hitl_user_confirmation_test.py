@@ -4,7 +4,7 @@
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
-from utils import AnyString, MockModel
+from utils import expected_hitl_messages, AnyString, MockModel
 
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.model import ChatResponse
@@ -24,7 +24,12 @@ from agentscope.message import (
     ToolCallBlock,
     UserMsg,
 )
-from agentscope.event import UserConfirmResultEvent, ConfirmResult
+from agentscope.event import (
+    ConfirmResult,
+    RequireUserConfirmEvent,
+    UserConfirmResultEvent,
+)
+from agentscope.state import AgentState
 
 
 class MockUserConfirmSequentialTool(ToolBase):
@@ -267,6 +272,16 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             ),
         ]
 
+    def _card(self, call_id: str) -> ToolCallBlock:
+        """Return the card as a client would read it from the parked reply."""
+        return next(
+            call.model_copy(deep=True)
+            for call in self.agent.state.get_awaiting_tool_calls(
+                self.agent.name,
+            )
+            if call.id == call_id
+        )
+
     def _get_event_base(self, reply_id: str) -> dict:
         """Get the dict with the basic fields for event assertion."""
         return {
@@ -290,6 +305,61 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             "role": "assistant",
             "usage": None,
         }
+
+    async def test_legacy_checkpoint_reissues_confirmation(self) -> None:
+        """A tokenless parked call needs a fresh card before it can resume."""
+        self.agent.toolkit = Toolkit(tools=[MockUserConfirmSequentialTool()])
+        call = ToolCallBlock(
+            id=self.tool_call_id_1,
+            name=self.sequential_tool_name,
+            input=self.tool_input_1,
+            state="asking",
+        )
+        self.agent.state.append_context(self.agent.name, [call])
+        checkpoint = self.agent.state.model_dump(
+            exclude={
+                "authorization_version": True,
+                "authorization_evidence": True,
+                "authorization_evidence_complete": True,
+                "schedule_authorization": True,
+                "reply_context": {"tool_approvals"},
+            },
+        )
+        self.agent.state = AgentState.model_validate(checkpoint)
+        answer = UserConfirmResultEvent(
+            reply_id=self.agent.state.reply_id,
+            confirm_results=[ConfirmResult(confirmed=True, tool_call=call)],
+        )
+        events = [e async for e in self.agent.reply_stream(answer)]
+        (prompt,) = [
+            e for e in events if isinstance(e, RequireUserConfirmEvent)
+        ]
+        pending = self._card(call.id)
+        self.assertEqual(
+            (
+                pending.state,
+                self.agent.state.confirmation_request(
+                    self.agent.name,
+                    call.id,
+                ),
+                prompt.tool_calls,
+            ),
+            ("asking", prompt.id, [pending]),
+        )
+        self.model.set_responses([self.final_mock_responses])
+        response = await self.agent.reply(
+            UserConfirmResultEvent(
+                reply_id=prompt.reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        request_id=prompt.id,
+                        confirmed=True,
+                        tool_call=pending,
+                    ),
+                ],
+            ),
+        )
+        self.assertEqual(response.finished_reason, "completed")
 
     async def test_single_user_confirmation(self) -> None:
         """Test single user confirmation tool call.
@@ -441,7 +511,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
         # Create user confirmation result event
@@ -449,12 +519,12 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             confirm_results=[
                 ConfirmResult(
-                    confirmed=True,
-                    tool_call=ToolCallBlock(
-                        id=self.tool_call_id_1,
-                        name=self.sequential_tool_name,
-                        input=self.tool_input_1,
+                    request_id=self.agent.state.confirmation_request(
+                        self.agent.name,
+                        self.tool_call_id_1,
                     ),
+                    confirmed=True,
+                    tool_call=self._card(self.tool_call_id_1),
                 ),
             ],
         )
@@ -740,7 +810,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
         # Create user confirmation result event
@@ -748,12 +818,12 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             confirm_results=[
                 ConfirmResult(
-                    confirmed=True,
-                    tool_call=ToolCallBlock(
-                        id=self.tool_call_id_1,
-                        name=self.sequential_tool_name,
-                        input=self.tool_input_1,
+                    request_id=self.agent.state.confirmation_request(
+                        self.agent.name,
+                        self.tool_call_id_1,
                     ),
+                    confirmed=True,
+                    tool_call=self._card(self.tool_call_id_1),
                 ),
             ],
         )
@@ -804,12 +874,12 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             confirm_results=[
                 ConfirmResult(
-                    confirmed=True,
-                    tool_call=ToolCallBlock(
-                        id=self.tool_call_id_2,
-                        name=self.sequential_tool_name,
-                        input=self.tool_input_2,
+                    request_id=self.agent.state.confirmation_request(
+                        self.agent.name,
+                        self.tool_call_id_2,
                     ),
+                    confirmed=True,
+                    tool_call=self._card(self.tool_call_id_2),
                 ),
             ],
         )
@@ -1129,7 +1199,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
         # Confirm the first call WITHOUT an always-allow rule.
@@ -1137,12 +1207,12 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             confirm_results=[
                 ConfirmResult(
-                    confirmed=True,
-                    tool_call=ToolCallBlock(
-                        id=self.tool_call_id_1,
-                        name=self.concurrent_tool_name,
-                        input=self.tool_input_1,
+                    request_id=self.agent.state.confirmation_request(
+                        self.agent.name,
+                        self.tool_call_id_1,
                     ),
+                    confirmed=True,
+                    tool_call=self._card(self.tool_call_id_1),
                 ),
             ],
         )
@@ -1152,8 +1222,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
-        # The first call executes; then the second (deferred) surfaces its
-        # own confirmation now that it is re-evaluated against the engine.
+        # Both workers run concurrently. Preserve the order of result events
+        # for the first call and verify the second call's single prompt.
         expected_events = [
             *self._get_tool_result_events(
                 self.tool_call_id_1,
@@ -1178,7 +1248,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             },
         ]
         self.assertListEqual(
-            events,
+            [e for e in events if e["type"] != "REQUIRE_USER_CONFIRM"]
+            + [e for e in events if e["type"] == "REQUIRE_USER_CONFIRM"],
             [{**basic_dict, **_} for _ in expected_events],
         )
 
@@ -1187,12 +1258,12 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             confirm_results=[
                 ConfirmResult(
-                    confirmed=True,
-                    tool_call=ToolCallBlock(
-                        id=self.tool_call_id_2,
-                        name=self.concurrent_tool_name,
-                        input=self.tool_input_2,
+                    request_id=self.agent.state.confirmation_request(
+                        self.agent.name,
+                        self.tool_call_id_2,
                     ),
+                    confirmed=True,
+                    tool_call=self._card(self.tool_call_id_2),
                 ),
             ],
         )
@@ -1373,12 +1444,12 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             confirm_results=[
                 ConfirmResult(
-                    confirmed=True,
-                    tool_call=ToolCallBlock(
-                        id=self.tool_call_id_1,
-                        name=self.concurrent_tool_name,
-                        input=self.tool_input_1,
+                    request_id=self.agent.state.confirmation_request(
+                        self.agent.name,
+                        self.tool_call_id_1,
                     ),
+                    confirmed=True,
+                    tool_call=self._card(self.tool_call_id_1),
                     rules=[
                         PermissionRule(
                             tool_name=self.concurrent_tool_name,
@@ -1624,7 +1695,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
+        expected_context = expected_hitl_messages(msg_base, expected_context)
         self.assertListEqual(context_dicts, expected_context)
 
         # A single confirmation event carrying BOTH approvals.
@@ -1632,20 +1703,20 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             confirm_results=[
                 ConfirmResult(
-                    confirmed=True,
-                    tool_call=ToolCallBlock(
-                        id=self.tool_call_id_1,
-                        name=name_a,
-                        input=self.tool_input_1,
+                    request_id=self.agent.state.confirmation_request(
+                        self.agent.name,
+                        self.tool_call_id_1,
                     ),
+                    confirmed=True,
+                    tool_call=self._card(self.tool_call_id_1),
                 ),
                 ConfirmResult(
-                    confirmed=True,
-                    tool_call=ToolCallBlock(
-                        id=self.tool_call_id_2,
-                        name=name_b,
-                        input=self.tool_input_2,
+                    request_id=self.agent.state.confirmation_request(
+                        self.agent.name,
+                        self.tool_call_id_2,
                     ),
+                    confirmed=True,
+                    tool_call=self._card(self.tool_call_id_2),
                 ),
             ],
         )
@@ -1804,12 +1875,12 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 reply_id=self.agent.state.reply_id,
                 confirm_results=[
                     ConfirmResult(
-                        confirmed=True,
-                        tool_call=ToolCallBlock(
-                            id=self.tool_call_id_1,
-                            name=name_a,
-                            input=self.tool_input_1,
+                        request_id=self.agent.state.confirmation_request(
+                            self.agent.name,
+                            self.tool_call_id_1,
                         ),
+                        confirmed=True,
+                        tool_call=self._card(self.tool_call_id_1),
                     ),
                 ],
             ),
@@ -1824,12 +1895,12 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 reply_id=self.agent.state.reply_id,
                 confirm_results=[
                     ConfirmResult(
-                        confirmed=True,
-                        tool_call=ToolCallBlock(
-                            id=self.tool_call_id_2,
-                            name=name_b,
-                            input=self.tool_input_2,
+                        request_id=self.agent.state.confirmation_request(
+                            self.agent.name,
+                            self.tool_call_id_2,
                         ),
+                        confirmed=True,
+                        tool_call=self._card(self.tool_call_id_2),
                     ),
                 ],
             ),
@@ -1871,11 +1942,16 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         (parked.finished_reason, self.agent.state.cur_iter),
                         (None, 0),
                     )
+                    request_id = self.agent.state.confirmation_request(
+                        self.agent.name,
+                        tool_call.id,
+                    )
                     final = await self.agent.reply(
                         UserConfirmResultEvent(
                             reply_id=self.agent.state.reply_id,
                             confirm_results=[
                                 ConfirmResult(
+                                    request_id=request_id,
                                     confirmed=confirmed,
                                     tool_call=tool_call,
                                 ),

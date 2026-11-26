@@ -47,6 +47,7 @@ class ChannelApprovalRecord(BaseModel):
     session_id: str
     reply_id: str
     tool_call_id: str
+    confirmation_id: str | None = None
     requester_id: str
 
 
@@ -97,10 +98,11 @@ async def requester_for_input(
     bus: MessageBus,
     session_id: str,
     input_msg: ChannelRunInput,
+    channel_requester_id: str = "",
 ) -> str:
     """Resolve the original platform requester from one run input.
 
-    A fresh channel turn carries the user id in ``Msg.name``. Resume
+    A fresh channel turn carries its requester in the queue entry. Resume
     events instead carry the parked reply id, so their requester is
     recovered from the mapping saved alongside that reply's paused state.
 
@@ -114,15 +116,8 @@ async def requester_for_input(
         `str`: Platform requester id, or an empty string when the run has
         no requester.
     """
-    if isinstance(input_msg, list) and input_msg:
-        input_msg = input_msg[0]
-    if isinstance(input_msg, Msg):
-        if input_msg.metadata.get(CHANNEL_APPROVAL_UNAVAILABLE) is True:
-            return ""
-        # Short-term compatibility: the Web UI uses the name "user",
-        # whereas channel messages use the platform user id. Replace
-        # this convention with explicit trusted provenance when available.
-        return "" if input_msg.name == "user" else input_msg.name
+    if isinstance(input_msg, (Msg, list)):
+        return channel_requester_id
     if not isinstance(
         input_msg,
         (
@@ -272,7 +267,7 @@ async def prune_session_approvals(
         await forget_reply_requester(bus, session_id, reply_id)
     namespace = MessageBusKeys.channel_session_approvals(session_id)
     pending = {
-        call.id
+        (call.id, state.confirmation_request(agent_name, call.id))
         for call in state.get_awaiting_tool_calls(agent_name)
         if call.state == ToolCallState.ASKING
     }
@@ -280,7 +275,7 @@ async def prune_session_approvals(
         record = ChannelApprovalRecord.model_validate_json(raw)
         if (
             record.reply_id != state.reply_id
-            or record.tool_call_id not in pending
+            or (record.tool_call_id, record.confirmation_id) not in pending
         ):
             await bus.registry_del(namespace, approval_id)
 

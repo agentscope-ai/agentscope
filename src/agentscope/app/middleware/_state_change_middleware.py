@@ -85,7 +85,7 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         """
         raw = (
             agent.state.tasks_context.model_dump_json()
-            + agent.state.permission_context.model_dump_json()
+            + agent.state.effective_permission_context.model_dump_json()
         )
         return hashlib.md5(raw.encode()).hexdigest()
 
@@ -102,7 +102,7 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     mode="json",
                 ),
                 "permission_context": (
-                    agent.state.permission_context.model_dump(
+                    agent.state.effective_permission_context.model_dump(
                         mode="json",
                     )
                 ),

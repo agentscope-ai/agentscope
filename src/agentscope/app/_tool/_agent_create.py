@@ -76,7 +76,7 @@ def _merge_leader_permissions(
       :attr:`PermissionContext.mode` wins; otherwise the worker
       inherits the leader's mode.
     - ``extend_leader_permission_rules``: if True, the leader's
-      allow/deny/ask rules are appended after the template's rules for
+      allow/ask rules are appended after the template's rules for
       each tool, so the worker doesn't re-prompt for permissions the
       user has already granted in the leader session. The template's
       rules appear first in each list, so the engine — which returns
@@ -86,6 +86,7 @@ def _merge_leader_permissions(
       working directories are merged in; on key (path) collisions the
       template's entry wins.
 
+    The worker inherits hard restrictions via AgentState.inherit_member_scope.
     The template fields are deep-copied so the returned context is
     independent of both the template and the leader state.
     """
@@ -93,6 +94,7 @@ def _merge_leader_permissions(
 
     if not template.override_leader_mode:
         merged.mode = leader_context.mode
+        merged.allow_workspace_edits = leader_context.allow_workspace_edits
 
     if template.extend_leader_working_directories:
         for path, wd in leader_context.working_directories.items():
@@ -102,7 +104,7 @@ def _merge_leader_permissions(
             )
 
     if template.extend_leader_permission_rules:
-        for attr in ("allow_rules", "deny_rules", "ask_rules"):
+        for attr in ("allow_rules", "ask_rules"):
             merged_rules: dict = getattr(merged, attr)
             for tool_name, rules in getattr(leader_context, attr).items():
                 merged_rules.setdefault(tool_name, []).extend(
@@ -424,14 +426,14 @@ optional):
             #    and/or working directories according to the template's
             #    inherit-from-leader flags. See
             #    :func:`_merge_leader_permissions` for the policy.
-            leader_permission_context = (
-                _agent_state.permission_context
+            leader_state = (
+                _agent_state
                 if _agent_state is not None
-                else leader_session.state.permission_context
+                else leader_session.state
             )
             worker_permission_context = _merge_leader_permissions(
                 template,
-                leader_permission_context,
+                leader_state.permission_context,
             )
             worker_state = AgentState(
                 permission_context=worker_permission_context,
@@ -439,6 +441,7 @@ optional):
                     deep=True,
                 ),
             )
+            worker_state.inherit_member_scope(leader_state)
             worker_session = await self._storage.upsert_session(
                 user_id=self._user_id,
                 agent_id=worker_agent.id,

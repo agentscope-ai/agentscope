@@ -286,6 +286,7 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
             delivered[0],
             {
                 "type": "hint",
+                "source_role": None,
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
@@ -319,6 +320,7 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
             delivered[0],
             {
                 "type": "hint",
+                "source_role": None,
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
@@ -373,6 +375,7 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
             delivered[0],
             {
                 "type": "hint",
+                "source_role": None,
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "finished_at": AnyString(),

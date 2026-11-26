@@ -502,6 +502,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                     [
                         {
                             "type": "hint",
+                            "source_role": None,
                             "id": AnyString(),
                             "created_at": AnyString(),
                             "finished_at": AnyString(),
@@ -705,6 +706,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                     [
                         {
                             "type": "hint",
+                            "source_role": None,
                             "id": AnyString(),
                             "created_at": AnyString(),
                             "finished_at": AnyString(),

@@ -3,6 +3,7 @@
 """Tests for honoring the self-reported MCP tool annotations only for trusted
 MCP servers."""
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 import mcp.types
 
@@ -43,16 +44,86 @@ class MCPAnnotationTrustTest(IsolatedAsyncioTestCase):
     """The read-only hint auto-allows a tool in every permission mode, so it
     must only be honored for trusted MCP servers."""
 
+    async def test_list_shares_scope_only_within_one_discovery(self) -> None:
+        """Use filtered descriptors in order and refresh scope each time."""
+        client = _client()
+        raw = [
+            _read_only_tool().model_copy(update={"name": name})
+            for name in ("alpha", "hidden", "beta")
+        ]
+        client._cached_tools = raw
+        client.disable_tools = ["hidden"]
+        with (
+            patch.object(
+                MCPClient,
+                "_discover_tools",
+                AsyncMock(return_value=raw),
+            ),
+            patch.object(
+                MCPClient,
+                "_approval_scope",
+                autospec=True,
+                side_effect=MCPClient._approval_scope,
+            ) as scope,
+        ):
+            for count in (1, 2):
+                wrapped = await client.list_tools()
+                self.assertEqual(
+                    (scope.call_count, [tool._tool for tool in wrapped]),
+                    (count, [raw[0], raw[2]]),
+                )
+        self.assertEqual((await client.get_tool("hidden"))._tool, raw[1])
+
+    async def test_custom_lookup_still_wraps_listed_tools(self) -> None:
+        """SDK subclasses can continue customizing wrappers by name."""
+
+        class CustomClient(MCPClient):
+            """Apply SDK-specific metadata to every resolved tool."""
+
+            async def get_tool(self, name: str) -> MCPTool:
+                wrapped = await super().get_tool(name)
+                wrapped.description = "Custom tool"
+                return wrapped
+
+        client = CustomClient.model_validate(_client().model_dump())
+        raw = [_read_only_tool()]
+        client._cached_tools = raw
+        with patch.object(
+            MCPClient,
+            "_discover_tools",
+            AsyncMock(return_value=raw),
+        ):
+            (tool,) = await client.list_tools()
+        self.assertEqual(tool.description, "Custom tool")
+
+    async def test_bulk_lookup_recovers_if_discovery_was_invalidated(
+        self,
+    ) -> None:
+        """An invalidated discovery cannot supply a stale descriptor."""
+        client = _client()
+        stale = _read_only_tool()
+        current = stale.model_copy(update={"description": "New catalog"})
+        catalogs = iter(([stale], [current]))
+
+        async def discover() -> list[mcp.types.Tool]:
+            catalog = next(catalogs)
+            client._cached_tools = None if catalog[0] is stale else catalog
+            return catalog
+
+        with patch.object(
+            MCPClient,
+            "_discover_tools",
+            AsyncMock(side_effect=discover),
+        ):
+            (tool,) = await client.list_tools()
+        self.assertEqual(tool._tool, current)
+
     async def test_trusted_read_only_hint_is_honored(self) -> None:
         """By default the hint is trusted, keeping the existing behavior."""
         tool = MCPTool(mcp_name="db", tool=_read_only_tool(), session=object())
 
         self.assertTrue(tool.is_read_only)
-        for mode in (
-            PermissionMode.DEFAULT,
-            PermissionMode.DONT_ASK,
-            PermissionMode.EXPLORE,
-        ):
+        for mode in PermissionMode:
             with self.subTest(mode=mode):
                 engine = PermissionEngine(PermissionContext(mode=mode))
                 decision = await engine.check_permission(tool, {})
@@ -70,13 +141,15 @@ class MCPAnnotationTrustTest(IsolatedAsyncioTestCase):
 
         self.assertFalse(tool.is_read_only)
         self.assertFalse(await tool.check_read_only({}))
-        for mode, expected in (
-            (PermissionMode.DEFAULT, PermissionBehavior.ASK),
-            (PermissionMode.DONT_ASK, PermissionBehavior.DENY),
-            (PermissionMode.EXPLORE, PermissionBehavior.DENY),
+        for context, expected in (
+            (PermissionContext(), PermissionBehavior.ASK),
+            (PermissionContext(mode="auto"), PermissionBehavior.ASK),
+            (PermissionContext(mode="bypass"), PermissionBehavior.ALLOW),
+            (PermissionContext(interactive=False), PermissionBehavior.DENY),
+            (PermissionContext(read_only=True), PermissionBehavior.DENY),
         ):
-            with self.subTest(mode=mode):
-                engine = PermissionEngine(PermissionContext(mode=mode))
+            with self.subTest(context=context):
+                engine = PermissionEngine(context)
                 decision = await engine.check_permission(tool, {})
                 self.assertEqual(decision.behavior, expected)
 

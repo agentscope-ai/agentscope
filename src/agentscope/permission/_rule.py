@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Permission rule model for tool usage."""
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ._types import PermissionBehavior
 
@@ -34,3 +34,9 @@ class PermissionRule(BaseModel):
     source: str
     """Where this rule originated from (e.g., "userSettings",
     "projectSettings")."""
+
+    confirmation_target: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    """MCP service and definition covered by a user-confirmed grant."""

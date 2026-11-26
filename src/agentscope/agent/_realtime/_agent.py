@@ -2,14 +2,17 @@
 """The realtime voice agent."""
 import asyncio
 import base64
+import json
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, TYPE_CHECKING
+from typing import Any, AsyncIterator
+
+import jsonschema
 
 from ...realtime import _events as me
 from ._aggregator import TurnAggregator
@@ -28,6 +31,7 @@ from ...realtime._transport._base import (
 from ...realtime._vad import SpeechTransition, VADBase
 from ..._logging import logger
 from ..._utils._common import _json_loads_with_repair
+from ...exception._tool import ExternalToolUnavailableError
 from ...event import (
     AgentEvent,
     ConfirmResult,
@@ -66,13 +70,28 @@ from ...message import (
     Usage,
     UserMsg,
 )
-from ...permission import PermissionBehavior, PermissionEngine
+from ...permission import (
+    PermissionBehavior,
+    PermissionContext,
+    PermissionEngine,
+    PermissionDecision,
+    PermissionMode,
+    PermissionReviewer,
+)
 from ...state import AgentState
-from ...tool import ToolChunk, ToolResponse, Toolkit
+from ...permission._engine import ApprovalRecheck
+from ...permission._evidence import retain_authorization_evidence
+from ...tool import (
+    AskUser,
+    AskUserParams,
+    ToolBase,
+    ToolChunk,
+    ToolResponse,
+    Toolkit,
+)
 from ...types import ReplyFinishedReason
 
-if TYPE_CHECKING:
-    from .._agent import Agent
+from .._agent import Agent
 
 # Audio buffered while the model is being reconnected: 10 s at 100 ms chunks.
 _BACKLOG_FRAMES = 100
@@ -188,6 +207,8 @@ class RealtimeAgent:
         delegation_agent_factory: (
             Callable[[AgentState], "Agent"] | None
         ) = None,
+        permission_reviewer: PermissionReviewer | None = None,
+        workspace_instructions: Callable[[], Awaitable[str]] | None = None,
     ) -> None:
         """Initialize the realtime agent.
 
@@ -231,9 +252,16 @@ class RealtimeAgent:
                 as this realtime agent so tool routing and checkpoint
                 recovery use the same assistant identity. A mismatched
                 name fails the delegation before backend execution.
+            permission_reviewer (`PermissionReviewer | None`, optional):
+                Independent reviewer for AUTO approvals. Without one,
+                pending requests use human confirmation when available.
+            workspace_instructions (optional):
+                Load the current workspace instructions for AUTO review.
         """
         self.name = name
         self.system_prompt = system_prompt
+        self._permission_system_prompt = system_prompt
+        self._workspace_instructions = workspace_instructions
         self.model = model
         self.toolkit = toolkit
         self.state = state or AgentState()
@@ -248,7 +276,16 @@ class RealtimeAgent:
                 "A full-duplex model cannot use client-side turn VAD.",
             )
 
-        self._engine = PermissionEngine(self.state.permission_context)
+        self._engine = PermissionEngine(
+            self.state.effective_permission_context,
+            reviewer=permission_reviewer,
+            context_provider=lambda: self.state.effective_permission_context,
+            rule_context_provider=lambda: self.state.permission_context,
+            authorization_provider=lambda: {
+                "messages": self.state.context,
+                **self.state.permission_review_context(),
+            },
+        )
         self._transport: TransportBase | None = None
         self._out: asyncio.Queue[_QueuedEvent] = asyncio.Queue()
         self._yielded_checkpoint: tuple[str, AgentState] | None = None
@@ -264,7 +301,7 @@ class RealtimeAgent:
         self._metrics = TurnMetrics()
         self._pending_tools: dict[str, ToolCallBlock] = {}
         self._confirmations: dict[str, asyncio.Future[ConfirmResult]] = {}
-        self._confirmation_replies: dict[str, str] = {}
+        self._confirmation_replies: dict[str, tuple[str, str]] = {}
         self._background_tools: dict[str, _BackgroundTools] = {}
         self._tasks: set[asyncio.Task] = set()
         self._barge_lock = asyncio.Lock()
@@ -322,7 +359,8 @@ class RealtimeAgent:
         self._closing = False
         self._connection_generation += 1
 
-        instructions = self.system_prompt
+        permission_system_prompt = self.system_prompt
+        instructions = permission_system_prompt
         tools = None
         if self.toolkit is not None:
             groups = self.state.tool_context.activated_groups
@@ -332,7 +370,9 @@ class RealtimeAgent:
             if self.model.card.supports_tools:
                 tools = await self.toolkit.get_tool_schemas(groups)
 
-        # TODO(realtime): tools and instructions are sent once, here.
+        # History fallback is conversation evidence, not approval policy.
+        # Review loads current skills separately from this provider snapshot.
+        # TODO(realtime): provider tools and instructions are sent once, here.
         #  Activating a tool group or installing a skill mid-session —
         #  ResetTools, the meta tool — therefore has no effect until the
         #  next connect, even though the model is told it can do it.
@@ -399,6 +439,7 @@ class RealtimeAgent:
         except Exception:
             await self.model.close()
             raise
+        self._permission_system_prompt = permission_system_prompt
         if self.vad is not None:
             self.vad.reset()
         self.aggregator.reset()
@@ -651,8 +692,25 @@ class RealtimeAgent:
                 ]
                 delegation = self._delegation_for_tool_calls(tool_call_ids)
                 if delegation is not None:
+                    if delegation.agent is not None and any(
+                        r.request_id is None for r in inputs.confirm_results
+                    ):
+                        delegation.agent.state.confirmation_status(
+                            self.name,
+                            inputs,
+                        )
                     self._schedule_client_delegation(delegation, inputs)
                     return
+                if any(r.request_id is None for r in inputs.confirm_results):
+                    waiting = self._confirmation_replies.items()
+                    inputs.validate_request_ids(
+                        {
+                            call_id: request
+                            for call_id, (reply, request) in waiting
+                            if reply == inputs.reply_id
+                            and not self._confirmations[call_id].done()
+                        },
+                    )
                 for result in inputs.confirm_results:
                     future = self._confirmations.get(result.tool_call.id)
                     if future is None or future.done():
@@ -660,12 +718,18 @@ class RealtimeAgent:
                     expected_reply = self._confirmation_replies.get(
                         result.tool_call.id,
                     )
-                    if expected_reply != inputs.reply_id:
+                    if expected_reply != (
+                        inputs.reply_id,
+                        result.request_id,
+                    ):
                         logger.warning(
                             "RealtimeAgent: ignored confirmation for tool %s "
-                            "from reply %s; expected reply %s",
+                            "for reply/prompt %s; expected %s",
                             result.tool_call.id,
-                            inputs.reply_id,
+                            (
+                                inputs.reply_id,
+                                result.request_id,
+                            ),
                             expected_reply,
                         )
                         continue
@@ -986,9 +1050,14 @@ class RealtimeAgent:
                             request_response=False,
                         )
 
-            case (me.ResponseDoneEvent() as done) | me.ModelErrorEvent(
-                response=me.ResponseDoneEvent() as done,
+            case me.ResponseDoneEvent() | me.ModelErrorEvent(
+                response=me.ResponseDoneEvent(),
             ):
+                done = (
+                    event.response
+                    if isinstance(event, me.ModelErrorEvent)
+                    else event
+                )
                 async with self._barge_lock:
                     reply = self._reply
                     if reply is None or reply.item_id != done.item_id:
@@ -1211,6 +1280,9 @@ class RealtimeAgent:
             total_chars -= len(message.get_text_content() or "")
             count -= 1
         if removed:
+            self.state.retain_authorization(
+                [msg for msg in self.state.context if msg.id in removed],
+            )
             self.state.context = [
                 msg for msg in self.state.context if msg.id not in removed
             ]
@@ -1302,6 +1374,7 @@ class RealtimeAgent:
         prompt = UserMsg(
             name="user",
             content=self._build_delegation_prompt(),
+            metadata={"authorization_source": "generated"},
         )
         delegation = _ClientDelegation(
             delegation_id=delegation_id,
@@ -1341,6 +1414,43 @@ class RealtimeAgent:
             self._schedule_delegation_failure(delegation.delegation_id)
             self._activate_next_client_delegation()
             return
+        if isinstance(agent, Agent):
+            # A normal backend uses the Live session policy. A factory may
+            # supply a stricter local policy, which still bounds execution.
+            last_policy = agent.state.permission_context.model_copy(deep=True)
+            local_bound = (
+                None
+                if last_policy == self.state.permission_context
+                else last_policy
+            )
+
+            def current_policy() -> PermissionContext:
+                nonlocal local_bound, last_policy
+                local = agent.state.permission_context
+                if local != last_policy:
+                    local_bound = local.model_copy(deep=True)
+                live = self.state.effective_permission_context
+                policy = (
+                    live
+                    if local_bound is None
+                    else (local_bound.restricted_by(live))
+                )
+                # State-injected tools must see the same current permissions
+                # as the engine, without sharing mutable parent settings.
+                agent.state.permission_context = policy.model_copy(deep=True)
+                last_policy = policy.model_copy(deep=True)
+                return agent.state.effective_permission_context
+
+            # pylint: disable-next=protected-access
+            engine = agent._engine
+            engine.context_provider = current_policy
+            engine.rule_context_provider = (
+                lambda: self.state.permission_context
+            )
+            # Reviewer and state-injected tools both resolve authority at use.
+            if agent.state is not self.state:
+                # pylint: disable-next=protected-access
+                agent.state._delegation_parent = lambda: self.state
         delegation.agent = agent
         delegation.prompt_id = delegation.prompt.id
         delegation.baseline_ids = {
@@ -1485,20 +1595,24 @@ class RealtimeAgent:
                     or inputs.reply_id != delegation.agent.state.reply_id
                 ):
                     return
+                state = delegation.agent.state
                 awaiting = {
-                    tool_call.id: tool_call.state
-                    for tool_call in (
-                        delegation.agent.state.get_awaiting_tool_calls(
-                            self.name,
-                        )
-                    )
+                    call.id: call
+                    for call in state.get_awaiting_tool_calls(self.name)
                 }
                 if isinstance(inputs, UserConfirmResultEvent):
+                    requests = {
+                        call.id: state.confirmation_request(self.name, call.id)
+                        for call in awaiting.values()
+                        if call.state == ToolCallState.ASKING
+                    }
+                    # Let older parked replies reissue a card on resume.
                     confirmations = [
                         result
                         for result in inputs.confirm_results
-                        if awaiting.get(result.tool_call.id)
-                        == ToolCallState.ASKING
+                        if result.tool_call.id in requests
+                        and requests[result.tool_call.id]
+                        in (None, result.request_id)
                     ]
                     if not confirmations:
                         return
@@ -1509,7 +1623,8 @@ class RealtimeAgent:
                     results = [
                         result
                         for result in inputs.execution_results
-                        if awaiting.get(result.id) == ToolCallState.SUBMITTED
+                        if (pending := awaiting.get(result.id))
+                        and pending.state == ToolCallState.SUBMITTED
                     ]
                     if not results:
                         return
@@ -1649,7 +1764,7 @@ class RealtimeAgent:
                     delegation.generation,
                 )
                 self._finish_client_delegation(delegation.delegation_id)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     "RealtimeAgent: client delegation %s failed",
                     delegation.delegation_id,
@@ -1697,6 +1812,14 @@ class RealtimeAgent:
                                         "The submitted result was rejected. "
                                         "Please check your answer and submit "
                                         "again."
+                                    ),
+                                    **(
+                                        exc.rejection_details()
+                                        if isinstance(
+                                            exc,
+                                            ExternalToolUnavailableError,
+                                        )
+                                        else {}
                                     ),
                                 },
                             ),
@@ -1818,6 +1941,13 @@ class RealtimeAgent:
             for message in self.state.context
             if message.id not in self._live_message_ids
         ]
+        state.retain_authorization(
+            [
+                msg
+                for msg in self.state.context
+                if msg.id in self._live_message_ids
+            ],
+        )
         return state
 
     def _sync_delegation_state(
@@ -1831,9 +1961,6 @@ class RealtimeAgent:
         self.state.reply_context = backend_state.reply_context.model_copy(
             deep=True,
         )
-        self.state.permission_context = (
-            backend_state.permission_context.model_copy(deep=True)
-        )
         self.state.tool_context = backend_state.tool_context.model_copy(
             deep=True,
         )
@@ -1842,6 +1969,23 @@ class RealtimeAgent:
         )
         self.state.middle_context = deepcopy(backend_state.middle_context)
         self.state.summary = deepcopy(backend_state.summary)
+        self.state.authorization_evidence = retain_authorization_evidence(
+            [
+                *self.state.authorization_evidence,
+                *deepcopy(
+                    [
+                        item
+                        for item in backend_state.authorization_evidence
+                        if item.message_id != delegation.prompt_id
+                    ],
+                ),
+            ],
+            [],
+        )
+        self.state.authorization_evidence_complete = (
+            self.state.authorization_evidence_complete
+            and backend_state.authorization_evidence_complete
+        )
         projected: dict[str, Msg] = {}
         for message in backend_state.context:
             if message.id == delegation.prompt_id:
@@ -2261,7 +2405,7 @@ class RealtimeAgent:
         self._background_tools.pop(self._reply_id, None)
         if reason != ReplyFinishedReason.COMPLETED:
             for call_id, future in self._confirmations.items():
-                if self._confirmation_replies.get(call_id) == self._reply_id:
+                if self._confirmation_replies[call_id][0] == self._reply_id:
                     future.cancel()
         event = ReplyEndEvent(
             session_id=self.state.session_id,
@@ -2485,6 +2629,21 @@ class RealtimeAgent:
                         ):
                             self._finish_reply(ReplyFinishedReason.COMPLETED)
 
+    async def _get_permission_instructions(self) -> str:
+        """Combine the base prompt, active skills, and workspace policy."""
+        instructions = self._permission_system_prompt
+        if self.toolkit is not None:
+            skills = await self.toolkit.get_skill_instructions(
+                list(self.state.tool_context.activated_groups),
+            )
+            if skills:
+                instructions = f"{instructions}\n\n{skills}"
+        if self._workspace_instructions is not None:
+            policy = await self._workspace_instructions()
+            if policy:
+                instructions = f"{instructions}\n\n{policy}"
+        return instructions
+
     async def _run_tool(self, reply_id: str, call: ToolCallBlock) -> None:
         """Check permission for one call, run it, and report the result."""
         assert self.toolkit is not None
@@ -2507,89 +2666,276 @@ class RealtimeAgent:
         self._emit(ToolCallEndEvent(reply_id=reply_id, tool_call_id=call.id))
 
         try:
-            tool = await self.toolkit.check_tool_available(
-                call.name,
-                self.state.tool_context.activated_groups,
-            )
-            tool_input = _json_loads_with_repair(call.input, tool.input_schema)
+            tool, tool_input = await self._resolve_tool_call(call)
         except Exception as exc:  # noqa: BLE001
             await self._report_tool(reply_id, call, str(exc))
             return
 
-        decision = await self._engine.check_permission(tool, tool_input)
-        if self._reply_id != reply_id:
+        identity = tool.approval_identity()
+        rechecks: list[ApprovalRecheck] = []
+
+        async def review(
+            target: ToolBase,
+            arguments: dict,
+        ) -> tuple[PermissionDecision, tuple | None]:
+            rechecks.clear()
+            current = await self._engine.check_permission(
+                target,
+                arguments,
+                messages=self.state.context,
+                instructions=self._get_permission_instructions,
+                rechecks=rechecks,
+            )
+            if (
+                current.behavior == PermissionBehavior.ALLOW
+                and self._reply_id == reply_id
+            ):
+                return current, self._engine.dispatch_basis(auto_only=True)
+            return current, None
+
+        decision, basis = await review(tool, tool_input)
+        interrupted = "Reply interrupted before tool execution."
+        if (
+            self._reply_id != reply_id
+            or decision.behavior == PermissionBehavior.DENY
+        ):
             await self._report_tool(
                 reply_id,
                 call,
-                "Reply interrupted before tool execution.",
+                interrupted
+                if self._reply_id != reply_id
+                else decision.message,
                 state=ToolResultState.DENIED,
             )
             return
-        if decision.behavior in (
-            PermissionBehavior.ASK,
-            PermissionBehavior.PASSTHROUGH,
-        ):
-            confirmed = await self._ask_user(reply_id, call, decision)
-            if not confirmed:
-                await self._report_tool(
+
+        source = call.model_copy(deep=True)
+        confirmed = False
+        replay_input = None
+        requests: list[tuple[PermissionDecision, tuple, str]] = []
+        rewritten_input = None
+        started = False
+        denial = None
+
+        def start() -> None:
+            nonlocal started
+            if not started:
+                started = True
+                self._emit(
+                    ToolResultStartEvent(
+                        reply_id=reply_id,
+                        tool_call_id=call.id,
+                        tool_call_name=call.name,
+                        tool_call_input=rewritten_input,
+                    ),
+                )
+
+        def edit_input(target: ToolBase, arguments: dict) -> dict | None:
+            if (
+                target.approval_identity() == identity
+                and json.dumps(arguments, sort_keys=True) == replay_input
+            ):
+                return deepcopy(tool_input)
+            return None
+
+        async def authorize(
+            target: ToolBase,
+            arguments: dict,
+        ) -> ToolBase | bool:
+            nonlocal denial, rewritten_input
+            if self._reply_id != reply_id:
+                denial = interrupted
+                return False
+            current, snapshot = decision, basis
+            target_identity = target.approval_identity()
+            final_input = json.dumps(arguments, sort_keys=True)
+            same_target = target_identity == identity and json.dumps(
+                arguments,
+                sort_keys=True,
+            ) == json.dumps(tool_input, sort_keys=True)
+            jsonschema.validate(arguments, target.input_schema)
+            if isinstance(target, AskUser):
+                AskUserParams.model_validate(arguments)
+            if confirmed and same_target:
+                current = await self._engine.check_permission(
+                    target,
+                    arguments,
+                    confirmed=True,
+                )
+            elif not same_target:
+                call.name = target.name
+                rewritten_input = json.dumps(arguments, ensure_ascii=False)
+                call.input = rewritten_input
+                # Honor a pending confirmation after an in-place change.
+                if not (
+                    current.behavior == PermissionBehavior.ASK
+                    and tool.approval_identity() != identity
+                ):
+                    current, snapshot = await review(target, arguments)
+            elif not rechecks and current.behavior == PermissionBehavior.ALLOW:
+                current, snapshot = await review(target, arguments)
+            for recheck in rechecks:
+                if current.behavior == PermissionBehavior.ALLOW:
+                    current = await recheck(current)
+            policy = self.state.effective_permission_context
+            if (
+                current.behavior == PermissionBehavior.ALLOW
+                and policy.mode == PermissionMode.AUTO
+                and not (confirmed and same_target)
+                and snapshot != self._engine.dispatch_basis()
+            ):
+                current = PermissionDecision(
+                    behavior=PermissionBehavior.ASK
+                    if policy.interactive
+                    else PermissionBehavior.DENY,
+                    message="Authorization changed before tool dispatch",
+                )
+            current = self._engine.recheck_tool_identity(
+                current,
+                target,
+                target_identity,
+            )
+            if self._reply_id == reply_id and current.behavior in (
+                PermissionBehavior.ASK,
+                PermissionBehavior.PASSTHROUGH,
+            ):
+                if policy.interactive:
+                    requests.append(
+                        (current, target.approval_identity(), final_input),
+                    )
+                else:
+                    denial = current.message
+                return False
+            if self._reply_id != reply_id:
+                denial = interrupted
+                return False
+            if current.behavior != PermissionBehavior.ALLOW:
+                denial = (
+                    current.message or f'Tool "{call.name}" denied by policy.'
+                )
+                return False
+            bound = target.bind_for_dispatch()
+            call.state = ToolCallState.ALLOWED
+            start()
+            return bound
+
+        while True:
+            output, result_state = await self._collect_tool_output(
+                reply_id,
+                source,
+                start,
+                authorize,
+                edit_input if replay_input is not None else None,
+            )
+            if not requests or result_state == ToolResultState.ERROR:
+                break
+
+            # Leave the old toolkit invocation before awaiting confirmation.
+            request, requested_identity, requested_input = requests.pop()
+            requested_name = call.name
+            result = await self._ask_user(reply_id, call, request)
+            if not result:
+                denial = f'Tool "{requested_name}" denied by user.'
+                break
+            try:
+                tool, tool_input = await self._resolve_confirmed_tool(
                     reply_id,
                     call,
-                    f'Tool "{call.name}" denied by user.',
-                    state=ToolResultState.DENIED,
+                    result,
+                    (requested_name, requested_identity),
                 )
-                return
-        elif decision.behavior is PermissionBehavior.DENY:
-            await self._report_tool(
-                reply_id,
-                call,
-                decision.message or f'Tool "{call.name}" denied by policy.',
-                state=ToolResultState.DENIED,
+            except Exception as exc:  # noqa: BLE001
+                output = str(exc)
+                result_state = ToolResultState.ERROR
+                break
+            if self._reply_id != reply_id:
+                denial = interrupted
+                break
+            identity = tool.approval_identity()
+            confirmed = (
+                call.name != requested_name or identity == requested_identity
             )
-            return
-        else:
-            call.state = ToolCallState.ALLOWED
-
-        self._emit(
-            ToolResultStartEvent(
-                reply_id=reply_id,
-                tool_call_id=call.id,
-                tool_call_name=call.name,
-            ),
-        )
-        parts: list[str] = []
-        streamed = False
-        result_state = ToolResultState.SUCCESS
-        try:
-            async for chunk in self.toolkit.call_tool(call, self.state):
-                texts = [
-                    b.text for b in chunk.content if isinstance(b, TextBlock)
-                ]
-                if isinstance(chunk, ToolResponse):
-                    # The completed result. Chunks before it were display
-                    # only, so this alone is what the provider receives.
-                    parts = texts
-                    result_state = chunk.state
-                    if not streamed:
-                        for text in texts:
-                            self._emit_tool_delta(reply_id, call.id, text)
-                    break
-                if not isinstance(chunk, ToolChunk):
-                    break
-                streamed = True
-                for text in texts:
-                    self._emit_tool_delta(reply_id, call.id, text)
-        except Exception:  # noqa: BLE001
-            logger.exception("RealtimeAgent: tool %s failed", call.name)
-            parts = [f"Error executing tool {call.name}."]
-            result_state = ToolResultState.ERROR
+            replay_input = None
+            if (
+                call.name == requested_name
+                and confirmed
+                and requested_input
+                != json.dumps(
+                    _json_loads_with_repair(source.input, tool.input_schema),
+                    sort_keys=True,
+                )
+            ):
+                # Replay a non-idempotent middleware from its original input.
+                replay_input = requested_input
+            else:
+                source = call.model_copy(deep=True)
+            rewritten_input = call.input
+            rechecks.clear()
+            if not confirmed:
+                decision, basis = await review(tool, tool_input)
+            else:
+                basis = None
 
         await self._report_tool(
             reply_id,
             call,
-            "".join(parts) or "Tool executed successfully.",
-            state=result_state,
-            started=True,
+            denial or output,
+            state=ToolResultState.DENIED if denial else result_state,
+            started=started,
         )
+
+    async def _resolve_tool_call(
+        self,
+        call: ToolCallBlock,
+    ) -> tuple[ToolBase, dict]:
+        """Resolve the live tool and validate the input supplied for it."""
+        assert self.toolkit is not None
+        target = await self.toolkit.check_tool_available(
+            call.name,
+            self.state.tool_context.activated_groups,
+        )
+        arguments = _json_loads_with_repair(call.input, target.input_schema)
+        jsonschema.validate(arguments, target.input_schema)
+        if isinstance(target, AskUser):
+            AskUserParams.model_validate(arguments)
+        return target, arguments
+
+    async def _collect_tool_output(
+        self,
+        reply_id: str,
+        call: ToolCallBlock,
+        start: Callable[[], None],
+        authorize: Callable[[ToolBase, dict], Awaitable[ToolBase | bool]],
+        edit_input: Callable[[ToolBase, dict], dict | None] | None,
+    ) -> tuple[str, ToolResultState]:
+        """Stream one dispatch attempt and collect its provider response."""
+        assert self.toolkit is not None
+        streamed = False
+        try:
+            async for chunk in self.toolkit.call_tool(
+                call,
+                self.state,
+                before_call=authorize,
+                edit_input=edit_input,
+            ):
+                start()
+                texts = [
+                    b.text for b in chunk.content if isinstance(b, TextBlock)
+                ]
+                if not streamed or isinstance(chunk, ToolChunk):
+                    for text in texts:
+                        self._emit_tool_delta(reply_id, call.id, text)
+                if isinstance(chunk, ToolResponse):
+                    return (
+                        "".join(texts) or "Tool executed successfully.",
+                        chunk.state,
+                    )
+                streamed = True
+        except Exception:  # noqa: BLE001
+            logger.exception("RealtimeAgent: tool %s failed", call.name)
+            return f"Error executing tool {call.name}.", ToolResultState.ERROR
+        # A parked or denied dispatch has no tool output.
+        return "", ToolResultState.SUCCESS
 
     def _emit_tool_delta(self, reply_id: str, call_id: str, text: str) -> None:
         """Emit one fragment of tool output."""
@@ -2605,37 +2951,59 @@ class RealtimeAgent:
         self,
         reply_id: str,
         call: ToolCallBlock,
-        decision: Any,
-    ) -> bool:
-        """Ask the user to confirm *call* and wait for the answer."""
+        decision: PermissionDecision,
+    ) -> ConfirmResult | None:
+        """Wait for the submitted confirmation, including requested rules."""
         call.suggested_rules = decision.suggested_rules or []
         call.state = ToolCallState.ASKING
-        self._emit(
-            RequireUserConfirmEvent(reply_id=reply_id, tool_calls=[call]),
-        )
+        prompt = RequireUserConfirmEvent.issue(reply_id, call)
+        reply = self._find_reply_message(reply_id)
+        if reply:
+            reply.set_confirmation_request(call.id, prompt.id)
         future: asyncio.Future[
             ConfirmResult
         ] = asyncio.get_running_loop().create_future()
         self._confirmations[call.id] = future
-        self._confirmation_replies[call.id] = reply_id
+        self._confirmation_replies[call.id] = (reply_id, prompt.id)
+        self._emit(prompt)
         try:
             result = await asyncio.wait_for(future, timeout=300)
         except (asyncio.TimeoutError, asyncio.CancelledError):
-            return False
+            return None
         finally:
             self._confirmations.pop(call.id, None)
             self._confirmation_replies.pop(call.id, None)
+            if reply:
+                reply.set_confirmation_request(call.id, None)
 
         if self._reply_id != reply_id:
-            return False
-        for rule in result.rules or []:
-            self._engine.add_rule(rule)
+            return None
+        if result.confirmed:
+            call.name = result.tool_call.name
+            call.input = result.tool_call.input
         call.state = (
             ToolCallState.ALLOWED
             if result.confirmed
             else ToolCallState.FINISHED
         )
-        return result.confirmed
+        return result if result.confirmed else None
+
+    async def _resolve_confirmed_tool(
+        self,
+        reply_id: str,
+        call: ToolCallBlock,
+        result: ConfirmResult,
+        requested: tuple[str, tuple],
+    ) -> tuple[ToolBase, dict]:
+        """Resolve the submitted call before installing its grants."""
+        target, arguments = await self._resolve_tool_call(call)
+        if (
+            result.rules
+            and self._reply_id == reply_id
+            and requested == (target.name, target.approval_identity())
+        ):
+            self._engine.add_confirmed_rules(target, result.rules)
+        return target, arguments
 
     async def _report_tool(
         self,
@@ -2653,6 +3021,7 @@ class RealtimeAgent:
                     reply_id=reply_id,
                     tool_call_id=call.id,
                     tool_call_name=call.name,
+                    tool_call_input=call.input,
                 ),
             )
             self._emit(

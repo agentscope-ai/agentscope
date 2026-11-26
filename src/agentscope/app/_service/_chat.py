@@ -15,7 +15,7 @@ import asyncio
 import inspect
 import json
 from dataclasses import dataclass
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -25,10 +25,12 @@ from .._bus_ops import (
     deliver_to_inbox,
     enqueue_run_trigger,
     finish_active_chat_reply,
+    finish_cancelled_wait,
     has_pending_inbox_or_release,
     publish_session_event,
     register_active_chat_reply,
     register_inbox_consumer,
+    session_execution,
 )
 from ..message_bus import MessageBus, MessageBusKeys
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
@@ -46,6 +48,7 @@ from ..storage import (
     ChannelOrigin,
     SOPOrigin,
 )
+from ._session_permissions import refresh_session_permissions
 from ..storage._utils import _resolve_team_leader
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
@@ -78,6 +81,7 @@ from ._session_projection import SessionProjection
 from ._sop import SOPService
 from ._projectors import SubagentHitlProjector
 
+from ...exception._tool import ExternalToolUnavailableError
 from ..._logging import logger
 from ...agent import Agent, ModelConfig
 from ...model import ChatModelBase
@@ -85,12 +89,16 @@ from ...event import (
     AgentEvent,
     CustomEvent,
     ReplyStartEvent,
+    ToolResultStartEvent,
+    RequireUserConfirmEvent,
+    RequireExternalExecutionEvent,
     ReplyEndEvent,
     ReplyFinishedReason,
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
     UserInterruptEvent,
 )
+from ...event._event import MissingConfirmationIdError
 from ._errors import _classify_error, _classify_setup_error
 from ..._utils._common import _generate_id
 from ...message import AssistantMsg, HintBlock, Msg, UserMsg
@@ -123,6 +131,9 @@ class _WorkerContext:
 
 
 _TeamContext = _LeaderContext | _WorkerContext
+_ResumeEvent: TypeAlias = (
+    UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent
+)
 
 
 class _SessionTitle(BaseModel):
@@ -280,15 +291,14 @@ class ChatService:
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
         self._projection = SessionProjection(message_bus)
-        self._projectors: list[EventProjector] = [
-            SubagentHitlProjector(storage),
-            *(extra_projectors or []),
-        ]
+        self._subagent_hitl = SubagentHitlProjector(storage)
+        self._projectors = extra_projectors or []
         # Queue nudges are detached from completed registry tasks so they
         # run only after the local run slot is released. Keep strong
         # references until completion; asyncio's loop retains only weak
         # references to un-awaited tasks.
         self._queue_nudge_tasks: set[asyncio.Task] = set()
+        self._approval_retries: set[asyncio.Task] = set()
 
     async def resolve_agent(
         self,
@@ -315,6 +325,7 @@ class ChatService:
         client_builtin_tools: list[ClientBuiltinToolName] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
+        channel_requester_id: str = "",
     ) -> None:
         """Drive a chat run to completion.
 
@@ -365,6 +376,8 @@ class ChatService:
                 Queue identity for terminal failure reporting.
             input_persisted (`bool`, optional):
                 Internal queue caller already saved this initial input.
+            channel_requester_id:
+                Verified platform sender of an unedited queued channel turn.
         """
         try:
             await self._run_impl(
@@ -376,7 +389,10 @@ class ChatService:
                 client_builtin_tools=client_builtin_tools,
                 sop_dispatch=sop_dispatch,
                 input_persisted=input_persisted,
+                channel_requester_id=channel_requester_id,
             )
+        except MissingConfirmationIdError:
+            raise
         except Exception as e:
             logger.exception(
                 "ChatService.run failed for user_id=%s session_id=%s "
@@ -815,18 +831,9 @@ class ChatService:
     ) -> None:
         """Interrupt an in-progress reply for a session.
 
-        Two paths, chosen by session liveness:
-
-        - **Running** (lock held): publish on the interrupt channel so
-          the local :class:`~agentscope.app._manager.CancelDispatcher`
-          cancels its chat-run task; the agent's ``CancelledError``
-          cleanup runs (fake tool results for pending calls, fallback
-          message, ``ReplyEndEvent(INTERRUPTED)``).
-        - **Not running**: enqueue a ``resume`` trigger carrying a
-          :class:`UserInterruptEvent`. If the session is parked on
-          HITL, the agent short-circuits into the same cleanup path;
-          if it is idle, the agent silently no-ops. Callers do not
-          need to distinguish the two — the operation is idempotent.
+        Broadcast to interrupt a running task. A parked reply also needs a
+        queued interrupt addressed to that reply: configuration writers
+        share the session lock, and a broadcast alone cannot resume it.
 
         Args:
             user_id (`str`):
@@ -848,14 +855,22 @@ class ChatService:
         if session is None:
             raise LookupError(f"Session '{session_id}' not found.")
 
+        parked = session.state.has_awaiting_tool_calls(None)
+        if parked:
+            await self._message_bus.registry_set(
+                MessageBusKeys.session_interrupts(session_id),
+                session.state.reply_id,
+                "1",
+            )
         if await self._message_bus.is_locked(
-            MessageBusKeys.session_lock(session_id),
+            MessageBusKeys.session_execution_lock(session_id),
         ):
             await self._message_bus.publish(
                 MessageBusKeys.session_interrupt_channel(),
                 {"session_id": session_id},
             )
-            return
+            if not parked:
+                return
 
         await enqueue_run_trigger(
             self._message_bus,
@@ -865,6 +880,89 @@ class ChatService:
             kind=MessageBusKeys.WAKEUP_KIND_RESUME,
             inputs=UserInterruptEvent(reply_id=session.state.reply_id),
         )
+
+    async def _resume_event(
+        self,
+        session_id: str,
+        event: _ResumeEvent,
+    ) -> _ResumeEvent:
+        """Let a stop for this reply supersede a pending continuation."""
+        if not isinstance(
+            event,
+            UserInterruptEvent,
+        ) and await self._message_bus.registry_exists(
+            MessageBusKeys.session_interrupts(session_id),
+            event.reply_id,
+        ):
+            return UserInterruptEvent(reply_id=event.reply_id)
+        return event
+
+    async def _reject_external_results(
+        self,
+        session_id: str,
+        event: ExternalExecutionResultEvent,
+        unavailable: ExternalToolUnavailableError | None = None,
+    ) -> None:
+        """Notify the submitting client while keeping its form open."""
+        rejection = CustomEvent(
+            name="external_execution_result_rejected",
+            value={
+                "request_id": event.id,
+                "reply_id": event.reply_id,
+                "tool_call_ids": [
+                    result.id for result in event.execution_results
+                ],
+                "message": "Please check the submitted result and try again.",
+                **(unavailable.rejection_details() if unavailable else {}),
+            },
+        )
+        await publish_session_event(
+            self._message_bus,
+            session_id,
+            rejection.model_dump(mode="json"),
+        )
+
+    async def _publish_resume_input(
+        self,
+        session_id: str,
+        event: UserConfirmResultEvent | ExternalExecutionResultEvent,
+        reply_msg: Msg | None,
+        agent: Agent,
+    ) -> str:
+        """Commit the accepted input to replay and its message projections."""
+        cursor = await publish_session_event(
+            self._message_bus,
+            session_id,
+            event.model_dump(mode="json"),
+        )
+        if isinstance(event, UserConfirmResultEvent):
+            message = agent.state.get_reply_message(agent.name)
+            if message is not None:
+                for call, result in event.matching_results(message):
+                    if result.confirmed:
+                        # The edit survives cancellation. The agent still
+                        # owns validation, permission rules and execution.
+                        call.name = result.tool_call.name
+                        call.input = result.tool_call.input
+        if reply_msg is not None:
+            if isinstance(event, ExternalExecutionResultEvent):
+                # A restored card may lack the original START placeholder.
+                # Only the agent's result stream commits output and receipt.
+                existing = {
+                    r.id for r in reply_msg.get_content_blocks("tool_result")
+                }
+                for result in event.execution_results:
+                    if result.id not in existing:
+                        reply_msg.append_event(
+                            ToolResultStartEvent(
+                                reply_id=event.reply_id,
+                                tool_call_id=result.id,
+                                tool_call_name=result.name,
+                            ),
+                        )
+            else:
+                reply_msg.append_event(event)
+        return cursor
 
     @staticmethod
     def _skip_parked_wakeup(
@@ -931,6 +1029,7 @@ class ChatService:
         sop_dispatch: str | None = None,
         client_builtin_tools: list[ClientBuiltinToolName] | None = None,
         input_persisted: bool = False,
+        channel_requester_id: str = "",
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
@@ -945,10 +1044,7 @@ class ChatService:
         resumed_sop_run_id: str | None = None
         interrupted = False
 
-        async with self._message_bus.acquire_lock(
-            MessageBusKeys.session_lock(session_id),
-            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
-        ):
+        async with session_execution(self._message_bus, session_id):
             # Bound before the try: an assembly failure reports through
             # them, and may happen before either is resolved.
             team_ctx: _TeamContext | None = None
@@ -992,6 +1088,50 @@ class ChatService:
                             f"agent {agent_id!r}."
                         ),
                     )
+                if isinstance(input_msg, ExternalExecutionResultEvent):
+                    try:
+                        pending = (
+                            session_record.state.pending_external_results(
+                                agent_record.data.name,
+                                input_msg,
+                            )
+                        )
+                    except ValueError:
+                        await self._reject_external_results(
+                            session_id,
+                            input_msg,
+                        )
+                        return
+                    if pending is None:
+                        return
+                    input_msg = pending
+                if isinstance(input_msg, UserInterruptEvent) and (
+                    input_msg.reply_id != session_record.state.reply_id
+                    or not session_record.state.has_awaiting_tool_calls(
+                        agent_record.data.name,
+                    )
+                ):
+                    await self._message_bus.registry_del(
+                        MessageBusKeys.session_interrupts(session_id),
+                        input_msg.reply_id,
+                    )
+                    return
+                confirmation_status = None
+                if isinstance(input_msg, UserConfirmResultEvent):
+                    confirmation_status = (
+                        session_record.state.confirmation_status(
+                            agent_record.data.name,
+                            input_msg,
+                        )
+                    )
+                    if confirmation_status == "stale":
+                        return
+                await refresh_session_permissions(
+                    self._storage,
+                    user_id,
+                    session_record,
+                )
+
                 worker_name = agent_record.data.name
                 if (
                     isinstance(session_record.origin, SOPOrigin)
@@ -1344,8 +1484,23 @@ class ChatService:
                     offloader=workspace,
                 )
 
+                if isinstance(input_msg, ExternalExecutionResultEvent):
+                    try:
+                        await agent.prepare_external_results(input_msg)
+                    except Exception as exc:  # pylint: disable=broad-except
+                        await self._reject_external_results(
+                            session_id,
+                            input_msg,
+                            exc
+                            if isinstance(exc, ExternalToolUnavailableError)
+                            else None,
+                        )
+                        return
+
                 if self._skip_parked_wakeup(session_id, agent, input_msg):
                     return
+            except MissingConfirmationIdError:
+                raise
             except Exception as e:  # pylint: disable=broad-except
                 # Under the session lock, like the reply this run never got
                 # to make: these events share a channel with a live reply's,
@@ -1371,6 +1526,7 @@ class ChatService:
                     self._message_bus,
                     session_id,
                     input_msg,
+                    channel_requester_id,
                 )
                 if isinstance(session_record.origin, ChannelOrigin)
                 else ""
@@ -1393,6 +1549,14 @@ class ChatService:
             reply_msg: Msg | None = None
             active_reply_id: str | None = None
             reply_msgs: list[Msg] = []
+            previous_request_ids = (
+                self._subagent_hitl.pending_request_ids(agent.state)
+                if isinstance(team_ctx, _WorkerContext)
+                else []
+            )
+            member_requests: list[
+                RequireUserConfirmEvent | RequireExternalExecutionEvent
+            ] = []
             checkpoint_cursor: str | None = None
             released = False
 
@@ -1449,6 +1613,17 @@ class ChatService:
                                     )
                                 elif reply_msg is not None:
                                     reply_msg.append_event(event)
+                                if isinstance(
+                                    team_ctx,
+                                    _WorkerContext,
+                                ) and isinstance(
+                                    event,
+                                    (
+                                        RequireUserConfirmEvent,
+                                        RequireExternalExecutionEvent,
+                                    ),
+                                ):
+                                    member_requests.append(event)
                                 try:
                                     if isinstance(event, ReplyStartEvent):
                                         if (
@@ -1495,6 +1670,10 @@ class ChatService:
                         else:
                             # Case B: continuation (UserConfirmResult
                             #  / ExternalExecResult)
+                            resume_reply = confirmation_status in (
+                                None,
+                                "ready",
+                            )
                             continuation_reply_id = agent.state.reply_id
                             reply_msg = await self._storage.get_message(
                                 user_id,
@@ -1511,8 +1690,6 @@ class ChatService:
                                     agent.state.reply_id,
                                     session_id,
                                 )
-                            elif input_msg:
-                                reply_msg.append_event(input_msg)
 
                             try:
                                 if (
@@ -1531,45 +1708,61 @@ class ChatService:
                                     session_id,
                                     continuation_reply_id,
                                 )
-                                # Broadcast the applied decision so
-                                # observers that didn't make it (other tabs,
-                                # the channel card) close it.
-                                if isinstance(
+                                input_msg = await self._resume_event(
+                                    session_id,
                                     input_msg,
-                                    (
-                                        UserConfirmResultEvent,
+                                )
+                                if isinstance(input_msg, UserInterruptEvent):
+                                    confirmation_status = None
+                                    resume_reply = True
+                                # Close the answered card on other clients.
+                                if (
+                                    confirmation_status == "ready"
+                                    or isinstance(
+                                        input_msg,
                                         ExternalExecutionResultEvent,
-                                    ),
+                                    )
                                 ):
+                                    receipt = asyncio.create_task(
+                                        self._publish_resume_input(
+                                            session_id,
+                                            input_msg,
+                                            reply_msg,
+                                            agent,
+                                        ),
+                                    )
+                                    try:
+                                        checkpoint_cursor = (
+                                            await asyncio.shield(receipt)
+                                        )
+                                    except asyncio.CancelledError:
+                                        checkpoint_cursor = (
+                                            await finish_cancelled_wait(
+                                                receipt,
+                                            )
+                                        )
+                                        raise
+                                if resume_reply:
+                                    # Signal continuation of the same reply.
+                                    continuation_start = ReplyStartEvent(
+                                        session_id=session_id,
+                                        reply_id=continuation_reply_id,
+                                        name=agent_record.data.name,
+                                    )
                                     checkpoint_cursor = (
                                         await publish_session_event(
                                             self._message_bus,
                                             session_id,
-                                            input_msg.model_dump(mode="json"),
+                                            continuation_start.model_dump(
+                                                mode="json",
+                                            ),
                                         )
                                     )
-
-                                # Emit a synthetic REPLY_START so SSE clients
-                                # can detect the continuation.
-                                #
-                                # IMPORTANT: The frontend SSE handler must
-                                # NOT clear its accumulated message buffer
-                                # upon receiving REPLY_START with the current
-                                # reply_id. This signals a continuation (e.g.
-                                # after an approval flow), not a fresh reply.
-                                continuation_start = ReplyStartEvent(
-                                    session_id=session_id,
-                                    reply_id=continuation_reply_id,
-                                    name=agent_record.data.name,
-                                )
-                                checkpoint_cursor = (
-                                    await publish_session_event(
-                                        self._message_bus,
-                                        session_id,
-                                        continuation_start.model_dump(
-                                            mode="json",
-                                        ),
-                                    )
+                                # Check after the last setup or broadcast
+                                # await, before the agent applies the receipt.
+                                input_msg = await self._resume_event(
+                                    session_id,
+                                    input_msg,
                                 )
                             except asyncio.CancelledError:
                                 # Resume the Agent so it closes pending tools
@@ -1586,6 +1779,17 @@ class ChatService:
                                 # see Case A above.
                                 if reply_msg is not None:
                                     reply_msg.append_event(event)
+                                if isinstance(
+                                    team_ctx,
+                                    _WorkerContext,
+                                ) and isinstance(
+                                    event,
+                                    (
+                                        RequireUserConfirmEvent,
+                                        RequireExternalExecutionEvent,
+                                    ),
+                                ):
+                                    member_requests.append(event)
                                 try:
                                     checkpoint_cursor = (
                                         await publish_session_event(
@@ -1712,6 +1916,16 @@ class ChatService:
                                 session_id=session_id,
                                 state=agent.state,
                             )
+                            if interrupted and isinstance(
+                                input_msg,
+                                UserInterruptEvent,
+                            ):
+                                await self._message_bus.registry_del(
+                                    MessageBusKeys.session_interrupts(
+                                        session_id,
+                                    ),
+                                    input_msg.reply_id,
+                                )
                             if isinstance(
                                 session_record.origin,
                                 ChannelOrigin,
@@ -1757,6 +1971,35 @@ class ChatService:
                                     MessageBusKeys.session_events(session_id),
                                     before_id=checkpoint_cursor,
                                 )
+                        if isinstance(team_ctx, _WorkerContext):
+                            try:
+                                await self._subagent_hitl.sync(
+                                    team_ctx.leader_session_id,
+                                    session_id,
+                                    agent_record,
+                                    agent.state,
+                                    member_requests,
+                                    self._projection,
+                                    previous_request_ids,
+                                )
+                            except Exception:  # pylint: disable=broad-except
+                                logger.exception(
+                                    "Failed to project approvals for %s",
+                                    session_id,
+                                )
+                                retry = asyncio.create_task(
+                                    self._retry_member_approvals(
+                                        user_id,
+                                        session_id,
+                                        team_ctx.leader_session_id,
+                                        agent_record,
+                                        previous_request_ids,
+                                    ),
+                                )
+                                self._approval_retries.add(retry)
+                                retry.add_done_callback(
+                                    self._approval_retries.discard,
+                                )
                     finally:
                         try:
                             if active_reply_id is not None:
@@ -1798,7 +2041,7 @@ class ChatService:
                     # Await the shielded task so the lock is only
                     # released after storage is consistent, then
                     # propagate to honour asyncio semantics.
-                    await persist_task
+                    await finish_cancelled_wait(persist_task)
                     raise
 
                 # Still under the session lock, so this config write
@@ -1821,6 +2064,51 @@ class ChatService:
             and self.sop_service is not None
         ):
             self.sop_service.advance_later(user_id, resumed_sop_run_id)
+
+    async def _retry_member_approvals(
+        self,
+        user_id: str,
+        worker_sid: str,
+        leader_sid: str,
+        agent: AgentRecord,
+        previous_request_ids: list[tuple[str, str]],
+    ) -> None:
+        """Retry from committed state without waking the parked agent."""
+        for delay in (1, 2, 4):
+            await asyncio.sleep(delay)
+            try:
+                async with self._message_bus.acquire_lock(
+                    MessageBusKeys.session_lock(worker_sid),
+                ):
+                    worker = await self._storage.get_session(
+                        user_id,
+                        agent.id,
+                        worker_sid,
+                    )
+                    if worker is None or worker.team_id is None:
+                        return
+                    team = await self._storage.get_team(
+                        user_id,
+                        worker.team_id,
+                    )
+                    if team is None or team.session_id != leader_sid:
+                        return
+                    await self._subagent_hitl.sync(
+                        leader_sid,
+                        worker_sid,
+                        agent,
+                        worker.state,
+                        [],
+                        self._projection,
+                        previous_request_ids,
+                    )
+                return
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Approval sync for %s failed after %ss backoff",
+                    worker_sid,
+                    delay,
+                )
 
     async def _parked_dispatch(
         self,

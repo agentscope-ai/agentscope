@@ -128,6 +128,12 @@ class HintBlock(BaseModel):
     """The sender or origin of this hint. For team messages this is the
     sender's display name (e.g. ``"alice"``); for system notifications
     it may be ``"system"`` or ``None``."""
+    source_role: Literal["user", "assistant", "system"] | None = None
+    """Original message role, set by a trusted steering input adapter.
+
+    A source label or hint text alone must not establish this provenance.
+    Hints from tools, retrieval, and team inboxes leave this unset.
+    """
     created_at: str = Field(default_factory=_generate_timestamp)
     """The creation time of the block"""
     finished_at: str | None = Field(default_factory=_generate_timestamp)

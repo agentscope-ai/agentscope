@@ -236,8 +236,17 @@ class TeamPipeline:
             member = self._parked_member(inputs.reply_id)
             # Reject invalid events before entering assignment execution;
             # they must not interrupt the team's pending work.
-            # pylint: disable-next=protected-access
-            await member.agent._check_incoming_event(inputs)
+            if isinstance(inputs, ExternalExecutionResultEvent):
+                inputs = member.agent.state.pending_external_results(
+                    member.agent.name,
+                    inputs,
+                )
+                if inputs is None:
+                    return
+                await member.agent.prepare_external_results(inputs)
+            else:
+                # pylint: disable-next=protected-access
+                await member.agent._check_incoming_event(inputs)
             async for evt in self._run_assignments(
                 self._assigning_calls(member),
                 results,
@@ -261,11 +270,10 @@ class TeamPipeline:
                 ):
                     assignments.extend(evt.tool_calls)
                     continue
-                yield evt
                 if isinstance(evt, ReplyEndEvent) and self.reset_members:
                     for member in self.members.values():
-                        member.agent.state.context.clear()
-                        member.agent.state.summary = ""
+                        self._reset_member(member.agent)
+                yield evt
 
             if not assignments:
                 return
@@ -285,6 +293,13 @@ class TeamPipeline:
                     async for evt in self.leader.reply_stream(inputs):
                         yield evt
                 return
+
+    def _reset_member(self, agent: Agent) -> None:
+        """Clear the turn and restore permissions owned by the member."""
+        state = agent.state
+        state.context.clear()
+        state.summary = ""
+        state.member_limits.pop(self.leader.state.session_id, None)
 
     async def _run_assignments(
         self,
@@ -313,12 +328,14 @@ class TeamPipeline:
             the rest stay queued until it resumes."""
             member = self.members[name]
             for tool_call in calls:
+                member.agent.state.inherit_member_scope(self.leader.state)
                 async for evt in member.agent.reply_stream(
                     resumed
                     if tool_call is tool_calls[0] and resumed
                     else UserMsg(
                         name="user",
                         content=self._parse(tool_call)["prompt"],
+                        metadata={"authorization_source": "generated"},
                     ),
                     yield_final_msg=True,
                 ):

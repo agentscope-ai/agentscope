@@ -10,7 +10,7 @@ import type {
 	ToolResultEndEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
-import { AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
+import { AssistantMsg, getContentBlocks, UserMsg } from '@agentscope-ai/agentscope/message';
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect, useMemo, useLayoutEffect } from 'react';
@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 
 import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
+import { ApiError } from '@/api/client';
 import { useAudioManager } from '@/context/AudioContext';
 import {
 	getQueueMessages,
@@ -28,7 +29,7 @@ import {
 import { useTranslation } from '@/i18n/useI18n';
 import { ASK_USER_TOOL_NAME, formatAskUserOutput, parseAskUserResult } from '@/lib/ask-user';
 import type { ClientExternalToolResult } from '@/lib/client-external-tools';
-import { appendMessageEvent } from '@/lib/message-events';
+import { appendMessageEvent, confirmationId } from '@/lib/message-events';
 import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 
 /**
@@ -44,13 +45,32 @@ export type SubagentHitlEntry = {
 	worker_agent_name: string;
 	reply_id: string;
 	event_type: 'require_user_confirm' | 'require_external_execution';
-	/** The original ``RequireUserConfirmEvent`` payload (serialized). */
-	event: { tool_calls?: ToolCallBlock[] } & Record<string, unknown>;
+	/** The original confirmation or external execution request. */
+	event: { id: string; tool_calls?: ToolCallBlock[] } & Record<string, unknown>;
 	created_at: string;
 };
 
-const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
-	`${e.worker_session_id}:${e.reply_id}`;
+function postToolReceipt(
+	agentId: string,
+	sessionId: string,
+	input: UserConfirmResultEvent | ExternalExecutionResultEvent,
+	member?: SubagentHitlEntry,
+) {
+	return chatApi.trigger(
+		{ agent_id: agentId, session_id: sessionId, input },
+		member && { agent_id: member.worker_agent_id, session_id: member.worker_session_id },
+	);
+}
+
+type MemberCardKey = Pick<SubagentHitlEntry, 'worker_session_id' | 'reply_id'> & {
+	request_id: string;
+};
+export const memberCardKey = (entry: SubagentHitlEntry | MemberCardKey) =>
+	JSON.stringify([
+		entry.worker_session_id,
+		entry.reply_id,
+		'event' in entry ? entry.event.id : entry.request_id,
+	]);
 
 /**
  * Lifecycle phase of the reply currently owned by this session.
@@ -70,6 +90,7 @@ export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
 
 /** Safety fallback: force phase back to idle if REPLY_END is not seen. */
 const INTERRUPT_TIMEOUT_MS = 10_000;
+const EXTERNAL_RECEIPT_TIMEOUT_MS = 60_000;
 
 /**
  * Manages messages for a single ``(agentId, sessionId)`` pair.
@@ -140,11 +161,14 @@ export function useMessages(
 	const { t } = useTranslation();
 	// A new identity for each visit also rejects late responses after A -> B -> A.
 	const session = useMemo(() => ({ agentId, sessionId }), [agentId, sessionId]);
+	const [missingSession, setMissingSession] = useState<typeof session | null>(null);
+	const sessionMissing = missingSession === session;
 	const externalSubmissionsRef = useRef(
 		new Map<
 			string,
 			{
 				replyId: string;
+				sourceSession: string;
 				toolCallIds: Set<string>;
 				resolve: () => void;
 				reject: (error: Error) => void;
@@ -193,7 +217,7 @@ export function useMessages(
 		steerQueued,
 		moveQueued,
 		reorderQueued,
-	} = useChatQueue(agentId, sessionId, setError);
+	} = useChatQueue(agentId, sessionMissing ? null : sessionId, setError);
 
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
@@ -225,11 +249,9 @@ export function useMessages(
 		});
 	}, []);
 
-	/** Apply a single AgentEvent to the in-progress reply. */
-	const processEvent = useCallback(
-		(event: AgentEvent) => {
-			// Custom events are service-layer notifications, not agent
-			// reply content — route them to callbacks and skip appendEvent.
+	// A member form is acknowledged on the worker stream that consumes it.
+	const processReceipt = useCallback(
+		(event: AgentEvent, sourceSession: string) => {
 			if (event.type === EventType.CUSTOM) {
 				const custom = event as CustomEvent;
 				if (custom.name === 'external_execution_result_rejected') {
@@ -237,18 +259,73 @@ export function useMessages(
 						request_id: string;
 						reply_id: string;
 						tool_call_ids: string[];
+						unavailable_tool?: string;
 					};
 					const pending = externalSubmissionsRef.current.get(failure.request_id);
 					if (
-						pending?.replyId === failure.reply_id &&
+						pending?.sourceSession === sourceSession &&
+						pending.replyId === failure.reply_id &&
 						failure.tool_call_ids.some((id) => pending.toolCallIds.has(id))
 					) {
 						externalSubmissionsRef.current.delete(failure.request_id);
-						const error = new Error(t('chat.externalExecution.rejected'));
+						const error = new Error(
+							failure.unavailable_tool
+								? t('chat.externalExecution.restoreTool', {
+										name: failure.unavailable_tool,
+									})
+								: t('chat.externalExecution.rejected'),
+						);
 						pending.reject(error);
 						toast.error(error.message);
 					}
-				} else if (custom.name === 'tts_error') {
+				}
+			}
+			if (event.type === EventType.TOOL_RESULT_END) {
+				const result = event as ToolResultEndEvent & { external_request_id?: string };
+				for (const [requestId, pending] of externalSubmissionsRef.current) {
+					if (
+						pending.sourceSession !== sourceSession ||
+						pending.replyId !== result.reply_id ||
+						!pending.toolCallIds.has(result.tool_call_id)
+					)
+						continue;
+					if (result.external_request_id !== requestId) {
+						externalSubmissionsRef.current.delete(requestId);
+						const error = new Error(t('chat.externalExecution.notAccepted'));
+						pending.reject(error);
+						toast.error(error.message);
+					} else {
+						pending.toolCallIds.delete(result.tool_call_id);
+						if (!pending.toolCallIds.size) {
+							externalSubmissionsRef.current.delete(requestId);
+							pending.resolve();
+						}
+					}
+				}
+			} else if (event.type === EventType.REPLY_END) {
+				for (const [requestId, pending] of externalSubmissionsRef.current) {
+					if (
+						pending.sourceSession !== sourceSession ||
+						pending.replyId !== event.reply_id
+					)
+						continue;
+					externalSubmissionsRef.current.delete(requestId);
+					pending.reject(new Error(t('chat.externalExecution.rejected')));
+				}
+			}
+		},
+		[t],
+	);
+
+	/** Apply a single AgentEvent to the in-progress reply. */
+	const processEvent = useCallback(
+		(event: AgentEvent) => {
+			if (sessionId) processReceipt(event, sessionId);
+			// Custom events are service-layer notifications, not agent
+			// reply content — route them to callbacks and skip appendEvent.
+			if (event.type === EventType.CUSTOM) {
+				const custom = event as CustomEvent;
+				if (custom.name === 'tts_error') {
 					const failure = custom.value as { stage?: string; reply_id?: string };
 					const sessionKey = JSON.stringify([agentId, sessionId]);
 					if (failure.stage === 'configuration') {
@@ -267,16 +344,26 @@ export function useMessages(
 				} else if (custom.name === 'subagent_require_user_confirm') {
 					// A team member is asking for confirmation; show (or
 					// refresh) its card on this leader view. Dedup by
-					// (worker_session_id, reply_id).
+					// worker, reply and request so sibling cards stay independent.
 					const e = custom.value as unknown as SubagentHitlEntry;
 					setSubagentHitl((prev) => [
-						...prev.filter((x) => hitlKey(x) !== hitlKey(e)),
+						...prev.filter((x) => memberCardKey(x) !== memberCardKey(e)),
 						e,
 					]);
+				} else if (custom.name === 'subagent_hitl_snapshot') {
+					const { pending } = custom.value as {
+						pending: MemberCardKey[];
+					};
+					const keys = new Set(pending.map(memberCardKey));
+					setSubagentHitl((prev) =>
+						prev.filter((entry) => keys.has(memberCardKey(entry))),
+					);
 				} else if (custom.name === 'subagent_user_confirm_result') {
 					// The member resolved (or its run ended); clear the card.
-					const v = custom.value as { worker_session_id: string; reply_id: string };
-					setSubagentHitl((prev) => prev.filter((x) => hitlKey(x) !== hitlKey(v)));
+					const v = custom.value as MemberCardKey;
+					setSubagentHitl((prev) =>
+						prev.filter((x) => memberCardKey(x) !== memberCardKey(v)),
+					);
 				} else if (custom.name === 'chat_input_started') {
 					const startedItem = startItem(custom.value as ChatInputStartedValue);
 					if (startedItem) {
@@ -321,23 +408,6 @@ export function useMessages(
 				}
 				return;
 			}
-			if (event.type === EventType.TOOL_RESULT_END) {
-				const result = event as ToolResultEndEvent;
-				for (const [requestId, pending] of externalSubmissionsRef.current) {
-					if (pending.replyId !== result.reply_id) continue;
-					pending.toolCallIds.delete(result.tool_call_id);
-					if (pending.toolCallIds.size === 0) {
-						externalSubmissionsRef.current.delete(requestId);
-						pending.resolve();
-					}
-				}
-			} else if (event.type === EventType.REPLY_END) {
-				for (const [requestId, pending] of externalSubmissionsRef.current) {
-					if (pending.replyId !== event.reply_id) continue;
-					externalSubmissionsRef.current.delete(requestId);
-					pending.reject(new Error(t('chat.externalExecution.rejected')));
-				}
-			}
 			if (event.type === EventType.REPLY_START) {
 				const e = event as ReplyStartEvent;
 				// A continuation (the run resuming after a confirmation or an
@@ -373,7 +443,24 @@ export function useMessages(
 						: (msgsRef.current.find((message) => message.id === event.reply_id) ?? null)
 					: currentReplyRef.current;
 				if (reply) {
-					appendMessageEvent(reply, event);
+					if (event.type === EventType.EXTERNAL_EXECUTION_RESULT) {
+						// The echo precedes consumption. Older cards may lack START.
+						const existing = getContentBlocks(reply, 'tool_result');
+						for (const result of event.execution_results) {
+							if (!existing.some((r) => r.id === result.id)) {
+								appendMessageEvent(reply, {
+									type: EventType.TOOL_RESULT_START,
+									id: event.id,
+									created_at: event.created_at,
+									reply_id: event.reply_id,
+									tool_call_id: result.id,
+									tool_call_name: result.name,
+								});
+							}
+						}
+					} else {
+						appendMessageEvent(reply, event);
+					}
 					// ``appendEvent`` mutates in place, which would leave
 					// every Msg identical across renders and force the whole
 					// list to re-render on each delta. Republish just the
@@ -435,6 +522,7 @@ export function useMessages(
 			scheduleUpdate();
 		},
 		[
+			processReceipt,
 			scheduleUpdate,
 			audioManager,
 			clearInterruptTimer,
@@ -447,8 +535,57 @@ export function useMessages(
 		],
 	);
 
+	// A persisted reply may already be parked on another tool or completed.
+	const applyHistory = useCallback((messages: Msg[], isRunning: boolean) => {
+		const pending = getPendingHitlCalls(messages)[0];
+		const tail = messages.at(-1);
+		const active = isRunning && !pending && tail?.role === 'assistant' ? tail : null;
+		msgsRef.current = messages;
+		currentReplyRef.current = pending
+			? (messages.find((message) => message.id === pending.replyId) ?? null)
+			: active;
+		setActiveReplyId(active?.id ?? null);
+		setPhase(isRunning || pending ? 'streaming' : 'idle');
+		setMsgs([...messages]);
+	}, []);
+
+	const reconcileReceipts = useCallback(
+		(messages: Msg[], sourceSession: string) => {
+			const submissions = externalSubmissionsRef.current;
+			for (const [id, pending] of submissions) {
+				if (pending.sourceSession !== sourceSession) continue;
+				const reply = messages.find((m) => m.id === pending.replyId);
+				const accepted = reply?.metadata?.external_result_receipts as
+					| Record<string, string>
+					| undefined;
+				const terminal = reply
+					? getContentBlocks(reply, 'tool_result').filter((r) => r.state !== 'running')
+					: [];
+				for (const key of pending.toolCallIds) {
+					if (accepted?.[key] === id) pending.toolCallIds.delete(key);
+				}
+				if (!pending.toolCallIds.size) {
+					submissions.delete(id);
+					pending.resolve();
+				} else {
+					const lost = [...pending.toolCallIds].some(
+						(key) => terminal.some((r) => r.id === key) && accepted?.[key] !== id,
+					);
+					// An idle worker may still have this receipt queued.
+					if (!lost) continue;
+					submissions.delete(id);
+					const error = new Error(t('chat.externalExecution.notAccepted'));
+					pending.reject(error);
+					toast.error(error.message);
+				}
+			}
+		},
+		[t],
+	);
+
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
 	useEffect(() => {
+		if (sessionMissing) return;
 		setLoadedKey(null);
 		msgsRef.current = [];
 		currentReplyRef.current = null;
@@ -464,91 +601,66 @@ export function useMessages(
 
 		const controller = new AbortController();
 		abortRef.current = controller;
-		let cancelled = false;
-
-		(async () => {
-			let eventCursor: string | null = null;
-			// 1. Fetch persisted history — unless this tab just created the
-			// session, in which case there is provably none.
-			if (takeFreshlyCreated(sessionId)) {
-				if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
-			} else {
-				try {
-					const { messages, is_running, event_cursor } = await sessionApi.messages(
-						sessionId,
-						agentId,
-					);
-					if (cancelled) return;
-					eventCursor = event_cursor;
-					msgsRef.current = messages;
-					// If a reply is in flight (running on a worker) OR any
-					// persisted msg is parked on a pending tool_call (awaiting
-					// user confirmation / external execution), initialise the
-					// phase to ``streaming`` so the interrupt button is
-					// available immediately — otherwise a fresh page load
-					// while parked leaves the UI stuck on ``idle`` with no
-					// way to abort.
-					const tail = messages[messages.length - 1];
-					const pendingHitl = getPendingHitlCalls(messages)[0];
-					if (is_running || pendingHitl) {
-						setPhase('streaming');
-						if (is_running && !pendingHitl && tail?.role === 'assistant') {
-							setActiveReplyId(tail.id);
-						}
-						if (pendingHitl) {
-							// Prime the ref so continuation events (which
-							// arrive without a fresh REPLY_START) apply to
-							// the right msg.
-							currentReplyRef.current =
-								messages.find((message) => message.id === pendingHitl.replyId) ??
-								null;
-						}
-					}
-					// Published synchronously, not through `scheduleUpdate`:
-					// its requestAnimationFrame batching exists for
-					// high-frequency streaming deltas, and deferring here
-					// would let `loadedKey` below clear `loading` a frame
-					// before the messages land — painting the empty-session
-					// greeting over a conversation that does have history.
-					// Both setters now land in the same React batch.
-					setMsgs([...msgsRef.current]);
-				} catch (e) {
-					if (!cancelled) setError(e as Error);
-					return;
-				} finally {
-					// Marks the load done whether it succeeded or threw —
-					// an error surfaces through `error`, and leaving
-					// `loading` stuck on would hide it behind a spinner
-					// forever.
-					if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
-				}
-			}
-
-			// 2. Open SSE long connection for live events
+		let retryTimer: ReturnType<typeof setTimeout>;
+		let fresh = takeFreshlyCreated(sessionId);
+		const submissions = externalSubmissionsRef.current;
+		const connect = async () => {
+			let cursor: string | null = null;
 			try {
+				if (!fresh) {
+					const history = await sessionApi.messages(sessionId, agentId);
+					if (controller.signal.aborted) return;
+					applyHistory(history.messages, history.is_running);
+					cursor = history.event_cursor;
+					reconcileReceipts(history.messages, sessionId);
+				}
+				fresh = false;
+				setLoadedKey(`${agentId}:${sessionId}`);
 				for await (const event of sessionApi.streamEvents(
 					sessionId,
 					agentId,
 					controller.signal,
-					eventCursor,
+					cursor,
 				)) {
-					if (cancelled) break;
+					if (controller.signal.aborted) return;
 					processEvent(event);
 				}
 			} catch (e) {
-				if ((e as Error).name !== 'AbortError' && !cancelled) {
-					setError(e as Error);
+				if (controller.signal.aborted) return;
+				setError(e as Error);
+				setLoadedKey(`${agentId}:${sessionId}`);
+				if (e instanceof ApiError && e.status === 404) {
+					setMissingSession(session);
+					for (const pending of submissions.values()) pending.reject(e);
+					submissions.clear();
+					applyHistory([], false);
+					setSubagentHitl([]);
+					return;
 				}
 			}
-		})();
-
+			if (!controller.signal.aborted) {
+				retryTimer = setTimeout(() => void connect(), 1000);
+			}
+		};
+		void connect();
 		return () => {
-			cancelled = true;
+			clearTimeout(retryTimer);
 			controller.abort();
 			abortRef.current = null;
 			clearInterruptTimer();
 		};
-	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
+	}, [
+		agentId,
+		sessionId,
+		session,
+		sessionMissing,
+		reconcileReceipts,
+		applyHistory,
+		processEvent,
+		audioManager,
+		clearInterruptTimer,
+		t,
+	]);
 
 	/**
 	 * Send a user message. The first idle input appears in the conversation
@@ -622,18 +734,25 @@ export function useMessages(
 		) => {
 			if (!agentId || !sessionId) return;
 
-			// Restore the ref so continuation events (no REPLY_START)
-			// have a target.
-			currentReplyRef.current = msgsRef.current.find((m) => m.id === replyId) ?? null;
+			const reply = msgsRef.current.find((message) => message.id === replyId);
+			// Reject a card superseded between render and click.
+			if (toolCall.state !== 'asking' || !reply?.content.includes(toolCall)) {
+				throw new Error('This confirmation is no longer current.');
+			}
+			currentReplyRef.current = reply;
+			const answer = {
+				confirmed: confirm,
+				tool_call: toolCall,
+				rules: rules ?? null,
+				request_id: confirmationId(reply, toolCall.id),
+			};
 
 			const event: UserConfirmResultEvent = {
 				type: EventType.USER_CONFIRM_RESULT,
 				id: crypto.randomUUID(),
 				created_at: new Date().toISOString(),
 				reply_id: replyId,
-				confirm_results: [
-					{ confirmed: confirm, tool_call: toolCall, rules: rules ?? null },
-				],
+				confirm_results: [answer],
 			};
 
 			try {
@@ -643,11 +762,7 @@ export function useMessages(
 				) {
 					await optionsRef.current.sendRealtimeUserConfirm(event);
 				} else {
-					await chatApi.trigger({
-						agent_id: agentId,
-						session_id: sessionId,
-						input: event,
-					});
+					await postToolReceipt(agentId, sessionId, event);
 				}
 			} catch (e) {
 				setError(e as Error);
@@ -657,57 +772,102 @@ export function useMessages(
 		[agentId, sessionId],
 	);
 
-	const onExternalExecutionResult = useCallback(
-		async (event: ExternalExecutionResultEvent) => {
-			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
-			try {
-				if (
-					optionsRef.current?.isRealtimeAudioActive?.() &&
-					optionsRef.current.sendRealtimeExternalExecutionResult
-				) {
-					// Sending a DataChannel frame does not acknowledge its result.
-					// Register first so even an immediate SSE response is matched.
-					const receipt = new Promise<void>((resolve, reject) => {
-						externalSubmissionsRef.current.set(event.id, {
-							replyId: event.reply_id,
-							toolCallIds: new Set(
-								event.execution_results.map((result) => result.id),
-							),
-							resolve,
-							reject,
-						});
-					});
-					await Promise.all([
-						receipt,
-						optionsRef.current.sendRealtimeExternalExecutionResult(event),
-					]);
-				} else {
-					await chatApi.trigger({
-						agent_id: agentId,
-						session_id: sessionId,
-						input: event,
-					});
+	const watchMemberReceipt = useCallback(
+		async (member: SubagentHitlEntry, requestId: string, signal: AbortSignal) => {
+			const { worker_session_id: sid, worker_agent_id: aid } = member;
+			while (!signal.aborted) {
+				try {
+					const history = await sessionApi.messages(sid, aid);
+					if (signal.aborted) return;
+					reconcileReceipts(history.messages, sid);
+					if (!externalSubmissionsRef.current.has(requestId)) return;
+					for await (const update of sessionApi.streamEvents(
+						sid,
+						aid,
+						signal,
+						history.event_cursor,
+					)) {
+						if (signal.aborted) return;
+						processReceipt(update, sid);
+					}
+				} catch (error) {
+					if (error instanceof ApiError && error.status === 404) {
+						externalSubmissionsRef.current.get(requestId)?.reject(error);
+						return;
+					}
 				}
+				if (!signal.aborted) await new Promise((r) => setTimeout(r, 1000));
+			}
+		},
+		[processReceipt, reconcileReceipts],
+	);
+
+	const onExternalExecutionResult = useCallback(
+		async (event: ExternalExecutionResultEvent, member?: SubagentHitlEntry) => {
+			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
+
+			const watcher = new AbortController();
+			let timeout: ReturnType<typeof setTimeout> | undefined;
+			try {
+				// Both transports acknowledge acceptance on the session event stream.
+				const receipt = new Promise<void>((resolve, reject) => {
+					externalSubmissionsRef.current.set(event.id, {
+						replyId: event.reply_id,
+						sourceSession: member?.worker_session_id ?? sessionId,
+						toolCallIds: new Set(event.execution_results.map((result) => result.id)),
+						resolve,
+						reject,
+					});
+				});
+				const options = optionsRef.current;
+				const send =
+					!member &&
+					options?.isRealtimeAudioActive?.() &&
+					options.sendRealtimeExternalExecutionResult
+						? options.sendRealtimeExternalExecutionResult(event)
+						: postToolReceipt(agentId, sessionId, event, member);
+				if (member) void watchMemberReceipt(member, event.id, watcher.signal);
+				await Promise.all([
+					receipt,
+					send.then(() => {
+						const pending = externalSubmissionsRef.current.get(event.id);
+						if (!pending) return;
+						timeout = setTimeout(() => {
+							const error = new Error(t('chat.externalExecution.unconfirmed'));
+							pending.reject(error);
+							toast.error(error.message);
+						}, EXTERNAL_RECEIPT_TIMEOUT_MS);
+					}),
+				]);
 			} catch (e) {
 				if (activeSessionRef.current === session) setError(e as Error);
 				throw e;
 			} finally {
+				watcher.abort();
+				clearTimeout(timeout);
 				externalSubmissionsRef.current.delete(event.id);
 			}
 		},
-		[agentId, sessionId, session],
+		[agentId, sessionId, session, t, watchMemberReceipt],
 	);
 
 	/** Return a client-executed tool result and resume the parked reply. */
 	const onClientExternalToolResult = useCallback(
-		async (toolCall: ToolCallBlock, result: ClientExternalToolResult, replyId: string) => {
+		async (
+			toolCall: ToolCallBlock,
+			result: ClientExternalToolResult,
+			replyId: string,
+			member?: SubagentHitlEntry,
+			state: 'success' | 'interrupted' = 'success',
+		) => {
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
-			currentReplyRef.current = msgsRef.current.find((msg) => msg.id === replyId) ?? null;
+			if (!member)
+				currentReplyRef.current = msgsRef.current.find((msg) => msg.id === replyId) ?? null;
 			const createdAt = new Date().toISOString();
-			const nativeResult =
-				toolCall.name === ASK_USER_TOOL_NAME ? parseAskUserResult(result) : null;
-			if (toolCall.name === ASK_USER_TOOL_NAME && !nativeResult) {
+			const isAnswer = toolCall.name === ASK_USER_TOOL_NAME && state === 'success';
+			const nativeResult = isAnswer ? parseAskUserResult(result) : null;
+			if (isAnswer && !nativeResult) {
 				throw new Error('Invalid AskUser answers');
 			}
 			const toolResult: ToolResultBlock = {
@@ -727,7 +887,7 @@ export function useMessages(
 						finished_at: createdAt,
 					},
 				],
-				state: 'success',
+				state,
 				metadata: nativeResult ?? {},
 				created_at: createdAt,
 				finished_at: createdAt,
@@ -740,7 +900,7 @@ export function useMessages(
 				execution_results: [toolResult],
 			};
 
-			await onExternalExecutionResult(event);
+			await onExternalExecutionResult(event, member);
 		},
 		[agentId, sessionId, session, onExternalExecutionResult],
 	);
@@ -790,12 +950,8 @@ export function useMessages(
 	 * Confirm or deny a tool call that a *team member* is awaiting,
 	 * from this leader view (design §3.6 — backend routing).
 	 *
-	 * The result is POSTed to the **leader** session (the
-	 * ``(agentId, sessionId)`` this hook is bound to), NOT the worker.
-	 * The backend resolves ``reply_id`` → worker session via the
-	 * leader's pending hash and forwards the event to the worker's
-	 * continuation. The client never addresses the worker directly —
-	 * ``entry.worker_*`` ids are used only for local dedup / clearing.
+	 * The leader endpoint routes the receipt to the worker. The worker's
+	 * tool selection supplies the definitions needed to resume its call.
 	 *
 	 * @param entry - The pending subagent HITL entry being resolved.
 	 * @param toolCall - The tool call block to confirm/deny.
@@ -811,45 +967,27 @@ export function useMessages(
 		) => {
 			if (!agentId || !sessionId) return;
 
+			const answer = {
+				confirmed: confirm,
+				tool_call: toolCall,
+				rules: rules ?? null,
+				request_id: entry.event.id,
+			};
 			const event: UserConfirmResultEvent = {
 				type: EventType.USER_CONFIRM_RESULT,
 				id: crypto.randomUUID(),
 				created_at: new Date().toISOString(),
 				reply_id: entry.reply_id, // worker's reply_id; backend maps it
-				confirm_results: [
-					{ confirmed: confirm, tool_call: toolCall, rules: rules ?? null },
-				],
+				confirm_results: [answer],
 			};
 
 			try {
-				// Post to the leader front door — backend routes to the
-				// worker session (§3.6). Do NOT address the worker here.
-				await chatApi.trigger({
-					agent_id: agentId,
-					session_id: sessionId,
-					input: event,
-				});
+				await postToolReceipt(agentId, sessionId, event, entry);
 			} catch (e) {
 				setError(e as Error);
 				// Rethrow so the card can re-enable itself and be retried.
 				throw e;
 			}
-
-			// Drop only the call just answered — an entry can carry several
-			// pending tool calls, and clearing the whole entry would take the
-			// unanswered siblings' cards down with it. The backend's clear
-			// event removes whatever is left.
-			setSubagentHitl((prev) =>
-				prev.flatMap((x) => {
-					if (hitlKey(x) !== hitlKey(entry)) return [x];
-					const remaining = (x.event.tool_calls ?? []).filter(
-						(tc) => tc.id !== toolCall.id,
-					);
-					return remaining.length > 0
-						? [{ ...x, event: { ...x.event, tool_calls: remaining } }]
-						: [];
-				}),
-			);
 		},
 		[agentId, sessionId],
 	);
@@ -875,7 +1013,6 @@ export function useMessages(
 		send,
 		onUserConfirm,
 		onClientExternalToolResult,
-		onExternalExecutionResult,
 		onSubagentConfirm,
 		subagentHitl: ownsConversation ? subagentHitl : [],
 		abort,

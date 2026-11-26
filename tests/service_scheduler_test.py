@@ -42,7 +42,6 @@ from agentscope.app.storage import (
     ScheduleOrigin,
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
-from agentscope.permission import PermissionMode
 from agentscope.message import ToolResultState
 
 
@@ -105,7 +104,7 @@ def _make_record(
                 parameters={},
             ),
             stateful=stateful,
-            permission_mode=PermissionMode.DONT_ASK,
+            permission_mode="dont_ask",
         ),
     )
 
@@ -164,6 +163,7 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
             hint,
             {
                 "type": "hint",
+                "source_role": None,
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "finished_at": AnyString(),

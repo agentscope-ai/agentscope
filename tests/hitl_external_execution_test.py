@@ -230,6 +230,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         self,
         id: str,
         result: str,
+        request_id: str,
         state: str = "success",
     ) -> list[dict]:
         """Helper method to get the expected tool result events."""
@@ -241,6 +242,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             },
             {
                 "type": "TOOL_RESULT_END",
+                "external_request_id": request_id,
                 "tool_call_id": id,
                 "state": state,
             },
@@ -373,6 +375,12 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             UserMsg(name="user", content=self.user_input_text),
         ):
             events.append(event.model_dump())
+            if isinstance(event, RequireExternalExecutionEvent):
+                approvals = self.agent.state.reply_context.tool_approvals
+                self.assertEqual(
+                    {k: v.external_request_id for k, v in approvals.items()},
+                    {self.tool_call_id_1: event.id},
+                )
 
         # Verify events
         session_id = self.agent.state.session_id
@@ -454,6 +462,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         # Create external execution result event
         external_result_event = ExternalExecutionResultEvent(
+            id="answer-1",
             reply_id=reply_id,
             execution_results=[
                 ToolResultBlock(
@@ -479,6 +488,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self._get_tool_result_events(
                 self.tool_call_id_1,
                 self.sequential_result_1,
+                external_result_event.id,
             ),
             *self.final_text_events,
             {
@@ -513,6 +523,11 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "error": None,
             },
             {
+                "metadata": {
+                    "external_result_receipts": {
+                        self.tool_call_id_1: "answer-1",
+                    },
+                },
                 "content": [
                     {
                         "type": "tool_call",
@@ -721,6 +736,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         # Create external execution result event
         external_result_event = ExternalExecutionResultEvent(
+            id="answer-1",
             reply_id=reply_id,
             execution_results=[
                 ToolResultBlock(
@@ -746,6 +762,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self._get_tool_result_events(
                 self.tool_call_id_1,
                 self.sequential_result_1,
+                external_result_event.id,
             ),
             *self._get_require_external_execution_events(
                 reply_id,
@@ -761,6 +778,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         # Given the external execution result of the second tool call
         external_result_event = ExternalExecutionResultEvent(
+            id="answer-2",
             reply_id=reply_id,
             execution_results=[
                 ToolResultBlock(
@@ -785,6 +803,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self._get_tool_result_events(
                 self.tool_call_id_2,
                 self.sequential_result_2,
+                external_result_event.id,
                 state="error",
             ),
             *self.final_text_events,
@@ -821,6 +840,12 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "error": None,
             },
             {
+                "metadata": {
+                    "external_result_receipts": {
+                        self.tool_call_id_1: "answer-1",
+                        self.tool_call_id_2: "answer-2",
+                    },
+                },
                 "content": [
                     {
                         "type": "tool_call",
@@ -1063,6 +1088,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         # Create external execution result event
         external_result_event = ExternalExecutionResultEvent(
+            id="answer-1",
             reply_id=reply_id,
             execution_results=[
                 ToolResultBlock(
@@ -1087,6 +1113,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self._get_tool_result_events(
                 self.tool_call_id_1,
                 self.concurrent_result_1,
+                external_result_event.id,
             ),
         ]
 
@@ -1095,8 +1122,31 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             [{**basic_dict, **_} for _ in expected_concurrent],
         )
 
+        snapshot = self.agent.state.model_dump()
+        self.assertEqual(
+            [
+                evt
+                async for evt in self.agent.reply_stream(
+                    external_result_event,
+                )
+            ],
+            [],
+        )
+        self.assertEqual(self.agent.state.model_dump(), snapshot)
+        first_result = external_result_event.execution_results[0]
+
+        unknown = first_result.model_copy(update={"id": "unknown"})
+        with self.assertRaisesRegex(ValueError, "unknown"):
+            await self.agent.reply(
+                external_result_event.model_copy(
+                    update={"execution_results": [first_result, unknown]},
+                ),
+            )
+        self.assertEqual(self.agent.state.model_dump(), snapshot)
+
         # The second tool call result
         external_result_event = ExternalExecutionResultEvent(
+            id="answer-2",
             reply_id=reply_id,
             execution_results=[
                 ToolResultBlock(
@@ -1110,6 +1160,11 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             ],
         )
 
+        external_result_event.execution_results.insert(0, first_result)
+        external_result_event.execution_results.append(
+            external_result_event.execution_results[-1],
+        )
+
         events = []
         async for event in self.agent.reply_stream(
             inputs=external_result_event,
@@ -1120,6 +1175,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self._get_tool_result_events(
                 self.tool_call_id_2,
                 self.concurrent_result_2,
+                external_result_event.id,
             ),
             *self.final_text_events,
             {
@@ -1155,6 +1211,12 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "error": None,
             },
             {
+                "metadata": {
+                    "external_result_receipts": {
+                        self.tool_call_id_1: "answer-1",
+                        self.tool_call_id_2: "answer-2",
+                    },
+                },
                 "content": [
                     {
                         "type": "tool_call",
@@ -1390,6 +1452,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         self.assertListEqual(context_dicts, expected_context)
 
         external_result_event = ExternalExecutionResultEvent(
+            id="answer-1",
             reply_id=reply_id,
             execution_results=[
                 ToolResultBlock(
@@ -1421,10 +1484,12 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self._get_tool_result_events(
                 self.tool_call_id_1,
                 self.concurrent_result_1,
+                external_result_event.id,
             ),
             *self._get_tool_result_events(
                 self.tool_call_id_2,
                 self.concurrent_result_2,
+                external_result_event.id,
             ),
             *self.final_text_events,
             {
@@ -1458,6 +1523,12 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "error": None,
             },
             {
+                "metadata": {
+                    "external_result_receipts": {
+                        self.tool_call_id_1: "answer-1",
+                        self.tool_call_id_2: "answer-1",
+                    },
+                },
                 "content": [
                     {
                         "type": "tool_call",

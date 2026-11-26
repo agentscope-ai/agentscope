@@ -19,6 +19,7 @@ from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, InjectionConfig, ReActConfig
 from agentscope.event import (
+    ExternalExecutionResultEvent,
     ReplyEndEvent,
     ToolResultStartEvent,
     UserInterruptEvent,
@@ -962,6 +963,24 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
         )
         reply_id = agent.state.reply_id
         session_id = agent.state.session_id
+
+        parked = agent.state.model_dump()
+        for late in (
+            UserInterruptEvent(reply_id="previous"),
+            ExternalExecutionResultEvent(
+                reply_id="previous",
+                execution_results=[],
+            ),
+        ):
+            self.assertEqual(
+                [evt async for evt in agent.reply_stream(late)],
+                [],
+            )
+            self.assertEqual(
+                await agent.reply(late),
+                agent.state.get_reply_message(agent.name),
+            )
+            self.assertEqual(agent.state.model_dump(), parked)
 
         events = []
         async for evt in agent.reply_stream(

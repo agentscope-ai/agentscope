@@ -419,7 +419,9 @@ class TestBubblewrapWorkspaceInstructions(IsolatedAsyncioTestCase):
                 """Capture the health command and return plain ok."""
                 del cwd, timeout
                 self.command = command
-                body = base64.b64encode(b"ok").decode("ascii")
+                body = base64.b64encode(
+                    b'{"status":"ok","protocol_version":1}',
+                ).decode("ascii")
                 return ExecResult(
                     0,
                     json.dumps({"status": 200, "body": body}).encode(),
@@ -451,7 +453,11 @@ class TestBubblewrapWorkspaceInstructions(IsolatedAsyncioTestCase):
             ) -> ExecResult:
                 """Return a health body with a different nonce."""
                 del command, cwd, timeout
-                payload = {"status": "ok", "instance_nonce": "actual"}
+                payload = {
+                    "status": "ok",
+                    "protocol_version": 1,
+                    "instance_nonce": "actual",
+                }
                 body = base64.b64encode(json.dumps(payload).encode()).decode()
                 return ExecResult(
                     0,
@@ -767,6 +773,7 @@ class TestGatewayMCPTool(unittest.TestCase):
                 input_schema={"type": "object"},
                 annotations=ToolAnnotations(read_only_hint=True),
             ),
+            client._approval_scope(),
         )
 
         self.assertFalse(tool.is_read_only)

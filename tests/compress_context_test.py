@@ -2024,6 +2024,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "hint",
+                        "source_role": None,
                         "hint": [
                             {
                                 "type": "text",
@@ -2051,6 +2052,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "hint",
+                        "source_role": None,
                         "hint": (
                             "<system-reminder>The image named 'img4' is "
                             "removed to free up context "
@@ -2246,6 +2248,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             },
                             {
                                 "type": "hint",
+                                "source_role": None,
                                 "hint": [
                                     {
                                         "type": "text",
@@ -2275,6 +2278,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             },
                             {
                                 "type": "hint",
+                                "source_role": None,
                                 "hint": (
                                     "<system-reminder>The image named 'img4' "
                                     "is offloaded into "
@@ -2446,6 +2450,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                         {
                             "type": "hint",
+                            "source_role": None,
                             "hint": [
                                 {
                                     "type": "text",
@@ -2822,6 +2827,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         """Summary failures fall back to lossy context truncation."""
         agent, _ = _make_failing_compression_agent()
         expected_state = agent.state.model_copy(deep=True)
+        expected_state.retain_authorization(expected_state.context[:1])
         expected_state.context = expected_state.context[1:]
         expected_state.summary = (
             "<system-info>Some earlier messages were truncated for limited "
@@ -2922,6 +2928,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         )
         expected_state = agent.state.model_copy(deep=True)
         expected_state.context = []
+        expected_state.retain_authorization(agent.state.context)
 
         await agent.compress_context()
 

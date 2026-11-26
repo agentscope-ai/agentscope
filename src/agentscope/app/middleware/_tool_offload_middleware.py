@@ -25,6 +25,7 @@ bus/wakeup infrastructure, which works correctly across processes.
 import asyncio
 import json
 import time
+from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
 from typing import Any, AsyncGenerator, Callable
 
@@ -38,6 +39,7 @@ from ...message import (
     ToolResultState,
 )
 from ...agent import Agent
+from ...agent._tool_dispatch import wait_for_tool_dispatch
 from ..message_bus import MessageBus
 from .._bus_ops import deliver_to_inbox
 from ..._logging import logger
@@ -228,6 +230,26 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 yield item
             return
 
+        async with AsyncExitStack() as foreground:
+            stream = self._offload(
+                agent,
+                input_kwargs,
+                next_handler,
+                foreground,
+            )
+            async with aclosing(stream):
+                async for item in stream:
+                    yield item
+
+    async def _offload(
+        self,
+        agent: Agent,
+        input_kwargs: dict,
+        next_handler: Callable[..., AsyncGenerator],
+        foreground: AsyncExitStack,
+    ) -> AsyncGenerator:
+        """Keep the foreground responsible until registration succeeds."""
+        tool_call = input_kwargs["tool_call"]
         # ----------------------------------------------------------------
         # Wrap next_handler in a Task, draining output into a Queue
         # ----------------------------------------------------------------
@@ -259,6 +281,13 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         execution_started_at = time.time()
         drain_task: asyncio.Task = asyncio.create_task(_drain_to_queue())
 
+        async def cancel_and_join() -> None:
+            drain_task.cancel()
+            await asyncio.gather(drain_task, return_exceptions=True)
+
+        foreground.push_async_callback(cancel_and_join)
+        await wait_for_tool_dispatch(drain_task)
+
         # ----------------------------------------------------------------
         # Consume items until the deadline or normal completion
         # ----------------------------------------------------------------
@@ -285,7 +314,6 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 break
 
             if isinstance(item, BaseException):
-                drain_task.cancel()
                 raise item
 
             pre_collected.append(item)
@@ -298,7 +326,6 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         if completed:
             for item in pre_collected:
                 yield item
-            drain_task.cancel()
             return
 
         # The deliverer awaits the final response directly. Drop the queue
@@ -446,11 +473,14 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 summary=_make_summary(tool_name, tool_call.input),
                 execution_started_at=execution_started_at,
             )
-            notification_id = task_id
-        finally:
-            # Deliver completed results even if registration fails or is
-            # cancelled. The drain task retains any result produced earlier.
-            asyncio.create_task(_deliver_when_done())
+        except BaseException:
+            # A tool may already have finished while registration was pending.
+            if drain_task.done():
+                asyncio.create_task(_deliver_when_done())
+            raise
+        notification_id = task_id
+        foreground.pop_all()
+        asyncio.create_task(_deliver_when_done())
 
         logger.info(
             "Synthetic ToolResponse yielded for offloaded tool '%s': "

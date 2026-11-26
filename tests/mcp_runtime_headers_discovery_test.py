@@ -5,14 +5,24 @@ import socket
 from collections import defaultdict
 from typing import Any, Coroutine
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
+import httpx
+import httpx2
 import uvicorn
 from mcp.server import MCPServer
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
+from mcp.shared.exceptions import MCPError
 from mcp.types import ListToolsResult, Tool
 
 from agentscope.mcp import HttpMCPConfig, MCPClient
+from agentscope.mcp._stateful_http import StatefulToolHTTPClient
 from agentscope.tool import MCPTool
+from agentscope.workspace._gateway_client import GatewayClient
+from agentscope.workspace._mcp_gateway._mcp_gateway_app import (
+    _build_app,
+    _State,
+)
 
 
 def _expected_schema(tenant: str) -> dict[str, Any]:
@@ -37,6 +47,8 @@ class RuntimeHeadersDiscoveryTest(IsolatedAsyncioTestCase):
         self.callers: list[asyncio.Task[Any]] = []
         self.clients: list[MCPClient] = []
         self.tool_requests: list[str] = []
+        self.called_tenants: list[str] = []
+        self.description_suffix = ""
         mcp = MCPServer("header-catalogue", middleware=[self._catalogue])
 
         @mcp.tool()
@@ -106,13 +118,16 @@ class RuntimeHeadersDiscoveryTest(IsolatedAsyncioTestCase):
         """Snapshot the request's tenant before pausing its response."""
         tenant = context.request.headers.get("x-tenant", "A")
         result = None
+        if context.method == "tools/call":
+            self.called_tenants.append(tenant)
         if context.method == "tools/list":
             self.tool_requests.append(tenant)
             result = ListToolsResult(
                 tools=[
                     Tool(
                         name="shared",
-                        description=f"Tenant {tenant}",
+                        description=f"Tenant {tenant}"
+                        + self.description_suffix,
                         input_schema={
                             "type": "object",
                             "properties": {
@@ -181,6 +196,115 @@ class RuntimeHeadersDiscoveryTest(IsolatedAsyncioTestCase):
                 (f"only_{tenant}", None, {"type": "object"}),
             ],
         )
+
+    async def test_approved_stateful_call_checks_headers_at_send(self) -> None:
+        """A rotation at the HTTP send boundary must reject the stale RPC."""
+        client = await self._client(stateful=True)
+        tool = await client.get_tool("shared")
+        identity = tool.approval_identity()
+        bound = tool.bind_for_dispatch()
+        entered, resume = asyncio.Event(), asyncio.Event()
+        send = StatefulToolHTTPClient.send
+
+        async def pause_send(
+            transport: StatefulToolHTTPClient,
+            request: httpx2.Request,
+            **kwargs: Any,
+        ) -> httpx2.Response:
+            if request.method == "POST" and b'"tools/call"' in request.content:
+                entered.set()
+                await resume.wait()
+            return await send(transport, request, **kwargs)
+
+        with patch.object(StatefulToolHTTPClient, "send", pause_send):
+            pending = self._start(bound(query_A="approved"))
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                await client.set_runtime_headers({"X-Tenant": "B"})
+            finally:
+                resume.set()
+            with self.assertRaisesRegex(MCPError, "credentials changed"):
+                await asyncio.wait_for(pending, 5)
+        self.assertNotEqual(identity, tool.approval_identity())
+        with self.assertRaisesRegex(MCPError, "credentials changed"):
+            await bound(query_A="approved before rotation")
+        self.assertEqual(self.called_tenants, [])
+        # A request already received by B can finish while headers rotate.
+        fresh = (await client.get_tool("shared")).bind_for_dispatch()
+        arrived, finish = self._gate("tools/call")
+        pending = self._start(fresh(query_B="new approval"))
+        await asyncio.wait_for(arrived.wait(), 5)
+        await client.set_runtime_headers({})
+        finish.set()
+        result = await asyncio.wait_for(pending, 5)
+        self.assertEqual(
+            (self.called_tenants, result.content[0].text),
+            (["B"], "new approval"),
+        )
+
+    async def test_gateway_verifies_discovered_target(self) -> None:
+        """Exercise the host proxy, gateway registry and real upstream."""
+        app = _build_app(_State())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://gateway",
+        ) as http:
+
+            async def relay(method: str, path: str, **kw: Any) -> tuple:
+                response = await http.request(
+                    method,
+                    path,
+                    params=kw.get("params"),
+                    json=kw.get("body"),
+                )
+                return response.status_code, response.content
+
+            gateway = GatewayClient(object(), 8000)
+            spec = MCPClient(
+                name="remote",
+                is_stateful=False,
+                mcp_config=HttpMCPConfig(url=self.url),
+            ).model_dump(mode="json")
+            proxy = gateway.make_client(spec)
+            with patch.object(gateway, "exec_request", relay):
+                await proxy.connect()
+                try:
+                    first = (
+                        await proxy.get_tool("shared")
+                    ).bind_for_dispatch()
+                    await first(query_A="first")
+                    entered, release = self._gate("tools/list")
+                    pending = self._start(first(query_A="in progress"))
+                    await asyncio.wait_for(entered.wait(), 5)
+                    try:
+                        await proxy.close()
+                        await proxy.connect()
+                    finally:
+                        release.set()
+                    raced = await asyncio.wait_for(pending, 5)
+                    stale = await first(query_A="old registration")
+                    await proxy.list_raw_tools()
+                    second = await proxy.get_tool("shared")
+                    self.description_suffix = " changed"
+                    changed = await second.bind_for_dispatch()(query_A="old")
+                    self.assertEqual(
+                        (
+                            raced.state,
+                            stale.state,
+                            changed.state,
+                            self.called_tenants,
+                        ),
+                        ("error", "error", "error", ["A"]),
+                    )
+                    await proxy.list_raw_tools()
+                    latest = await proxy.get_tool("shared")
+                    result = await latest.bind_for_dispatch()(query_A="new")
+                    self.assertEqual(
+                        (self.called_tenants, result.content[0].text),
+                        (["A", "A"], "new"),
+                    )
+                finally:
+                    await proxy.close()
 
     async def test_cached_lookup_refreshes_after_rotation_and_clear(
         self,

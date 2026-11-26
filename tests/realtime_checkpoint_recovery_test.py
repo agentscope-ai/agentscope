@@ -455,6 +455,10 @@ class RealtimeCheckpointRecoveryTest(IsolatedAsyncioTestCase):
                             reply_id=reply_id,
                             confirm_results=[
                                 ConfirmResult(
+                                    request_id=state.confirmation_request(
+                                        "Friday",
+                                        call.id,
+                                    ),
                                     confirmed=action == "accept",
                                     tool_call=call,
                                 ),

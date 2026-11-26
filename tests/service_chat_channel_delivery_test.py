@@ -10,15 +10,36 @@ than the agent's last event.
 """
 import asyncio
 import json
+from contextlib import aclosing
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+from utils import MockModel
 
-from agentscope.agent import ContextConfig, ReActConfig
-from agentscope.app._service import ChatService
+from agentscope.agent import Agent, ContextConfig, ReActConfig
+from agentscope.app._bus_ops import (
+    register_inbox_consumer,
+    has_pending_inbox_or_release,
+    session_execution,
+    list_chat_inputs,
+    update_chat_input,
+)
+from agentscope.app._client_external_tool import (
+    ClientExternalTool,
+    ClientExternalToolDefinition,
+)
+from agentscope.app._manager._chat_input_queue import ChatInputQueue
+from agentscope.app._router._chat import chat
+from agentscope.app._router._schema._chat import ChatRequest
+from agentscope.app._router._schema._session import UpdateSessionRequest
+from agentscope.app._router._session import (
+    stream_session_events,
+    update_session,
+)
+from agentscope.app._service import ChatService, SubagentHitlProjector
 from agentscope.app.channel import (
     ChannelBase,
     ChannelClients,
@@ -28,6 +49,9 @@ from agentscope.app.channel import (
     ChatKind,
     FeishuChannel,
 )
+from agentscope.app.channel._base import _EVENT_ADAPTER
+from agentscope.app.channel._gateway import ChannelGateway
+from agentscope.app.channel._routing import resolve
 from agentscope.app.channel._approval import (
     CHANNEL_APPROVAL_UNAVAILABLE,
     load_approval,
@@ -36,6 +60,7 @@ from agentscope.app.channel._approval import (
 )
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.event import (
+    ExternalExecutionResultEvent,
     ConfirmResult,
     ReplyEndEvent,
     ReplyStartEvent,
@@ -44,6 +69,7 @@ from agentscope.event import (
     TextBlockStartEvent,
     TextBlockDeltaEvent,
     UserConfirmResultEvent,
+    UserInterruptEvent,
 )
 from agentscope.types import ReplyFinishedReason
 from agentscope.message import (
@@ -51,9 +77,12 @@ from agentscope.message import (
     Msg,
     TextBlock,
     ToolCallBlock,
+    ToolResultBlock,
     UserMsg,
 )
+from agentscope.model import ChatResponse
 from agentscope.state import AgentState
+from agentscope.tool import AskUser, FunctionTool, Toolkit
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -64,6 +93,9 @@ from agentscope.app.storage import (
     SessionConfig,
     SessionRecord,
     SessionSettings,
+    TeamData,
+    TeamMember,
+    TeamRecord,
     ChannelOrigin,
     SessionOrigin,
     UserOrigin,
@@ -222,8 +254,8 @@ class _TwoApprovalAgent:
         inputs: Msg | UserConfirmResultEvent,
     ) -> AsyncGenerator[object, None]:
         """A Web approval advances to the next tool, then completion."""
-        self.state.reply_id = "r-1"
         if isinstance(inputs, Msg):
+            self.state.reply_id = "r-1"
             tool_id = "tool-1"
             yield ReplyStartEvent(
                 session_id=self.state.session_id,
@@ -242,7 +274,7 @@ class _TwoApprovalAgent:
             self.state.context = []
             yield ReplyEndEvent(
                 session_id=self.state.session_id,
-                reply_id="r-1",
+                reply_id=self.state.reply_id,
                 name=self.name,
                 finished_reason=ReplyFinishedReason.COMPLETED,
             )
@@ -255,14 +287,20 @@ class _TwoApprovalAgent:
             if self.pause_event is RequireExternalExecutionEvent
             else "asking",
         )
-        self.state.context = [
+        self.state.context = [inputs] if isinstance(inputs, Msg) else []
+        self.state.context.append(
             AssistantMsg(id="r-1", name=self.name, content=[tool]),
-        ]
-        yield self.pause_event(reply_id="r-1", tool_calls=[tool])
+        )
+        if self.pause_event is RequireUserConfirmEvent:
+            prompt = RequireUserConfirmEvent.issue("r-1", tool)
+            self.state.context[-1].set_confirmation_request(tool.id, prompt.id)
+            yield prompt
+        else:
+            yield self.pause_event(reply_id="r-1", tool_calls=[tool])
 
 
-class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
-    """The run starts the delivery; the channel runtime owns it."""
+class _ChannelDeliveryFixture(IsolatedAsyncioTestCase):
+    """Build isolated chat services and channel clients."""
 
     def setUp(self) -> None:
         """Isolate the instances each test observes."""
@@ -358,10 +396,1102 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
             )
         return service, clients, storage, bus
 
+
+class MemberApprovalRetryTest(_ChannelDeliveryFixture):
+    """A parked member can notify its connected leader after an outage."""
+
+    async def test_failed_member_card_retries_on_connected_leader(
+        self,
+    ) -> None:
+        """A live subscriber receives the retry without another turn."""
+        await self._check_member_card_retry(resolved=False)
+
+    async def test_failed_member_card_rechecks_worker_state(self) -> None:
+        """A card resolved during backoff is closed on the live stream."""
+        await self._check_member_card_retry(resolved=True)
+
+    async def _check_member_card_retry(self, *, resolved: bool) -> None:
+        service, _, storage, bus = self._approval_fixture()
+        service._channel_clients = None
+        worker = storage.session
+        worker.team_id = "team"
+        team = SimpleNamespace(session_id="leader", leader_agent_id="boss")
+        self.enterContext(
+            patch.object(
+                storage,
+                "get_team",
+                AsyncMock(return_value=team),
+                create=True,
+            ),
+        )
+        response = await stream_session_events(
+            "leader",
+            "boss",
+            None,
+            worker.user_id,
+            storage,
+            bus,
+        )
+        publish = service._projection.publish
+        missed = []
+
+        async def fail_first(sid: str, name: str, card: dict) -> None:
+            if not missed:
+                missed.append(card)
+                if resolved:
+                    # Another node has committed the end of this reply.
+                    worker.state = AgentState()
+                raise ConnectionError("first notification failed")
+            await publish(sid, name, card)
+
+        with patch.object(service._projection, "publish", fail_first):
+            async with aclosing(response.body_iterator) as stream:
+                first = json.loads(
+                    (await anext(stream)).removeprefix("data: "),
+                )
+                self.assertEqual(first["value"], {"pending": []})
+                await service._run_impl(
+                    worker.user_id,
+                    worker.id,
+                    worker.agent_id,
+                    UserMsg("user", "Start"),
+                )
+                (card,) = missed
+                frame = await asyncio.wait_for(anext(stream), 3)
+                event = json.loads(frame.removeprefix("data: "))
+        expected = (
+            (
+                SubagentHitlProjector.EVT_RESULT,
+                {
+                    k: card[k]
+                    for k in ("worker_session_id", "reply_id", "request_id")
+                },
+            )
+            if resolved
+            else (SubagentHitlProjector.EVT_REQUIRE, card)
+        )
+        self.assertEqual((event["name"], event["value"]), expected)
+
+
+class ChannelDeliveryFromTheRunTest(_ChannelDeliveryFixture):
+    """The run starts the delivery; the channel runtime owns it."""
+
+    async def test_member_approvals_survive_reconnect_independently(
+        self,
+    ) -> None:
+        """Reconnect during a save, then answer two prompts out of order."""
+        service, _, storage, bus = self._approval_fixture()
+        service._agent_cls = Agent
+        service._channel_clients = None
+        ids = ("user-1", "session-1", "agent-1")
+        storage.session.team_id = "team"
+        team = SimpleNamespace(session_id="leader", leader_agent_id="boss")
+        executed = []
+
+        def say(content: str) -> str:
+            executed.append(content)
+            return content
+
+        model = MockModel(context_size=10000)
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id=k,
+                            name="inspect" if k == "A" else "TeamSay",
+                            input=json.dumps({"content": k}),
+                        )
+                        for k in ("A", "B")
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(content=[TextBlock(text="Done")], is_last=True),
+            ],
+        )
+        toolkit = Toolkit(
+            tools=[
+                FunctionTool(say, name=name) for name in ("inspect", "TeamSay")
+            ],
+        )
+        writing, release = asyncio.Event(), asyncio.Event()
+        save = storage.update_session_state
+
+        async def delayed_save(*, state: AgentState, **kwargs: Any) -> None:
+            writing.set()
+            await release.wait()
+            await save(state=state, **kwargs)
+
+        async def snapshot() -> list:
+            response = await stream_session_events(
+                "leader",
+                "boss",
+                None,
+                ids[0],
+                storage,
+                bus,
+            )
+            async with aclosing(response.body_iterator) as stream:
+                async for frame in stream:
+                    event = json.loads(frame.removeprefix("data: "))
+                    if event.get("name") == "subagent_hitl_snapshot":
+                        return event["value"]["pending"]
+            raise AssertionError("Missing card snapshot")
+
+        with (
+            patch.object(
+                storage,
+                "get_team",
+                AsyncMock(return_value=team),
+                create=True,
+            ),
+            patch.object(storage, "update_session_state", delayed_save),
+            patch(
+                "agentscope.app._service._chat.get_model",
+                AsyncMock(return_value=model),
+            ),
+            patch(
+                "agentscope.app._service._chat.get_toolkit",
+                AsyncMock(return_value=toolkit),
+            ),
+        ):
+            run = asyncio.create_task(
+                service._run_impl(*ids, UserMsg("user", "Start")),
+            )
+            try:
+                await asyncio.wait_for(writing.wait(), 3)
+                response = await stream_session_events(
+                    "leader",
+                    "boss",
+                    None,
+                    ids[0],
+                    storage,
+                    bus,
+                )
+                live = await self.enterAsyncContext(
+                    aclosing(response.body_iterator),
+                )
+                first = json.loads((await anext(live)).removeprefix("data: "))
+                self.assertEqual(
+                    (first["name"], first["value"]),
+                    ("subagent_hitl_snapshot", {"pending": []}),
+                )
+                self.assertEqual(
+                    await service._projection.list(
+                        "leader",
+                        SubagentHitlProjector.KIND,
+                    ),
+                    [],
+                )
+            finally:
+                release.set()
+                await run
+            state = storage.session.state
+            calls = state.get_awaiting_tool_calls("a")
+            self.assertEqual([c.id for c in calls], ["A", "B"])
+            keys = [
+                {
+                    "worker_session_id": ids[1],
+                    "reply_id": state.reply_id,
+                    "request_id": state.confirmation_request("a", c.id),
+                }
+                for c in calls
+            ]
+            self.assertNotEqual(keys[0]["request_id"], keys[1]["request_id"])
+            live_cards = [
+                json.loads(
+                    (await asyncio.wait_for(anext(live), 2)).removeprefix(
+                        "data: ",
+                    ),
+                )
+                for _ in keys
+            ]
+            self.assertCountEqual(
+                [(e["name"], e["value"]["event"]["id"]) for e in live_cards],
+                [
+                    (SubagentHitlProjector.EVT_REQUIRE, k["request_id"])
+                    for k in keys
+                ],
+            )
+            with patch.object(
+                AgentState,
+                "get_awaiting_tool_calls",
+                autospec=True,
+                side_effect=AgentState.get_awaiting_tool_calls,
+            ) as read_pending:
+                self.assertCountEqual(await snapshot(), keys)
+                read_pending.assert_called_once()
+            answers = [
+                UserConfirmResultEvent(
+                    reply_id=state.reply_id,
+                    confirm_results=[
+                        ConfirmResult(
+                            tool_call=c,
+                            confirmed=c.id == "B",
+                            request_id=k["request_id"],
+                        ),
+                    ],
+                )
+                for c, k in zip(calls, keys)
+            ]
+            for answer, duplicate, remaining in (
+                (answers[1], False, keys[:1]),
+                (answers[1], True, keys[:1]),
+                (answers[0], False, []),
+            ):
+                if duplicate:
+                    self.assertIsNone(
+                        await SubagentHitlProjector.resolve(
+                            service._projection,
+                            "leader",
+                            state.reply_id,
+                            answer,
+                        ),
+                    )
+                else:
+                    routed = await chat(
+                        ChatRequest(
+                            agent_id="boss",
+                            session_id="leader",
+                            input=answer,
+                        ),
+                        user_id=ids[0],
+                        message_bus=bus,
+                        storage=storage,
+                    )
+                    self.assertEqual(routed.session_id, ids[1])
+                    ((_, trigger),) = await bus.queue_drain(
+                        MessageBusKeys.wakeup_queue(),
+                    )
+                    self.assertEqual(
+                        (trigger["agent_id"], trigger["input"]),
+                        (ids[2], answer.model_dump(mode="json")),
+                    )
+                await service._run_impl(*ids, answer)
+                self.assertEqual(await snapshot(), remaining)
+            self.assertEqual(executed, ["B"])
+
+    async def test_leader_recovers_and_answers_missing_member_cards(
+        self,
+    ) -> None:
+        """Recover a form and a confirmation after the first write fails."""
+        service, _, storage, bus = self._approval_fixture()
+        service._agent_cls = Agent
+        service._channel_clients = None
+        worker = storage.session
+        worker.team_id = "team"
+        ids = (worker.user_id, worker.id, worker.agent_id)
+        leader = worker.model_copy(
+            update={"id": "leader", "agent_id": "boss", "state": AgentState()},
+        )
+        team = TeamRecord(
+            id=worker.team_id,
+            user_id=worker.user_id,
+            session_id=leader.id,
+            leader_agent_id=leader.agent_id,
+            data=TeamData(
+                name="Test",
+                members=[
+                    TeamMember(
+                        owner_id=worker.user_id,
+                        agent_id=worker.agent_id,
+                        session_id=worker.id,
+                        role="created",
+                    ),
+                ],
+            ),
+        )
+        question = {
+            "header": "Choice",
+            "question": "Which?",
+            "options": [{"label": k, "description": k} for k in ("A", "B")],
+        }
+
+        def write(text: str) -> str:
+            return text
+
+        model = MockModel(context_size=10000)
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="form",
+                            name="AskUser",
+                            input=json.dumps({"questions": [question]}),
+                        ),
+                        ToolCallBlock(
+                            id="write",
+                            name="write",
+                            input='{"text":"draft"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(content=[TextBlock(text="Done")], is_last=True),
+            ],
+        )
+        self.enterContext(
+            patch.object(
+                storage,
+                "get_team",
+                AsyncMock(return_value=team),
+                create=True,
+            ),
+        )
+        self.enterContext(
+            patch.object(
+                storage,
+                "get_session",
+                AsyncMock(
+                    side_effect=lambda u, a, sid: (
+                        leader if sid == leader.id else storage.session
+                    ).model_copy(deep=True),
+                ),
+            ),
+        )
+        self.enterContext(
+            patch(
+                "agentscope.app._service._chat.get_model",
+                AsyncMock(return_value=model),
+            ),
+        )
+        self.enterContext(
+            patch(
+                "agentscope.app._service._chat.get_toolkit",
+                AsyncMock(
+                    return_value=Toolkit(
+                        tools=[
+                            AskUser(),
+                            FunctionTool(write),
+                        ],
+                    ),
+                ),
+            ),
+        )
+        with patch.object(
+            service._projection,
+            "upsert",
+            AsyncMock(side_effect=ConnectionError("projection offline")),
+        ) as failed:
+            await service._run_impl(*ids, UserMsg("user", "Start"))
+        failed.assert_awaited_once()
+        projection = service._projection
+        projector = service._subagent_hitl
+        self.assertEqual(await projection.list(leader.id, projector.KIND), [])
+        state = storage.session.state
+        response = await stream_session_events(
+            leader.id,
+            leader.agent_id,
+            None,
+            worker.user_id,
+            storage,
+            bus,
+        )
+        async with aclosing(response.body_iterator) as stream:
+            frames = [
+                json.loads((await anext(stream)).removeprefix("data: "))
+                for _ in range(3)
+            ]
+        cards = [frame["value"] for frame in frames[:-1]]
+        expected = {
+            "form": (
+                "require_external_execution",
+                state.reply_context.tool_approvals["form"].external_request_id,
+            ),
+            "write": (
+                "require_user_confirm",
+                state.confirmation_request("a", "write"),
+            ),
+        }
+        self.assertEqual(
+            {
+                c["event"]["tool_calls"][0]["id"]: (
+                    c["event_type"],
+                    c["request_id"],
+                )
+                for c in cards
+            },
+            expected,
+        )
+        self.assertEqual(
+            frames[-1]["value"],
+            {
+                "pending": [
+                    {
+                        "worker_session_id": worker.id,
+                        "reply_id": state.reply_id,
+                        "request_id": c["request_id"],
+                    }
+                    for c in cards
+                ],
+            },
+        )
+        result = ToolResultBlock(
+            id="form",
+            name="AskUser",
+            output="A",
+            state="success",
+        )
+        for metadata in (
+            {},
+            {
+                "answers": [
+                    {"question": "Which?", "selected": ["A"]},
+                ],
+            },
+        ):
+            receipt = ExternalExecutionResultEvent(
+                reply_id=state.reply_id,
+                execution_results=[
+                    result.model_copy(
+                        update={"metadata": metadata},
+                    ),
+                ],
+            )
+            if not metadata:
+                with self.assertRaises(ValidationError):
+                    ChatRequest(
+                        agent_id=leader.agent_id,
+                        session_id=leader.id,
+                        input=receipt,
+                    )
+                self.assertEqual(storage.session.state, state)
+                continue
+            routed = await chat(
+                ChatRequest(
+                    agent_id=leader.agent_id,
+                    session_id=leader.id,
+                    input=receipt,
+                ),
+                user_id=worker.user_id,
+                storage=storage,
+                message_bus=bus,
+            )
+            self.assertEqual(routed.session_id, worker.id)
+            ((_, trigger),) = await bus.queue_drain(
+                MessageBusKeys.wakeup_queue(),
+            )
+            self.assertEqual(trigger["input"], receipt.model_dump(mode="json"))
+            await service._run_impl(*ids, receipt)
+            reply = storage.messages[state.reply_id]
+            self.assertEqual(
+                reply.metadata["external_result_receipts"],
+                {"form": receipt.id},
+            )
+        events = await bus.log_read(MessageBusKeys.session_events(leader.id))
+        self.assertEqual(
+            [
+                e["value"]
+                for _, e in events
+                if e.get("name") == projector.EVT_RESULT
+            ],
+            [
+                {
+                    "worker_session_id": worker.id,
+                    "reply_id": state.reply_id,
+                    "request_id": expected["form"][1],
+                },
+            ],
+        )
+        remaining = await projection.list(leader.id, projector.KIND)
+        self.assertEqual(
+            [c["request_id"] for c in remaining],
+            [expected["write"][1]],
+        )
+        await projection.purge(leader.id, projector.KIND)
+        await projector.sync(
+            leader.id,
+            worker.id,
+            storage.agent,
+            storage.session.state,
+            [],
+            projection,
+        )
+        self.assertEqual(
+            await projection.list(leader.id, projector.KIND),
+            remaining,
+        )
+
+    async def test_duplicate_external_result_preserves_waiting_reply(
+        self,
+    ) -> None:
+        """Publish only the first outstanding result for each tool."""
+        service, _, storage, bus = self._approval_fixture()
+        service._channel_clients = None
+        service._agent_cls = Agent
+        ids = ("user-1", "session-1", "agent-1")
+        state = storage.session.state
+        first = ToolResultBlock(id="a", name="AskUser", output="first")
+        second = ToolResultBlock(
+            id="b",
+            name="AskUser",
+            output="second",
+            state="success",
+            metadata={"answers": [{"question": "Which?", "selected": ["A"]}]},
+        )
+        state.append_context(
+            "a",
+            [
+                ToolCallBlock(
+                    id="a",
+                    name="AskUser",
+                    input="{}",
+                    state="finished",
+                ),
+                first,
+                ToolCallBlock(
+                    id="b",
+                    name="AskUser",
+                    input="{}",
+                    state="submitted",
+                ),
+            ],
+        )
+        reply = state.get_reply_message("a").model_copy(deep=True)
+        storage.messages[reply.id] = reply
+        snapshot = state.model_dump()
+        duplicate = ExternalExecutionResultEvent(
+            reply_id=reply.id,
+            execution_results=[first],
+        )
+        model = MockModel()
+        model.set_responses(
+            [
+                ChatResponse(content=[TextBlock(text="Done")], is_last=True),
+            ],
+        )
+        with (
+            patch(
+                "agentscope.app._service._chat.get_model",
+                AsyncMock(return_value=model),
+            ),
+            patch(
+                "agentscope.app._service._chat.get_toolkit",
+                AsyncMock(return_value=Toolkit()),
+            ),
+            patch.object(bus, "publish", wraps=bus.publish) as published,
+        ):
+            await service._run_impl(*ids, duplicate)
+            published.assert_not_awaited()
+            self.assertEqual(storage.session.state.model_dump(), snapshot)
+            self.assertEqual(storage.messages[reply.id], reply)
+            batch = duplicate.model_copy(
+                update={"execution_results": [first, second, second]},
+            )
+            await service._run_impl(*ids, batch)
+        receipts = [
+            payload
+            for (_, payload), _ in published.await_args_list
+            if payload.get("type") == "EXTERNAL_EXECUTION_RESULT"
+        ]
+        self.assertEqual(
+            [[r["id"] for r in e["execution_results"]] for e in receipts],
+            [["b"]],
+        )
+        self.assertEqual(
+            storage.messages[reply.id].finished_reason,
+            "completed",
+        )
+        self.assertEqual(
+            storage.session.state.get_awaiting_tool_calls("a"),
+            [],
+        )
+
+    async def test_stop_after_external_echo_leaves_no_accepted_receipt(
+        self,
+    ) -> None:
+        """Only a consumed result can acknowledge the submitted answer."""
+        service, _, storage, bus = self._approval_fixture()
+        service._agent_cls = Agent
+        service._channel_clients = None
+        ids = ("user-1", "session-1", "agent-1")
+        state = storage.session.state
+        call = ToolCallBlock(
+            id="q",
+            name="AskUser",
+            state="submitted",
+            input="{}",
+        )
+        state.append_context("a", [call])
+        reply = state.get_reply_message("a")
+        storage.messages[reply.id] = reply.model_copy(deep=True)
+        receipt = ExternalExecutionResultEvent(
+            reply_id=reply.id,
+            execution_results=[
+                ToolResultBlock(
+                    id=call.id,
+                    name=call.name,
+                    output="my submitted answer",
+                    state="success",
+                    metadata={
+                        "answers": [{"question": "Q", "selected": ["A"]}],
+                    },
+                ),
+            ],
+        )
+        publish = bus.publish
+        terminals = []
+
+        async def stop_after_echo(channel: str, payload: dict) -> None:
+            if payload.get("type") == "EXTERNAL_EXECUTION_RESULT":
+                await bus.registry_set(
+                    MessageBusKeys.session_interrupts(ids[1]),
+                    reply.id,
+                    "1",
+                )
+            if payload.get("type") == "TOOL_RESULT_END":
+                terminals.append(
+                    (payload["state"], payload.get("external_request_id")),
+                )
+            await publish(channel, payload)
+
+        with (
+            patch(
+                "agentscope.app._service._chat.get_model",
+                AsyncMock(return_value=MockModel()),
+            ),
+            patch(
+                "agentscope.app._service._chat.get_toolkit",
+                AsyncMock(return_value=Toolkit()),
+            ),
+            patch.object(bus, "publish", stop_after_echo),
+        ):
+            await service._run_impl(*ids, receipt)
+        self.assertEqual(terminals, [("interrupted", None)])
+        for message in (
+            storage.messages[reply.id],
+            storage.session.state.get_reply_message("a"),
+        ):
+            (result,) = message.get_content_blocks("tool_result")
+            self.assertEqual(
+                (result.id, result.state, message.metadata),
+                ("q", "interrupted", {}),
+            )
+            self.assertNotIn("my submitted answer", result.model_dump_json())
+
+    async def test_legacy_external_result_recovers_with_original_tool(
+        self,
+    ) -> None:
+        """An old form stays parked until its validator becomes available."""
+        service, _, storage, bus = self._approval_fixture()
+        service._channel_clients = None
+        service._agent_cls = Agent
+        ids = ("user-1", "session-1", "agent-1")
+        name = "client__choose_option"
+        state = storage.session.state
+        state.append_context(
+            "a",
+            [
+                ToolCallBlock(
+                    id="pick",
+                    name=name,
+                    state="submitted",
+                    input="{}",
+                ),
+            ],
+        )
+        reply = state.get_reply_message("a")
+        storage.messages[reply.id] = reply.model_copy(deep=True)
+        before = state.model_dump()
+        submission = ExternalExecutionResultEvent(
+            reply_id=reply.id,
+            execution_results=[
+                ToolResultBlock(
+                    id="pick",
+                    name=name,
+                    output="A",
+                    state="success",
+                ),
+            ],
+        )
+        model = MockModel()
+        model.set_responses(
+            [ChatResponse(content=[TextBlock(text="Done")], is_last=True)],
+        )
+        toolkit = Toolkit()
+        with (
+            patch(
+                "agentscope.app._service._chat.get_model",
+                AsyncMock(return_value=model),
+            ),
+            patch(
+                "agentscope.app._service._chat.get_toolkit",
+                AsyncMock(return_value=toolkit),
+            ),
+            patch.object(bus, "publish", wraps=bus.publish) as publish,
+        ):
+            await service._run_impl(*ids, submission)
+            ((args, _),) = publish.await_args_list
+            self.assertEqual(
+                args[1]["value"],
+                {
+                    "request_id": submission.id,
+                    "reply_id": reply.id,
+                    "tool_call_ids": ["pick"],
+                    "unavailable_tool": name,
+                    "message": f"Re-enable {name!r} or use a client "
+                    "configured with the original tool, then submit "
+                    "the result again.",
+                },
+            )
+            self.assertEqual(storage.session.state.model_dump(), before)
+            await toolkit.add_tool(
+                ClientExternalTool(
+                    ClientExternalToolDefinition(
+                        name=name,
+                        description="Pick an option",
+                        input_schema={"type": "object", "properties": {}},
+                    ),
+                ),
+            )
+            await service._run_impl(*ids, submission)
+            publish.reset_mock()
+            await service._run_impl(
+                *ids,
+                submission.model_copy(update={"id": "late"}),
+            )
+            publish.assert_not_awaited()
+        self.assertEqual(
+            storage.messages[reply.id].model_dump(exclude_unset=True)[
+                "metadata"
+            ],
+            {"external_result_receipts": {"pick": submission.id}},
+        )
+
+    async def test_invalid_external_batch_preserves_form_for_retry(
+        self,
+    ) -> None:
+        """Reject the whole receipt before changing either pending call."""
+        service, _, storage, bus = self._approval_fixture()
+        service._agent_cls = Agent
+        service._channel_clients = None
+        ids = ("user-1", "session-1", "agent-1")
+        state = storage.session.state
+        state.append_context(
+            "a",
+            [
+                ToolCallBlock(
+                    id=key,
+                    name="AskUser",
+                    input="{}",
+                    state="submitted",
+                )
+                for key in ("first", "second")
+            ],
+        )
+        reply = state.get_reply_message("a").model_copy(deep=True)
+        storage.messages[reply.id] = reply
+        snapshot = state.model_dump()
+        answer = ToolResultBlock(
+            id="first",
+            name="AskUser",
+            output="A",
+            state="success",
+            metadata={"answers": [{"question": "Which?", "selected": ["A"]}]},
+        )
+        second = answer.model_copy(update={"id": "second"})
+        model = MockModel()
+        model.set_responses(
+            [ChatResponse(content=[TextBlock(text="Done")], is_last=True)],
+        )
+        with (
+            patch(
+                "agentscope.app._service._chat.get_model",
+                AsyncMock(return_value=model),
+            ),
+            patch(
+                "agentscope.app._service._chat.get_toolkit",
+                AsyncMock(return_value=Toolkit()),
+            ),
+            patch.object(bus, "publish", wraps=bus.publish) as published,
+        ):
+            for invalid in (
+                second.model_copy(update={"metadata": {}}),
+                second.model_copy(update={"name": "other"}),
+                ToolResultBlock(id="second", name="AskUser", output="A"),
+            ):
+                receipt = ExternalExecutionResultEvent(
+                    reply_id=reply.id,
+                    execution_results=[answer, invalid],
+                )
+                await service._run_impl(*ids, receipt)
+                events = [args[1] for args, _ in published.await_args_list]
+                self.assertEqual(
+                    [
+                        (e.get("name"), e["value"]["request_id"])
+                        for e in events
+                    ],
+                    [("external_execution_result_rejected", receipt.id)],
+                )
+                self.assertEqual(storage.messages[reply.id], reply)
+                self.assertEqual(state.model_dump(), snapshot)
+                published.reset_mock()
+            await service._run_impl(
+                *ids,
+                ExternalExecutionResultEvent(
+                    reply_id=reply.id,
+                    execution_results=[answer, second],
+                ),
+            )
+        self.assertEqual(
+            storage.messages[reply.id].finished_reason,
+            "completed",
+        )
+        self.assertEqual(
+            storage.session.state.get_awaiting_tool_calls("a"),
+            [],
+        )
+
+    async def test_web_edit_clears_queued_platform_requester(self) -> None:
+        """The Web replacement keeps its display name and loses card rights."""
+        service, _, storage, bus = self._approval_fixture()
+        service._channel_clients = None
+        gateway = ChannelGateway(storage, bus, _WorkspaceManager())
+        event = ChannelEvent(
+            channel_id="chan-1",
+            chat_id="chat-1",
+            channel_user_id="sender",
+            content=[TextBlock(text="Original")],
+        )
+        agent_id, session_id, _ = resolve(event, storage.channel)
+        storage.session.id = session_id
+        await gateway.process(event)
+        (item,) = await list_chat_inputs(bus, session_id)
+        await update_chat_input(
+            bus,
+            "user-1",
+            session_id,
+            agent_id,
+            item["id"],
+            UserMsg(
+                name="sender",
+                content="Edited",
+                metadata={"channel_requester_id": "sender"},
+            ),
+        )
+        queue = ChatInputQueue(bus, storage, service)
+        self.addAsyncCleanup(queue.close)
+        self.assertTrue(
+            await queue.drain_chat_inputs("user-1", session_id, agent_id),
+        )
+        self.assertEqual(
+            [
+                m.get_text_content()
+                for m in storage.messages.values()
+                if m.role == "user"
+            ],
+            ["Edited"],
+        )
+        self.assertTrue(storage.session.state.has_awaiting_tool_calls("a"))
+        self.assertEqual(
+            await bus.registry_getall(
+                MessageBusKeys.channel_session_requesters(session_id),
+            ),
+            {},
+        )
+
+    async def test_previous_external_result_leaves_current_card_open(
+        self,
+    ) -> None:
+        """An old result cannot use a stale stop marker against this reply."""
+        service, _, storage, bus = self._approval_fixture()
+        service._channel_clients = None
+        ids = ("user-1", "session-1", "agent-1")
+        await service._run_impl(*ids, UserMsg("requester", "Start"))
+        state = storage.session.state
+        (call,) = state.get_awaiting_tool_calls("a")
+        snapshot = state.model_dump()
+        await bus.registry_set(
+            MessageBusKeys.session_interrupts(ids[1]),
+            "previous",
+            "1",
+        )
+        late = ExternalExecutionResultEvent(
+            reply_id="previous",
+            execution_results=[
+                ToolResultBlock(id=call.id, name=call.name, output="old"),
+            ],
+        )
+        with patch.object(bus, "publish", wraps=bus.publish) as published:
+            await service._run_impl(*ids, late)
+            published.assert_not_awaited()
+        self.assertEqual(storage.session.state.model_dump(), snapshot)
+        await service._run_impl(
+            *ids,
+            UserConfirmResultEvent(
+                reply_id=state.reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=call,
+                        request_id=state.confirmation_request("a", call.id),
+                    ),
+                ],
+            ),
+        )
+        self.assertEqual(
+            [c.id for c in storage.session.state.get_awaiting_tool_calls("a")],
+            ["tool-2"],
+        )
+
+    async def test_stop_while_confirmation_environment_is_loading(
+        self,
+    ) -> None:
+        """Stop wins before tool execution even if pub/sub is delayed."""
+        for after_receipt in (False, True):
+            for deliver_signal in (False, True):
+                with self.subTest(
+                    after_receipt=after_receipt,
+                    signal=deliver_signal,
+                ):
+                    await self._stop_loading_confirmation(
+                        deliver_signal,
+                        after_receipt,
+                    )
+
+    async def _stop_loading_confirmation(
+        self,
+        deliver_signal: bool,
+        after_receipt: bool,
+    ) -> None:
+        service, _, storage, bus = self._approval_fixture()
+        service._channel_clients = None
+        ids = ("user-1", "session-1", "agent-1")
+        await service._run_impl(*ids, UserMsg("requester", "Start"))
+        state = storage.session.state
+        (call,) = state.get_awaiting_tool_calls("a")
+        original = '{"value":"original"}'
+        edited = '{"value":"edited"}'
+        call.input = original
+        replay = state.get_reply_message("a").model_copy(deep=True)
+        storage.messages[state.reply_id] = replay.model_copy(deep=True)
+        receipt = UserConfirmResultEvent(
+            reply_id=state.reply_id,
+            confirm_results=[
+                ConfirmResult(
+                    confirmed=True,
+                    tool_call=call.model_copy(update={"input": edited}),
+                    request_id=state.confirmation_request("a", call.id),
+                ),
+            ],
+        )
+        executed = []
+
+        def edit(value: str) -> str:
+            executed.append(value)
+            return "done"
+
+        tool = FunctionTool(edit, name=call.name)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def load(*_: object) -> MockModel:
+            if not after_receipt:
+                entered.set()
+                await release.wait()
+            return MockModel()
+
+        signals = []
+        receipts = []
+        publish = bus.publish
+
+        async def dispatch(channel: str, payload: dict) -> None:
+            if channel == MessageBusKeys.session_events(ids[1]):
+                event = _EVENT_ADAPTER.validate_python(payload)
+                replay.append_event(event)
+                if isinstance(event, UserConfirmResultEvent):
+                    receipts.append(event.id)
+                    if after_receipt:
+                        entered.set()
+                        await release.wait()
+            if channel == MessageBusKeys.session_interrupt_channel():
+                signals.append(payload)
+                if deliver_signal:
+                    run.cancel()
+            await publish(channel, payload)
+
+        service._agent_cls = Agent
+        with (
+            patch("agentscope.app._service._chat.get_model", load),
+            patch(
+                "agentscope.app._service._chat.get_toolkit",
+                AsyncMock(return_value=Toolkit(tools=[tool])),
+            ),
+            patch.object(bus, "publish", dispatch),
+        ):
+            run = asyncio.create_task(service._run_impl(*ids, receipt))
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=2)
+                await service.interrupt(*ids)
+                if after_receipt and deliver_signal:
+                    # Let the first cancellation reach the shielded wait.
+                    await asyncio.sleep(0)
+                    await service.interrupt(*ids)
+                    await asyncio.sleep(0)
+            finally:
+                release.set()
+                await asyncio.gather(run, return_exceptions=True)
+            if not deliver_signal:
+                self.assertEqual(
+                    storage.messages[state.reply_id].finished_reason,
+                    ReplyFinishedReason.INTERRUPTED,
+                )
+            stops = [
+                UserInterruptEvent.model_validate(trigger["input"])
+                for _, trigger in await bus.queue_drain(
+                    MessageBusKeys.wakeup_queue(),
+                )
+            ]
+            for stop in stops:
+                await service._run_impl(*ids, stop)
+        stop_count = 2 if after_receipt and deliver_signal else 1
+        expected_input = edited if after_receipt else original
+        self.assertEqual(
+            (
+                receipts,
+                [
+                    message.get_content_blocks("tool_call")[0].input
+                    for message in (
+                        replay,
+                        storage.messages[state.reply_id],
+                        storage.session.state.get_reply_message("a"),
+                    )
+                ],
+            ),
+            ([receipt.id] if after_receipt else [], [expected_input] * 3),
+        )
+        self.assertEqual(
+            (
+                executed,
+                signals,
+                [stop.reply_id for stop in stops],
+                storage.messages[state.reply_id].finished_reason,
+                storage.session.state.has_awaiting_tool_calls("a"),
+                await bus.registry_getall(
+                    MessageBusKeys.session_interrupts(ids[1]),
+                ),
+            ),
+            (
+                [],
+                [{"session_id": ids[1]}] * stop_count,
+                [state.reply_id] * stop_count,
+                ReplyFinishedReason.INTERRUPTED,
+                False,
+                {},
+            ),
+        )
+
     async def test_delayed_feishu_delivery_keeps_requester_after_web_approval(
         self,
     ) -> None:
         """An early Web decision must preserve the next card's buttons."""
+        for during_rename in (True, False):
+            with self.subTest(during_rename=during_rename):
+                await self._verify_channel_card(during_rename)
+
+    async def _verify_channel_card(self, during_rename: bool) -> None:
+        """Retain the sender during a rename and at the end of a run."""
         service, clients, storage, bus = self._approval_fixture()
         sending = asyncio.Event()
         release_send = asyncio.Event()
@@ -385,20 +1515,105 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
 
         async def run(inputs: Msg | UserConfirmResultEvent) -> None:
             await asyncio.wait_for(
-                service._run_impl("user-1", "session-1", "agent-1", inputs),
+                service._run_impl("user-1", session_id, "agent-1", inputs),
                 timeout=2,
             )
 
-        await run(UserMsg(name="requester-1", content="Run both tools"))
+        event = ChannelEvent(
+            channel_id="chan-1",
+            chat_id="chat-1",
+            channel_user_id="requester-1",
+            content=[TextBlock(text="Run both tools")],
+        )
+        agent_id, session_id, _ = resolve(event, storage.channel)
+        storage.session.id = session_id
+        gateway = ChannelGateway(storage, bus, _WorkspaceManager())
+
+        async def save_during_message(**kwargs: Any) -> SessionRecord:
+            await gateway.process(event)
+            storage.session.config = kwargs["config"]
+            return storage.session
+
+        if during_rename:
+            with patch.object(
+                storage,
+                "upsert_session",
+                save_during_message,
+                create=True,
+            ):
+                await update_session(
+                    session_id,
+                    UpdateSessionRequest(name="renamed"),
+                    agent_id,
+                    "user-1",
+                    storage,
+                    service._access,
+                    bus,
+                )
+            self.assertEqual(storage.session.config.name, "renamed")
+        else:
+            state = storage.session.state
+            state.reply_id = "previous"
+            prior = ToolCallBlock(
+                id="previous-tool",
+                name="old",
+                input="{}",
+                state="asking",
+            )
+            state.append_context("a", [prior])
+            message = state.get_reply_message("a")
+            message.set_confirmation_request(prior.id, "previous-card")
+            storage.messages[state.reply_id] = message.model_copy(deep=True)
+            async with session_execution(bus, session_id):
+                await register_inbox_consumer(bus, session_id)
+                self.assertFalse(
+                    await has_pending_inbox_or_release(bus, session_id),
+                )
+                await gateway.process(event)
+        ((_, trigger),) = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        self.assertEqual(trigger["kind"], "queued_message")
+        queue = ChatInputQueue(bus, storage, service)
+        self.addAsyncCleanup(queue.close)
+        ids = ("user-1", session_id, agent_id)
+        (queued,) = await list_chat_inputs(bus, session_id)
+        incoming = Msg.model_validate(queued["input"])
+        if not during_rename:
+            self.assertFalse(await queue.drain_chat_inputs(*ids))
+            self.assertEqual(list(storage.messages), ["previous"])
+            self.assertEqual(await list_chat_inputs(bus, session_id), [queued])
+            with patch.object(service, "_channel_clients", None):
+                await run(
+                    UserConfirmResultEvent(
+                        reply_id="previous",
+                        confirm_results=[
+                            ConfirmResult(
+                                confirmed=True,
+                                tool_call=prior,
+                                request_id="previous-card",
+                            ),
+                        ],
+                    ),
+                )
+            self.assertEqual(
+                storage.messages["previous"].finished_reason,
+                ReplyFinishedReason.COMPLETED,
+            )
+        self.assertTrue(await queue.drain_chat_inputs(*ids))
+        self.assertEqual(await list_chat_inputs(bus, session_id), [])
+        self.assertEqual(
+            [m for m in storage.session.state.context if m.role == "user"],
+            [incoming],
+        )
+        self.assertEqual(storage.messages[incoming.id], incoming)
         await asyncio.wait_for(sending.wait(), timeout=2)
         first_deliveries = set(clients._deliveries)
         self.assertFalse(release_send.is_set())
         self.assertFalse(
-            await bus.is_locked(MessageBusKeys.session_lock("session-1")),
+            await bus.is_locked(MessageBusKeys.session_lock(session_id)),
         )
         self.assertDictEqual(
             await bus.registry_getall(
-                MessageBusKeys.channel_session_approvals("session-1"),
+                MessageBusKeys.channel_session_approvals(session_id),
             ),
             {},
         )
@@ -410,6 +1625,10 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
                 reply_id="r-1",
                 confirm_results=[
                     ConfirmResult(
+                        request_id=storage.session.state.confirmation_request(
+                            "a",
+                            pending[0].id,
+                        ),
                         confirmed=True,
                         tool_call=pending[0],
                     ),
@@ -426,15 +1645,23 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         actions = card["elements"][-1]["actions"]
         approval_id = actions[0]["value"]["approval_id"]
         record = await load_approval(bus, approval_id)
+        pending = storage.session.state.get_awaiting_tool_calls("a")
+        self.assertTrue(
+            storage.session.state.confirmation_request("a", pending[0].id),
+        )
         self.assertDictEqual(
             record.model_dump(),
             {
                 "channel_id": "chan-1",
                 "chat_id": "chat-1",
                 "agent_id": "agent-1",
-                "session_id": "session-1",
+                "session_id": session_id,
                 "reply_id": "r-1",
                 "tool_call_id": "tool-2",
+                "confirmation_id": storage.session.state.confirmation_request(
+                    "a",
+                    pending[0].id,
+                ),
                 "requester_id": "requester-1",
             },
         )
@@ -443,12 +1670,15 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
             ["approve", "deny"],
         )
 
-        pending = storage.session.state.get_awaiting_tool_calls("a")
         await run(
             UserConfirmResultEvent(
                 reply_id="r-1",
                 confirm_results=[
                     ConfirmResult(
+                        request_id=storage.session.state.confirmation_request(
+                            "a",
+                            pending[0].id,
+                        ),
                         confirmed=True,
                         tool_call=pending[0],
                     ),
@@ -460,7 +1690,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         await asyncio.wait_for(asyncio.gather(*clients._deliveries), timeout=2)
         self.assertDictEqual(
             {
-                kind: await bus.registry_getall(namespace("session-1"))
+                kind: await bus.registry_getall(namespace(session_id))
                 for kind, namespace in (
                     ("requesters", MessageBusKeys.channel_session_requesters),
                     ("approvals", MessageBusKeys.channel_session_approvals),
@@ -527,6 +1757,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
                 "session-1",
                 "agent-1",
                 UserMsg(name="requester-1", content="Pause"),
+                channel_requester_id="requester-1",
             )
         self.assertListEqual(
             observed,
@@ -605,6 +1836,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
                     "session-1",
                     "agent-1",
                     UserMsg(name="requester-1", content="Pause"),
+                    channel_requester_id="requester-1",
                 ),
             )
             try:

@@ -1,8 +1,11 @@
 import { getContentBlocks, type Msg, type ToolCallBlock } from '@agentscope-ai/agentscope/message';
 
+import { confirmationId } from './message-events';
+
 export type PendingHitlCall = {
 	kind: 'confirmation' | 'external_execution';
 	replyId: string;
+	requestId?: string;
 	toolCall: ToolCallBlock;
 };
 
@@ -20,7 +23,12 @@ export function getPendingHitlCalls(messages: readonly Msg[]): PendingHitlCall[]
 		for (const toolCall of getContentBlocks(message, 'tool_call')) {
 			if (resultIds.has(toolCall.id)) continue;
 			if (toolCall.state === 'asking') {
-				pending.push({ kind: 'confirmation', replyId: message.id, toolCall });
+				pending.push({
+					kind: 'confirmation',
+					replyId: message.id,
+					requestId: confirmationId(message, toolCall.id),
+					toolCall,
+				});
 			} else if (toolCall.state === 'submitted') {
 				pending.push({ kind: 'external_execution', replyId: message.id, toolCall });
 			}

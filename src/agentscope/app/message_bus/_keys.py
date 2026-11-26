@@ -167,6 +167,16 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         """Per-session distributed-lock key."""
         return cls._SESSION_LOCK.format(sid=session_id)
 
+    @classmethod
+    def session_execution_lock(cls, session_id: str) -> str:
+        """Lease held only by a chat or realtime execution."""
+        return f"agentscope:session:executing:{session_id}"
+
+    @classmethod
+    def session_interrupts(cls, session_id: str) -> str:
+        """Pending stop requests keyed by the parked reply ID."""
+        return f"agentscope:session:interrupts:{session_id}"
+
     # ------------------------------------------------------------------
     # SOP run lock
     # ------------------------------------------------------------------
@@ -524,6 +534,11 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     # ------------------------------------------------------------------
 
     _SCHEDULE_LIFECYCLE = "agentscope:schedule:lifecycle"
+
+    @classmethod
+    def schedule_lock(cls, schedule_id: str) -> str:
+        """Serialize changes to the same schedule across API processes."""
+        return f"agentscope:schedule:lock:{schedule_id}"
 
     @classmethod
     def schedule_lifecycle(cls) -> str:

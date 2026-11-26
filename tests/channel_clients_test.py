@@ -352,6 +352,11 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
         in the bus and survive a continuation of the same reply."""
         bus = InMemoryMessageBus()
         clients = self._clients(bus)
+        (call,) = clients._storage.state.get_awaiting_tool_calls("assistant")
+        clients._storage.state.context[-1].set_confirmation_request(
+            call.id,
+            "current",
+        )
         await remember_reply_requester(
             bus,
             session_id="s-1",
@@ -367,14 +372,16 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
                     name="assistant",
                 ),
                 RequireUserConfirmEvent(
+                    id="previous",
                     reply_id="reply-1",
                     tool_calls=[
-                        ToolCallBlock(
-                            id="tool-1",
-                            name="Bash",
-                            input="{}",
-                        ),
+                        call,
                     ],
+                ),
+                RequireUserConfirmEvent(
+                    id="current",
+                    reply_id="reply-1",
+                    tool_calls=[call],
                 ),
             ):
                 yield event.model_dump(mode="json")
@@ -389,6 +396,14 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
                 session_id="s-1",
             )
         ]
+        self.assertEqual(
+            [
+                raw["id"]
+                for raw in first
+                if raw["type"] == "REQUIRE_USER_CONFIRM"
+            ],
+            ["current"],
+        )
         approval_id = first[1]["metadata"]["channel_approval_ids"]["tool-1"]
         self.assertRegex(approval_id, r"^s-1:[0-9a-f]{32}$")
         approval = await load_approval(bus, approval_id)
@@ -402,6 +417,7 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
                 "session_id": "s-1",
                 "reply_id": "reply-1",
                 "tool_call_id": "tool-1",
+                "confirmation_id": "current",
                 "requester_id": "requester-1",
             },
         )
@@ -430,6 +446,7 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
                 "session_id": "s-1",
                 "reply_id": "reply-1",
                 "tool_call_id": "tool-1",
+                "confirmation_id": "current",
                 "requester_id": "requester-1",
             },
         )
@@ -504,6 +521,19 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
             [tool["id"] for tool in delivered["tool_calls"]],
             ["pending"],
         )
+
+        # Reusing the same call id for a fresh prompt retires its old card.
+        clients._storage.state.context[-1].set_confirmation_request(
+            calls[1].id,
+            "replacement",
+        )
+        await prune_session_approvals(
+            bus,
+            "s-1",
+            clients._storage.state,
+            "assistant",
+        )
+        self.assertIsNone(await load_approval(bus, ids["pending"]))
 
         # A delivery delayed until after deletion cannot recreate records.
         clients._storage.state = None
@@ -608,7 +638,7 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
     ) -> None:
         """Web UI and background runs have no platform requester identity."""
         bus = InMemoryMessageBus()
-        message = UserMsg(name="user", content="hello")
+        message = UserMsg(name="platform-user", content="hello")
         for run_input in (None, message, [message], []):
             with self.subTest(run_input=run_input):
                 self.assertEqual(
@@ -656,7 +686,7 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
         )
 
     async def test_requester_is_resolved_from_run_input(self) -> None:
-        """Fresh messages name the requester; resume events recover it."""
+        """Resolve fresh and resumed runs from trusted requester records."""
         bus = InMemoryMessageBus()
         message = UserMsg(
             name="requester-1",
@@ -667,6 +697,7 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
                 bus,
                 "s-1",
                 message,
+                channel_requester_id="requester-1",
             ),
             "requester-1",
         )

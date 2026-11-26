@@ -457,6 +457,7 @@ class MCPProgressTest(unittest.IsolatedAsyncioTestCase):
                                 },
                             ),
                             gateway=_GatewayFacade(final),
+                            binding="current",
                             agent_id="agent",
                             session_id="session",
                         )

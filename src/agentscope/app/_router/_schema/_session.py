@@ -2,15 +2,20 @@
 """Request / response schemas for the session router."""
 from pydantic import BaseModel, Field
 
-from ....permission import PermissionMode
+from ....permission import PermissionContext, PermissionMode
+from ....state import TaskContext
+from ...storage._model._base import _RecordBase
 from ...storage import (
     ASRModelConfig,
     ChatModelConfig,
     RealtimeModelConfig,
+    SessionConfig,
     SessionKnowledgeConfig,
-    TTSModelConfig,
+    SessionOrigin,
     SessionRecord,
+    TTSModelConfig,
     TeamRecord,
+    UserOrigin,
 )
 from ..._service import AgentView, SessionStatus
 
@@ -161,6 +166,18 @@ class UpdateSessionRequest(BaseModel):
         default=None,
         description="New permission mode for the session.",
     )
+    read_only: bool | None = Field(
+        default=None,
+        description="Restrict the session to read-only operations.",
+    )
+    allow_workspace_edits: bool | None = Field(
+        default=None,
+        description="Grant edits within authorized working directories.",
+    )
+    interactive: bool | None = Field(
+        default=None,
+        description="Allow unresolved approvals to ask the user.",
+    )
     cwd: str | None = Field(
         default=None,
         description=(
@@ -171,35 +188,39 @@ class UpdateSessionRequest(BaseModel):
     )
 
 
+class SessionListState(BaseModel):
+    """The two runtime fields used to initialize the sidebar panels."""
+
+    permission_context: PermissionContext
+    tasks_context: TaskContext
+
+
+class ListedSession(_RecordBase):
+    """Session metadata and the sidebar projection of runtime state."""
+
+    user_id: str
+    agent_id: str
+    origin: SessionOrigin = Field(default_factory=UserOrigin)
+    team_id: str | None = None
+    config: SessionConfig
+    state: SessionListState
+
+    @classmethod
+    def from_record(cls, record: SessionRecord) -> "ListedSession":
+        """Expose only effective permissions and tasks from runtime state."""
+        return cls(
+            **record.model_dump(exclude={"state"}),
+            state=SessionListState(
+                permission_context=record.state.effective_permission_context,
+                tasks_context=record.state.tasks_context,
+            ),
+        )
+
+
 class SessionView(BaseModel):
-    """Per-session bundle with everything the frontend needs to
-    render either the list view or open a session.
+    """Sidebar session metadata, effective permissions, tasks and status."""
 
-    Bundles three orthogonal pieces of information so opening a
-    session does not require a waterfall of follow-up requests:
-
-    - the persisted :class:`SessionRecord` itself (config + state),
-    - whether the session has an active chat run right now,
-    - the team detail (resolved leader + members) when the session
-      participates in a team.
-
-    Messages are intentionally **not** included here — they are
-    paginated separately via ``GET /sessions/{id}/messages``.
-    """
-
-    session: SessionRecord = Field(
-        description=(
-            "The persisted session record, with the bulk of ``state`` "
-            "stripped: ``context`` and ``summary`` are cleared and "
-            "``tool_context`` is reset. Those hold the conversation the "
-            "model sees and the contents of every file it has read, so "
-            "listing twenty sessions would otherwise ship twenty "
-            "transcripts to render a sidebar. ``permission_context`` "
-            "and ``tasks_context`` survive — they are small, and the UI "
-            "seeds its panels from them. Read a session's messages via "
-            "``GET /sessions/{id}/messages``."
-        ),
-    )
+    session: ListedSession
     is_running: bool = Field(
         description=(
             "**Deprecated** — use :attr:`status`. True only while a "

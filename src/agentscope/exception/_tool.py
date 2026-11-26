@@ -4,6 +4,21 @@
 from ._base import AgentOrientedException
 
 
+class ExternalToolUnavailableError(ValueError):
+    """A parked call requires its original result validator."""
+
+    def __init__(self, tool_name: str) -> None:
+        self.tool_name = tool_name
+        super().__init__(
+            f"Re-enable {tool_name!r} or use a client configured with the "
+            "original tool, then submit the result again.",
+        )
+
+    def rejection_details(self) -> dict[str, str]:
+        """Expose the recovery action to clients of either transport."""
+        return {"unavailable_tool": self.tool_name, "message": str(self)}
+
+
 class ToolNotFoundError(AgentOrientedException):
     """Exception raised when a tool was not found."""
 

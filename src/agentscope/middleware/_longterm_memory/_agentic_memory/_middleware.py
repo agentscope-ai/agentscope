@@ -534,6 +534,22 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             `str`:
                 The prompt with filesystem memory instructions appended.
         """
+        instructions, snapshot = await self._memory_prompt_parts()
+        return f"{current_prompt}\n\n{instructions}\n## MEMORY.md\n{snapshot}"
+
+    async def on_permission_prompt(
+        self,
+        agent: "Agent",
+        current_prompt: str,
+        untrusted_context: list[str],
+    ) -> str:
+        """Expose only configured memory instructions as application policy."""
+        instructions, snapshot = await self._memory_prompt_parts()
+        untrusted_context.append(snapshot)
+        return f"{current_prompt}\n\n{instructions}"
+
+    async def _memory_prompt_parts(self) -> tuple[str, str]:
+        """Read the configured instructions and the bounded file separately."""
         await self._ensure_layout()
         memory_md_content = await self._get_memory_md_content() or ""
 
@@ -565,11 +581,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             "{memory_dir}",
             self._get_memory_dir(),
         )
-        content = (
-            f"{memory_instructions}\n" f"## MEMORY.md\n{memory_md_truncated}"
-        )
-
-        return f"{current_prompt}\n\n{content}"
+        return memory_instructions, memory_md_truncated
 
     async def on_reply(
         self,

@@ -1428,6 +1428,11 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     "key": MessageBusKeys.session_lock("session-1"),
                     "ttl_secs": MessageBusKeys.SESSION_RUN_TTL_SECS,
                 },
+                {
+                    "method": "acquire_lock",
+                    "key": MessageBusKeys.session_execution_lock("session-1"),
+                    "ttl_secs": MessageBusKeys.SESSION_RUN_TTL_SECS,
+                },
                 {"method": "agent_factory"},
                 {
                     "method": "log_append",
@@ -2028,6 +2033,11 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 {
                     "method": "acquire_lock",
                     "key": MessageBusKeys.session_lock("session-1"),
+                    "ttl_secs": MessageBusKeys.SESSION_RUN_TTL_SECS,
+                },
+                {
+                    "method": "acquire_lock",
+                    "key": MessageBusKeys.session_execution_lock("session-1"),
                     "ttl_secs": MessageBusKeys.SESSION_RUN_TTL_SECS,
                 },
                 {"method": "agent_factory"},

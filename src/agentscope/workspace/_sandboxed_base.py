@@ -449,21 +449,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
     # ── gateway lifecycle helpers ─────────────────────────────────
 
     async def _setup_mcp_gateway(self) -> None:
-        """Bootstrap (once) and launch the in-sandbox gateway.
-
-        Steps:
-
-        1. Bootstrap the venv + script if :attr:`_gateway_script` is
-           missing (Docker's image already has it → fast-path).
-        2. Kill any leftover gateway from a previous resume.
-        3. Launch a fresh gateway pointed at ``.mcp``.
-        4. Bind :attr:`_gateway` and poll ``/health``.
-        """
+        """Bootstrap a fresh gateway and verify its protocol before use."""
         backend = self.get_backend()
-
-        # Provision the venv + script on first use. Fast-path skips
-        # when the script already exists (Docker image build, E2B
-        # resume, K8s PVC remount).
         if not await backend.file_exists(self._gateway_script):
             logger.info(
                 "%s: bootstrapping workspace_id=%r",
@@ -482,9 +469,6 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                         f"stderr: {r.stderr.decode(errors='replace')}\n"
                         f"stdout: {r.stdout.decode(errors='replace')}",
                     )
-            # Glob helper first, gateway script last — a partial
-            # bootstrap leaves _gateway_script absent so the next
-            # initialize retries cleanly.
             if self._glob_helper_path is not None:
                 await backend.write_file(
                     self._glob_helper_path,
@@ -508,7 +492,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         # Launch. The gateway starts with an empty registry — it never
         # reads ``.mcp``; every MCP is registered through it on demand.
         launch_cmd = (
-            f"nohup {shlex.quote(self._gateway_python)} -u "
+            f"nohup {shlex.quote(self._gateway_python)} -I -u "
             f"{shlex.quote(self._gateway_script)} "
             f"--port {self.gateway_port} "
             f"> {shlex.quote(self._gateway_log)} 2>&1 &"
@@ -516,7 +500,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         await backend.exec_shell(["sh", "-c", launch_cmd])
 
         # Wait for ``/health``; on timeout, tail the gateway log.
-        self._gateway = GatewayClient(
+        gateway = GatewayClient(
             backend=backend,
             gateway_port=self.gateway_port,
             timeout=30.0,
@@ -526,7 +510,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         deadline = asyncio.get_event_loop().time() + health_timeout
         delay = 0.1
         while asyncio.get_event_loop().time() < deadline:
-            if await self._gateway.health():
+            if await gateway.health(require_compatible=True):
+                self._gateway = gateway
                 break
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 1.0)
@@ -537,7 +522,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             except Exception:
                 tail = "<no gateway log available>"
             raise RuntimeError(
-                f"gateway did not become healthy within {health_timeout}s. "
+                f"gateway did not report the required protocol within "
+                f"{health_timeout}s. "
                 f"Tail of {self._gateway_log}:\n{tail}",
             )
 

@@ -1,13 +1,21 @@
 # -*- coding: utf-8 -*-
 """The schedule storage model."""
+from copy import deepcopy
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from ._base import _RecordBase
 from ._session import ChatModelConfig
-from ....permission import PermissionMode
+from ._permission import AccessSettings
+from ....permission import PermissionMode, PermissionRule
+from ....state import AgentState
+from ....state._state import ScheduleSessionLimits
+from ....permission._evidence import (
+    AuthorizationEvidence,
+    ScheduleAuthorization,
+)
 
 
 class ScheduleSource(str, Enum):
@@ -37,7 +45,7 @@ def _get_local_timezone() -> str:
         return "UTC"
 
 
-class ScheduleData(BaseModel):
+class ScheduleData(AccessSettings):
     """The schedule configuration data."""
 
     name: str = Field(description="Display name of the schedule.")
@@ -87,11 +95,22 @@ class ScheduleData(BaseModel):
 
     permission_mode: PermissionMode = Field(
         title="Permission mode",
-        default=PermissionMode.DONT_ASK,
-        description="Permission level for the agent during scheduled "
-        "execution. Defaults to DONT_ASK since no user is present to "
-        "answer prompts.",
+        default=PermissionMode.AUTO,
+        description="Approval mode for scheduled execution. Automatic "
+        "review is used by default; unresolved approvals are denied.",
     )
+
+    deny_rules: dict[str, list[PermissionRule]] = Field(default_factory=dict)
+    """Hard prohibitions inherited from the creating session."""
+
+    authorized_description: str | None = None
+    """Exact task description supplied through the authenticated user API."""
+    authorization_evidence: list[AuthorizationEvidence] = Field(
+        default_factory=list,
+    )
+    """Original instructions supporting an agent-created schedule."""
+    authorization_evidence_complete: bool = True
+    """Whether the creating session retained all earlier instructions."""
 
     source: ScheduleSource = Field(
         default=ScheduleSource.USER,
@@ -115,3 +134,45 @@ class ScheduleRecord(_RecordBase):
     )
 
     data: ScheduleData = Field(description="Schedule configuration.")
+
+    def apply_to_session(
+        self,
+        state: AgentState,
+        *,
+        new_session: bool = False,
+    ) -> None:
+        """Refresh schedule policy while respecting explicit session limits."""
+        context = state.permission_context
+        limits = state.schedule_session_limits
+        if limits is None:
+            # Older records have no provenance for the last policy values.
+            limits = (
+                ScheduleSessionLimits()
+                if new_session
+                else ScheduleSessionLimits.from_context(context)
+            )
+            state.schedule_session_limits = limits
+        context.mode = self.data.permission_mode.restricted_by(limits.mode)
+        context.read_only = self.data.read_only or limits.read_only
+        context.allow_workspace_edits = (
+            self.data.allow_workspace_edits and limits.allow_workspace_edits
+        )
+        context.interactive = False
+        for name, rules in self.data.deny_rules.items():
+            current = context.deny_rules.setdefault(name, [])
+            current.extend(deepcopy(r) for r in rules if r not in current)
+        state.schedule_authorization = self.review_authorization()
+
+    def review_authorization(self) -> ScheduleAuthorization:
+        """Bind original authorization to the current task description."""
+        return ScheduleAuthorization(
+            schedule_id=self.id,
+            user_id=self.user_id,
+            source=self.data.source.value,
+            description=self.data.description,
+            authorized_description=self.data.authorized_description
+            if self.data.authorized_description == self.data.description
+            else None,
+            evidence=self.data.authorization_evidence,
+            complete=self.data.authorization_evidence_complete,
+        )

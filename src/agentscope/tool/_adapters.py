@@ -5,6 +5,7 @@ import inspect
 import json
 import re
 import warnings
+from copy import copy, deepcopy
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Callable, Any, AsyncGenerator, Generator
 
@@ -26,6 +27,8 @@ from ._utils import (
     _get_callable_name,
     _remove_title_field,
 )
+from ..mcp._mcp_client import _StatelessToolConnection
+from ..mcp._stateful_http import StatefulToolHTTPClient
 from .._logging import logger
 from ..message import (
     Base64Source,
@@ -257,6 +260,8 @@ class MCPTool(ToolBase):
         middlewares: list[ToolMiddlewareBase] | None = None,
         stream_progress: bool = False,
         trust_annotations: bool = True,
+        service_scope: bytes = b"",
+        stateful_http: StatefulToolHTTPClient | None = None,
     ) -> None:
         """Initialize the MCPTool.
 
@@ -281,6 +286,10 @@ class MCPTool(ToolBase):
                 Tool middlewares wrapping the tool execution.
             stream_progress (`bool`, defaults to `False`):
                 Return a progress/result stream instead of the final chunk.
+            stateful_http:
+                Live HTTP transport used to check approved credentials.
+            service_scope (`bytes`):
+                Opaque fingerprint of the configured service and credentials.
             trust_annotations (`bool`, defaults to `True`):
                 Whether to trust the tool annotations reported by the MCP
                 server. If `False`, the ``readOnlyHint`` annotation is
@@ -338,9 +347,16 @@ class MCPTool(ToolBase):
                 )
 
         # Store MCP tool and connection info
+        self._approval_scope = (service_scope, trust_annotations)
         self._tool = tool
         self._client_gen = client_gen
         self._session = session
+        self._stateful_http = stateful_http
+        self._discovery_version = (
+            stateful_http.credential_version if stateful_http else None
+        )
+        self._approved_version: int | None = None
+        self._approved_definition: str | None = None
 
         if timeout:
             self._timeout = float(timeout)
@@ -354,6 +370,62 @@ class MCPTool(ToolBase):
             raise ValueError(
                 "Either client_gen or session must be provided, but not both.",
             )
+
+    @staticmethod
+    def _descriptor_identity(tool: mcp.types.Tool) -> str:
+        """Compare complete JSON definitions, including typed schema values."""
+        return json.dumps(tool.model_dump(mode="json"), sort_keys=True)
+
+    def _definition_identity(self) -> tuple:
+        """Snapshot the configured service, tool definition and policy."""
+        scope = self._approval_scope
+        if isinstance(self._client_gen, _StatelessToolConnection):
+            scope = (self._client_gen.service_scope(), scope[1])
+        return (
+            type(self),
+            self.mcp_name,
+            scope,
+            self._descriptor_identity(self._tool),
+            self.is_read_only,
+        )
+
+    def approval_identity(self) -> tuple:
+        """Bind in-flight approval to the live client and middleware."""
+        factory = self._client_gen
+        if isinstance(factory, _StatelessToolConnection):
+            factory_id = (id(factory.client), id(type(factory)))
+        else:
+            factory_id = (
+                id(getattr(factory, "__self__", None)),
+                id(getattr(factory, "__func__", factory)),
+            )
+        return (
+            self._definition_identity(),
+            id(self._session),
+            self._stateful_http.credential_version
+            if self._stateful_http
+            else None,
+            factory_id,
+            tuple(map(id, self._middlewares)),
+        )
+
+    def bind_for_dispatch(self) -> "MCPTool":
+        """Capture the transport and remote tool selected at commitment."""
+        # pylint: disable=protected-access
+        bound = copy(self)
+        bound._middlewares = list(self._middlewares)
+        bound._tool = self._tool.model_copy(deep=True)
+        bound._approved_definition = self._descriptor_identity(bound._tool)
+        bound._approved_version = self._discovery_version
+        if isinstance(self._client_gen, _StatelessToolConnection):
+            bound._client_gen = self._client_gen.bind()
+        return bound
+
+    def _confirmation_scope(self) -> tuple:
+        """Configured endpoints can be recognized after a restart."""
+        if self._approval_scope[0] and not self._middlewares:
+            return self._definition_identity()
+        return super()._confirmation_scope()
 
     async def check_permissions(
         self,
@@ -398,10 +470,18 @@ class MCPTool(ToolBase):
                 The final result by default. When streaming is enabled,
                 progress chunks followed by the converted tool result.
         """
+        stream = self._stream_call(
+            deepcopy(kwargs),
+            self._session,
+            self._client_gen,
+            self._tool.name,
+            self._timeout,
+            self._approved_version,
+        )
         if self.stream_progress:
-            return self._stream_call(kwargs)
+            return stream
         final_chunk: ToolChunk | None = None
-        async for chunk in self._stream_call(kwargs):
+        async for chunk in stream:
             if chunk.is_last:
                 final_chunk = chunk
         if final_chunk is None:
@@ -410,9 +490,47 @@ class MCPTool(ToolBase):
             )
         return final_chunk
 
+    def _retry_client(self, client: mcp.Client) -> mcp.Client:
+        """Check the fresh descriptor before the SDK resends a bound call."""
+        approved = self._approved_definition
+        if approved is None:
+            return client
+
+        async def relist(name: str) -> None:
+            cursor = None
+            # Match the SDK's bounded, timeout-guarded refresh on mismatch.
+            for _ in range(100):
+                page = await client.list_tools(
+                    cursor=cursor,
+                    cache_mode="refresh",
+                )
+                for tool in page.tools:
+                    if tool.name == name:
+                        if self._descriptor_identity(tool) == approved:
+                            return
+                        raise RuntimeError(
+                            f"MCP tool {name!r} changed; fresh approval "
+                            "is required before retrying.",
+                        )
+                cursor = page.next_cursor
+                if cursor is None:
+                    break
+            raise RuntimeError(f"Cannot verify approved MCP tool {name!r}.")
+
+        # The original client and session can serve concurrent approvals.
+        # Only this invocation replaces the SDK's mismatch-recovery hook.
+        scoped = copy(client)
+        scoped._relist_tool = relist  # pylint: disable=protected-access
+        return scoped
+
     async def _stream_call(
         self,
         kwargs: dict[str, Any],
+        session: Any,
+        client_gen: Callable[..., AbstractAsyncContextManager[Any]] | None,
+        remote_name: str,
+        timeout: float | None,
+        approved_version: int | None,
     ) -> AsyncGenerator[ToolChunk, None]:
         """Run one MCP call and expose request-scoped progress updates."""
         # Progress is a snapshot; retain the newest 1024 pending updates.
@@ -444,10 +562,10 @@ class MCPTool(ToolBase):
 
         async def _invoke() -> mcp.types.CallToolResult:
             async with AsyncExitStack() as stack:
-                client = self._session
-                if self._client_gen:
+                client = session
+                if client_gen:
                     client = await stack.enter_async_context(
-                        self._client_gen(),
+                        client_gen(),
                     )
                     if isinstance(client, tuple):
                         warnings.warn(
@@ -461,11 +579,18 @@ class MCPTool(ToolBase):
                             mcp.ClientSession(client[0], client[1]),
                         )
                         await client.initialize()
+                options = {}
+                if approved_version is not None:
+                    key = StatefulToolHTTPClient.version_key
+                    options["meta"] = {key: approved_version}
+                if isinstance(client, mcp.Client):
+                    client = self._retry_client(client)
                 return await client.call_tool(
-                    self._tool.name,
+                    remote_name,
                     arguments=kwargs,
-                    read_timeout_seconds=self._timeout,
+                    read_timeout_seconds=timeout,
                     progress_callback=_on_progress,
+                    **options,
                 )
 
         call_task = asyncio.create_task(_invoke())

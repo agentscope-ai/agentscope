@@ -41,13 +41,14 @@ RUN curl -LsSf -o /tmp/uv-installer.sh \
 # Keep in sync with agentscope.workspace._k8s._k8s_bootstrap.GATEWAY_HOME
 ENV GATEWAY_HOME=/root/.agentscope
 
-# Gateway venv + base runtime requirements
-# (mirrors ``_GATEWAY_BASE_REQUIREMENTS`` in _utils.py)
-RUN mkdir -p "${GATEWAY_HOME}" \
+# Read the shared requirements before installing the checkout or its imports.
+RUN --mount=type=bind,source=src/agentscope/workspace/_utils.py,target=/tmp/gateway_defaults.py \
+    cd /tmp \
+ && python -c 'from gateway_defaults import _GATEWAY_BASE_REQUIREMENTS as deps; print(*deps, sep="\n")' > gateway-requirements.txt \
+ && mkdir -p "${GATEWAY_HOME}" \
  && uv venv "${GATEWAY_HOME}/.venv" \
  && uv pip install --python "${GATEWAY_HOME}/.venv/bin/python" \
-        'mcp>=2.0.0' uvicorn fastapi httpx 'httpx2>=2.5.0' \
-        'certifi>=2026.10.19'
+        -r gateway-requirements.txt
 
 # Install agentscope itself from the local checkout.
 # Build context is repo root, so pyproject.toml + src/ are visible at /src.
@@ -62,6 +63,15 @@ COPY src/agentscope/workspace/_mcp_gateway/_mcp_gateway_app.py \
      "${GATEWAY_HOME}/_mcp_gateway_app.py"
 COPY src/agentscope/tool/_builtin/_scripts/_glob_helper.py \
      "${GATEWAY_HOME}/_glob_helper.py"
+
+# Exercise the standalone entry script using only the image's gateway venv.
+RUN "${GATEWAY_HOME}/.venv/bin/python" -I - "${GATEWAY_HOME}/_mcp_gateway_app.py" <<'PY'
+import runpy
+import sys
+
+gateway = runpy.run_path(sys.argv[1])
+gateway["_build_app"](gateway["_State"]())
+PY
 
 # The workdir is created lazily by ``_provision_sandbox``; leaving it here
 # just makes ad-hoc `docker run` debugging friendlier.

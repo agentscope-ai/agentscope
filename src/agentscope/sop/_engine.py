@@ -6,10 +6,12 @@ whichever one parked, and spends the attempt budget. It decides from
 each step's :class:`~._state.SOPStepRunState` alone, never from how the
 step reached it.
 """
+from contextlib import ExitStack
 from itertools import zip_longest
 from typing import AsyncGenerator
 
-from ._schema import SOP
+from ._schema import SOP, SOPStep
+from ..state import AgentState
 from ._state import SOPPhase, SOPRunState
 from ..event import (
     AgentEvent,
@@ -125,11 +127,23 @@ class SOPEngine:
                         "attempt": len(record.verifications) + 1,
                     },
                 )
-                async for event in step.reply_stream(
-                    inputs if resuming else record.given,
-                    record,
-                ):
-                    yield event
+                with ExitStack() as scopes:
+                    if isinstance(step, SOPStep):
+                        source = AgentState(context=self.state.inputs)
+                        for actor in (step.executor, step.verifier):
+                            actor_state = getattr(actor, "state", None)
+                            if isinstance(actor_state, AgentState):
+                                scopes.enter_context(
+                                    actor_state.assignment_scope(
+                                        source,
+                                        f"sop:{self.state.id}",
+                                    ),
+                                )
+                    async for event in step.reply_stream(
+                        inputs if resuming else record.given,
+                        record,
+                    ):
+                        yield event
                 yield CustomEvent(
                     name="SOP_STEP_ENDED",
                     value={
@@ -170,5 +184,6 @@ class SOPEngine:
                     *(self.state.steps[index - 1].submission or []),
                     TextBlock(text="</handover>"),
                 ],
+                metadata={"authorization_source": "generated"},
             ),
         ]

@@ -6,6 +6,7 @@ from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+from jsonschema import ValidationError
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, InjectionConfig
@@ -16,7 +17,12 @@ from agentscope.event import (
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
-from agentscope.message import TextBlock, ToolCallBlock, UserMsg
+from agentscope.message import (
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    UserMsg,
+)
 from agentscope.model import ChatResponse
 from agentscope.permission import (
     PermissionBehavior,
@@ -24,7 +30,7 @@ from agentscope.permission import (
     PermissionDecision,
 )
 from agentscope.pipeline import TeamMember, TeamPipeline
-from agentscope.tool import ToolBase, ToolChunk, Toolkit
+from agentscope.tool import AskUser, ToolBase, ToolChunk, Toolkit
 
 
 class AskTool(ToolBase):
@@ -224,7 +230,11 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                     "finished_reason": None,
                     "structured_output": None,
                     "error": None,
-                    "metadata": {},
+                    "metadata": {
+                        "external_result_receipts": {
+                            "call-1": AnyString(),
+                        },
+                    },
                     "name": "leader",
                     "role": "assistant",
                     "usage": None,
@@ -422,6 +432,9 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                 reply_id=reply_id,
                 confirm_results=[
                     ConfirmResult(
+                        request_id=self.researcher.state.context[
+                            -1
+                        ].confirmation_request(calls[0].id),
                         confirmed=True,
                         tool_call=calls[0],
                     ),
@@ -429,6 +442,55 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(events[-1], ("REPLY_END", "leader"))
+
+    async def test_member_can_correct_rejected_form(self) -> None:
+        """Invalid form metadata leaves both sides of the assignment parked."""
+        await self.researcher.toolkit.add_tool(AskUser())
+        self.leader.model.set_responses(
+            [
+                _tool_call("assign", '{"member":"researcher","prompt":"Ask"}'),
+                _text("Done"),
+            ],
+        )
+        self.researcher.model.set_responses(
+            [
+                _tool_call(
+                    "form",
+                    '{"questions":[{"question":"Which?","header":"Pick",'
+                    '"options":[{"label":"A","description":"First"},'
+                    '{"label":"B","description":"Second"}]}]}',
+                    "AskUser",
+                ),
+                _text("Got it"),
+            ],
+        )
+        await self._run(self.query)
+        states = [agent.state for agent in (self.leader, self.researcher)]
+        self.assertEqual(
+            [
+                [c.name for c in s.get_awaiting_tool_calls(None)]
+                for s in states
+            ],
+            [["TeamAssign"], ["AskUser"]],
+        )
+        before = [s.model_dump() for s in states]
+        result = ToolResultBlock(
+            id="form",
+            name="AskUser",
+            output="A",
+            state="success",
+        )
+        event = ExternalExecutionResultEvent(
+            reply_id=self.researcher.state.reply_id,
+            execution_results=[result],
+        )
+        with self.assertRaises(ValidationError):
+            await self._run(event)
+        self.assertEqual([s.model_dump() for s in states], before)
+        event.execution_results[0].metadata = {
+            "answers": [{"question": "Which?", "selected": ["A"]}],
+        }
+        self.assertEqual((await self._run(event))[-1], ("REPLY_END", "leader"))
 
     async def test_cleanup_failure_preserves_member_error(self) -> None:
         """A failing interrupt must neither recurse nor replace the error."""
@@ -491,6 +553,9 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                     reply_id=self.researcher.state.reply_id,
                     confirm_results=[
                         ConfirmResult(
+                            request_id=self.researcher.state.context[
+                                -1
+                            ].confirmation_request(calls[0].id),
                             confirmed=True,
                             tool_call=calls[0],
                         ),
@@ -563,6 +628,11 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                 reply_id=self.researcher.state.reply_id,
                 confirm_results=[
                     ConfirmResult(
+                        request_id=self.researcher.state.context[
+                            -1
+                        ].confirmation_request(
+                            self.researcher.state.context[-1].content[0].id,
+                        ),
                         confirmed=True,
                         tool_call=self.researcher.state.context[-1].content[0],
                     ),
@@ -602,7 +672,7 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                     "finished_reason": None,
                     "structured_output": None,
                     "error": None,
-                    "metadata": {},
+                    "metadata": {"authorization_source": "generated"},
                     "name": "user",
                     "role": "user",
                     "usage": None,
@@ -809,7 +879,11 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                 "finished_reason": None,
                 "structured_output": None,
                 "error": None,
-                "metadata": {},
+                "metadata": {
+                    "external_result_receipts": {
+                        "call-1": AnyString(),
+                    },
+                },
                 "name": "leader",
                 "role": "assistant",
                 "usage": None,
@@ -913,6 +987,11 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                 reply_id=self.researcher.state.reply_id,
                 confirm_results=[
                     ConfirmResult(
+                        request_id=self.researcher.state.context[
+                            -1
+                        ].confirmation_request(
+                            self.researcher.state.context[-1].content[0].id,
+                        ),
                         confirmed=True,
                         tool_call=self.researcher.state.context[-1].content[0],
                     ),
@@ -929,7 +1008,12 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                 "finished_reason": None,
                 "structured_output": None,
                 "error": None,
-                "metadata": {},
+                "metadata": {
+                    "external_result_receipts": {
+                        "call-1": AnyString(),
+                        "call-2": AnyString(),
+                    },
+                },
                 "name": "leader",
                 "role": "assistant",
                 "usage": None,
@@ -1058,6 +1142,13 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                     reply_id=self.researcher.state.reply_id,
                     confirm_results=[
                         ConfirmResult(
+                            request_id=self.researcher.state.context[
+                                -1
+                            ].confirmation_request(
+                                self.researcher.state.context[-1]
+                                .content[0]
+                                .id,
+                            ),
                             confirmed=True,
                             tool_call=self.researcher.state.context[
                                 -1
@@ -1077,7 +1168,12 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                 "finished_reason": None,
                 "structured_output": None,
                 "error": None,
-                "metadata": {},
+                "metadata": {
+                    "external_result_receipts": {
+                        "call-1": AnyString(),
+                        "call-2": AnyString(),
+                    },
+                },
                 "name": "leader",
                 "role": "assistant",
                 "usage": None,
@@ -1284,6 +1380,11 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                 reply_id=self.researcher.state.reply_id,
                 confirm_results=[
                     ConfirmResult(
+                        request_id=self.researcher.state.context[
+                            -1
+                        ].confirmation_request(
+                            self.researcher.state.context[-1].content[0].id,
+                        ),
                         confirmed=True,
                         tool_call=self.researcher.state.context[-1].content[0],
                     ),

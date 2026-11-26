@@ -14,7 +14,6 @@ from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
-    PermissionMode,
     PermissionRule,
 )
 from ...message import TextBlock, ToolResultState
@@ -153,7 +152,7 @@ easier to review tool calls and give permission.
         Args:
             dangerous_files (`list[str]`, optional):
                 Sensitive files that require explicit user confirmation,
-                even in BYPASS mode. Matched by basename
+                unless approvals are bypassed. Matched by basename
                 (case-insensitive). Defaults to `DEFAULT_DANGEROUS_FILES`.
                 Pass a custom list to fully replace the defaults, or `[]`
                 to disable the filename check.
@@ -242,7 +241,7 @@ easier to review tool calls and give permission.
            ASK)
         5. Dangerous removal path check for system dirs (bypass-immune
            safety ASK)
-        6. ACCEPT_EDITS auto-allow for ``mkdir``/``touch``/``rm``/
+        6. Workspace edit grants for ``mkdir``/``touch``/``rm``/
            ``rmdir``/``mv``/``cp``/``sed`` — only when **every** subcommand
            of a compound command is one of those filesystem commands AND
            every target path resolves inside a working directory
@@ -250,7 +249,7 @@ easier to review tool calls and give permission.
 
         "Bypass-immune" decisions set
         :attr:`PermissionDecision.bypass_immune` so they cannot be
-        silenced by allow rules in DEFAULT mode. In BYPASS mode all
+        silenced by allow rules. In BYPASS mode all
         bypass-immune ASKs are intentionally skipped — see
         :attr:`PermissionMode.BYPASS`.
 
@@ -354,16 +353,13 @@ easier to review tool calls and give permission.
             )
 
         # 6. Auto-allow filesystem commands whose targets all live inside a
-        # working directory. Applies to ACCEPT_EDITS (interactive) and
-        # DONT_ASK (its unattended counterpart). Mirrors Write/Edit's strict
+        # working directory. Uses the explicit workspace edit grant and
+        # mirrors Write/Edit's strict
         # working-directory check — we never auto-allow a bash command that
         # would touch a path outside the configured working set (e.g.
         # ``cp /etc/hosts /tmp/x`` must not pass even though ``cp`` is in
         # the auto-allow list).
-        if context.mode in (
-            PermissionMode.ACCEPT_EDITS,
-            PermissionMode.DONT_ASK,
-        ):
+        if context.allow_workspace_edits:
             filesystem_commands = {
                 "mkdir",
                 "touch",

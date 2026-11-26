@@ -15,6 +15,7 @@ export type ClientExternalToolResult =
 	| { [key: string]: ClientExternalToolResult };
 
 export type PendingClientExternalToolProps = {
+	autoFocus?: boolean;
 	toolCall: ToolCallBlock;
 	onSubmit: (result: ClientExternalToolResult) => Promise<void>;
 	onCancel?: () => void;

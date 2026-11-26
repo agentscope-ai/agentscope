@@ -14,7 +14,6 @@ from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
-    PermissionMode,
     PermissionRule,
 )
 from .._response import ToolChunk
@@ -74,7 +73,7 @@ Usage:
         Args:
             dangerous_files (`list[str]`, optional):
                 Sensitive files that require explicit user confirmation,
-                even in BYPASS mode. Matched by basename
+                unless approvals are bypassed. Matched by basename
                 (case-insensitive). Defaults to `DEFAULT_DANGEROUS_FILES`.
                 Pass a custom list to fully replace the defaults, or `[]`
                 to disable the filename check.
@@ -108,7 +107,7 @@ Usage:
 
         This method implements Write-specific permission checks:
         1. Dangerous path check (safety check, bypass-immune)
-        2. ACCEPT_EDITS mode check for files in working directories
+        2. workspace edit grants check for files in working directories
 
         Args:
             tool_input (`dict[str, Any]`):
@@ -119,7 +118,7 @@ Usage:
         Returns:
             `PermissionDecision`:
                 ASK for dangerous paths, ALLOW for safe operations in
-                ACCEPT_EDITS mode, PASSTHROUGH otherwise
+                workspace edit grants, PASSTHROUGH otherwise
         """
 
         file_path = tool_input.get("file_path")
@@ -140,13 +139,8 @@ Usage:
             )
 
         # 2. Auto-allow edits within a working directory. This applies to
-        # ACCEPT_EDITS (interactive) and DONT_ASK (its unattended
-        # counterpart), which trusts in-working-directory edits without a
-        # prompt because no user is available to grant one.
-        if context.mode in (
-            PermissionMode.ACCEPT_EDITS,
-            PermissionMode.DONT_ASK,
-        ):
+        # the explicit workspace edit grant, independently of the reviewer.
+        if context.allow_workspace_edits:
             if self._path_in_allowed_working_path(file_path, context):
                 return PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,

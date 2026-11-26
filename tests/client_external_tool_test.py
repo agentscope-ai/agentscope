@@ -5,6 +5,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
+from jsonschema import ValidationError as JsonSchemaValidationError
 from pydantic import ValidationError
 from utils import MockModel
 
@@ -32,6 +33,7 @@ from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
 )
+from agentscope.state import AgentState
 from agentscope.tool import AskUser, Toolkit
 
 
@@ -637,6 +639,101 @@ class ClientExternalToolRuntimeTest(IsolatedAsyncioTestCase):
                     [("strict-call", definition.name, "error")],
                 )
 
+    async def test_disabled_client_tool_can_finish_after_restore(self) -> None:
+        """A checkpoint retains the contract of an already issued call."""
+        definition = _definition(read_only=True)
+        agent = Agent(
+            "Friday",
+            "Help.",
+            MockModel(),
+            toolkit=Toolkit(tools=[ClientExternalTool(definition)]),
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="pick",
+                            name=definition.name,
+                            input='{"question":"Which?"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+        await agent.reply(UserMsg("user", "Ask me."))
+        state = AgentState.model_validate_json(
+            agent.state.model_dump_json(exclude_defaults=True),
+        )
+        restored = Agent("Friday", "Help.", MockModel(), state=state)
+        restored.model.set_responses(
+            [ChatResponse(content=[TextBlock(text="Done")], is_last=True)],
+        )
+        receipt = ExternalExecutionResultEvent(
+            reply_id=state.reply_id,
+            execution_results=[
+                ToolResultBlock(
+                    id="pick",
+                    name="other",
+                    output="A",
+                    state="success",
+                ),
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "Expected tool"):
+            await restored.reply(receipt)
+        receipt.execution_results[0].name = definition.name
+        await restored.prepare_external_results(receipt)
+        self.assertEqual(
+            (await restored.reply(receipt)).get_text_content(),
+            "Done",
+        )
+        self.assertEqual(restored.state.get_awaiting_tool_calls("Friday"), [])
+        self.assertIsNone(await restored.toolkit.get_tool(definition.name))
+        self.assertEqual(restored.state.reply_context.tool_approvals, {})
+
+    async def test_custom_result_validator_survives_dispatch(self) -> None:
+        """A Python validator must run even when metadata has no schema."""
+        tool = ClientExternalTool(_definition(read_only=True))
+        model = MockModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="pick",
+                            name=tool.name,
+                            input='{"question":"Which?"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent("Friday", "Help.", model, toolkit=Toolkit(tools=[tool]))
+        with patch.object(
+            tool,
+            "check_external_result",
+            side_effect=ValueError("Invalid answer"),
+        ) as validate:
+            await agent.reply(UserMsg("user", "Ask me."))
+            result = ToolResultBlock(
+                id="pick",
+                name=tool.name,
+                output="A",
+                state="success",
+            )
+            receipt = ExternalExecutionResultEvent(
+                reply_id=agent.state.reply_id,
+                execution_results=[result],
+            )
+            before = agent.state.model_dump()
+            with self.assertRaisesRegex(ValueError, "Invalid answer"):
+                await agent.prepare_external_results(receipt)
+            validate.assert_awaited_once_with(result)
+            self.assertEqual(agent.state.model_dump(), before)
+
     async def test_native_ask_user_parks_and_resumes_with_metadata(
         self,
     ) -> None:
@@ -704,20 +801,45 @@ class ClientExternalToolRuntimeTest(IsolatedAsyncioTestCase):
                 {"question": "Which?", "selected": ["B"], "other": None},
             ],
         }
-        reply = await agent.reply(
-            ExternalExecutionResultEvent(
-                reply_id=pending[0].reply_id,
-                execution_results=[
-                    ToolResultBlock(
-                        id="ask",
-                        name="AskUser",
-                        output="Which?\nB",
-                        state=ToolResultState.SUCCESS,
-                        metadata=metadata,
-                    ),
-                ],
-            ),
+        receipt = ExternalExecutionResultEvent(
+            reply_id=pending[0].reply_id,
+            execution_results=[
+                ToolResultBlock(
+                    id="ask",
+                    name="AskUser",
+                    output="Which?\nB",
+                    state=ToolResultState.SUCCESS,
+                    metadata=metadata,
+                ),
+            ],
         )
+        snapshot = agent.state.model_dump()
+        for changes, reason in (
+            ({"name": "other"}, "Expected tool"),
+            ({"state": ToolResultState.RUNNING}, "terminal result"),
+        ):
+            result = receipt.execution_results[0].model_copy(update=changes)
+            with self.subTest(changes=changes):
+                with self.assertRaisesRegex(ValueError, reason):
+                    await agent.reply(
+                        receipt.model_copy(
+                            update={"execution_results": [result]},
+                        ),
+                    )
+                self.assertEqual(agent.state.model_dump(), snapshot)
+        replacement = AskUser()
+        replacement.metadata_schema = {}
+        await agent.toolkit.remove_tool(AskUser.name)
+        await agent.toolkit.add_tool(replacement)
+        invalid = receipt.execution_results[0].model_copy(
+            update={"metadata": {}},
+        )
+        with self.assertRaises(JsonSchemaValidationError):
+            await agent.reply(
+                receipt.model_copy(update={"execution_results": [invalid]}),
+            )
+        self.assertEqual(agent.state.model_dump(), snapshot)
+        reply = await agent.reply(receipt)
         self.assertEqual(reply.get_text_content(), "Done")
         results = [
             result

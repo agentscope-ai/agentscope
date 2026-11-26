@@ -74,7 +74,10 @@ class MCPClientListChangedTest(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         _FakeClient.instances = []
 
-    async def _connect(self) -> tuple[MCPClient, _FakeClient]:
+    async def _connect(
+        self,
+        client_type: type[MCPClient] = MCPClient,
+    ) -> tuple[MCPClient, _FakeClient]:
         """Connect a stateful client against the fake SDK client."""
         with patch(
             "agentscope.mcp._mcp_client.stdio_client",
@@ -83,7 +86,7 @@ class MCPClientListChangedTest(IsolatedAsyncioTestCase):
             "agentscope.mcp._mcp_client.SDKClient",
             _FakeClient,
         ):
-            client = MCPClient(
+            client = client_type(
                 name="list_changed",
                 is_stateful=True,
                 mcp_config=StdioMCPConfig(command="unused"),
@@ -94,6 +97,37 @@ class MCPClientListChangedTest(IsolatedAsyncioTestCase):
         fake = _FakeClient.instances[0]
         self.assertIsNotNone(fake.message_handler)
         return client, fake
+
+    async def test_custom_listing_rechecks_names_after_change(self) -> None:
+        """Honor removal while a custom listing is awaiting postprocessing."""
+        captured, release = asyncio.Event(), asyncio.Event()
+
+        class DelayedListing(MCPClient):
+            """Pause after taking a snapshot of the current catalog."""
+
+            async def list_raw_tools(self) -> list[mcp.types.Tool]:
+                tools = await super().list_raw_tools()
+                captured.set()
+                await asyncio.wait_for(release.wait(), 5)
+                return tools
+
+        client, fake = await self._connect(DelayedListing)
+        pending = asyncio.create_task(client.list_tools())
+        await asyncio.wait_for(captured.wait(), 5)
+        fake.tool_names = ["echo_v2"]
+        await fake.message_handler(
+            mcp.types.ToolListChangedNotification(
+                method="notifications/tools/list_changed",
+            ),
+        )
+        release.set()
+        with self.assertRaisesRegex(ValueError, "Tool 'echo' not found"):
+            await pending
+        tool = await client.get_tool("echo_v2")
+        self.assertEqual(
+            (tool.name, fake.list_calls),
+            ("mcp__list_changed__echo_v2", 2),
+        )
 
     async def test_get_tool_rediscovers_after_notification(self) -> None:
         """A tool added after the notification must be discoverable."""

@@ -78,6 +78,119 @@ class TestConditionalQueueRemoval(IsolatedAsyncioTestCase):
         await self._stack.aclose()
         await self.fr.aclose()
 
+    async def test_push_consuming_commits_once_and_preserves_other_ids(
+        self,
+    ) -> None:
+        """A stale retry cannot append again or consume unrelated entries."""
+        for backend, bus in self.buses.items():
+            with self.subTest(backend=backend):
+                for index in range(3):
+                    await bus.queue_push("media", {"i": index}, ttl_secs=60)
+                first, middle, last = await bus.queue_read("media")
+                selected = [first[0], last[0]]
+                queued = {"caption": "look"}
+                for invalid in ([], [first[0], "0-0"], [first[0], first[0]]):
+                    self.assertFalse(
+                        await bus.queue_push_consuming(
+                            "input",
+                            queued,
+                            "media",
+                            invalid,
+                        ),
+                    )
+                self.assertEqual(
+                    (
+                        await bus.queue_read("input"),
+                        await bus.queue_read("media"),
+                    ),
+                    ([], [first, middle, last]),
+                )
+                # The caller can retry the same snapshot after a lost reply.
+                await bus.queue_push_consuming(
+                    "input",
+                    queued,
+                    "media",
+                    selected,
+                )
+                self.assertFalse(
+                    await bus.queue_push_consuming(
+                        "input",
+                        queued,
+                        "media",
+                        selected,
+                    ),
+                )
+                self.assertEqual(
+                    (
+                        [
+                            payload
+                            for _, payload in await bus.queue_read("input")
+                        ],
+                        await bus.queue_read("media"),
+                    ),
+                    ([queued], [middle]),
+                )
+
+    async def test_redis_driver_replays_a_successful_commit(self) -> None:
+        """A repeated EVAL must acknowledge the already accepted input."""
+        bus = self.buses["redis"]
+        media = await bus.queue_push("media", {"i": 1})
+        execute = self.fr.eval
+
+        async def retry(*args: Any) -> int:
+            self.assertEqual(await execute(*args), 1)
+            await self.fr.delete("dest")
+            await bus.queue_push("dest", {"input_ref": "later"})
+            return await execute(*args)
+
+        with patch.object(self.fr, "eval", retry):
+            self.assertTrue(
+                await bus.queue_push_consuming(
+                    "dest",
+                    {"input_ref": "caption"},
+                    "media",
+                    [media],
+                ),
+            )
+        (receipt,) = await self.fr.keys("dest:commit:*")
+        self.assertGreater(await self.fr.ttl(receipt), 0)
+        self.assertFalse(
+            await bus.queue_push_consuming(
+                "dest",
+                {"input_ref": "new"},
+                "media",
+                [media],
+            ),
+        )
+        self.assertEqual(
+            (
+                [payload for _, payload in await bus.queue_read("dest")],
+                await bus.queue_read("media"),
+                await self.fr.keys("dest:commit:*"),
+            ),
+            ([{"input_ref": "later"}], [], [receipt]),
+        )
+
+    async def test_failed_destination_write_preserves_source(self) -> None:
+        """A payload preparation failure leaves both queues untouched."""
+        for backend, bus in self.buses.items():
+            with self.subTest(backend=backend):
+                source_id = await bus.queue_push("media", {"i": 1})
+                # A generator is neither copyable nor JSON-serializable.
+                payload = {"invalid": (x for x in ())}
+                with self.assertRaises(TypeError):
+                    await bus.queue_push_consuming(
+                        "dest",
+                        payload,
+                        "media",
+                        [source_id],
+                    )
+                self.assertEqual(await bus.queue_read("dest"), [])
+                self.assertEqual(
+                    await bus.queue_read("media"),
+                    [(source_id, {"i": 1})],
+                )
+
     async def test_remove_preserves_other_entries_and_expiry(self) -> None:
         """Appends survive removal with their IDs, contents and expiry."""
         for backend, bus in self.buses.items():
@@ -1154,6 +1267,7 @@ class TestBaseClassIsAbstract(IsolatedAsyncioTestCase):
                 "queue_read",
                 "queue_replace",
                 "queue_remove_if",
+                "queue_push_consuming",
                 "acquire_lock_bounded",
             }
             & MessageBus.__abstractmethods__,
@@ -1163,5 +1277,7 @@ class TestBaseClassIsAbstract(IsolatedAsyncioTestCase):
             await MessageBus.queue_read(bus, "unsupported")
         with self.assertRaises(NotImplementedError):
             await MessageBus.queue_replace(bus, "unsupported", [])
+        with self.assertRaises(NotImplementedError):
+            await MessageBus.queue_push_consuming(bus, "dest", {}, "src", [])
         with self.assertRaises(NotImplementedError):
             await MessageBus.queue_remove_if(bus, "unsupported", [])

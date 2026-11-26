@@ -1,40 +1,46 @@
 import { ChevronDown, UserRoundKey } from 'lucide-react';
 
-import type { PermissionMode } from '@/api/types';
+import type { PermissionConstraints, PermissionMode } from '@/api/types';
 import { Button } from '@/components/ui/button';
 import {
 	DropdownMenu,
+	DropdownMenuCheckboxItem,
 	DropdownMenuContent,
 	DropdownMenuGroup,
 	DropdownMenuItem,
 	DropdownMenuLabel,
+	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useTranslation } from '@/i18n/useI18n.ts';
 import { cn } from '@/lib/utils.ts';
 
-const PERMISSION_MODES: { value: PermissionMode; label: string }[] = [
-	{ value: 'default', label: 'Default' },
-	{ value: 'accept_edits', label: 'Accept Edits' },
-	{ value: 'explore', label: 'Explore' },
-	{ value: 'bypass', label: 'Bypass' },
-	{ value: 'dont_ask', label: "Don't Ask" },
-];
+const PERMISSION_MODES: PermissionMode[] = ['ask', 'auto', 'bypass'];
 
 interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onChange' | 'value'> {
 	className?: string;
 	value?: PermissionMode;
 	disabled?: boolean;
 	onChange?: (value: PermissionMode) => void;
+	constraints?: PermissionConstraints;
+	onConstraintsChange?: (updates: PermissionConstraints) => void;
+	unattended?: boolean;
 }
 
-export function PermissionModeSelect({ className, value, disabled, onChange, ...props }: Props) {
+export function PermissionModeSelect({
+	className,
+	value,
+	disabled,
+	onChange,
+	constraints,
+	onConstraintsChange,
+	unattended = false,
+	...props
+}: Props) {
 	const { t } = useTranslation();
 
-	const displayLabel = value
-		? (PERMISSION_MODES.find((m) => m.value === value)?.label ?? value)
-		: t('permission-mode.placeholder');
+	const displayLabel = value ? t(`permission-mode.${value}`) : t('permission-mode.placeholder');
 
 	return (
 		<DropdownMenu>
@@ -58,18 +64,53 @@ export function PermissionModeSelect({ className, value, disabled, onChange, ...
 				<DropdownMenuGroup>
 					<DropdownMenuLabel>{t('permission-mode.label')}</DropdownMenuLabel>
 					{PERMISSION_MODES.map((mode) => (
-						<Tooltip key={mode.value}>
+						<Tooltip key={mode}>
 							<TooltipTrigger asChild>
-								<DropdownMenuItem onSelect={() => onChange?.(mode.value)}>
-									{mode.label}
+								<DropdownMenuItem onSelect={() => onChange?.(mode)}>
+									{t(`permission-mode.${mode}`)}
 								</DropdownMenuItem>
 							</TooltipTrigger>
 							<TooltipContent side="right">
-								{t(`permission-mode.${mode.value}-tooltip`)}
+								{t(`permission-mode.${mode}-tooltip`)}
 							</TooltipContent>
 						</Tooltip>
 					))}
 				</DropdownMenuGroup>
+				{onConstraintsChange && (
+					<>
+						<DropdownMenuSeparator />
+						<DropdownMenuLabel>{t('permission-mode.constraints')}</DropdownMenuLabel>
+						<DropdownMenuCheckboxItem
+							checked={constraints?.read_only ?? false}
+							disabled={disabled}
+							onCheckedChange={(checked) =>
+								onConstraintsChange({ read_only: checked })
+							}
+						>
+							{t('permission-mode.read-only')}
+						</DropdownMenuCheckboxItem>
+						<DropdownMenuCheckboxItem
+							checked={constraints?.allow_workspace_edits ?? false}
+							disabled={disabled}
+							onCheckedChange={(checked) =>
+								onConstraintsChange({ allow_workspace_edits: checked })
+							}
+						>
+							{t('permission-mode.workspace-edits')}
+						</DropdownMenuCheckboxItem>
+						{!unattended && (
+							<DropdownMenuCheckboxItem
+								checked={constraints?.interactive ?? true}
+								disabled={disabled}
+								onCheckedChange={(checked) =>
+									onConstraintsChange({ interactive: checked })
+								}
+							>
+								{t('permission-mode.interactive')}
+							</DropdownMenuCheckboxItem>
+						)}
+					</>
+				)}
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);

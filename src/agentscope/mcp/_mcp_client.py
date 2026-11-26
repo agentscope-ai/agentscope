@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
 import asyncio
+import hashlib
+import json
 import re
 from contextlib import (
     AbstractAsyncContextManager,
     asynccontextmanager,
 )
-from typing import Any, AsyncGenerator, ClassVar, TYPE_CHECKING
+from typing import Any, AsyncGenerator, Callable, ClassVar, TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import httpx2
@@ -20,6 +22,7 @@ from mcp.client.streamable_http import (
 from pydantic import Field, BaseModel, PrivateAttr
 
 from ._config import StdioMCPConfig, HttpMCPConfig
+from ._stateful_http import StatefulToolHTTPClient
 from .._logging import logger
 
 if TYPE_CHECKING:
@@ -27,6 +30,36 @@ if TYPE_CHECKING:
 else:
     MCPTool = Any
     ToolBase = Any
+
+
+class _StatelessToolConnection:  # pylint: disable=protected-access
+    """A live stateless factory that can freeze one approved connection."""
+
+    def __init__(self, client: "MCPClient") -> None:
+        self.client = client
+
+    def __call__(self) -> AbstractAsyncContextManager[Any]:
+        return self.client._get_client_gen()
+
+    def service_scope(self) -> bytes:
+        """Identify the current endpoint and credentials for approval."""
+        return self.client._approval_scope()
+
+    def bind(self) -> Callable[[], SDKClient]:
+        """Keep this invocation isolated from later URL and header changes."""
+        client = self.client
+        assert isinstance(client.mcp_config, HttpMCPConfig)
+        config = client.mcp_config.model_copy(deep=True)
+        headers = dict(client._runtime_headers)
+
+        def connect() -> SDKClient:
+            return SDKClient(
+                client._create_http_client(config, headers),
+                mode="auto",
+                message_handler=client._handle_server_message,
+            )
+
+        return connect
 
 
 class MCPClient(BaseModel):
@@ -262,17 +295,21 @@ class MCPClient(BaseModel):
 
     def _create_http_client(
         self,
+        config: HttpMCPConfig | None = None,
+        headers: dict[str, str] | None = None,
     ) -> AbstractAsyncContextManager[Any]:
         """Create an HTTP MCP transport (SSE or Streamable HTTP)."""
-        config = self.mcp_config
-        if self._is_sse:
+        if config is None:
+            assert isinstance(self.mcp_config, HttpMCPConfig)
+            config = self.mcp_config
+        if self._is_sse_url(config.url):
             return sse_client(
                 url=config.url,
                 headers=config.headers,
                 timeout=config.timeout,
             )
 
-        return self._create_streamable_http_client()
+        return self._create_streamable_http_client(config, headers)
 
     @property
     def _is_sse(self) -> bool:
@@ -280,28 +317,40 @@ class MCPClient(BaseModel):
         the path is inspected, so a query string (``/sse?key=...``) still
         resolves to SSE rather than falling through to streamable HTTP.
         """
-        path = urlsplit(self.mcp_config.url).path
+        return self._is_sse_url(self.mcp_config.url)
+
+    @staticmethod
+    def _is_sse_url(url: str) -> bool:
+        path = urlsplit(url).path
         return path.endswith("/sse") or path.endswith("/messages/")
 
     @asynccontextmanager
     async def _create_streamable_http_client(
         self,
+        config: HttpMCPConfig,
+        headers: dict[str, str] | None,
     ) -> AsyncGenerator[Any, None]:
         """Create an owned HTTP client that runtime headers can update."""
-        config = self.mcp_config
-        # Use the SDK factory to keep the transport's own client defaults
-        client = create_mcp_http_client(
-            headers=config.headers,
-            timeout=(
-                httpx2.Timeout(config.timeout)
-                if config.timeout is not None
-                else None
-            ),
-        )
+        if self.is_stateful:
+            client = StatefulToolHTTPClient(
+                config,
+                self._runtime_headers_generation,
+            )
+        else:
+            client = create_mcp_http_client(
+                headers=config.headers,
+                timeout=(
+                    httpx2.Timeout(config.timeout)
+                    if config.timeout is not None
+                    else None
+                ),
+            )
         # Snapshot before overlaying: clearing runtime headers restores it.
-        self._static_headers = httpx2.Headers(client.headers)
-        client.headers.update(self._runtime_headers)
-        self._http_client = client
+        if headers is None:
+            self._static_headers = httpx2.Headers(client.headers)
+            self._http_client = client
+            headers = self._runtime_headers
+        client.headers.update(headers)
 
         try:
             async with client:
@@ -392,6 +441,10 @@ class MCPClient(BaseModel):
             self._http_client.headers = merged
         if changed:
             self._runtime_headers_generation += 1
+            if isinstance(self._http_client, StatefulToolHTTPClient):
+                self._http_client.credential_version = (
+                    self._runtime_headers_generation
+                )
             self._cached_tools = None
 
     async def connect(self) -> None:
@@ -551,7 +604,13 @@ class MCPClient(BaseModel):
                 if notifications or runtime-header changes invalidate both
                 discovery attempts.
         """
-        available_tools = await self._discover_tools()
+        # A notification may clear the cache before a discovery waiter runs.
+        await self._discover_tools()
+        if self._cached_tools is None:
+            await self._discover_tools()
+        available_tools = self._cached_tools
+        if available_tools is None:
+            raise RuntimeError("MCP catalog changed; retry tool discovery.")
         if self.enable_tools is not None:
             available_tools = [
                 tool
@@ -628,8 +687,33 @@ class MCPClient(BaseModel):
         Raises:
             RuntimeError: If not connected (for stateful connections).
         """
+        return await self._list_tools(MCPClient)
+
+    async def _list_tools(
+        self,
+        defaults: type["MCPClient"],
+    ) -> list[ToolBase]:
+        """Batch only when discovery and name lookup use the same snapshot."""
         raw_tools = await self.list_raw_tools()
-        return [await self.get_tool(_.name) for _ in raw_tools]
+        if not raw_tools:
+            return []
+        if (
+            getattr(self.list_raw_tools, "__func__", None)
+            is not defaults.list_raw_tools
+            or getattr(self.get_tool, "__func__", None)
+            is not defaults.get_tool
+        ):
+            return [await self.get_tool(tool.name) for tool in raw_tools]
+        scope = self._approval_scope()
+        return [self._wrap_tool(tool, scope) for tool in raw_tools]
+
+    def _approval_scope(self) -> bytes:
+        """Snapshot service configuration without retaining credential text."""
+        config = json.dumps(
+            (self.mcp_config.model_dump(mode="json"), self._runtime_headers),
+            sort_keys=True,
+        )
+        return hashlib.sha256(config.encode()).digest()
 
     async def get_tool(
         self,
@@ -653,12 +737,12 @@ class MCPClient(BaseModel):
             ValueError: If the tool is not found.
             RuntimeError: If not connected (for stateful connections).
         """
-        # Avoid circular import by importing here
-        from ..tool import MCPTool
-
+        if self._cached_tools is None:
+            await self._discover_tools()
+        # An update can invalidate a shared discovery before its waiter runs.
         tools = self._cached_tools
         if tools is None:
-            tools = await self._discover_tools()
+            raise RuntimeError("MCP catalog changed; retry tool discovery.")
         target_tool = next(
             (tool for tool in tools if tool.name == name),
             None,
@@ -668,27 +752,37 @@ class MCPClient(BaseModel):
                 f"Tool {name!r} not found in MCP server {self.name!r}",
             )
 
-        # Create MCPTool based on stateful/stateless
+        return self._wrap_tool(target_tool, self._approval_scope())
+
+    def _wrap_tool(self, tool: mcp.types.Tool, scope: bytes) -> MCPTool:
+        """Bind a discovered descriptor to this client's connection."""
+        from ..tool import MCPTool
+
         if not self.is_stateful:
             # Stateless: pass client generator
             return MCPTool(
                 mcp_name=self.name,
-                tool=target_tool,
-                client_gen=self._get_client_gen,
+                tool=tool,
+                client_gen=_StatelessToolConnection(self),
                 timeout=self.execution_timeout,
                 stream_progress=self.stream_progress,
                 trust_annotations=self.trust_annotations,
+                service_scope=scope,
             )
         else:
             # Stateful: pass session
             self._validate_connection()
             return MCPTool(
                 mcp_name=self.name,
-                tool=target_tool,
+                tool=tool,
                 session=self._client,
+                stateful_http=self._http_client
+                if isinstance(self._http_client, StatefulToolHTTPClient)
+                else None,
                 timeout=self.execution_timeout,
                 stream_progress=self.stream_progress,
                 trust_annotations=self.trust_annotations,
+                service_scope=scope,
             )
 
     def _validate_connection(self) -> None:

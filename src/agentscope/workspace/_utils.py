@@ -93,6 +93,7 @@ DEFAULT_SESSIONS_DIR = "sessions"
 #: Standard workspace-relative file for persisted MCP registrations.
 DEFAULT_MCP_FILE = ".mcp"
 
+GATEWAY_PROTOCOL_VERSION = 1
 DEFAULT_GATEWAY_VENV = ".venv"
 DEFAULT_GATEWAY_LOG = "gateway.log"
 DEFAULT_GATEWAY_SCRIPT = "_mcp_gateway_app.py"
@@ -115,6 +116,14 @@ _GATEWAY_BASE_REQUIREMENTS: tuple[str, ...] = (
     "fastapi",
     "httpx",
     "httpx2>=2.5.0",
+    # MCPClient.get_tool imports the concrete adapter and its toolkit.
+    "aiofiles",
+    "docstring_parser",
+    "jinja2",
+    "jsonschema",
+    "python-frontmatter",
+    "tree_sitter",
+    "tree_sitter_bash",
 )
 
 

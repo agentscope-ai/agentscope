@@ -9,12 +9,16 @@ import warnings
 
 from asyncio import Queue
 from copy import deepcopy
-from contextlib import aclosing
+from contextlib import AsyncExitStack, aclosing
+from dataclasses import replace
 from fnmatch import fnmatch
 from datetime import datetime
 from typing import (
     Any,
+    Awaitable,
+    Callable,
     AsyncGenerator,
+    AsyncIterator,
     Sequence,
     List,
     TYPE_CHECKING,
@@ -24,6 +28,7 @@ from typing import (
 import jsonschema
 from pydantic import BaseModel, ValidationError
 
+from ._tool_dispatch import dispatch_stream
 from ._config import (
     ContextConfig,
     ReActConfig,
@@ -32,6 +37,11 @@ from ._config import (
     _validate_context_config_ratios,
 )
 from ..state import AgentState, ReplyContext
+from ..permission import PermissionReviewer
+from ..permission._evidence import contains_authorization_media
+from ..permission._engine import ApprovalRecheck
+from ..permission._review import ReviewInstructions
+from ..permission.reviewer import ChatPermissionReviewer
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
 from .._logging import logger
 from .._utils._common import (
@@ -71,6 +81,7 @@ from ..event import (
     UserInterruptEvent,
     HintBlockEvent,
 )
+from ..exception._tool import ExternalToolUnavailableError
 from ..exception import (
     AgentOrientedException,
     ContentBlockedError,
@@ -82,6 +93,7 @@ from ..model import (
     ChatModelBase,
     FinishedReason,
 )
+from ..state._state import ActingRewrite
 from ..message import (
     Msg,
     AssistantMsg,
@@ -112,6 +124,7 @@ from ..tool import (
 from ..permission import (
     PermissionBehavior,
     PermissionEngine,
+    PermissionMode,
     PermissionDecision,
     PermissionRule,
 )
@@ -144,6 +157,7 @@ class Agent:
         context_config: ContextConfig | None = None,
         react_config: ReActConfig | None = None,
         injection_config: InjectionConfig | None = None,
+        permission_reviewer: PermissionReviewer | None = None,
     ) -> None:
         """Initialize the agent class in AgentScope.
 
@@ -180,6 +194,9 @@ class Agent:
                 The runtime state injection config, which controls how the
                 time, (plan) tasks and context usage are injected into the
                 context to help the agent better reason and act.
+            permission_reviewer (`PermissionReviewer | None`, optional):
+                Independent reviewer for AUTO approvals. Defaults to an
+                isolated structured-output call using this agent's model.
         """
         self.name = name
         self._system_prompt = system_prompt
@@ -205,7 +222,16 @@ class Agent:
         self._validate_configs()
 
         # The permission engine
-        self._engine = PermissionEngine(self.state.permission_context)
+        self._engine = PermissionEngine(
+            self.state.effective_permission_context,
+            reviewer=permission_reviewer or ChatPermissionReviewer(model),
+            context_provider=lambda: self.state.effective_permission_context,
+            rule_context_provider=lambda: self.state.permission_context,
+            authorization_provider=lambda: {
+                "messages": self.state.context,
+                **self.state.permission_review_context(),
+            },
+        )
 
         # The offloader/workspace
         self.offloader = offloader
@@ -214,6 +240,7 @@ class Agent:
         # The Tool-related logics
         # ====================================================================
         self.toolkit = toolkit or Toolkit()
+        self._prepared_receipt: ExternalExecutionResultEvent | None = None
         # Built here rather than in ``_prepare_model_input``, so that the
         # registration can tell this agent's tool from a tool of the same
         # name, e.g. another agent sharing the toolkit
@@ -241,6 +268,11 @@ class Agent:
         self._check_permission_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_check_permission")
         ]
+        self._dispatch_guards = [
+            mw
+            for mw in middlewares
+            if mw.is_implemented("tool_dispatch_guard")
+        ]
         self._acting_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_acting")
         ]
@@ -249,6 +281,12 @@ class Agent:
         ]
         self._system_prompt_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_system_prompt")
+        ]
+        self._permission_prompt_middlewares = [
+            mw
+            for mw in middlewares
+            if mw.is_implemented("on_permission_prompt")
+            or mw.is_implemented("on_system_prompt")
         ]
         self._compress_context_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_compress_context")
@@ -751,6 +789,7 @@ class Agent:
             current_reply_usage = self._get_reply_usage()
 
             # Update the context and summary
+            self.state.retain_authorization(msgs_to_compress)
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
 
@@ -826,12 +865,21 @@ class Agent:
             ) and block.source.media_type.startswith("image/")
 
         # Collect all the image data blocks in chronological order, recorded
-        # as (container list, index, block, is_top_level, role)
-        images: list[tuple[list, int, DataBlock, bool, str]] = []
+        # with their container, replacement position and authorization source.
+        images: list[tuple[list, int, DataBlock, bool, str, bool]] = []
         for msg in self.state.context:
             for i, block in enumerate(msg.content):
                 if _is_image(block):
-                    images.append((msg.content, i, block, True, msg.role))
+                    images.append(
+                        (
+                            msg.content,
+                            i,
+                            block,
+                            True,
+                            msg.role,
+                            contains_authorization_media(msg, block),
+                        ),
+                    )
                 elif isinstance(block, ToolResultBlock) and isinstance(
                     block.output,
                     list,
@@ -839,16 +887,24 @@ class Agent:
                     for j, sub in enumerate(block.output):
                         if _is_image(sub):
                             images.append(
-                                (block.output, j, sub, False, msg.role),
+                                (block.output, j, sub, False, msg.role, False),
                             )
                 elif isinstance(block, HintBlock) and isinstance(
                     block.hint,
                     list,
                 ):
+                    authority = contains_authorization_media(msg, block)
                     for j, sub in enumerate(block.hint):
                         if _is_image(sub):
                             images.append(
-                                (block.hint, j, sub, False, msg.role),
+                                (
+                                    block.hint,
+                                    j,
+                                    sub,
+                                    False,
+                                    msg.role,
+                                    authority,
+                                ),
                             )
 
         n_exceed = len(images) - max_image_num
@@ -868,7 +924,11 @@ class Agent:
         # the replacements together to avoid partial modification on
         # interruption
         replacements: list[tuple[list, int, HintBlock | TextBlock]] = []
-        for container, idx, block, is_top_level, role in images[:n_exceed]:
+        removed_authority = False
+        for container, idx, block, is_top_level, role, authority in images[
+            :n_exceed
+        ]:
+            removed_authority |= authority
             url = ""
             if isinstance(block.source, URLSource):
                 url = str(block.source.url)
@@ -900,6 +960,8 @@ class Agent:
                 new_block = TextBlock(type="text", text=text)
             replacements.append((container, idx, new_block))
 
+        if removed_authority:
+            self.state.authorization_evidence_complete = False
         for container, idx, new_block in replacements:
             container[idx] = new_block
 
@@ -1029,6 +1091,8 @@ class Agent:
                 )
 
             call_block.state = ToolCallState.FINISHED
+            last_msg.set_confirmation_request(call_block.id, None)
+            self.state.reply_context.tool_approvals.pop(call_block.id, None)
             yield ToolResultTextDeltaEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=last_msg.content[index].id,
@@ -1062,29 +1126,11 @@ class Agent:
 
         end_event: ReplyEndEvent | None = None
         try:
-            # Dispatch the unified inputs by type into the legacy local
-            # variables
-            event: (
-                UserConfirmResultEvent
-                | UserInterruptEvent
-                | ExternalExecutionResultEvent
-                | None
+            msgs, event = (
+                (inputs, None)
+                if isinstance(inputs, (Msg, list))
+                else (None, inputs)
             )
-            msgs: Msg | list[Msg] | None
-            if isinstance(
-                inputs,
-                (
-                    UserConfirmResultEvent,
-                    UserInterruptEvent,
-                    ExternalExecutionResultEvent,
-                ),
-            ):
-                event = inputs
-                msgs = None
-            else:
-                event = None
-                msgs = inputs
-
             if event and structured_schema:
                 logger.warning(
                     "The given structured_schema is ignored when "
@@ -1092,12 +1138,33 @@ class Agent:
                     "schema is used instead.",
                 )
 
+            # ===================================================================
+            # Step 1: Checking agent input:
+            #  - if incoming event and agent is waiting for an event
+            #  - if event is None and agent is not waiting for an event
+            # ===================================================================
+            if event is not None and event.reply_id == self.state.reply_id:
+                # Receive cancellation redirected by the service before a
+                # continuation can apply a decision or execute a tool.
+                await asyncio.sleep(0)
+            if isinstance(event, ExternalExecutionResultEvent):
+                event = self.state.pending_external_results(self.name, event)
+                if event is None:
+                    message = self.state.get_reply_message(self.name)
+                    if message is not None:
+                        yield message
+                    return
+            pending = self._parked_reply_updates(event)
+            if pending is not None:
+                for update in pending:
+                    yield update
+                return
             # Parked-interrupt short-circuit: only signal an INTERRUPTED
             # end when there is actual HITL work to close; otherwise the
             # session is effectively idle and the call is a silent no-op.
             # ``finally`` reuses the CancelledError cleanup path when
             # ``end_event`` is set — no reasoning-acting loop either way.
-            if isinstance(inputs, UserInterruptEvent):
+            if isinstance(event, UserInterruptEvent):
                 if self.state.has_awaiting_tool_calls(self.name):
                     end_event = ReplyEndEvent(
                         session_id=self.state.session_id,
@@ -1106,15 +1173,6 @@ class Agent:
                     )
                 return
 
-            # ===================================================================
-            # Step 1: Checking agent input:
-            #  - if incoming event and agent is waiting for an event
-            #  - if event is None and agent is not waiting for an event
-            # ===================================================================
-            if event is not None:
-                # Receive cancellation redirected by the service before a
-                # continuation can apply a decision or execute a tool.
-                await asyncio.sleep(0)
             is_awaiting = await self._check_incoming_event(event)
 
             # ===================================================================
@@ -1867,6 +1925,33 @@ class Agent:
                 finished_reason=ReplyFinishedReason.COMPLETED,
             )
 
+    def _parked_reply_updates(
+        self,
+        event: UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+        | None,
+    ) -> list[RequireUserConfirmEvent | Msg] | None:
+        """Return parked reply updates, or None to process the input."""
+        message = self.state.get_reply_message(self.name)
+        if event is not None and event.reply_id != self.state.reply_id:
+            return [message] if message else []
+        if isinstance(
+            event,
+            (UserInterruptEvent, ExternalExecutionResultEvent),
+        ):
+            return None
+        if event is not None:
+            status = self.state.confirmation_status(self.name, event)
+            if status == "stale":
+                return [message] if message else []
+            if status != "reissue":
+                return None
+        if message is None:
+            return None
+        prompts = RequireUserConfirmEvent.reissue_missing(message)
+        return [*prompts, message] if prompts else None
+
     async def _check_incoming_event(
         self,
         event: UserConfirmResultEvent | ExternalExecutionResultEvent | None,
@@ -1925,30 +2010,114 @@ class Agent:
             extra_ids = set(
                 _.tool_call.id for _ in event.confirm_results
             ) - set(awaiting_confirmations)
+            message = self.state.get_reply_message(self.name)
+            if message:
+                extra_ids.difference_update(
+                    call.id
+                    for call in message.get_content_blocks("tool_call")
+                    if call.state
+                    in (
+                        ToolCallState.FINISHED,
+                        ToolCallState.SUBMITTED,
+                    )
+                )
             if extra_ids:
                 raise ValueError(
                     f"Received UserConfirmResultEvent with tool call ids "
                     f"{extra_ids} that are not waiting for confirmation.",
                 )
 
-        if isinstance(event, ExternalExecutionResultEvent):
-            if not awaiting_external_executions:
-                raise ValueError(
-                    f"Agent is not waiting for external execution result, "
-                    f"but received ExternalExecutionResultEvent: {event}",
-                )
-
-            extra_ids = set(_.id for _ in event.execution_results) - set(
-                awaiting_external_executions,
-            )
-            if extra_ids:
-                raise ValueError(
-                    f"Received ExternalExecutionResultEvent with tool call "
-                    f"ids {extra_ids} that are not waiting for external "
-                    f"execution results.",
-                )
-
         return event is not None
+
+    async def _resolve_tool_call(
+        self,
+        tool_call: ToolCallBlock,
+    ) -> tuple[ToolBase, dict]:
+        """Resolve and validate the arguments used for execution and grants."""
+        # Check if the tool is available
+        tool = await self.toolkit.check_tool_available(
+            tool_call.name,
+            self.state.tool_context.activated_groups,
+        )
+
+        # Try to parse the input with the tool schema
+        parsed_input = _json_loads_with_repair(
+            tool_call.input,
+            tool.input_schema,
+        )
+
+        # Validate the parsed input with the tool schema
+        # TODO: Maybe some logic to mix the validation error in runtime
+        try:
+            jsonschema.validate(parsed_input, tool.input_schema)
+            if isinstance(tool, AskUser):
+                # JSON Schema omits the model's uniqueness validators.
+                AskUserParams.model_validate(parsed_input)
+        except jsonschema.ValidationError as e:
+            raise AgentOrientedException(
+                f"Input validation failed for tool '{tool_call.name}': "
+                f"{e.message} (at {e.json_path})",
+            ) from e
+        except ValidationError as e:
+            raise AgentOrientedException(
+                f"Input validation failed for tool '{tool_call.name}': "
+                f"{e}",
+            ) from e
+        except Exception as e:
+            raise AgentOrientedException(
+                f"Input schema evaluation failed for tool "
+                f"'{tool_call.name}': {e}",
+            ) from e
+        return tool, parsed_input
+
+    async def _confirmed_rule_target(
+        self,
+        call: ToolCallBlock,
+        confirmation_target: str | None,
+    ) -> ToolBase | None:
+        """Find the current tool if it still matches the card."""
+        try:
+            target, _ = await self._resolve_tool_call(call)
+        except AgentOrientedException:
+            return None
+        if target.confirmation_identity() == confirmation_target:
+            return target
+        return None
+
+    async def _check_external_result(self, result: ToolResultBlock) -> None:
+        """Apply the dispatched contract or the tool's custom validator."""
+        approval = self.state.reply_context.tool_approvals.get(result.id)
+        if (
+            approval is not None
+            and approval.external_result_schema is not None
+        ):
+            if (
+                result.state == ToolResultState.SUCCESS
+                and approval.external_result_schema
+            ):
+                jsonschema.validate(
+                    result.metadata,
+                    approval.external_result_schema,
+                )
+            return
+        tool = await self.toolkit.get_tool(result.name)
+        if tool is None and result.name == AskUser.name:
+            tool = AskUser()
+        if tool is None or not tool.is_external_tool:
+            raise ExternalToolUnavailableError(result.name)
+        await tool.check_external_result(result)
+
+    async def prepare_external_results(
+        self,
+        event: ExternalExecutionResultEvent,
+    ) -> None:
+        """Validate a pending batch before a service acknowledges it."""
+        self._prepared_receipt = None
+        # Isolate the checked values from edits by the caller or middleware.
+        receipt = event.model_copy(deep=True)
+        for result in receipt.execution_results:
+            await self._check_external_result(result)
+        self._prepared_receipt = receipt
 
     async def _handle_incoming_event(
         self,
@@ -1980,80 +2149,89 @@ class Agent:
             return
 
         if isinstance(event, UserConfirmResultEvent):
-            # The confirmed tool calls
-            confirmed_tool_calls = {
-                _.tool_call.id: _ for _ in event.confirm_results
-            }
-
-            # Update the state with the confirmed tool calls
-            for tool_call in last_msg.get_content_blocks("tool_call"):
-                if len(confirmed_tool_calls) == 0:
-                    break
-
-                if tool_call.id in confirmed_tool_calls:
-                    confirmation = confirmed_tool_calls[tool_call.id]
-                    if confirmation.confirmed:
-                        # Update state and wait for execution in the next step
-                        self._update_tool_call_state(
-                            tool_call.id,
-                            ToolCallState.ALLOWED,
+            for tool_call, confirmation in event.matching_results(last_msg):
+                if confirmation.confirmed:
+                    approval = self.state.reply_context.approval_for(
+                        tool_call.id,
+                    )
+                    if confirmation.rules:
+                        target = await self._confirmed_rule_target(
+                            confirmation.tool_call,
+                            approval.confirmation_target,
                         )
-
-                        # Update name and  input in case user modification is
-                        # allowed
-                        tool_call.name = confirmation.tool_call.name
-                        tool_call.input = confirmation.tool_call.input
-
-                        # Update the permission rule if accepted
-                        if confirmation.rules:
-                            for rule in confirmation.rules:
-                                self._engine.add_rule(rule)
-
-                    else:
-                        # Update the state to deny and handling
-                        async for evt in self._handle_error_tool_call(
+                        if last_msg is not self.state.get_reply_message(
+                            self.name,
+                        ) or not confirmation.answers(
                             tool_call,
-                            message=(
-                                "<system-reminder>The execution of tool "
-                                f'"{tool_call.name}" is denied by user!'
-                                "</system-reminder>"
-                            ),
-                            state=ToolResultState.DENIED,
+                            last_msg.confirmation_request(tool_call.id),
                         ):
-                            yield evt
+                            continue
+                        if target is not None:
+                            self._engine.add_confirmed_rules(
+                                target,
+                                confirmation.rules,
+                            )
+                    # Update state and wait for execution in the next step
+                    approval.user_confirmed = True
+                    self._update_tool_call_state(
+                        tool_call.id,
+                        ToolCallState.ALLOWED,
+                    )
 
-                    # Delete for quick lookup and later processing
-                    confirmed_tool_calls.pop(tool_call.id)
+                    # Update name and  input in case user modification is
+                    # allowed
+                    tool_call.name = confirmation.tool_call.name
+                    tool_call.input = confirmation.tool_call.input
+
+                else:
+                    self._update_tool_call_state(
+                        tool_call.id,
+                        ToolCallState.FINISHED,
+                    )
+                    # Record the denied result.
+                    async for evt in self._handle_error_tool_call(
+                        tool_call,
+                        message=(
+                            "<system-reminder>The execution of tool "
+                            f'"{tool_call.name}" is denied by user!'
+                            "</system-reminder>"
+                        ),
+                        state=ToolResultState.DENIED,
+                    ):
+                        yield evt
 
         elif isinstance(event, ExternalExecutionResultEvent):
-            # Directly append the execution results into context
-            for tool_result in event.execution_results:
-                # Whoever executed this promised a shape; a result that
-                # breaks it is their bug to fix, and the reply stays
-                # parked so they can send it again.
-                tool = await self.toolkit.get_tool(tool_result.name)
-                if tool is not None:
-                    await tool.check_external_result(tool_result)
-
+            receipt = self._prepared_receipt
+            self._prepared_receipt = None
+            prepared = receipt is not None and event == receipt
+            results = (
+                receipt.execution_results
+                if prepared
+                else event.execution_results
+            )
+            for tool_result in results:
+                if not prepared:
+                    await self._check_external_result(tool_result)
                 async for evt in self._convert_tool_chunk_to_event(
                     tool_result.id,
                     tool_result.output,
                 ):
                     yield evt
 
+                self._save_to_context([tool_result])
+                self._update_tool_call_state(
+                    tool_result.id,
+                    ToolCallState.FINISHED,
+                )
+                message = self.state.get_reply_message(self.name)
+                if message is not None:
+                    message.record_external_receipt(tool_result.id, event.id)
                 yield ToolResultEndEvent(
                     reply_id=self.state.reply_id,
                     tool_call_id=tool_result.id,
                     state=tool_result.state,
                     metadata=tool_result.metadata,
-                )
-
-                self._save_to_context([tool_result])
-
-                # Update the state according to the execution result state
-                self._update_tool_call_state(
-                    tool_result.id,
-                    ToolCallState.FINISHED,
+                    external_request_id=event.id,
                 )
 
         else:
@@ -2116,6 +2294,8 @@ class Agent:
                             f"{name}is attached with media type "
                             f"'{block.source.media_type}'.</system-reminder>"
                         )
+                    if contains_authorization_media(msg, block):
+                        self.state.authorization_evidence_complete = False
                     msg.content[i] = TextBlock(type="text", text=text)
 
                 self.state.context.append(msg)
@@ -2368,13 +2548,16 @@ class Agent:
         tool_call: ToolCallBlock,
         tool: ToolBase,
         tool_input: dict[str, Any],
+        dispatch_rechecks: list[ApprovalRecheck] | None = None,
+        *,
+        at_dispatch: bool = False,
     ) -> PermissionDecision:
         """Run permission checking through the middleware onion.
 
         The middleware chain receives copies of the tool call and tool input;
-        changes to these copies do not alter the eventual tool invocation. A
-        call already allowed by user confirmation still traverses the
-        middleware chain, but skips re-evaluation by the built-in engine.
+        AUTO and final dispatch check the validated invocation even if
+        middleware forwards a different preview. Human confirmation still
+        traverses middleware and the engine's current hard restrictions.
 
         Args:
             tool_call (`ToolCallBlock`):
@@ -2394,24 +2577,38 @@ class Agent:
                 tool_call,
                 tool,
                 tool_input,
+                dispatch_rechecks,
             )
 
         # Copy so middleware cannot mutate what the agent consumes later.
-        tool_call = deepcopy(tool_call)
-        tool_input = deepcopy(tool_input)
+        validated = (
+            tool_call.model_copy(deep=True),
+            tool,
+            deepcopy(tool_input),
+        )
+
+        rechecks: list[ApprovalRecheck] = []
 
         async def execute_chain(
             index: int = 0,
-            tool_call: ToolCallBlock = tool_call,
+            tool_call: ToolCallBlock = deepcopy(tool_call),
             tool: ToolBase = tool,
-            tool_input: dict[str, Any] = tool_input,
+            tool_input: dict[str, Any] = deepcopy(tool_input),
         ) -> PermissionDecision:
             """Execute the check_permission middleware chain."""
             if index >= len(self._check_permission_middlewares):
+                policy = (
+                    self._engine.context_provider()
+                    if self._engine.context_provider
+                    else self.state.effective_permission_context
+                )
+                if at_dispatch or policy.mode == PermissionMode.AUTO:
+                    tool_call, tool, tool_input = validated
                 return await self._check_permission_impl(
                     tool_call,
                     tool,
                     tool_input,
+                    rechecks,
                 )
 
             mw = self._check_permission_middlewares[index]
@@ -2433,26 +2630,87 @@ class Agent:
                 next_handler=next_handler,
             )
 
-        return await execute_chain()
+        decision = await execute_chain()
+        if (
+            at_dispatch
+            and not rechecks
+            and decision.behavior == PermissionBehavior.ALLOW
+        ):
+            # Middleware can grant a soft ASK or skip the engine. Enforce
+            # current hard limits on the actual invocation after it returns.
+            hard_check = await self._engine.check_permission(
+                validated[1],
+                validated[2],
+                confirmed=True,
+            )
+            if hard_check.behavior == PermissionBehavior.DENY:
+                return hard_check
+        if dispatch_rechecks is not None:
+            dispatch_rechecks.extend(rechecks)
+            return decision
+        if decision.behavior == PermissionBehavior.ALLOW:
+            for recheck in rechecks:
+                decision = await recheck(decision)
+                if decision.behavior != PermissionBehavior.ALLOW:
+                    break
+        return decision
 
     async def _check_permission_impl(
         self,
         tool_call: ToolCallBlock,
         tool: ToolBase,
         tool_input: dict[str, Any],
+        rechecks: list[ApprovalRecheck] | None = None,
     ) -> PermissionDecision:
         """Core permission resolution, wrapped by ``on_check_permission``.
 
-        A call already allowed by user confirmation short-circuits to ALLOW;
-        otherwise the built-in engine evaluates the tool and its input. See
+        User confirmation skips approval, but never current hard policy. See
         :meth:`_check_permission` for the argument and return semantics.
         """
-        if tool_call.state == ToolCallState.ALLOWED:
-            return PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message="Already allowed by user confirmation.",
+        return await self._engine.check_permission(
+            tool,
+            tool_input,
+            messages=self.state.context,
+            instructions=self._get_permission_instructions,
+            confirmed=self.state.reply_context.has_user_confirmation(
+                tool_call,
+            ),
+            rechecks=rechecks,
+        )
+
+    async def _check_dispatch_inputs(
+        self,
+        decision: PermissionDecision,
+        basis: tuple | None,
+        guards: AsyncExitStack,
+    ) -> PermissionDecision:
+        """Keep each input view stable until the caller commits dispatch."""
+        try:
+            async with asyncio.timeout(self._engine.review_timeout):
+                checks = [
+                    await guards.enter_async_context(
+                        mw.tool_dispatch_guard(self),
+                    )
+                    for mw in self._dispatch_guards
+                ]
+                if not any(check() for check in checks) and (
+                    basis == self._engine.dispatch_basis()
+                ):
+                    return decision
+            reason = (
+                "Authorization or queued input changed before tool dispatch"
             )
-        return await self._engine.check_permission(tool, tool_input)
+        except Exception as error:
+            reason = f"Dispatch input check failed: {type(error).__name__}"
+        return replace(
+            decision,
+            behavior=PermissionBehavior.ASK
+            if self.state.effective_permission_context.interactive
+            else PermissionBehavior.DENY,
+            message=reason,
+            decision_reason=reason,
+            review=None,
+        )
 
     async def _execute_tool_call(
         self,
@@ -2507,40 +2765,7 @@ class Agent:
         #  - if success, continue to permission checking and tool execution
         # ===================================================================
         try:
-            # Check if the tool is available
-            tool = await self.toolkit.check_tool_available(
-                tool_call.name,
-                self.state.tool_context.activated_groups,
-            )
-
-            # Try to parse the input with the tool schema
-            parsed_input = _json_loads_with_repair(
-                tool_call.input,
-                tool.input_schema,
-            )
-
-            # Validate the parsed input with the tool schema
-            # TODO: Maybe some logic to mix the validation error in runtime
-            try:
-                jsonschema.validate(parsed_input, tool.input_schema)
-                if isinstance(tool, AskUser):
-                    # JSON Schema omits the model's uniqueness validators.
-                    AskUserParams.model_validate(parsed_input)
-            except jsonschema.ValidationError as e:
-                raise AgentOrientedException(
-                    f"Input validation failed for tool '{tool_call.name}': "
-                    f"{e.message} (at {e.json_path})",
-                ) from e
-            except ValidationError as e:
-                raise AgentOrientedException(
-                    f"Input validation failed for tool '{tool_call.name}': "
-                    f"{e}",
-                ) from e
-            except Exception as e:
-                raise AgentOrientedException(
-                    f"Input schema evaluation failed for tool "
-                    f"'{tool_call.name}': {e}",
-                ) from e
+            tool, parsed_input = await self._resolve_tool_call(tool_call)
 
         # The exceptions that
         #  - cannot found tool
@@ -2559,16 +2784,244 @@ class Agent:
         # ===================================================================
         # Step 2: Check permission by toolkit and permission engine
         # ===================================================================
+        reply = self.state.reply_context
+        approval = reply.tool_approvals.get(tool_call.id)
+        if (
+            approval is not None
+            and reply.has_user_confirmation(tool_call)
+            and approval.confirmation_target != tool.confirmation_identity()
+        ):
+            approval.user_confirmed = False
+            self._update_tool_call_state(tool_call.id, ToolCallState.PENDING)
+        invocation = tool_call.model_copy(
+            update={
+                "name": tool.name,
+                "input": json.dumps(parsed_input, ensure_ascii=False),
+            },
+        )
+        was_confirmed = self.state.reply_context.has_user_confirmation(
+            invocation,
+        )
+        identity = tool.approval_identity()
+        rechecks: list[ApprovalRecheck] = []
         decision = await self._check_permission(
             tool_call,
             tool,
             parsed_input,
+            rechecks,
         )
 
-        # ===================================================================
-        # Step 3: Handle the permission and execute the tool call if allowed
-        # ===================================================================
+        async with AsyncExitStack() as stack:
+            rewritten_input = None
+            chunks = None
+            if decision.behavior == PermissionBehavior.ALLOW:
+                basis = (
+                    None
+                    if was_confirmed
+                    else self._engine.dispatch_basis(auto_only=True)
+                )
+                ready = asyncio.get_running_loop().create_future()
+                claimed = False
 
+                async def authorize(
+                    target: ToolBase,
+                    arguments: dict,
+                    forwarded: tuple[str, str],
+                    cache_index: int | None = None,
+                ) -> ToolBase | bool:
+                    nonlocal claimed
+                    if claimed or ready.done():
+                        return False
+                    claimed = True
+                    changed = target.name != invocation.name or json.dumps(
+                        arguments,
+                        sort_keys=True,
+                    ) != json.dumps(parsed_input, sort_keys=True)
+                    target_identity = target.approval_identity()
+                    replaced = target_identity != identity
+                    confirmed = was_confirmed and not changed and not replaced
+                    current, snapshot = decision, basis
+                    if changed or replaced:
+                        jsonschema.validate(arguments, target.input_schema)
+                        if isinstance(target, AskUser):
+                            AskUserParams.model_validate(arguments)
+                        if changed:
+                            approval = reply.approval_for(tool_call.id)
+                            approval.acting_rewrite = ActingRewrite(
+                                source=approval.acting_rewrite.source
+                                if approval.acting_rewrite
+                                else (invocation.name, invocation.input),
+                                forwarded=forwarded,
+                                cache_index=cache_index,
+                                final_input=json.dumps(
+                                    arguments,
+                                    sort_keys=True,
+                                ),
+                            )
+                            tool_call.name = target.name
+                            tool_call.input = json.dumps(
+                                arguments,
+                                ensure_ascii=False,
+                            )
+                            approval.user_confirmed = False
+                            self._update_tool_call_state(
+                                tool_call.id,
+                                ToolCallState.PENDING,
+                                target=tool_call,
+                            )
+                        rechecks.clear()
+                    if not rechecks:
+                        current = await self._check_permission(
+                            tool_call
+                            if confirmed or not was_confirmed
+                            else tool_call.model_copy(
+                                update={"state": ToolCallState.PENDING},
+                            ),
+                            target,
+                            deepcopy(arguments),
+                            rechecks,
+                            at_dispatch=True,
+                        )
+                        if changed or replaced:
+                            snapshot = self._engine.dispatch_basis(
+                                auto_only=True,
+                            )
+                    if was_confirmed and not confirmed:
+                        policy = self.state.effective_permission_context
+                        if (
+                            policy.mode == PermissionMode.ASK
+                            and current.behavior == PermissionBehavior.ALLOW
+                        ):
+                            current = PermissionDecision(
+                                behavior=PermissionBehavior.ASK
+                                if policy.interactive
+                                else PermissionBehavior.DENY,
+                                message="The confirmed tool call changed.",
+                            )
+                    for recheck in rechecks:
+                        if current.behavior != PermissionBehavior.ALLOW:
+                            break
+                        current = await recheck(current)
+                    bound = None
+                    async with AsyncExitStack() as guards:
+                        if (
+                            current.behavior == PermissionBehavior.ALLOW
+                            and not confirmed
+                            and self.state.effective_permission_context.mode
+                            == PermissionMode.AUTO
+                        ):
+                            current = await self._check_dispatch_inputs(
+                                current,
+                                snapshot,
+                                guards,
+                            )
+                        current = self._engine.recheck_tool_identity(
+                            current,
+                            target,
+                            target_identity,
+                        )
+                        if ready.done():
+                            return False
+                        if current.behavior == PermissionBehavior.ALLOW:
+                            bound = target.bind_for_dispatch()
+                            self._mark_tool_dispatched(
+                                tool_call.id,
+                                bound if bound is not None else target,
+                            )
+                        ready.set_result(
+                            (
+                                bound if bound is not None else target,
+                                deepcopy(arguments),
+                                current,
+                                changed,
+                            ),
+                        )
+                    return (
+                        bound
+                        if bound is not None and not bound.is_external_tool
+                        else False
+                    )
+
+                if tool.is_external_tool:
+                    await authorize(
+                        tool,
+                        parsed_input,
+                        (invocation.name, invocation.input),
+                    )
+                else:
+                    try:
+                        chunks = await stack.enter_async_context(
+                            dispatch_stream(
+                                self._acting(
+                                    invocation.model_copy(deep=True),
+                                    before_call=authorize,
+                                ),
+                                ready,
+                            ),
+                        )
+                    except AgentOrientedException as exc:
+                        async for evt in self._handle_error_tool_call(
+                            tool_call,
+                            exc.message,
+                            state=ToolResultState.ERROR,
+                        ):
+                            yield evt
+                        return
+
+                if ready.result() is not None:
+                    tool, parsed_input, decision, changed = ready.result()
+                    if changed:
+                        rewritten_input = tool_call.input
+
+            if decision.behavior != PermissionBehavior.ALLOW:
+                async for evt in self._permission_events(
+                    tool_call,
+                    tool,
+                    parsed_input,
+                    decision,
+                    kept_rules,
+                    rewritten_input,
+                ):
+                    yield evt
+                return
+
+            if tool.is_external_tool:
+                tool_call.input = json.dumps(parsed_input, ensure_ascii=False)
+            else:
+                self._update_tool_call_state(
+                    tool_call.id,
+                    ToolCallState.ALLOWED,
+                )
+            yield ToolResultStartEvent(
+                reply_id=self.state.reply_id,
+                tool_call_id=tool_call.id,
+                tool_call_name=tool_call.name,
+                tool_call_input=rewritten_input,
+            )
+            if tool.is_external_tool:
+                request = RequireExternalExecutionEvent(
+                    reply_id=self.state.reply_id,
+                    tool_calls=[tool_call],
+                )
+                approval = self.state.reply_context.approval_for(tool_call.id)
+                approval.external_request_id = request.id
+                yield request
+                return
+
+            assert chunks is not None
+            async for evt in self._tool_result_events(tool_call, chunks):
+                yield evt
+
+    async def _permission_events(
+        self,
+        tool_call: ToolCallBlock,
+        tool: ToolBase,
+        parsed_input: dict,
+        decision: PermissionDecision,
+        kept_rules: list[PermissionRule] | None,
+        rewritten_input: str | None,
+    ) -> AsyncGenerator:
+        """Park or finish a call before opening its result stream."""
         # Case 1: Ask for user confirmation if needed
         if decision.behavior in [
             PermissionBehavior.ASK,
@@ -2604,18 +3057,27 @@ class Agent:
                 # batch can be de-duplicated against them.
                 kept_rules.extend(decision.suggested_rules or [])
 
+            self.state.reply_context.approval_for(
+                tool_call.id,
+            ).confirmation_target = tool.confirmation_identity()
+            tool_call.suggested_rules = decision.suggested_rules or []
+            tool_call.state = ToolCallState.ASKING
+            prompt = RequireUserConfirmEvent.issue(
+                self.state.reply_id,
+                tool_call,
+            )
             # Set the state of the tool call to "ask"
             # **Note** the update must be done before yielding the event
             self._update_tool_call_state(
                 tool_call.id,
                 ToolCallState.ASKING,
+                target=tool_call,
             )
 
-            tool_call.suggested_rules = decision.suggested_rules or []
-            yield RequireUserConfirmEvent(
-                reply_id=self.state.reply_id,
-                tool_calls=[tool_call],
-            )
+            message = self.state.get_reply_message(self.name)
+            if message:
+                message.set_confirmation_request(tool_call.id, prompt.id)
+            yield prompt
             return
 
         # Case 2: Denied by the permission system
@@ -2624,148 +3086,9 @@ class Agent:
                 tool_call,
                 decision.message,
                 state=ToolResultState.DENIED,
+                rewritten_input=rewritten_input,
             ):
                 yield evt
-
-            return
-
-        # Case 3: Allowed by the permission system, execute the tool call and
-        #  yield the events
-        if decision.behavior == PermissionBehavior.ALLOW:
-            self._update_tool_call_state(
-                tool_call.id,
-                ToolCallState.ALLOWED,
-            )
-            # Send start event
-            yield ToolResultStartEvent(
-                reply_id=self.state.reply_id,
-                tool_call_id=tool_call.id,
-                tool_call_name=tool_call.name,
-            )
-            # Send requiring external execution event if it's an external tool
-            if tool.is_external_tool:
-                # External clients should receive the same repaired and
-                # schema-validated JSON that permission checks consumed.
-                tool_call.input = json.dumps(
-                    parsed_input,
-                    ensure_ascii=False,
-                )
-                # Update the state to "submitted" BEFORE yielding
-                # because the outer loop will break immediately after
-                # receiving this event, preventing any code after yield
-                # from executing
-                self._update_tool_call_state(
-                    tool_call.id,
-                    ToolCallState.SUBMITTED,
-                )
-                yield RequireExternalExecutionEvent(
-                    reply_id=self.state.reply_id,
-                    tool_calls=[tool_call],
-                )
-                return
-
-            # ================================================================
-            # Step 4: Delegate raw execution to _acting (middleware hook point)
-            # ================================================================
-            async for chunk in self._acting(tool_call):
-                # The ToolResponse is the last and completed tool result here
-                if isinstance(chunk, ToolResponse):
-                    tool_result_block = ToolResultBlock(
-                        id=tool_call.id,
-                        name=tool_call.name,
-                        output=[TextBlock(text=chunk.content)]
-                        if isinstance(chunk.content, str)
-                        else chunk.content,
-                        state=chunk.state,
-                        metadata=chunk.metadata,
-                    )
-
-                    # ========================================================
-                    # Step 5: Truncate the tool result if exceed
-                    # ========================================================
-                    (
-                        reserved_tool_result_block,
-                        offload_tool_result_block,
-                    ) = await self._split_tool_result_for_compression(
-                        tool_result_block,
-                    )
-
-                    # If offload result is not empty, attach reminder to the
-                    # reserved context
-                    if offload_tool_result_block is not None:
-                        reminder = (
-                            "\n<<<TRUNCATED>>>\n<system-reminder>The "
-                            "remaining content has been omitted for "
-                            "limited context.{offload_reminder}"
-                            "</system-reminder>"
-                        )
-
-                        offload_reminder = ""
-                        if self.offloader:
-                            path = await self.offloader.offload_tool_result(
-                                self.state.session_id,
-                                offload_tool_result_block,
-                            )
-
-                            offload_reminder = (
-                                f" You can refer to the file in '{path}' "
-                                f"for the truncated content if needed."
-                            )
-
-                        reminder = reminder.format(
-                            offload_reminder=offload_reminder,
-                        )
-
-                        # Insert the reminder to the tool result output
-                        if isinstance(reserved_tool_result_block.output, str):
-                            reserved_tool_result_block.output += reminder
-
-                        elif len(
-                            reserved_tool_result_block.output,
-                        ) > 0 and isinstance(
-                            reserved_tool_result_block.output[-1],
-                            TextBlock,
-                        ):
-                            reserved_tool_result_block.output[
-                                -1
-                            ].text += reminder
-
-                        else:
-                            reserved_tool_result_block.output += [
-                                TextBlock(text=reminder),
-                            ]
-
-                    self._save_to_context([reserved_tool_result_block])
-                    # Ends the tool call lifecycle.
-                    self._update_tool_call_state(
-                        tool_call.id,
-                        ToolCallState.FINISHED,
-                    )
-                    # The ended event for the tool result
-                    yield ToolResultEndEvent(
-                        reply_id=self.state.reply_id,
-                        tool_call_id=tool_call.id,
-                        state=chunk.state,
-                        metadata=chunk.metadata,
-                    )
-
-                else:
-                    # Intermediate ToolChunk — convert to streaming events
-                    progress = chunk.metadata.get("mcp_progress")
-                    if progress is not None:
-                        yield CustomEvent(
-                            name="mcp_progress",
-                            value={
-                                **progress,
-                                "reply_id": self.state.reply_id,
-                                "tool_call_id": tool_call.id,
-                            },
-                        )
-                    async for evt in self._convert_tool_chunk_to_event(
-                        tool_call.id,
-                        chunk.content,
-                    ):
-                        yield evt
 
             return
 
@@ -2773,17 +3096,125 @@ class Agent:
             f"Invalid permission decision behavior: {decision.behavior}",
         )
 
+    async def _tool_result_events(
+        self,
+        tool_call: ToolCallBlock,
+        chunks: AsyncIterator[ToolChunk | ToolResponse],
+    ) -> AsyncGenerator:
+        """Convert the committed tool stream to events and persist it."""
+        async for chunk in chunks:
+            # The ToolResponse is the last and completed tool result here
+            if isinstance(chunk, ToolResponse):
+                tool_result_block = ToolResultBlock(
+                    id=tool_call.id,
+                    name=tool_call.name,
+                    output=[TextBlock(text=chunk.content)]
+                    if isinstance(chunk.content, str)
+                    else chunk.content,
+                    state=chunk.state,
+                    metadata=chunk.metadata,
+                )
+
+                # ========================================================
+                # Step 5: Truncate the tool result if exceed
+                # ========================================================
+                (
+                    reserved_tool_result_block,
+                    offload_tool_result_block,
+                ) = await self._split_tool_result_for_compression(
+                    tool_result_block,
+                )
+
+                # If offload result is not empty, attach reminder to the
+                # reserved context
+                if offload_tool_result_block is not None:
+                    reminder = (
+                        "\n<<<TRUNCATED>>>\n<system-reminder>The "
+                        "remaining content has been omitted for "
+                        "limited context.{offload_reminder}"
+                        "</system-reminder>"
+                    )
+
+                    offload_reminder = ""
+                    if self.offloader:
+                        path = await self.offloader.offload_tool_result(
+                            self.state.session_id,
+                            offload_tool_result_block,
+                        )
+
+                        offload_reminder = (
+                            f" You can refer to the file in '{path}' "
+                            f"for the truncated content if needed."
+                        )
+
+                    reminder = reminder.format(
+                        offload_reminder=offload_reminder,
+                    )
+
+                    # Insert the reminder to the tool result output
+                    if isinstance(reserved_tool_result_block.output, str):
+                        reserved_tool_result_block.output += reminder
+
+                    elif len(
+                        reserved_tool_result_block.output,
+                    ) > 0 and isinstance(
+                        reserved_tool_result_block.output[-1],
+                        TextBlock,
+                    ):
+                        reserved_tool_result_block.output[-1].text += reminder
+
+                    else:
+                        reserved_tool_result_block.output += [
+                            TextBlock(text=reminder),
+                        ]
+
+                self._save_to_context([reserved_tool_result_block])
+                # Ends the tool call lifecycle.
+                self._update_tool_call_state(
+                    tool_call.id,
+                    ToolCallState.FINISHED,
+                )
+                # The ended event for the tool result
+                yield ToolResultEndEvent(
+                    reply_id=self.state.reply_id,
+                    tool_call_id=tool_call.id,
+                    state=chunk.state,
+                    metadata=chunk.metadata,
+                )
+
+            else:
+                # Intermediate ToolChunk — convert to streaming events
+                progress = chunk.metadata.get("mcp_progress")
+                if progress is not None:
+                    yield CustomEvent(
+                        name="mcp_progress",
+                        value={
+                            **progress,
+                            "reply_id": self.state.reply_id,
+                            "tool_call_id": tool_call.id,
+                        },
+                    )
+                async for evt in self._convert_tool_chunk_to_event(
+                    tool_call.id,
+                    chunk.content,
+                ):
+                    yield evt
+
     async def _acting(
         self,
         tool_call: ToolCallBlock,
+        *,
+        before_call: Callable[
+            [ToolBase, dict, tuple[str, str], int | None],
+            Awaitable[ToolBase | bool],
+        ]
+        | None = None,
     ) -> AsyncGenerator["ToolChunk | ToolResponse", None]:
         """Raw tool execution entry point (maybe wrapped by middleware).
 
-        This method is the hook point for ``on_acting`` middleware.  It
-        delegates to :meth:`_acting_impl` which wraps
-        ``toolkit.call_tool`` directly.  Permission checking and context
-        writes are **not** part of this method — they are handled by
-        :meth:`_execute_tool_call` before and after this call.
+        Acting middleware can transform the invocation. When AUTO supplies
+        a dispatch check, the toolkit applies it to the final target and
+        parsed arguments immediately before invocation.
 
         Args:
             tool_call (`ToolCallBlock`):
@@ -2794,23 +3225,87 @@ class Agent:
                 Intermediate :class:`~agentscope.tool.ToolChunk` objects
                 followed by a final :class:`~agentscope.tool.ToolResponse`.
         """
+
+        call_id = tool_call.id
+        approval = self.state.reply_context.tool_approvals.get(call_id)
+        rewrite = approval.acting_rewrite if approval else None
+        source = tool_call.model_copy(deep=True) if before_call else tool_call
+        if rewrite:
+            source.name, source.input = rewrite.source
+
+        def invoke(call: ToolCallBlock) -> AsyncGenerator:
+            if before_call is None:
+                return self._acting_impl(call)
+            forwarded = (call.name, call.input)
+            replay = rewrite and forwarded == rewrite.forwarded
+            if replay and (
+                rewrite.final_input is None or call.name != tool_call.name
+            ):
+                # Replay the middleware from its original input. At its exit,
+                # use the exact target the user saw (including user edits).
+                call = tool_call
+
+            def edit_input(target: ToolBase, arguments: dict) -> dict | None:
+                if (
+                    replay
+                    and call.name == tool_call.name
+                    and json.dumps(arguments, sort_keys=True)
+                    == rewrite.final_input
+                ):
+                    edited = _json_loads_with_repair(
+                        tool_call.input,
+                        target.input_schema,
+                    )
+                    jsonschema.validate(edited, target.input_schema)
+                    return edited
+                return None
+
+            async def check(
+                target: ToolBase,
+                arguments: dict,
+            ) -> ToolBase | bool:
+                return await before_call(target, arguments, forwarded, None)
+
+            return self.toolkit.call_tool(
+                call.model_copy(update={"id": call_id}, deep=True),
+                self.state,
+                before_call=check,
+                edit_input=edit_input if replay else None,
+            )
+
         if not self._acting_middlewares:
-            async for item in self._acting_impl(tool_call):
+            async for item in invoke(source):
                 yield item
         else:
+            confirmed_call = tool_call
+            cached: ToolCallBlock | None = None
+            cache_index = None
 
             async def execute_chain(
                 index: int = 0,
-                tool_call: ToolCallBlock = tool_call,
+                tool_call: ToolCallBlock = source,
             ) -> AsyncGenerator:
+                nonlocal cached, cache_index
                 if index >= len(self._acting_middlewares):
-                    async for item in self._acting_impl(tool_call):
+                    cached = None
+                    async for item in invoke(tool_call):
                         yield item
                 else:
+                    forwarded = False
+                    if (
+                        rewrite
+                        and index == rewrite.cache_index
+                        and (tool_call.name, tool_call.input)
+                        == rewrite.forwarded
+                    ):
+                        # Query this cache with the invocation on the card.
+                        tool_call = confirmed_call.model_copy(deep=True)
                     mw = self._acting_middlewares[index]
                     input_kwargs = {"tool_call": tool_call}
 
                     async def next_handler(**kwargs: Any) -> AsyncGenerator:
+                        nonlocal forwarded
+                        forwarded = True
                         async for item in execute_chain(
                             index + 1,
                             **{**input_kwargs, **kwargs},
@@ -2824,8 +3319,20 @@ class Agent:
                     ):
                         yield item
 
+                    if not forwarded and before_call is not None:
+                        cached = tool_call.model_copy(deep=True)
+                        cache_index = index
+
             async for item in execute_chain():
                 yield item
+            if cached is not None and before_call is not None:
+                target, arguments = await self._resolve_tool_call(cached)
+                await before_call(
+                    target,
+                    arguments,
+                    (cached.name, cached.input),
+                    cache_index,
+                )
 
     async def _acting_impl(
         self,
@@ -2862,6 +3369,8 @@ class Agent:
         tool_call: ToolCallBlock,
         message: str,
         state: ToolResultState,
+        *,
+        rewritten_input: str | None = None,
     ) -> AsyncGenerator[
         ToolResultStartEvent
         | ToolResultTextDeltaEvent
@@ -2892,6 +3401,7 @@ class Agent:
             reply_id=self.state.reply_id,
             tool_call_id=tool_call.id,
             tool_call_name=tool_call.name,
+            tool_call_input=rewritten_input,
         )
 
         result = ToolChunk(
@@ -3327,7 +3837,19 @@ class Agent:
     # ======================================================================
     # Agent internal utility methods
     # ======================================================================
-    async def _get_system_prompt(self) -> str:
+    async def _get_permission_instructions(self) -> ReviewInstructions:
+        """Collect application policy separately from contextual material."""
+        context: list[str] = []
+        prompt = await self._get_system_prompt(context)
+        fields: ReviewInstructions = {"application_instructions": prompt}
+        if context:
+            fields["untrusted_context"] = context
+        return fields
+
+    async def _get_system_prompt(
+        self,
+        untrusted_context: list[str] | None = None,
+    ) -> str:
         """Get the system prompt of the agent."""
         prompt = [self._system_prompt]
 
@@ -3346,9 +3868,16 @@ class Agent:
 
         result = "\n".join(prompt)
 
-        # Apply system_prompt middlewares sequentially (transformer pattern)
-        for mw in self._system_prompt_middlewares:
-            result = await mw.on_system_prompt(self, result)
+        if untrusted_context is None:
+            for mw in self._system_prompt_middlewares:
+                result = await mw.on_system_prompt(self, result)
+        else:
+            for mw in self._permission_prompt_middlewares:
+                result = await mw.on_permission_prompt(
+                    self,
+                    result,
+                    untrusted_context,
+                )
 
         return result
 
@@ -3562,10 +4091,26 @@ class Agent:
         finally:
             await stream.aclose()
 
+    def _mark_tool_dispatched(self, call_id: str, tool: ToolBase) -> None:
+        """Park external calls with the metadata contract used at dispatch."""
+        if not tool.is_external_tool:
+            self._update_tool_call_state(call_id, ToolCallState.ALLOWED)
+            return
+        self._update_tool_call_state(call_id, ToolCallState.SUBMITTED)
+        validator = getattr(tool.check_external_result, "__func__", None)
+        if validator is ToolBase.check_external_result:
+            # Custom Python validators still require their tool instance.
+            approval = self.state.reply_context.approval_for(call_id)
+            approval.external_result_schema = deepcopy(
+                tool.metadata_schema or {},
+            )
+
     def _update_tool_call_state(
         self,
         tool_call_id: str,
         state: ToolCallState,
+        *,
+        target: ToolCallBlock | None = None,
     ) -> None:
         """Update the tool call state. This function is to avoid the update
         not reflected in the context due to the shallow copy of the content
@@ -3577,12 +4122,21 @@ class Agent:
             state (`ToolCallState`):
                 The new state of the tool call.
         """
+        approvals = self.state.reply_context.tool_approvals
+        if state in (ToolCallState.FINISHED, ToolCallState.SUBMITTED):
+            approvals.pop(tool_call_id, None)
+        elif state != ToolCallState.ALLOWED and tool_call_id in approvals:
+            approvals[tool_call_id].user_confirmed = False
         last_msg = self.state.get_reply_message(self.name)
         if last_msg is None:
             return
         for block in last_msg.get_content_blocks():
             if isinstance(block, ToolCallBlock) and block.id == tool_call_id:
+                if target is not None:
+                    block.name, block.input = target.name, target.input
                 block.state = state
+                if state != ToolCallState.ASKING:
+                    last_msg.set_confirmation_request(tool_call_id, None)
                 break
 
     def _save_to_context(
@@ -3632,6 +4186,9 @@ class Agent:
         if not persisted_blocks and msg_usage is None:
             return
 
+        for block in persisted_blocks:
+            if isinstance(block, ToolCallBlock):
+                self.state.reply_context.tool_approvals.pop(block.id, None)
         self.state.append_context(self.name, persisted_blocks)
 
         if msg_usage is not None:

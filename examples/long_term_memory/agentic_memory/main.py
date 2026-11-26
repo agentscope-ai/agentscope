@@ -72,7 +72,8 @@ def _configure_demo_permissions(agent: Agent, workspace_root: Path) -> None:
         workspace_root (`Path`):
             The directory containing the demo memory files.
     """
-    agent.state.permission_context.mode = PermissionMode.ACCEPT_EDITS
+    agent.state.permission_context.mode = PermissionMode.ASK
+    agent.state.permission_context.allow_workspace_edits = True
     agent.state.permission_context.working_directories[
         str(workspace_root)
     ] = AdditionalWorkingDirectory(

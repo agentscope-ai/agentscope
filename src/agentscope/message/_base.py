@@ -152,6 +152,40 @@ class Msg(BaseModel):
         typs = [block_type] if isinstance(block_type, str) else block_type
         return any(b.type in typs for b in self.content)
 
+    def record_external_receipt(self, call_id: str, request_id: str) -> None:
+        """Remember which submission supplied a terminal external result."""
+        self.metadata = {
+            **self.metadata,
+            "external_result_receipts": {
+                **self.metadata.get("external_result_receipts", {}),
+                call_id: request_id,
+            },
+        }
+
+    def confirmation_request(self, call_id: str) -> str | None:
+        """Get the outstanding prompt for a tool call in this reply."""
+        return self.metadata.get("pending_confirmations", {}).get(call_id)
+
+    def set_confirmation_request(
+        self,
+        call_id: str,
+        request_id: str | None,
+    ) -> None:
+        """Track only pending prompt IDs so clients can resume after reload."""
+        if request_id is not None:
+            requests = {
+                **self.metadata.get("pending_confirmations", {}),
+                call_id: request_id,
+            }
+            self.metadata = {
+                **self.metadata,
+                "pending_confirmations": requests,
+            }
+        elif requests := self.metadata.get("pending_confirmations"):
+            requests.pop(call_id, None)
+            if not requests:
+                self.metadata.pop("pending_confirmations")
+
     def get_text_content(self, separator: str = "\n") -> str:
         """Join all top-level TextBlocks, returning "" if none are present.
 
@@ -384,6 +418,7 @@ class Msg(BaseModel):
                 hint_block = HintBlock(
                     id=event.block_id,
                     source=event.source,
+                    source_role=event.source_role,
                     hint=event.hint,
                 )
                 hint_block.finished_at = hint_block.created_at
@@ -412,6 +447,11 @@ class Msg(BaseModel):
                     block.finished_at = event.created_at
 
             case EventType.TOOL_RESULT_START:
+                if event.tool_call_input is not None:
+                    call = self._find_block("tool_call", event.tool_call_id)
+                    if isinstance(call, ToolCallBlock):
+                        call.name = event.tool_call_name
+                        call.input = event.tool_call_input
                 self.content.append(
                     ToolResultBlock(
                         id=event.tool_call_id,
@@ -492,6 +532,11 @@ class Msg(BaseModel):
                         )
                 else:
                     assert isinstance(block, ToolResultBlock)
+                    if event.external_request_id is not None:
+                        self.record_external_receipt(
+                            event.tool_call_id,
+                            event.external_request_id,
+                        )
                     block.state = event.state
                     block.metadata = event.metadata
                     block.finished_at = event.created_at
@@ -506,6 +551,7 @@ class Msg(BaseModel):
                     if call_block is not None:
                         assert isinstance(call_block, ToolCallBlock)
                         call_block.state = ToolCallState.FINISHED
+                        self.set_confirmation_request(call_block.id, None)
 
             case EventType.REQUIRE_USER_CONFIRM:
                 for tool_call in event.tool_calls:
@@ -513,23 +559,24 @@ class Msg(BaseModel):
                     if b is not None:
                         assert isinstance(b, ToolCallBlock)
                         # Update the state
+                        b.name = tool_call.name
+                        b.input = tool_call.input
+                        self.set_confirmation_request(b.id, event.id)
                         b.state = ToolCallState.ASKING
                         # Record the suggestions
                         b.suggested_rules = tool_call.suggested_rules
 
             case EventType.USER_CONFIRM_RESULT:
-                for result in event.confirm_results:
-                    b = self._find_block("tool_call", result.tool_call.id)
-                    # Only ASKING calls can transition; skip stale results
-                    # (e.g. arriving after an interrupt already resolved the
-                    # tool call).
-                    if b is not None and b.state == ToolCallState.ASKING:
-                        assert isinstance(b, ToolCallBlock)
-                        b.state = (
-                            ToolCallState.ALLOWED
-                            if result.confirmed
-                            else ToolCallState.FINISHED
-                        )
+                for call, result in event.matching_results(self):
+                    self.set_confirmation_request(call.id, None)
+                    if result.confirmed:
+                        call.name = result.tool_call.name
+                        call.input = result.tool_call.input
+                    call.state = (
+                        ToolCallState.ALLOWED
+                        if result.confirmed
+                        else ToolCallState.FINISHED
+                    )
 
             case EventType.REQUIRE_EXTERNAL_EXECUTION:
                 for tool_call in event.tool_calls:
@@ -537,6 +584,7 @@ class Msg(BaseModel):
                     if b is not None:
                         assert isinstance(b, ToolCallBlock)
                         b.state = ToolCallState.SUBMITTED
+                        self.set_confirmation_request(b.id, None)
 
             case EventType.EXTERNAL_EXECUTION_RESULT:
                 # Skip results whose tool_call already has a tool_result

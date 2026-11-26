@@ -9,11 +9,9 @@ import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Field } from '@/components/ui/field';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { useSchedules } from '@/hooks/useSchedules';
 import { useTranslation } from '@/i18n/useI18n';
 import { EmptyState } from '@/pages/schedule/empty-state';
 import { ScheduleCard } from '@/pages/schedule/schedule-card';
-import { ScheduleDetailDrawer } from '@/pages/schedule/schedule-detail-drawer';
 
 function scheduleHasOccurrencesInRange(
 	schedule: ScheduleRecord,
@@ -45,10 +43,14 @@ function scheduleHasOccurrencesInRange(
 	}
 }
 
-export function ListTabPage() {
+interface ListTabPageProps {
+	schedules: ScheduleRecord[];
+	initialLoading: boolean;
+	onSelect: (id: string) => void;
+}
+
+export function ListTabPage({ schedules, initialLoading, onSelect }: ListTabPageProps) {
 	const { t } = useTranslation();
-	const { schedules, loading, remove } = useSchedules();
-	const [selectedSchedule, setSelectedSchedule] = React.useState<ScheduleRecord | null>(null);
 	const [dateRange, setDateRange] = React.useState<DateRange | undefined>(undefined);
 
 	const filteredSchedules = React.useMemo(() => {
@@ -64,7 +66,7 @@ export function ListTabPage() {
 		);
 	}, [schedules, dateRange]);
 
-	if (loading) {
+	if (initialLoading) {
 		return (
 			<div className="flex items-center justify-center h-full">
 				<div className="text-muted-foreground">{t('common.loading')}</div>
@@ -122,19 +124,12 @@ export function ListTabPage() {
 							<ScheduleCard
 								key={schedule.id}
 								schedule={schedule}
-								onClick={() => setSelectedSchedule(schedule)}
+								onClick={() => onSelect(schedule.id)}
 							/>
 						))}
 					</div>
 				)}
 			</div>
-
-			<ScheduleDetailDrawer
-				schedule={selectedSchedule}
-				open={!!selectedSchedule}
-				onOpenChange={(open) => !open && setSelectedSchedule(null)}
-				onDelete={remove}
-			/>
 		</div>
 	);
 }

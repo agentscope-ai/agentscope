@@ -132,6 +132,7 @@ async def _confirm(
         )
         results.append(
             ConfirmResult(
+                request_id=pending.id,
                 confirmed=always or answer in ("y", "yes"),
                 tool_call=tool_call,
                 rules=tool_call.suggested_rules if always else None,

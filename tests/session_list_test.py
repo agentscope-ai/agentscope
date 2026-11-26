@@ -341,7 +341,13 @@ class SessionListTest(IsolatedAsyncioTestCase):
             self.assertEqual(full.status_code, 200, full.text)
             expected_views = [
                 {
-                    "session": self._expected_record(record),
+                    "session": {
+                        **record.model_dump(mode="json", exclude={"state"}),
+                        "state": record.state.model_dump(
+                            mode="json",
+                            include={"permission_context", "tasks_context"},
+                        ),
+                    },
                     "is_running": False,
                     "status": status,
                     "team": None,

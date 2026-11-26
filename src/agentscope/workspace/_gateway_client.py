@@ -27,6 +27,7 @@ import base64
 import json
 import secrets
 import uuid
+from copy import copy
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
@@ -41,6 +42,7 @@ from ..permission import (
     PermissionDecision,
 )
 from ..tool import ToolBase, ToolChunk
+from ._utils import GATEWAY_PROTOCOL_VERSION
 from ._gateway_shim import (
     BODY_INLINE_LIMIT,
     SANDBOX_TMP_DIR,
@@ -74,6 +76,8 @@ class GatewayMCPTool(ToolBase):
         agent_id: str = "",
         session_id: str = "",
         trust_annotations: bool = True,
+        service_scope: bytes = b"",
+        binding: str | None = None,
     ) -> None:
         """Build a gateway-backed MCP tool.
 
@@ -96,6 +100,10 @@ class GatewayMCPTool(ToolBase):
                 The agent whose gateway-side session to run against.
             session_id (`str`, defaults to ``""``):
                 The session whose gateway-side session to run against.
+            binding:
+                Server-issued registration and tool definition fingerprint.
+            service_scope (`bytes`):
+                Opaque fingerprint of the configured service and credentials.
             trust_annotations (`bool`, defaults to `True`):
                 Whether to trust the tool annotations reported by the
                 upstream MCP server. If `False`, the ``readOnlyHint``
@@ -131,8 +139,44 @@ class GatewayMCPTool(ToolBase):
                     mcp_name,
                 )
 
+        self._approval_scope = (service_scope, trust_annotations)
+        self._binding = binding
+        self._approved = False
         self._tool = tool
         self._gateway = gateway
+
+    def bind_for_dispatch(self) -> GatewayMCPTool:
+        """Keep the gateway, route and session selected at approval."""
+        bound = copy(self)
+        # pylint: disable-next=protected-access
+        bound._tool = self._tool.model_copy()
+        bound._approved = True  # pylint: disable=protected-access
+        return bound
+
+    def approval_identity(self) -> tuple:
+        """Bind approval to the scoped gateway service and its definition."""
+        return self._gateway_scope(id(self._gateway))
+
+    def _gateway_scope(self, binding: int | str) -> tuple:
+        """Include the service registered for this gateway session."""
+        return (
+            type(self),
+            binding,
+            self._agent_id,
+            self._session_id,
+            self.mcp_name,
+            self._binding,
+            self._approval_scope,
+            json.dumps(self._tool.model_dump(mode="json"), sort_keys=True),
+            self.is_read_only,
+        )
+
+    def _confirmation_scope(self) -> tuple:
+        """Use the gateway instance and session bound at discovery."""
+        binding = getattr(self._gateway, "approval_binding", None)
+        if isinstance(binding, str):
+            return self._gateway_scope(binding)
+        return super()._confirmation_scope()
 
     async def check_permissions(
         self,
@@ -160,14 +204,29 @@ class GatewayMCPTool(ToolBase):
         :class:`RuntimeError` only if the gateway returns 2xx with no
         ``chunk`` payload (protocol violation).
         """
+        payload: dict[str, Any] = {"arguments": kwargs}
+        route = "tools"
+        if self._approved and not self._binding:
+            return ToolChunk(
+                content=[
+                    {
+                        "type": "text",
+                        "text": "Gateway did not supply an approval binding.",
+                    },
+                ],
+                state=ToolResultState.ERROR,
+            )
+        if self._approved:
+            route = "approved-tools"
+            payload["binding"] = self._binding
         status, body = await self._gateway.exec_request(
             "POST",
-            f"/mcps/{self.mcp_name}/tools/{self._tool.name}",
+            f"/mcps/{self.mcp_name}/{route}/{self._tool.name}",
             params={
                 "agent_id": self._agent_id,
                 "session_id": self._session_id,
             },
-            body={"arguments": kwargs},
+            body=payload,
         )
         if status >= 400:
             return ToolChunk(
@@ -205,6 +264,8 @@ class GatewayMCPClient(MCPClient):
     _gateway: "GatewayClient | None" = PrivateAttr(default=None)
     _agent_id: str = PrivateAttr(default="")
     _session_id: str = PrivateAttr(default="")
+
+    _tool_bindings: dict[str, str] = PrivateAttr(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:
         """Leave configuration validation to the gateway-side MCP client."""
@@ -440,6 +501,7 @@ class GatewayMCPClient(MCPClient):
                 params={
                     "agent_id": self._agent_id,
                     "session_id": self._session_id,
+                    "with_bindings": "true",
                 },
             )
             if status >= 400:
@@ -452,7 +514,21 @@ class GatewayMCPClient(MCPClient):
             if generation != self._runtime_headers_generation:
                 continue
             data = json.loads(body)
-            raw_tools = [mcp.types.Tool.model_validate(d) for d in data]
+            if not isinstance(data, dict) or not isinstance(
+                bindings := data.get("bindings"),
+                dict,
+            ):
+                raise RuntimeError("Incompatible MCP gateway tool listing.")
+            raw_tools = [
+                mcp.types.Tool.model_validate(d) for d in data["tools"]
+            ]
+            if any(
+                not isinstance(bindings.get(tool.name), str)
+                or not bindings[tool.name]
+                for tool in raw_tools
+            ):
+                raise RuntimeError("MCP gateway returned an unbound tool.")
+            self._tool_bindings = bindings
             self._cached_tools = raw_tools
             break
         else:
@@ -470,6 +546,10 @@ class GatewayMCPClient(MCPClient):
                 t for t in raw_tools if t.name not in self.disable_tools
             ]
         return raw_tools
+
+    async def list_tools(self) -> list[ToolBase]:
+        """Wrap each gateway descriptor with its matching approval binding."""
+        return await self._list_tools(GatewayMCPClient)
 
     async def get_tool(  # type: ignore[override]
         self,
@@ -490,14 +570,18 @@ class GatewayMCPClient(MCPClient):
             await self.list_raw_tools()
         for raw in self._cached_tools or []:
             if raw.name == name:
-                return self._wrap_tool(raw)
+                return self._wrap_tool(raw, self._approval_scope())
         raise ValueError(
             f"Tool {name!r} not found in MCP {self.name!r}.",
         )
 
     # ── helpers ───────────────────────────────────────────────────
 
-    def _wrap_tool(self, tool: mcp.types.Tool) -> GatewayMCPTool:
+    def _wrap_tool(  # type: ignore[override]
+        self,
+        tool: mcp.types.Tool,
+        scope: bytes,
+    ) -> GatewayMCPTool:
         """Build a :class:`GatewayMCPTool` bound to this client's
         gateway facade.
         """
@@ -509,6 +593,8 @@ class GatewayMCPClient(MCPClient):
             agent_id=self._agent_id,
             session_id=self._session_id,
             trust_annotations=self.trust_annotations,
+            service_scope=scope,
+            binding=self._tool_bindings.get(tool.name),
         )
 
 
@@ -577,6 +663,7 @@ class GatewayClient:
         self.gateway_log_path = gateway_log_path
         self.auth_token = auth_token
         self.instance_nonce = instance_nonce
+        self.approval_binding = instance_nonce or uuid.uuid4().hex
         # Health-probe timeout is kept short so the diagnostic path adds
         # little latency to the failing request. It only runs on the
         # error path, never on the hot path.
@@ -585,14 +672,10 @@ class GatewayClient:
         # log on unreachable-gateway diagnosis.
         self._log_tail_bytes: int = 4000
 
-    async def health(self) -> bool:
+    async def health(self, *, require_compatible: bool = False) -> bool:
         """Probe ``/health``.
-        any other outcome (shim transport failure, non-200) → ``False``.
-        With no expected ``instance_nonce``, HTTP 200 means healthy. When a
-        nonce is configured, the response must be a JSON object containing the
-        matching ``instance_nonce``. Transport failures, non-200 responses,
-        malformed JSON, non-object JSON, and nonce mismatches return
-        ``False``.
+        Accept only the expected protocol and, when configured, the nonce
+        of the process launched for this workspace.
 
         The ``/health`` path is treated specially by
         :meth:`exec_request` — it never triggers the failure
@@ -609,21 +692,31 @@ class GatewayClient:
             return False
         if status != 200:
             return False
-        if self.instance_nonce is None:
-            return True
         try:
-            payload = json.loads(body)
+            payload = {"status": "ok"} if body == b"ok" else json.loads(body)
         except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
             return False
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or payload.get("status") != "ok":
             return False
-        nonce = payload.get("instance_nonce")
-        return (
-            isinstance(nonce, str)
-            and nonce.isascii()
-            and self.instance_nonce.isascii()
-            and secrets.compare_digest(nonce, self.instance_nonce)
-        )
+        if self.instance_nonce is not None:
+            nonce = payload.get("instance_nonce")
+            if not (
+                isinstance(nonce, str)
+                and nonce.isascii()
+                and self.instance_nonce.isascii()
+                and secrets.compare_digest(nonce, self.instance_nonce)
+            ):
+                return False
+        version = payload.get("protocol_version")
+        if type(version) is int and version == GATEWAY_PROTOCOL_VERSION:
+            return True
+        if require_compatible:
+            raise RuntimeError(
+                f"Incompatible MCP gateway protocol {version!r}, "
+                f"expected {GATEWAY_PROTOCOL_VERSION}. Rebuild the sandbox "
+                "with the matching AgentScope runtime.",
+            )
+        return False
 
     async def list_mcps(
         self,

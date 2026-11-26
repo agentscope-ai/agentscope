@@ -238,7 +238,9 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                                 ],
                                 "role": "user",
                                 "id": AnyString(),
-                                "metadata": {},
+                                "metadata": {
+                                    "authorization_source": "generated",
+                                },
                                 "created_at": AnyString(),
                                 "usage": None,
                                 "finished_at": AnyString(),

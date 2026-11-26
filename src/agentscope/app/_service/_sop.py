@@ -39,7 +39,6 @@ from ...sop import (
     SOPStepBase,
     SOPStepRunState,
 )
-from ...permission import PermissionContext, PermissionMode
 from ...state import AgentState
 
 _PARKED = (
@@ -226,14 +225,25 @@ class SessionSOPStep(SOPStepBase):
         text = (
             f"<system-reminder>You are running one step of the SOP.\n\n"
             f"## {self.subject}\n\n{self.description}\n"
+            "</system-reminder>"
         )
+        messages = [UserMsg(name="sop", content=text)]
         if state.verifications:
-            text += (
-                f"\nYour last attempt was not accepted:\n"
-                f"{state.verifications[-1].message}\n"
+            last = state.verifications[-1]
+            messages.append(
+                UserMsg(
+                    name="sop",
+                    content=(
+                        "Your last attempt was not accepted:\n"
+                        f"{last.message}\n"
+                    ),
+                    metadata={}
+                    if isinstance(self._data.verifier, HumanVerifier)
+                    and last.verifier == self._user_id
+                    else {"authorization_source": "generated"},
+                ),
             )
-        text += "</system-reminder>"
-        return [UserMsg(name="sop", content=text), *state.given]
+        return [*messages, *state.given]
 
     def _question(
         self,
@@ -257,6 +267,7 @@ class SessionSOPStep(SOPStepBase):
                     *(state.submission or []),
                     TextBlock(type="text", text="</submission>"),
                 ],
+                metadata={"authorization_source": "generated"},
             ),
         ]
 
@@ -378,9 +389,7 @@ class SOPService:
                         ),
                     ),
                     state=AgentState(
-                        permission_context=PermissionContext(
-                            mode=PermissionMode(settings.permission_mode),
-                        ),
+                        permission_context=settings.to_permission_context(),
                     ),
                     origin=SOPOrigin(sop_run_id=run.id, session_key=key),
                 )

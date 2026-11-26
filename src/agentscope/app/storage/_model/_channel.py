@@ -16,7 +16,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from ._base import _RecordBase
-from ....permission import PermissionMode
+from ._permission import PermissionSettings
 
 
 class SessionScope(str, Enum):
@@ -112,7 +112,7 @@ class RoutingConfig(BaseModel):
         return bindings
 
 
-class SessionSettings(BaseModel):
+class SessionSettings(PermissionSettings):
     """Settings for a session a channel or SOP run opens for a user."""
 
     chat_model_config: dict[str, Any]
@@ -122,18 +122,6 @@ class SessionSettings(BaseModel):
     fallback_chat_model_config: dict[str, Any] | None = None
     """Optional fallback model configuration, used when the primary
     model fails."""
-
-    permission_mode: str = PermissionMode.DEFAULT.value
-    """Permission mode for channel sessions. Defaults to ``default`` so a
-    tool needing approval surfaces the confirmation card rather than being
-    auto-denied. Any :class:`PermissionMode` is accepted — the engine
-    resolves every mode server-side and the ASK path maps to the card."""
-
-    @field_validator("permission_mode")
-    @classmethod
-    def _validate_permission_mode(cls, v: str) -> str:
-        PermissionMode(v)  # reject values outside the enum
-        return v
 
 
 class ChannelRecord(_RecordBase):

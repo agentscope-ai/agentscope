@@ -37,6 +37,8 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.sop import SOPPhase
+from agentscope.permission import PermissionEngine
+from agentscope.permission._evidence import retain_authorization_evidence
 
 
 class _Workspaces:
@@ -411,6 +413,75 @@ class SOPServiceTest(  # pylint: disable=too-many-public-methods
                     ),
                     "verifier": "sop",
                     "created_at": AnyString(),
+                },
+            ],
+        )
+
+    async def test_authenticated_verdict_keeps_its_user_source(self) -> None:
+        """A person's retry constraint is not treated as generated feedback."""
+        sop = _sop("user-1", HumanVerifier(), ("modeller", "modeller"))
+        await self.storage.upsert_sop("user-1", sop)
+        service = SOPService(
+            self.storage,
+            _Workspaces(),
+            self.bus,
+            None,
+            self.sessions,
+        )
+        run = await service.create_run("user-1", sop.id)
+        await self._drive(
+            _ScriptedChat(
+                self.storage,
+                self.bus,
+                [(SubmitHandover, {"handover": "draft"})],
+            ),
+            run.id,
+        )
+        restriction = "Do not upload anything without my confirmation."
+        await service.record_verdict(
+            "user-1",
+            run.id,
+            0,
+            False,
+            restriction,
+        )
+        retry = _ScriptedChat(
+            self.storage,
+            self.bus,
+            [(SubmitHandover, {"handover": "revised draft"})],
+        )
+        await self._drive(retry, run.id)
+        feedback = retry.asked[0][1][1]
+        text = f"Your last attempt was not accepted:\n{restriction}\n"
+        self.assertEqual(
+            # pylint: disable-next=protected-access
+            PermissionEngine._review_transcript(
+                [feedback],
+            ),
+            [
+                {
+                    "role": "user",
+                    "name": "sop",
+                    "content": [{"type": "text", "text": text}],
+                },
+            ],
+        )
+        self.assertEqual(
+            [
+                item.model_dump()
+                for item in retain_authorization_evidence(
+                    [],
+                    [feedback],
+                )
+            ],
+            [
+                {
+                    "source": "user",
+                    "message_id": feedback.id,
+                    "block_id": feedback.content[0].id,
+                    "author": "sop",
+                    "created_at": feedback.content[0].created_at,
+                    "text": text,
                 },
             ],
         )

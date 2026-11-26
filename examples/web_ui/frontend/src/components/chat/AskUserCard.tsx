@@ -36,6 +36,7 @@ export function AskUserCard(props: PendingClientExternalToolProps) {
 }
 
 function AskUserForm({
+	autoFocus = true,
 	questions,
 	onSubmit,
 	onCancel,
@@ -53,6 +54,7 @@ function AskUserForm({
 	const [focused, setFocused] = useState(0);
 	const [submitting, setSubmitting] = useState(false);
 	const submittingRef = useRef(false);
+	const formRef = useRef<HTMLElement>(null);
 	const optionsRef = useRef<Array<HTMLButtonElement | null>>([]);
 	const otherRef = useRef<HTMLTextAreaElement>(null);
 	const question = questions[index];
@@ -61,11 +63,12 @@ function AskUserForm({
 	const canSubmit = answer.selected.length > 0 || Boolean(answer.other?.trim());
 
 	useEffect(() => {
+		if (!autoFocus && !formRef.current?.contains(document.activeElement)) return;
 		const active = optionsRef.current.find(
 			(option) => option?.getAttribute('aria-checked') === 'true',
 		);
 		(active ?? optionsRef.current[0])?.focus();
-	}, [index]);
+	}, [autoFocus, index]);
 
 	const update = (next: AskUserAnswer) =>
 		setAnswers((current) => current.map((value, i) => (i === index ? next : value)));
@@ -135,7 +138,10 @@ function AskUserForm({
 	};
 
 	return (
-		<section className="flex max-h-[min(72vh,42rem)] flex-col rounded-[28px] bg-muted p-5 text-sm ring-1 ring-border sm:p-6">
+		<section
+			ref={formRef}
+			className="flex max-h-[min(72vh,42rem)] flex-col rounded-[28px] bg-muted p-5 text-sm ring-1 ring-border sm:p-6"
+		>
 			<div className="min-h-0 overflow-y-auto px-1 pb-1">
 				<div className="mb-4 flex items-center justify-between gap-3 text-xs text-muted-foreground">
 					<span>{question.header}</span>

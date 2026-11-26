@@ -2,9 +2,14 @@
 """The toolkit class for tool calls in AgentScope."""
 import asyncio
 import inspect
+import json
 from collections import OrderedDict
+from copy import deepcopy
 from typing import (
+    Any,
     AsyncGenerator,
+    Awaitable,
+    Callable,
     Type,
     Generator,
     Sequence,
@@ -226,6 +231,13 @@ class Toolkit:
         self,
         tool_call: ToolCallBlock,
         state: AgentState,
+        *,
+        before_call: Callable[
+            [ToolBase, dict[str, Any]],
+            Awaitable[bool | ToolBase],
+        ]
+        | None = None,
+        edit_input: Callable[[ToolBase, dict], dict | None] | None = None,
     ) -> AsyncGenerator[ToolChunk | ToolResponse, None]:
         """Call the tool function, return the incremental tool result in
         a ToolChunk stream, and finally return the complete tool result in a
@@ -238,6 +250,13 @@ class Toolkit:
                 A tool call block.
             state (`AgentState`):
                 The current agent state, used to state injection.
+            before_call:
+                Optional dispatch check on the resolved tool and repaired
+                arguments. Return a bound tool to execute it, true to use the
+                resolved tool, or false to stop before invocation.
+            edit_input:
+                Project a confirmed edit before checking the effective input.
+                A changed cache key restarts lookup at the serving layer.
 
         Yields:
             `ToolChunk | ToolResponse`:
@@ -302,20 +321,88 @@ class Toolkit:
                 tool_func.input_schema,
             )
 
-            # State injection
-            if (
+            inject_state = (
                 tool_func.is_state_injected
                 and not tool_func.is_mcp
                 and not tool_func.is_external_tool
-            ):
+            )
+            if inject_state:
                 kwargs["_agent_state"] = state
 
-            if inspect.iscoroutinefunction(tool_func.__call__):
-                res = await tool_func(**kwargs)
+            middleware = getattr(tool_func, "_middlewares", [])
+            edit_applied = False
+            checked = False
+            permitted = None
+
+            async def prepare(
+                final: dict,
+                cached: bool = False,
+            ) -> tuple[dict | None, ToolBase | None]:
+                nonlocal checked, permitted, edit_applied
+                assert before_call is not None
+                if checked:
+                    return None, None
+                # Middleware can retain references while the reviewer awaits.
+                arguments = deepcopy(
+                    {
+                        k: v
+                        for k, v in final.items()
+                        if not (inject_state and k == "_agent_state")
+                    },
+                )
+                cache_key = (
+                    json.dumps(arguments, sort_keys=True) if cached else None
+                )
+                if edit_input is not None and not edit_applied:
+                    edited = edit_input(tool_func, arguments)
+                    if edited is not None:
+                        edit_applied = True
+                        arguments = edited
+                        if cached and cache_key != json.dumps(
+                            arguments,
+                            sort_keys=True,
+                        ):
+                            if inject_state:
+                                arguments["_agent_state"] = state
+                            return arguments, None
+                checked = True
+                target = await before_call(tool_func, arguments)
+                permitted = isinstance(target, ToolBase) or bool(target)
+                if not permitted:
+                    return None, None
+                if cached and cache_key != json.dumps(
+                    arguments,
+                    sort_keys=True,
+                ):
+                    permitted = False
+                    raise ValueError(
+                        "Cached result does not match the approved input.",
+                    )
+                if inject_state:
+                    arguments["_agent_state"] = state
+                return (
+                    arguments,
+                    target if isinstance(target, ToolBase) else tool_func,
+                )
+
+            if before_call is not None and middleware:
+                # pylint: disable-next=protected-access
+                res = tool_func._run_middlewares(
+                    kwargs,
+                    middleware,
+                    prepare,
+                )
             else:
-                # When `tool_func.original_func` is Async generator function or
-                # Sync function
-                res = tool_func(**kwargs)
+                if before_call is not None:
+                    prepared, target = await prepare(kwargs)
+                    if prepared is None or target is None:
+                        return
+                    tool_func = target
+                    kwargs = prepared
+                if inspect.iscoroutinefunction(tool_func.__call__):
+                    res = await tool_func(**kwargs)
+                else:
+                    res = tool_func(**kwargs)
 
             if isinstance(res, ToolChunk):
                 yield res
@@ -323,9 +410,26 @@ class Toolkit:
 
             # If return an async generator
             elif isinstance(res, AsyncGenerator):
+                buffered: list[ToolChunk] = []
                 async for chunk in res:
+                    if before_call is not None and permitted is None:
+                        # Middleware may stream before reaching the tool.
+                        buffered.append(chunk)
+                        continue
+                    if permitted is False:
+                        continue
+                    for early in buffered:
+                        yield early
+                        tool_response.append_chunk(early)
+                    buffered.clear()
                     yield chunk
                     tool_response.append_chunk(chunk)
+                if before_call is not None and permitted is not True:
+                    return
+                # An approved chain may have buffered only progress chunks.
+                for early in buffered:
+                    yield early
+                    tool_response.append_chunk(early)
 
             # If return a sync generator
             elif isinstance(res, Generator):
@@ -387,9 +491,7 @@ class Toolkit:
             yield chunk
             tool_response.append_chunk(chunk)
 
-        finally:
-            # Finally, yield the complete tool response
-            yield tool_response
+        yield tool_response
 
     async def _get_available_skills(
         self,

@@ -1,11 +1,23 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
 """The tool protocol in agentscope."""
+import asyncio
+import hashlib
 import inspect
 import os
+import uuid
 from abc import abstractmethod, ABC
+from contextvars import ContextVar
+from copy import deepcopy
 from pathlib import Path
-from typing import AsyncGenerator, Any, Callable, List, TYPE_CHECKING
+from typing import (
+    Awaitable,
+    AsyncGenerator,
+    Any,
+    Callable,
+    List,
+    TYPE_CHECKING,
+)
 
 import jsonschema
 
@@ -24,6 +36,13 @@ from ._utils import _remove_title_field
 
 if TYPE_CHECKING:
     from ..message import ToolResultBlock
+
+
+# A legacy __call__ may delegate to super() after its middleware has run.
+_legacy_body: ContextVar[tuple | None] = ContextVar(
+    "legacy_tool_body",
+    default=None,
+)
 
 
 class ParamsBase(BaseModel):
@@ -134,6 +153,8 @@ class ToolBase(ABC):
     """The name of the MCP server this tool belongs to, which is required if
     this tool is an MCP tool."""
 
+    _confirmation_binding: str | None = None
+
     # Class attributes for dangerous path checking
     dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES
     """List of dangerous files that should be protected from auto-editing."""
@@ -155,6 +176,27 @@ class ToolBase(ABC):
         self._middlewares: List["ToolMiddlewareBase"] = (
             middlewares if middlewares is not None else []
         )
+
+    def approval_identity(self) -> tuple:
+        """Identify this concrete tool for the duration of one approval."""
+        return (id(self),)
+
+    def bind_for_dispatch(self) -> "ToolBase":
+        """Return the execution target for this approved invocation."""
+        return self
+
+    def confirmation_identity(self) -> str | None:
+        """Return the checkpoint fingerprint for an MCP confirmation."""
+        if not self.is_mcp:
+            return None
+        scope = repr(self._confirmation_scope())
+        return hashlib.sha256(scope.encode()).hexdigest()
+
+    def _confirmation_scope(self) -> tuple:
+        """Opaque transports can reuse approval only on the same instance."""
+        if self._confirmation_binding is None:
+            self._confirmation_binding = uuid.uuid4().hex
+        return self._confirmation_binding, self.approval_identity()
 
     async def call(
         self,
@@ -216,10 +258,29 @@ class ToolBase(ABC):
         # even if a subclass overrides ``__init__`` without calling
         # ``super().__init__()``.
         middlewares = getattr(self, "_middlewares", [])
-        if not middlewares:
+        active = _legacy_body.get()
+        if not middlewares or (
+            active
+            and active[0] is self
+            and active[1] is asyncio.current_task()
+        ):
             if inspect.isasyncgenfunction(self.call):
                 return self.call(**kwargs)
             return await self.call(**kwargs)
+
+        return self._run_middlewares(kwargs, middlewares)
+
+    def _run_middlewares(
+        self,
+        kwargs: dict,
+        middlewares: list[ToolMiddlewareBase],
+        prepare: Callable[
+            [dict, bool],
+            Awaitable[tuple[dict | None, "ToolBase | None"]],
+        ]
+        | None = None,
+    ) -> AsyncGenerator[ToolChunk, None]:
+        """Run the tool chain and prepare its final arguments at the leaf."""
 
         # Keep the private cursor separate from tool arguments named "index".
         async def execute_chain(
@@ -235,11 +296,21 @@ class ToolBase(ABC):
                 # ``ToolChunk`` / an async generator (e.g. ``FunctionTool``).
                 # Normalize both into a single stream so middlewares never have
                 # to distinguish them.
-                if inspect.isasyncgenfunction(self.call):
-                    async for chunk in self.call(**chain_kwargs):
+                target = self
+                if prepare is not None:
+                    prepared, target = await prepare(chain_kwargs, False)
+                    if prepared is None or target is None:
+                        return
+                    chain_kwargs = prepared
+                if prepare and type(target).__call__ is not ToolBase.__call__:
+                    # pylint: disable-next=protected-access
+                    async for chunk in target._legacy_chunks(chain_kwargs):
+                        yield chunk
+                elif inspect.isasyncgenfunction(target.call):
+                    async for chunk in target.call(**chain_kwargs):
                         yield chunk
                 else:
-                    result = await self.call(**chain_kwargs)
+                    result = await target.call(**chain_kwargs)
                     if isinstance(result, AsyncGenerator):
                         async for chunk in result:
                             yield chunk
@@ -248,10 +319,23 @@ class ToolBase(ABC):
             else:
                 mw = middlewares[index]
                 input_kwargs = dict(chain_kwargs)
+                forwarded = False
+                pending: list[ToolChunk] = []
+                if prepare is not None:
+                    # Freeze this layer's key before middleware can mutate
+                    # nested arguments. Preserve the injected state reference.
+                    state = (
+                        input_kwargs.get("_agent_state")
+                        if self.is_state_injected
+                        else None
+                    )
+                    cache_input = deepcopy(chain_kwargs, {id(state): state})
 
                 async def next_handler(
                     **kw: Any,
                 ) -> AsyncGenerator[ToolChunk, None]:
+                    nonlocal forwarded
+                    forwarded = True
                     async for chunk in execute_chain(index + 1, **kw):
                         yield chunk
 
@@ -260,9 +344,57 @@ class ToolBase(ABC):
                     input_kwargs=input_kwargs,
                     next_handler=next_handler,
                 ):
+                    if prepare is not None and not forwarded:
+                        pending.append(chunk)
+                        continue
+                    for early in pending:
+                        yield early
+                    pending.clear()
                     yield chunk
 
+                if prepare is not None and not forwarded:
+                    prepared, target = await prepare(cache_input, True)
+                    if prepared is None:
+                        return
+                    if target is None:
+                        pending.clear()
+                        async for chunk in execute_chain(index, **prepared):
+                            yield chunk
+                        return
+                for early in pending:
+                    yield early
+
         return execute_chain(**kwargs)
+
+    async def _legacy_chunks(self, arguments: dict) -> AsyncGenerator:
+        """Run a legacy override once, including calls through super()."""
+        owner = (self, asyncio.current_task())
+        token = _legacy_body.set(owner)
+        try:
+            result = self(**arguments)
+            if inspect.isawaitable(result):
+                result = await result
+        finally:
+            _legacy_body.reset(token)
+        if isinstance(result, ToolChunk):
+            yield result
+            return
+        # Keep the marker local to advancing the legacy implementation.
+        # Consumers and middleware handling a yielded chunk run outside it.
+        while True:
+            token = _legacy_body.set(owner)
+            try:
+                if inspect.isasyncgen(result):
+                    chunk = await anext(result)
+                elif inspect.isgenerator(result):
+                    chunk = next(result)
+                else:
+                    raise TypeError("Expected tool chunks from legacy tool")
+            except (StopIteration, StopAsyncIteration):
+                return
+            finally:
+                _legacy_body.reset(token)
+            yield chunk
 
     @abstractmethod
     async def check_permissions(
@@ -416,7 +548,7 @@ class ToolBase(ABC):
         directories compare equal on both sides.
 
         Used by tools that conditionally auto-allow file operations in
-        :attr:`PermissionMode.ACCEPT_EDITS` (e.g. Write, Edit, and the
+        explicit workspace edit grants (e.g. Write, Edit, and the
         filesystem-command branch of Bash).
 
         Args:

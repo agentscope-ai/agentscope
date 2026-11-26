@@ -354,20 +354,27 @@ class SOPStep(SOPStepBase):
         text = (
             f"<system-reminder>You are running one step of the SOP.\n\n"
             f"## {self.subject}\n\n{self.description}\n"
+            "</system-reminder>"
         )
+        messages = [UserMsg(name="sop", content=text)]
         if state.verifications:
             last = state.verifications[-1]
-            text += (
-                f"\nYour last attempt was not accepted:\n{last.message}\n"
-                f"This is attempt {len(state.verifications) + 1} of "
-                f"{self.max_attempts}."
+            messages.append(
+                UserMsg(
+                    name="sop",
+                    content=(
+                        "Your last attempt was not accepted:\n"
+                        f"{last.message}\n"
+                        f"This is attempt {len(state.verifications) + 1} of "
+                        f"{self.max_attempts}."
+                    ),
+                    metadata={"authorization_source": "generated"},
+                ),
             )
-        text += "</system-reminder>"
 
-        brief = UserMsg(name="sop", content=text)
         if inputs is None:
-            return [brief]
-        return [brief, *(inputs if isinstance(inputs, list) else [inputs])]
+            return messages
+        return [*messages, *(inputs if isinstance(inputs, list) else [inputs])]
 
     def _question(
         self,
@@ -408,6 +415,7 @@ class SOPStep(SOPStepBase):
                     *(state.submission or []),
                     TextBlock(text="</submission>"),
                 ],
+                metadata={"authorization_source": "generated"},
             ),
         ]
 

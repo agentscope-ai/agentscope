@@ -965,6 +965,7 @@ class TestQueueFailureScope(IsolatedAsyncioTestCase):
                         agent_id="a",
                         input_msg=message,
                         queue_item_id=item["id"],
+                        channel_requester_id="",
                         input_persisted=True,
                         client_external_tools=None,
                         client_builtin_tools=None,

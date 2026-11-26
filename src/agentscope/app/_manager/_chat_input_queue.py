@@ -588,6 +588,10 @@ class ChatInputQueue:
                     session_id=queued_session_id,
                     agent_id=queued_agent_id,
                     input_msg=queued_input,
+                    channel_requester_id=payload.get(
+                        "channel_requester_id",
+                        "",
+                    ),
                     queue_item_id=queue_item_id,
                     input_persisted=True,
                     client_external_tools=client_external_tools or None,

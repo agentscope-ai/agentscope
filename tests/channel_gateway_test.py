@@ -15,11 +15,13 @@ from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from utils import AnyString
+import fakeredis.aioredis
 
 from agentscope.app._bus_ops import (
     has_pending_inbox_or_release,
     register_inbox_consumer,
+    session_execution,
+    list_chat_inputs,
 )
 from agentscope.app.channel import (
     ChannelClients,
@@ -41,14 +43,18 @@ from agentscope.app.channel._approval import (
     new_approval_id,
     store_approval,
     remember_reply_requester,
-    requester_for_input,
 )
 from agentscope.app.channel._gateway import ChannelGateway
 from agentscope.app.channel._routing import resolve
 from agentscope.message import Msg, ToolCallBlock, ToolCallState
 from agentscope.state import AgentState
-from agentscope.app.message_bus import InMemoryMessageBus
-from agentscope.app.message_bus import MessageBusKeys
+from agentscope.app.middleware import InboxMiddleware
+from agentscope.app.message_bus import (
+    InMemoryMessageBus,
+    MessageBus,
+    MessageBusKeys,
+    RedisMessageBus,
+)
 from agentscope.app.message_bus import _in_memory_message_bus as _bus
 from agentscope.app.storage import (
     ChannelBinding,
@@ -291,73 +297,370 @@ class MediaBufferTest(IsolatedAsyncioTestCase):
             ),
         )
 
-    def _media_event(self, name: str) -> ChannelEvent:
-        return ChannelEvent(
-            channel_id="c",
+    def _caption_fixture(
+        self,
+        bus: MessageBus | None = None,
+    ) -> tuple[MessageBus, ChannelGateway, ChannelEvent, ChannelEvent, str]:
+        record = _channel_record("owner")
+        if bus is None:
+            bus = InMemoryMessageBus()
+        gateway = ChannelGateway(
+            storage=_InboundStorage(record),
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+        image = ChannelEvent(
+            channel_id=record.id,
             channel_user_id="u",
             chat_id="chat",
-            content=[self._img(name)],
+            content=[self._img("a.png")],
         )
+        caption = image.model_copy(
+            update={"content": [TextBlock(text="look")]},
+        )
+        _, session_id, _ = resolve(caption, record)
+        return bus, gateway, image, caption, session_id
 
     async def test_aggregate_media_only_buffers(self) -> None:
-        bus = InMemoryMessageBus()
-        gw = ChannelGateway(
-            storage=None,
-            message_bus=bus,
-            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        bus, gateway, image, _, sid = self._caption_fixture()
+        await gateway.process(image)
+        buffer = MessageBusKeys.channel_media_buffer(
+            image.channel_id,
+            "chat",
+            "u",
         )
-        self.assertIsNone(
-            await gw._aggregate_media(self._media_event("a.png")),
+        self.assertEqual(
+            (
+                [payload for _, payload in await bus.queue_read(buffer)],
+                await list_chat_inputs(bus, sid),
+            ),
+            ([image.content[0].model_dump(mode="json")], []),
         )
 
-    async def test_aggregate_text_drains_buffered_media(self) -> None:
-        bus = InMemoryMessageBus()
-        gw = ChannelGateway(
-            storage=None,
-            message_bus=bus,
-            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+    async def test_full_queue_keeps_media_for_caption_retry(self) -> None:
+        bus, gateway, image, caption, session_id = self._caption_fixture()
+        channel = _FakeChannel()
+        channel._show_thinking = channel._show_tool_process = False
+        queue = MessageBusKeys.chat_inputs(session_id)
+        buffer = MessageBusKeys.channel_media_buffer(
+            image.channel_id,
+            "chat",
+            "u",
         )
-        await gw._aggregate_media(self._media_event("a.png"))
-        await gw._aggregate_media(self._media_event("b.png"))
-        content = await gw._aggregate_media(
-            ChannelEvent(
-                channel_id="c",
-                channel_user_id="u",
-                chat_id="chat",
-                content=[TextBlock(text="look")],
+        await gateway.process(image, channel=channel)
+        buffered = await bus.queue_read(buffer)
+        with patch.object(MessageBusKeys, "CHAT_INPUT_MAX_LEN", 1):
+            await bus.queue_push(queue, {"id": "existing"})
+            await gateway.process(caption, channel=channel)
+            self.assertEqual(
+                _text(channel),
+                "The message queue is full. "
+                "Please resend your message shortly.",
+            )
+            self.assertEqual(await bus.queue_read(buffer), buffered)
+            self.assertEqual(
+                [data for _, data in await bus.queue_drain(queue)],
+                [{"id": "existing"}],
+            )
+            await gateway.process(caption, channel=channel)
+        (queued,) = await list_chat_inputs(bus, session_id)
+        self.assertEqual(
+            (
+                Msg.model_validate(queued["input"]).content,
+                await bus.queue_read(buffer),
+            ),
+            ([*image.content, *caption.content], []),
+        )
+
+    async def test_caption_does_not_depend_on_separate_media_cleanup(
+        self,
+    ) -> None:
+        bus, gateway, image, caption, sid = self._caption_fixture()
+        await gateway.process(image)
+        with patch.object(
+            bus,
+            "queue_drain",
+            side_effect=ConnectionError("cleanup failed"),
+        ):
+            await gateway.process(caption)
+        following = caption.model_copy(
+            update={"content": [TextBlock(text="next")]},
+        )
+        await gateway.process(following)
+        self.assertEqual(
+            [
+                Msg.model_validate(item["input"]).content
+                for item in await list_chat_inputs(bus, sid)
+            ],
+            [[*image.content, *caption.content], following.content],
+        )
+
+    async def test_caption_survives_lost_commit_response(self) -> None:
+        bus, gateway, image, caption, sid = self._caption_fixture()
+        await gateway.process(image)
+        push = bus.queue_push_consuming
+
+        async def lose_response(*args: Any) -> bool:
+            self.assertTrue(await push(*args))
+            raise ConnectionError("Lost reply to enqueue")
+
+        with (
+            patch.object(bus, "queue_push_consuming", lose_response),
+            self.assertRaises(ConnectionError),
+        ):
+            await gateway._handle_message(caption)
+        following = caption.model_copy(
+            update={"content": [TextBlock(text="next")]},
+        )
+        await gateway.process(following)
+        self.assertEqual(
+            [
+                Msg.model_validate(item["input"]).content
+                for item in await list_chat_inputs(bus, sid)
+            ],
+            [[*image.content, *caption.content], following.content],
+        )
+
+    async def test_redis_retry_after_agent_consumes_channel_caption(
+        self,
+    ) -> None:
+        client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self.addAsyncCleanup(client.aclose)
+        bus = await self.enterAsyncContext(
+            RedisMessageBus(connection_pool=client.connection_pool),
+        )
+        _, gateway, image, caption, sid = self._caption_fixture(bus)
+        channel = _FakeChannel()
+        agent = SimpleNamespace(name="agent", state=AgentState(session_id=sid))
+        middleware = InboxMiddleware(bus)
+        execute = bus.get_client().eval
+        inbox = MessageBusKeys.inbox(sid)
+        receipts = []
+
+        async def lose_first_response(*args: Any) -> int:
+            accepted = await execute(*args)
+            if args[1] > 1 and args[2] == inbox:
+                receipts.append(accepted)
+                async for _ in middleware.on_reasoning(
+                    agent,
+                    {},
+                    lambda: _aiter([]),
+                ):
+                    pass
+                accepted = await execute(*args)
+                receipts.append(accepted)
+            return accepted
+
+        await gateway.process(image, channel=channel)
+        async with session_execution(bus, sid):
+            await register_inbox_consumer(bus, sid)
+            with (
+                patch.object(bus.get_client(), "eval", lose_first_response),
+                patch.object(
+                    channel,
+                    "send_response",
+                    new_callable=AsyncMock,
+                ) as notice,
+            ):
+                await gateway.process(caption, channel=channel)
+        self.assertEqual(
+            (
+                receipts,
+                [
+                    block.hint
+                    for msg in agent.state.context
+                    for block in msg.get_content_blocks("hint")
+                ],
+                await bus.queue_read(inbox),
+                notice.await_count,
+            ),
+            ([1, 1], [[*image.content, *caption.content]], [], 0),
+        )
+
+    async def test_expired_media_rejects_caption_before_publication(
+        self,
+    ) -> None:
+        bus, gateway, image, caption, sid = self._caption_fixture()
+        await gateway.process(image)
+        push = bus.queue_push_consuming
+
+        async def expire_media(
+            key: str,
+            payload: dict,
+            source_key: str,
+            entry_ids: list[str],
+        ) -> bool:
+            await bus.queue_delete(source_key)
+            return await push(key, payload, source_key, entry_ids)
+
+        channel = _FakeChannel()
+        channel._show_thinking = channel._show_tool_process = False
+        with patch.object(bus, "queue_push_consuming", expire_media):
+            await gateway.process(caption, channel=channel)
+        self.assertEqual(
+            (
+                await list_chat_inputs(bus, sid),
+                await bus.registry_getall(
+                    MessageBusKeys.chat_input_payloads(sid),
+                ),
+                await bus.queue_read(MessageBusKeys.wakeup_queue()),
+                _text(channel),
+            ),
+            (
+                [],
+                {},
+                [],
+                "The selected attachments are no longer available. "
+                "Please resend them with your message.",
             ),
         )
-        assert content is not None
-        self.assertEqual(len(content), 3)  # two buffered images + text
-        self.assertIsInstance(content[0], DataBlock)
-        self.assertIsInstance(content[-1], TextBlock)
+
+    async def test_cancel_after_enqueue_consumes_only_caption_media(
+        self,
+    ) -> None:
+        bus, gateway, image, caption, session_id = self._caption_fixture()
+        unrelated = caption.model_copy(
+            update={"content": [TextBlock(text="next")]},
+        )
+        waking = asyncio.Event()
+
+        async def wait_for_wakeup(*args: Any, **kwargs: Any) -> None:
+            waking.set()
+            await asyncio.Future()
+
+        await gateway.process(image)
+        with patch(
+            "agentscope.app._bus_ops.enqueue_run_trigger",
+            wait_for_wakeup,
+        ):
+            task = asyncio.create_task(gateway.process(caption))
+            await asyncio.wait_for(waking.wait(), timeout=2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        await gateway.process(unrelated)
+        self.assertEqual(
+            [
+                Msg.model_validate(item["input"]).content
+                for item in await list_chat_inputs(bus, session_id)
+            ],
+            [[*image.content, *caption.content], unrelated.content],
+        )
+
+    async def test_cancel_before_enqueue_keeps_caption_media(self) -> None:
+        bus, gateway, image, caption, sid = self._caption_fixture()
+        preparing = asyncio.Event()
+        registry_set = bus.registry_set
+
+        async def hold_payload(key: str, *args: Any, **kwargs: Any) -> None:
+            if key == MessageBusKeys.chat_input_payloads(sid):
+                preparing.set()
+                await asyncio.Future()
+            await registry_set(key, *args, **kwargs)
+
+        await gateway.process(image)
+        with patch.object(bus, "registry_set", hold_payload):
+            task = asyncio.create_task(gateway.process(caption))
+            await asyncio.wait_for(preparing.wait(), timeout=2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual(await list_chat_inputs(bus, sid), [])
+        await gateway.process(caption)
+        (item,) = await list_chat_inputs(bus, sid)
+        self.assertEqual(
+            Msg.model_validate(item["input"]).content,
+            [*image.content, *caption.content],
+        )
+
+    async def test_inbox_cancellation_after_commit_keeps_media_consumed(
+        self,
+    ) -> None:
+        bus, gateway, image, caption, sid = self._caption_fixture()
+        committed = asyncio.Event()
+        push = bus.queue_push_consuming
+
+        async def hold_response(*args: Any) -> bool:
+            self.assertTrue(await push(*args))
+            committed.set()
+            await asyncio.Future()
+            return True
+
+        await gateway.process(image)
+        async with session_execution(bus, sid):
+            await register_inbox_consumer(bus, sid)
+            with patch.object(bus, "queue_push_consuming", hold_response):
+                task = asyncio.create_task(gateway.process(caption))
+                await asyncio.wait_for(committed.wait(), timeout=2)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            unrelated = caption.model_copy(
+                update={"content": [TextBlock(text="next")]},
+            )
+            await gateway.process(unrelated)
+        self.assertEqual(
+            [
+                hint["hint"]
+                for _, hint in await bus.queue_drain(MessageBusKeys.inbox(sid))
+            ],
+            [
+                [b.model_dump(mode="json") for b in blocks]
+                for blocks in (
+                    [*image.content, *caption.content],
+                    unrelated.content,
+                )
+            ],
+        )
+
+    async def test_busy_queue_keeps_media_and_notifies_sender(self) -> None:
+        for session_lock in (True, False):
+            with self.subTest(session_lock=session_lock):
+                bus, gateway, image, caption, sid = self._caption_fixture()
+                key = (
+                    MessageBusKeys.chat_input_mutation_lock(sid)
+                    if session_lock
+                    else MessageBusKeys.chat_input_user_quota_lock("owner")
+                )
+                channel = _FakeChannel()
+                channel._show_thinking = channel._show_tool_process = False
+                await gateway.process(image)
+                with patch.object(
+                    MessageBusKeys,
+                    "CHAT_INPUT_MUTATION_TIMEOUT_SECS",
+                    0.02,
+                ):
+                    async with bus.acquire_lock(key):
+                        await gateway.process(caption, channel=channel)
+                self.assertEqual(
+                    (_text(channel), await list_chat_inputs(bus, sid)),
+                    (
+                        "The message queue is busy. "
+                        "Please resend your message shortly.",
+                        [],
+                    ),
+                )
+                await gateway.process(caption, channel=channel)
+                (item,) = await list_chat_inputs(bus, sid)
+                self.assertEqual(
+                    Msg.model_validate(item["input"]).content,
+                    [*image.content, *caption.content],
+                )
 
     async def test_new_media_refreshes_buffer_for_earlier_media(self) -> None:
         """All buffered images survive until the last push's deadline."""
-        bus = InMemoryMessageBus()
-        gw = ChannelGateway(
-            storage=None,
-            message_bus=bus,
-            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
-        )
-        first = self._media_event("a.png")
-        second = self._media_event("b.png")
-        text = ChannelEvent(
-            channel_id="c",
-            channel_user_id="u",
-            chat_id="chat",
-            content=[TextBlock(text="look")],
-        )
+        bus, gateway, first, caption, sid = self._caption_fixture()
+        second = first.model_copy(update={"content": [self._img("b.png")]})
         with patch.object(_bus.time, "monotonic", return_value=0):
-            await gw._aggregate_media(first)
+            await gateway.process(first)
         with patch.object(_bus.time, "monotonic", return_value=240):
-            await gw._aggregate_media(second)
+            await gateway.process(second)
         with patch.object(_bus.time, "monotonic", return_value=360):
-            content = await gw._aggregate_media(text)
-
+            await gateway.process(caption)
+        (queued,) = await list_chat_inputs(bus, sid)
         self.assertEqual(
-            content,
-            [*first.content, *second.content, *text.content],
+            Msg.model_validate(queued["input"]).content,
+            [*first.content, *second.content, *caption.content],
         )
 
 
@@ -438,7 +741,9 @@ class _PausedSessionCheckBus(InMemoryMessageBus):
 class ChannelInboxHandoffTest(IsolatedAsyncioTestCase):
     """Channel hints must use the session inbox hand-off protocol."""
 
-    async def test_late_channel_message_enqueues_wakeup(self) -> None:
+    async def test_late_channel_message_starts_an_identified_user_turn(
+        self,
+    ) -> None:
         """A message after the final consumer check cannot be stranded."""
         record = _channel_record("user-1")
         event = ChannelEvent(
@@ -449,18 +754,16 @@ class ChannelInboxHandoffTest(IsolatedAsyncioTestCase):
         )
         _agent_id, session_id, _scope = resolve(event, record)
         bus = _PausedSessionCheckBus(
-            MessageBusKeys.session_lock(session_id),
+            MessageBusKeys.session_execution_lock(session_id),
         )
         gateway = ChannelGateway(
-            storage=_ChannelStorage(record),
+            storage=_InboundStorage(record),
             message_bus=bus,
             workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
         )
 
         await register_inbox_consumer(bus, session_id)
-        async with bus.acquire_lock(
-            MessageBusKeys.session_lock(session_id),
-        ):
+        async with session_execution(bus, session_id):
             message_task = asyncio.create_task(gateway.process(event))
             await asyncio.wait_for(bus.checked.wait(), timeout=2)
 
@@ -470,40 +773,29 @@ class ChannelInboxHandoffTest(IsolatedAsyncioTestCase):
             bus.resume.set()
             await asyncio.wait_for(message_task, timeout=2)
 
-        wakeups = await bus.queue_drain(MessageBusKeys.wakeup_queue())
-        self.assertEqual(len(wakeups), 1)
-        self.assertDictEqual(
-            wakeups[0][1],
-            {
-                "user_id": "user-1",
-                "session_id": session_id,
-                "agent_id": "agent-x",
-                "kind": MessageBusKeys.WAKEUP_KIND_WAKE,
-                "input": None,
-            },
+        ((_, trigger),) = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        (queued,) = await list_chat_inputs(bus, session_id)
+        message = Msg.model_validate(queued["input"])
+        ((_, item),) = await bus.queue_read(
+            MessageBusKeys.chat_inputs(session_id),
         )
-
-        inbox = await bus.queue_drain(MessageBusKeys.inbox(session_id))
-        self.assertListEqual(
-            [payload for _entry_id, payload in inbox],
-            [
-                {
-                    "type": "hint",
-                    "hint": [
-                        {
-                            "type": "text",
-                            "text": "late message",
-                            "id": AnyString(),
-                            "created_at": AnyString(),
-                            "finished_at": None,
-                        },
-                    ],
-                    "id": AnyString(),
-                    "source": '{"label": "channel", "sublabel": "member-1"}',
-                    "created_at": AnyString(),
-                    "finished_at": AnyString(),
-                },
-            ],
+        self.assertEqual(
+            (
+                trigger["kind"],
+                message.name,
+                message.role,
+                message.content,
+                item["channel_requester_id"],
+                await bus.queue_drain(MessageBusKeys.inbox(session_id)),
+            ),
+            (
+                "queued_message",
+                event.channel_user_id,
+                "user",
+                event.content,
+                event.channel_user_id,
+                [],
+            ),
         )
 
 
@@ -618,14 +910,14 @@ class TrustedChannelIdentityTest(IsolatedAsyncioTestCase):
                 [(_, trigger)] = await bus.queue_drain(
                     MessageBusKeys.wakeup_queue(),
                 )
-                message = Msg.model_validate(trigger["input"])
+                (queued,) = await list_chat_inputs(bus, trigger["session_id"])
+                message = Msg.model_validate(queued["input"])
                 self.assertEqual(message.name, staff_id or payload["senderId"])
+                ((_, item),) = await bus.queue_read(
+                    MessageBusKeys.chat_inputs(trigger["session_id"]),
+                )
                 self.assertEqual(
-                    await requester_for_input(
-                        bus,
-                        trigger["session_id"],
-                        message,
-                    ),
+                    item.get("channel_requester_id", ""),
                     staff_id,
                 )
 
@@ -750,6 +1042,9 @@ class _AwaitingStorage:
                 context=[
                     Msg(
                         id="reply-1",
+                        metadata={
+                            "pending_confirmations": {"call_abc": "current"},
+                        },
                         name="Friday",
                         role="assistant",
                         content=[
@@ -869,6 +1164,7 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
                     yield {
                         "type": EventType.REQUIRE_USER_CONFIRM,
                         "reply_id": "reply-1",
+                        "id": "current",
                         "tool_calls": [{"id": "call_abc"}],
                     }
 
@@ -950,7 +1246,10 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
                         api.send_text.assert_not_awaited()
 
     @staticmethod
-    async def _approval(bus: InMemoryMessageBus) -> str:
+    async def _approval(
+        bus: InMemoryMessageBus,
+        confirmation_id: str | None = "current",
+    ) -> str:
         approval_id = new_approval_id("the-parked-session")
         await store_approval(
             bus,
@@ -962,6 +1261,7 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
                 session_id="the-parked-session",
                 reply_id="reply-1",
                 tool_call_id="call_abc",
+                confirmation_id=confirmation_id,
                 requester_id="requester-1",
             ),
         )
@@ -1018,6 +1318,7 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
                     "confirm_results": [
                         {
                             "confirmed": True,
+                            "request_id": "current",
                             "rules": None,
                             "tool_call": {
                                 "type": "tool_call",
@@ -1036,6 +1337,50 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(storage.asked, ["the-parked-session"])
         self.assertIsNone(await load_approval(bus, approval_id))
+
+    async def test_superseded_cards_do_not_consume_the_current_prompt(
+        self,
+    ) -> None:
+        storage = _AwaitingStorage(
+            _channel_record("user-1"),
+            "the-parked-session",
+        )
+        bus = InMemoryMessageBus()
+        gateway = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+        statuses = []
+        for prompt in ("previous", None, "current"):
+            event = ChannelConfirmationResultEvent(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                channel_user_id="requester-1",
+                approval_id=await self._approval(bus, prompt),
+                approved=True,
+            )
+            statuses.append(await gateway.process(event))
+        statuses.append(await gateway.process(event))
+        queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        self.assertEqual(
+            (
+                statuses,
+                [
+                    item["input"]["confirm_results"][0]["request_id"]
+                    for _, item in queued
+                ],
+            ),
+            (
+                [
+                    ChannelDecisionStatus.STALE,
+                    ChannelDecisionStatus.STALE,
+                    ChannelDecisionStatus.ACCEPTED,
+                    ChannelDecisionStatus.STALE,
+                ],
+                ["current"],
+            ),
+        )
 
     async def test_non_requester_is_rejected_without_consuming_card(
         self,

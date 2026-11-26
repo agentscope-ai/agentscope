@@ -419,9 +419,9 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             name="search",
             input='{"q": "hi"}',
         )
-        ev_require_confirm = RequireUserConfirmEvent(
-            reply_id=_REPLY_ID,
-            tool_calls=[_tc_allow_block],
+        ev_require_confirm = RequireUserConfirmEvent.issue(
+            _REPLY_ID,
+            _tc_allow_block,
         )
         gt_require_confirm = _base(
             _s4_prefix
@@ -436,25 +436,29 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             ],
         )
 
+        gt_require_confirm["metadata"] = {
+            "pending_confirmations": {_TC_ALLOW: ev_require_confirm.id},
+        }
+
         # UserConfirmResultEvent (confirmed=True)  → state: asking → allowed
         ev_user_confirmed = UserConfirmResultEvent(
             reply_id=_REPLY_ID,
             confirm_results=[
-                ConfirmResult(confirmed=True, tool_call=_tc_allow_block),
-            ],
-        )
-        gt_user_confirmed = _base(
-            _s4_prefix
-            + [
-                _tcb(
-                    _TC_ALLOW,
-                    "search",
-                    '{"q": "hi"}',
-                    "allowed",
-                    AnyString(),
+                ConfirmResult(
+                    request_id=ev_require_confirm.id,
+                    confirmed=True,
+                    tool_call=_tc_allow_block,
                 ),
             ],
         )
+        confirmed_call = _tcb(
+            _TC_ALLOW,
+            "search",
+            '{"q": "hi"}',
+            "allowed",
+            AnyString(),
+        )
+        gt_user_confirmed = _base(_s4_prefix + [confirmed_call])
 
         # ToolResult for _TC_ALLOW – text output
         ev_result_start = ToolResultStartEvent(
@@ -462,9 +466,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_call_id=_TC_ALLOW,
             tool_call_name="search",
         )
-        _s4b_prefix = _s4_prefix + [
-            _tcb(_TC_ALLOW, "search", '{"q": "hi"}', "allowed", AnyString()),
-        ]
+        _s4b_prefix = _s4_prefix + [confirmed_call]
         gt_result_start = _base(
             _s4b_prefix + [_trb(_TC_ALLOW, "search", [], "running")],
         )
@@ -593,19 +595,36 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         )
 
         _tc_deny_block = ToolCallBlock(id=_TC_DENY, name="delete", input="")
-        ev_require_confirm_deny = RequireUserConfirmEvent(
-            reply_id=_REPLY_ID,
-            tool_calls=[_tc_deny_block],
+        ev_require_confirm_deny = RequireUserConfirmEvent.issue(
+            _REPLY_ID,
+            _tc_deny_block,
         )
         gt_require_confirm_deny = _base(
-            _s5_prefix + [_tcb(_TC_DENY, "delete", "", "asking", AnyString())],
+            _s5_prefix
+            + [
+                _tcb(
+                    _TC_DENY,
+                    "delete",
+                    "",
+                    "asking",
+                    AnyString(),
+                ),
+            ],
         )
+
+        gt_require_confirm_deny["metadata"] = {
+            "pending_confirmations": {_TC_DENY: ev_require_confirm_deny.id},
+        }
 
         # UserConfirmResultEvent (confirmed=False)  → state: asking → finished
         ev_user_denied = UserConfirmResultEvent(
             reply_id=_REPLY_ID,
             confirm_results=[
-                ConfirmResult(confirmed=False, tool_call=_tc_deny_block),
+                ConfirmResult(
+                    request_id=ev_require_confirm_deny.id,
+                    confirmed=False,
+                    tool_call=_tc_deny_block,
+                ),
             ],
         )
         gt_user_denied = _base(
