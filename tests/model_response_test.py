@@ -472,5 +472,30 @@ class ChatResponseAppendTest(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_legacy_accumulation_keeps_late_metadata(self) -> None:
+        """The public response accumulator also retains closing metadata."""
+        response = ChatResponse(
+            content=[TextBlock(id="part-1", text="answer")],
+            is_last=False,
+        )
+        for signature in ("YW5zd2Vy", None):
+            response.append_chat_response(
+                ChatResponse(
+                    content=[
+                        TextBlock(
+                            id="part-1",
+                            text="",
+                            gemini_thought_signature=signature,
+                        ),
+                    ],
+                    is_last=False,
+                ),
+            )
+        self.assertEqual(response.content[0].text, "answer")
+        self.assertEqual(
+            response.content[0].model_extra,
+            {"gemini_thought_signature": "YW5zd2Vy"},
+        )
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
