@@ -73,6 +73,8 @@ interface WavHeader {
 	bitsPerSample: number;
 	/** Byte offset where PCM samples begin (right after the ``data`` chunk header). */
 	dataOffset: number;
+	/** PCM data length, or Infinity for a streaming WAV with unknown size. */
+	dataSize: number;
 }
 
 /**
@@ -92,6 +94,7 @@ export function parseWavHeader(bytes: Bytes): WavHeader | null {
 	let channels = 0;
 	let bitsPerSample = 0;
 	let dataOffset = -1;
+	let dataSize = 0;
 
 	while (offset + 8 <= bytes.length) {
 		const chunkId = view.getUint32(offset, false);
@@ -105,6 +108,7 @@ export function parseWavHeader(bytes: Bytes): WavHeader | null {
 			bitsPerSample = view.getUint16(chunkBody + 14, true);
 		} else if (chunkId === 0x64617461 /* "data" */) {
 			dataOffset = chunkBody;
+			dataSize = chunkSize === 0xffffffff ? Infinity : chunkSize;
 			break;
 		}
 		// RIFF pads odd-sized chunks to the next even byte boundary.
@@ -112,7 +116,7 @@ export function parseWavHeader(bytes: Bytes): WavHeader | null {
 	}
 
 	if (!sampleRate || !channels || !bitsPerSample || dataOffset < 0) return null;
-	return { sampleRate, channels, bitsPerSample, dataOffset };
+	return { sampleRate, channels, bitsPerSample, dataOffset, dataSize };
 }
 
 /**
@@ -202,6 +206,8 @@ class WavStreamPlayer {
 		if (!this.ctx || !this.header) return;
 
 		const frameSize = (this.header.bitsPerSample / 8) * this.header.channels;
+		// Bytes after the declared data chunk are RIFF metadata, not PCM.
+		bytes = bytes.subarray(0, Math.max(0, this.header.dataSize - this.frameCount * frameSize));
 		const playableBytes = Math.floor(bytes.length / frameSize) * frameSize;
 		// Keep only the incomplete frame without retaining the whole chunk.
 		this.pending = playableBytes < bytes.length ? bytes.slice(playableBytes) : null;

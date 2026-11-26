@@ -7,6 +7,7 @@ interface AudioBlock {
 	mediaType: string;
 	chunks: Uint8Array<ArrayBuffer>[];
 	header: ReturnType<typeof parseWavHeader>;
+	pcmBytesPlayed: number;
 	playbackDone?: Promise<void>;
 	finishPlayback?: () => void;
 	decoding: boolean;
@@ -63,6 +64,7 @@ export class PipelineAudioPlayer {
 			mediaType,
 			chunks: [],
 			header: null,
+			pcmBytesPlayed: 0,
 			decoding: false,
 		});
 		this.onChange(true);
@@ -140,7 +142,9 @@ export class PipelineAudioPlayer {
 					bytes = bytes.subarray(block.header.dataOffset);
 				}
 				const frameSize = (block.header.channels * block.header.bitsPerSample) / 8;
+				bytes = bytes.subarray(0, Math.max(0, block.header.dataSize - block.pcmBytesPlayed));
 				const count = bytes.length - (bytes.length % frameSize);
+				block.pcmBytesPlayed += count;
 				if (count < bytes.length) block.chunks.push(bytes.slice(count));
 				if (count) {
 					const buffer = pcmToAudioBuffer(
