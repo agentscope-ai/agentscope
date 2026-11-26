@@ -15,6 +15,7 @@ SDK's public ``start()`` — the one place to adapt if the SDK changes.
 import asyncio
 import base64
 import json
+import re
 import threading
 import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
@@ -43,7 +44,11 @@ from ._card_templates import (
 
 if TYPE_CHECKING:
     import httpx
-    from lark_oapi.api.im.v1 import EventMessage, P2ImMessageReceiveV1
+    from lark_oapi.api.im.v1 import (
+        EventMessage,
+        MentionEvent,
+        P2ImMessageReceiveV1,
+    )
     from lark_oapi.event.callback.model.p2_card_action_trigger import (
         P2CardActionTrigger,
         P2CardActionTriggerResponse,
@@ -431,13 +436,8 @@ class FeishuChannel(ChannelBase):
             text = (
                 json.loads(message.content or "{}").get("text") or ""
             ).strip()
-            if chat_type == "group":
-                # The mention keys ("@_user_1", ...) are placeholders Feishu
-                # puts in the text, not anything the sender typed; drop them
-                # whether or not only_at_reply is on, otherwise a group the
-                # bot replies to freely still hands them to the agent.
-                for mention in message.mentions or []:
-                    text = text.replace(mention.key or "", "").strip()
+            if chat_type == "group" and message.mentions:
+                text = self._resolve_mentions(text, message.mentions)
             content = [TextBlock(text=text)] if text else []
         elif message_id or chat_id:
             await self._send(
@@ -461,6 +461,26 @@ class FeishuChannel(ChannelBase):
             content=content,
             metadata=meta,
         )
+
+    def _resolve_mentions(
+        self,
+        text: str,
+        mentions: list["MentionEvent"],
+    ) -> str:
+        """Remove bot mentions and render group members by name or open ID."""
+        replacements = {}
+        for mention in mentions:
+            open_id = mention.id.open_id if mention.id else None
+            if open_id and open_id == self._bot_open_id:
+                replacements[mention.key] = ""
+            elif name := mention.name or open_id:
+                replacements[mention.key] = f"@{name}"
+
+        return re.sub(
+            r"@_user_[0-9]+",
+            lambda match: replacements.get(match[0], match[0]),
+            text,
+        ).strip()
 
     async def chat_name(self, chat_id: str) -> str:
         """The chat's title (cached per chat); ``""`` when unavailable —
