@@ -11,12 +11,14 @@ from pydantic import TypeAdapter
 from ._lifespan import lifespan
 from .access import DenyAllResourceAccessPolicy, ResourceAccessPolicyBase
 from .hub import HubBase, HubError, MCPHubBase, SkillHubBase
+from ._service._session import SessionBusyError
 from .rag.blob_store import BlobStoreBase, LocalBlobStore
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     asr_router,
     agent_router,
+    background_task_router,
     channel_router,
     chat_router,
     credential_router,
@@ -137,6 +139,7 @@ def create_app(
     channels: list[Type[ChannelBase]] | None = None,
     download_secret: str | None = None,
     realtime_ice_servers: list[dict[str, Any]] | None = None,
+    allowed_stdio_commands: list[str] | None = None,
     title: str = "AgentScope",
     version: str = __version__,
     **kwargs: Any,
@@ -251,6 +254,18 @@ def create_app(
             subclasses to register before the app starts.  Equivalent to
             calling :func:`~agentscope.credential.CredentialFactory.
             register_credential` for each class.
+        allowed_stdio_commands (`list[str] | None`, optional):
+            Executables that callers may add to a workspace as stdio
+            MCPs. A stdio server runs a local process, so unrestricted
+            registration can execute code as the service's OS user.
+            Commands match exactly, including any path. Direct
+            registration rejects a disallowed command with HTTP 403.
+            Adding from the library, including from an installed hub
+            card, reports each rejected entry in ``failed``.
+            ``None`` (the default) allows any command. An empty list
+            blocks all new stdio additions through these two routes.
+            Existing workspace entries and ``default_mcps`` are outside
+            the scope of this check.
         extra_middlewares (`list[Middleware] | None`, optional):
             Additional ASGI middlewares to add to the application.
         extra_agent_middlewares (`AgentMiddlewareFactory | None`, optional):
@@ -356,6 +371,11 @@ def create_app(
     app.state.channel_type_registry = ChannelTypeRegistry(channels or [])
     app.state.mcp_hubs = _index_hubs(mcp_hubs, "MCP")
     app.state.skill_hubs = _index_hubs(skill_hubs, "skill")
+    app.state.allowed_stdio_commands = (
+        None
+        if allowed_stdio_commands is None
+        else frozenset(allowed_stdio_commands)
+    )
     app.state.download_secret = download_secret or secrets.token_urlsafe(32)
     app.state.realtime_ice_servers = _load_realtime_ice_servers(
         realtime_ice_servers,
@@ -439,6 +459,7 @@ def create_app(
     for router in (
         asr_router,
         agent_router,
+        background_task_router,
         chat_router,
         credential_router,
         health_router,
@@ -458,6 +479,17 @@ def create_app(
         channel_router,
     ):
         app.include_router(router)
+
+    @app.exception_handler(SessionBusyError)
+    async def _on_session_busy(
+        _: Request,
+        exc: SessionBusyError,
+    ) -> JSONResponse:
+        """Allow callers to retry deletion after lock contention."""
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": str(exc)},
+        )
 
     @app.exception_handler(HubError)
     async def _on_hub_error(_: Request, exc: HubError) -> JSONResponse:

@@ -185,7 +185,16 @@ class SessionRow(_JsonRecordMixin):
         index=True,
     )
 
-    __table_args__ = (Index("ix_sessions_user_agent", "user_id", "agent_id"),)
+    __table_args__ = (
+        Index("ix_sessions_user_agent", "user_id", "agent_id"),
+        Index(
+            "ix_sessions_user_agent_created_id",
+            "user_id",
+            "agent_id",
+            "created_at",
+            "id",
+        ),
+    )
 
     _indexed_fields = (
         "user_id",

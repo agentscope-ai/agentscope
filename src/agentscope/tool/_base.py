@@ -221,8 +221,10 @@ class ToolBase(ABC):
                 return self.call(**kwargs)
             return await self.call(**kwargs)
 
+        # Keep the private cursor separate from tool arguments named "index".
         async def execute_chain(
             index: int = 0,
+            /,
             **chain_kwargs: Any,
         ) -> AsyncGenerator[ToolChunk, None]:
             """Execute the tool middleware chain."""
@@ -439,16 +441,21 @@ class ToolBase(ABC):
                 os.path.expanduser(working_dir),
             )
             try:
-                os.path.relpath(abs_file_path, abs_working_dir)
-                if (
-                    abs_file_path.startswith(abs_working_dir + os.sep)
-                    or abs_file_path == abs_working_dir
-                ):
-                    return True
+                relative = os.path.relpath(abs_file_path, abs_working_dir)
             except ValueError:
                 # On Windows, relpath raises ValueError if paths are on
                 # different drives.
                 continue
+            # A plain prefix test misses every filesystem root: for
+            # ``/`` it builds ``"//"`` and for ``D:\`` it builds
+            # ``"D:\\"``, neither of which a real path starts with. The
+            # relative path is ``"."`` for the directory itself and
+            # otherwise only escapes upwards when it begins with
+            # ``".."``.
+            if relative != os.pardir and not relative.startswith(
+                os.pardir + os.sep,
+            ):
+                return True
 
         return False
 

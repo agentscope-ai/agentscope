@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import fakeredis.aioredis
 
-from utils import AnyString
+from utils import AnyString, AnyValue
 
 from agentscope.app.storage import (
     RedisStorage,
@@ -360,6 +360,50 @@ class TestSession(IsolatedAsyncioTestCase):
         )
         records = await self.storage.list_sessions(self.user_id, "agent-B")
         self.assertEqual(records, [])
+
+    async def test_tied_sessions_list_in_a_total_order(self) -> None:
+        """Sessions sharing a ``created_at`` still come back in one order.
+
+        The index is a Set, so falling back to its iteration order for
+        ties left the listing (and the ``sessions[0]`` callers that read
+        the first row as "the newest") depending on Redis' hash order,
+        which shifts as the set is rewritten. SQL breaks these ties on
+        the id; this must agree with it.
+        """
+        for session_id in ("s2", "s3", "s1"):
+            await self.storage.upsert_session(
+                self.user_id,
+                self.agent_id,
+                make_session_config(self.workspace_id),
+                session_id=session_id,
+            )
+        await self._tie_created_at(("s2", "s3", "s1"))
+
+        records = await self.storage.list_sessions(
+            self.user_id,
+            self.agent_id,
+        )
+        self.assertEqual([r.id for r in records], ["s3", "s2", "s1"])
+
+    async def _tie_created_at(self, session_ids: tuple[str, ...]) -> None:
+        """Rewrite the stored sessions so they share one ``created_at``.
+
+        ``upsert_session`` builds the record itself, so the timestamp can
+        only be set on the stored JSON — the same shape MySQL produces
+        when its whole-second ``DateTime`` collapses a burst.
+        """
+        fixed = DateTime(2026, 1, 1, 12, 0, 0)
+        for session_id in session_ids:
+            key = self.storage._key(
+                self.storage.key_config.session,
+                user_id=self.user_id,
+                session_id=session_id,
+            )
+            record = SessionRecord.model_validate_json(
+                await self.storage._client.get(key),
+            )
+            record.created_at = fixed
+            await self.storage._client.set(key, record.model_dump_json())
 
 
 class TestMessage(IsolatedAsyncioTestCase):
@@ -1939,6 +1983,29 @@ class TestSOP(IsolatedAsyncioTestCase):
             {waiting.id, other.id},
         )
 
+    async def test_tied_runs_list_in_a_total_order(self) -> None:
+        """Runs sharing a ``created_at`` come back in one order too.
+
+        Same tie as the session listing above: the run index is a Set,
+        and SQL breaks the tie on the id.
+        """
+        fixed = DateTime(2026, 1, 1, 12, 0, 0)
+        for run_id in ("r2", "r3", "r1"):
+            await self.storage.upsert_sop_run(
+                self.user_id,
+                SOPRunRecord(
+                    id=run_id,
+                    created_at=fixed,
+                    user_id=self.user_id,
+                    sop_id="sop-1",
+                    definition=SOPData(name="a", steps=[_A_STEP]),
+                    state=SOPRunState(steps=[SOPStepRunState()]),
+                ),
+            )
+
+        records = await self.storage.list_sop_runs(self.user_id)
+        self.assertEqual([r.id for r in records], ["r3", "r2", "r1"])
+
     async def test_update_run_writes_state_and_sessions(self) -> None:
         """The hot path rewrites what moves and keeps the snapshot."""
         run = SOPRunRecord(
@@ -2108,3 +2175,96 @@ class TestVoiceProfileTimestamps(IsolatedAsyncioTestCase):
                 self.assertEqual(record.created_at, created_at)
                 stored = await storage.get_voice_profile("owner", record.id)
                 self.assertEqual(stored.model_dump(), record.model_dump())
+
+
+class TestRecordKeyTTL(IsolatedAsyncioTestCase):
+    """Record writes store the value and its TTL in one SET command."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.addAsyncCleanup(self.storage._client.aclose)
+
+    async def _value_and_ttl(self, key: str) -> tuple[str | None, int]:
+        """Read back a key's value and remaining TTL."""
+        client = self.storage._client
+        return await client.get(key), await client.ttl(key)
+
+    async def test_first_write_expires(self) -> None:
+        """A new key is written with the configured TTL."""
+        self.storage.key_ttl = 60
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        result = await self._value_and_ttl("probe")
+        self.assertEqual(result, ("new", AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)
+
+    async def test_overwrite_keeps_key_expiring(self) -> None:
+        """Overwriting an expiring or persistent key leaves it expiring."""
+        self.storage.key_ttl = 60
+        await self.storage._client.set("expiring", "old", ex=5)
+        await self.storage._client.set("persistent", "old")
+
+        for key in ("expiring", "persistent"):
+            with self.subTest(key=key):
+                await self.storage._set_with_ttl(key, "new")
+                result = await self._value_and_ttl(key)
+                self.assertEqual(result, ("new", AnyValue()))
+                self.assertGreater(result[1], 5)
+                self.assertLessEqual(result[1], 60)
+
+    async def test_no_ttl_configured_keeps_key_persistent(self) -> None:
+        """With key_ttl None, records are written without an expiry."""
+        self.storage.key_ttl = None
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        self.assertEqual(await self._value_and_ttl("probe"), ("new", -1))
+
+    async def test_no_ttl_configured_clears_existing_expiry(self) -> None:
+        """With key_ttl None, overwriting a key removes its expiry."""
+        self.storage.key_ttl = None
+        await self.storage._client.set("probe", "old", ex=60)
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        self.assertEqual(await self._value_and_ttl("probe"), ("new", -1))
+
+    async def test_failure_after_set_cannot_drop_ttl(self) -> None:
+        """A failing EXPIRE cannot leave the rewritten key persistent."""
+        self.storage.key_ttl = 60
+        await self.storage._client.set("probe", "old", ex=60)
+
+        with patch.object(
+            self.storage._client,
+            "expire",
+            side_effect=ConnectionError("injected"),
+        ):
+            await self.storage._set_with_ttl("probe", "new")
+
+        result = await self._value_and_ttl("probe")
+        self.assertEqual(result, ("new", AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)
+
+    async def test_voice_profile_write_expires(self) -> None:
+        """Voice profile records get the configured TTL like other records."""
+        self.storage.key_ttl = 60
+        record = VoiceProfileRecord(
+            user_id="owner",
+            data=VoiceProfileData(name="Voice"),
+        )
+
+        await self.storage.upsert_voice_profile("owner", record)
+
+        key = self.storage._key(
+            self.storage.key_config.voice_profile,
+            user_id="owner",
+            profile_id=record.id,
+        )
+        result = await self._value_and_ttl(key)
+        self.assertEqual(result, (record.model_dump_json(), AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)

@@ -2,15 +2,22 @@
 """DashScope batch and realtime ASR model tests."""
 
 import asyncio
+import gc
 import json
+import weakref
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call as expected_call, patch
 
 from websockets.asyncio.server import ServerConnection, serve
 
-from agentscope.asr import DashScopeASRModel, DashScopeRealtimeASRModel
+from agentscope.asr import (
+    ASRResponse,
+    DashScopeASRModel,
+    DashScopeRealtimeASRModel,
+)
 from agentscope.credential import DashScopeCredential
+from agentscope.message import TextBlock
 
 
 class DashScopeASRModelTest(IsolatedAsyncioTestCase):
@@ -120,6 +127,96 @@ class DashScopeASRModelTest(IsolatedAsyncioTestCase):
             stream=False,
             format="wav",
         )
+
+    async def test_model_override_is_local_to_one_call(self) -> None:
+        """Use the effective model for dispatch and parameter filtering."""
+        models = (
+            "qwen-audio-3.0-asr-flash",
+            "qwen-audio-3.1-asr-flash",
+        )
+        common_request = {
+            "api_key": "test-key",
+            "base_address": "https://dashscope.aliyuncs.com/api/v1",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "data:audio/wav;base64,YXVkaW8=",
+                            },
+                        },
+                    ],
+                },
+            ],
+            "stream": False,
+            "format": "wav",
+        }
+        model_options: dict[str, dict[str, str | bool]] = {
+            models[0]: {"model": models[0]},
+            models[1]: {
+                "model": models[1],
+                "keep_dialect": True,
+                "speaker_diarization_enabled": True,
+            },
+        }
+        for default_model, override in (models, models[::-1]):
+            with self.subTest(default=default_model, override=override):
+                model = DashScopeASRModel(
+                    credential=DashScopeCredential(api_key="test-key"),
+                    model=default_model,
+                    parameters=DashScopeASRModel.Parameters(
+                        keep_dialect=True,
+                        speaker_diarization_enabled=True,
+                    ),
+                )
+                response = SimpleNamespace(
+                    status_code=200,
+                    output={"text": "recognized"},
+                )
+                with patch(
+                    "dashscope.MultiModalConversation.call",
+                    return_value=response,
+                ) as mock_call:
+                    result = await model.transcribe(
+                        b"audio",
+                        model=override,
+                        language_hints=["en"],
+                    )
+                    await model.transcribe(b"audio")
+
+                self.assertEqual(result.content.text, "recognized")
+                self.assertEqual(
+                    {
+                        "model": model.model,
+                        "parameters": model.parameters.model_dump(),
+                    },
+                    {
+                        "model": default_model,
+                        "parameters": {
+                            "language_hints": None,
+                            "keep_dialect": True,
+                            "speaker_diarization_enabled": True,
+                            "vocabulary": None,
+                            "sample_rate": None,
+                        },
+                    },
+                )
+                self.assertEqual(
+                    mock_call.call_args_list,
+                    [
+                        expected_call(
+                            **common_request,
+                            **model_options[override],
+                            language_hints=["en"],
+                        ),
+                        expected_call(
+                            **common_request,
+                            **model_options[default_model],
+                        ),
+                    ],
+                )
 
     async def test_surfaces_provider_error(self) -> None:
         """Raise a useful error when the provider rejects the request."""
@@ -253,7 +350,7 @@ class _FakeDashScopeWebSocket:
                 {
                     "output": {
                         "sentence": {
-                            "text": "hello",
+                            "text": " Hel",
                             "sentence_end": False,
                         },
                     },
@@ -278,7 +375,7 @@ class _FakeDashScopeWebSocket:
                     {
                         "output": {
                             "sentence": {
-                                "text": "hello world",
+                                "text": " world!\t",
                                 "sentence_end": True,
                             },
                         },
@@ -352,10 +449,61 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
                         },
                     )
 
+    async def test_only_latest_partial_is_retained(self) -> None:
+        """A burst retains one cumulative partial before the next read."""
+        # pylint: disable=protected-access
+        model = DashScopeRealtimeASRModel(
+            credential=DashScopeCredential(api_key="test-key"),
+        )
+        responses: list[weakref.ReferenceType[ASRResponse]] = []
+
+        def record_response(
+            *,
+            content: TextBlock | None,
+            is_last: bool,
+        ) -> ASRResponse:
+            """Record a reference without retaining the response."""
+            response = ASRResponse(content=content, is_last=is_last)
+            responses.append(weakref.ref(response))
+            return response
+
+        with patch(
+            "agentscope.asr._dashscope._realtime_model.ASRResponse",
+            side_effect=record_response,
+        ):
+            for text, sentence_end in [
+                ("First. ", True),
+                ("Par", False),
+                ("Partial", False),
+            ]:
+                model._handle_result(
+                    {
+                        "payload": {
+                            "output": {
+                                "sentence": {
+                                    "text": text,
+                                    "sentence_end": sentence_end,
+                                },
+                            },
+                        },
+                    },
+                )
+
+            gc.collect()
+            self.assertEqual(
+                [result() is not None for result in responses],
+                [False, False, True],
+            )
+            response = model._drain_latest_response()
+            self.assertIsNotNone(response.content)
+            self.assertEqual(response.content.text, "First. Partial")
+            self.assertIsNone(model._drain_latest_response().content)
+
     async def test_streams_pcm_and_returns_partial_and_final_text(
         self,
     ) -> None:
         """Map the complete realtime task lifecycle to ASR responses."""
+        # pylint: disable=protected-access
         socket = _FakeDashScopeWebSocket()
         model = DashScopeRealtimeASRModel(
             credential=DashScopeCredential(api_key="test-key"),
@@ -371,7 +519,28 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
         ) as connect:
             async with model:
                 partial = await model.push(b"pcm")
+                responses = [partial]
+                for text, sentence_end in [
+                    (" Hello ", False),
+                    (" Hello.\n", True),
+                    (" wor", False),
+                    (" world ", False),
+                ]:
+                    await socket._put_event(
+                        "result-generated",
+                        {
+                            "output": {
+                                "sentence": {
+                                    "text": text,
+                                    "sentence_end": sentence_end,
+                                },
+                            },
+                        },
+                    )
+                    await asyncio.sleep(0)
+                    responses.append(model._drain_latest_response())
                 final = await model.transcribe()
+                responses.append(final)
 
         connect.assert_awaited_once_with(
             "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
@@ -400,10 +569,20 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(socket.sent[1], b"pcm")
-        self.assertEqual(partial.content.text, "hello")
-        self.assertFalse(partial.is_last)
-        self.assertEqual(final.content.text, "hello world")
-        self.assertTrue(final.is_last)
+        self.assertEqual(
+            [
+                (response.content.text, response.is_last)
+                for response in responses
+            ],
+            [
+                (" Hel", False),
+                (" Hello ", False),
+                (" Hello.\n", False),
+                (" Hello.\n wor", False),
+                (" Hello.\n world ", False),
+                (" Hello.\n world!\t", True),
+            ],
+        )
         self.assertEqual(
             json.loads(socket.sent[2])["header"]["action"],
             "finish-task",
@@ -589,3 +768,49 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "not connected"):
             await model.push(b"pcm")
+
+    def test_preserves_sentence_text(self) -> None:
+        """Keep whitespace and punctuation without inserting separators."""
+        # pylint: disable=protected-access
+        cases = [
+            (["Hello", "world"], "Helloworld"),
+            (["Hello.", "World."], "Hello.World."),
+            ([" Hello. ", " World. \n"], " Hello.  World. \n"),
+            (["Really?", "Yes."], "Really?Yes."),
+            (["Hello", "\t \n", "world"], "Hello\t \nworld"),
+        ]
+        for sentences, expected in cases:
+            with self.subTest(sentences=sentences):
+                model = DashScopeRealtimeASRModel(
+                    credential=DashScopeCredential(api_key="test-key"),
+                )
+                for text in sentences:
+                    model._handle_result(
+                        {
+                            "payload": {
+                                "output": {
+                                    "sentence": {
+                                        "text": text,
+                                        "sentence_end": True,
+                                    },
+                                },
+                            },
+                        },
+                    )
+                response = model._drain_latest_response()
+                self.assertEqual(
+                    {
+                        "text": model._complete_text(),
+                        "response_text": response.content.text,
+                        "is_last": response.is_last,
+                        "sentences": model._committed_sentences,
+                        "current": model._current_sentence,
+                    },
+                    {
+                        "text": expected,
+                        "response_text": expected,
+                        "is_last": False,
+                        "sentences": sentences,
+                        "current": "",
+                    },
+                )

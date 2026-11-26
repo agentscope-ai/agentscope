@@ -1,4 +1,3 @@
-import { useQueryClient } from '@tanstack/react-query';
 import {
 	AudioWaveform,
 	Plus,
@@ -9,7 +8,7 @@ import {
 	Upload,
 	Loader2,
 } from 'lucide-react';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 import { voiceProfileApi } from '@/api';
 import type { VoiceProfileRecord, VoiceProfileData, EngineInfo } from '@/api';
@@ -37,7 +36,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useVoiceEngines } from '@/hooks/useVoiceEngines';
-import { useVoiceProfiles, VOICE_PROFILES_KEY } from '@/hooks/useVoiceProfiles';
+import { notifyVoiceProfilesChanged, useVoiceProfiles } from '@/hooks/useVoiceProfiles';
 import { useTranslation } from '@/i18n/useI18n';
 
 const EMPTY_MODELS: EngineInfo['models'] = [];
@@ -49,6 +48,7 @@ const ENGINE_LABELS: Record<string, string> = {
 	dashscope_tts: 'DashScope TTS',
 	openai_tts: 'OpenAI TTS',
 	gemini_tts: 'Gemini TTS',
+	minimax_tts: 'MiniMax TTS',
 };
 
 /** Read preset choices without treating an unlisted voice as invalid. */
@@ -203,7 +203,9 @@ function VoiceProfileDialog({
 	const canClone = !!credentialIsAvailable && (selectedEngine?.voice_cloning ?? false);
 
 	const selectedModelSupportsClone = selectedCard?.voice_cloning ?? false;
-	const cloneSupportsUpload = engine === 'dashscope_tts' || engine === 'openai_tts';
+	const cloneSupportsUpload =
+		engine === 'dashscope_tts' || engine === 'openai_tts' || engine === 'minimax_tts';
+	const cloneMaxSizeMB = engine === 'minimax_tts' ? 20 : MAX_AUDIO_SIZE_MB;
 	const enrollmentModel = selectedCard?.enrollment_model;
 
 	const handleConsentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -238,8 +240,8 @@ function VoiceProfileDialog({
 	const handleCloneUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
 		const file = e.target.files?.[0];
 		if (!file || !engine || !credentialId) return;
-		if (file.size > MAX_AUDIO_SIZE_BYTES) {
-			setCloneError(t('voiceProfile.fileTooLarge', { max: MAX_AUDIO_SIZE_MB }));
+		if (file.size > cloneMaxSizeMB * 1024 * 1024) {
+			setCloneError(t('voiceProfile.fileTooLarge', { max: cloneMaxSizeMB }));
 			return;
 		}
 		if (engine !== 'openai_tts' && !model) {
@@ -519,6 +521,11 @@ function VoiceProfileDialog({
 					{canClone && selectedModelSupportsClone && (
 						<div className="flex flex-col gap-2">
 							<Label>{t('voiceProfile.cloneVoice')}</Label>
+							{engine === 'minimax_tts' && (
+								<p className="text-xs text-muted-foreground">
+									{t('voiceProfile.minimaxCloneHint')}
+								</p>
+							)}
 							{enrollmentModel && (
 								<div className="flex flex-col gap-2">
 									<Label htmlFor="vp-enrollment-model">
@@ -609,7 +616,9 @@ function VoiceProfileDialog({
 									<input
 										ref={fileInputRef}
 										type="file"
-										accept="audio/*"
+										accept={
+											engine === 'minimax_tts' ? '.mp3,.m4a,.wav' : 'audio/*'
+										}
 										className="hidden"
 										onChange={handleCloneUpload}
 									/>
@@ -690,16 +699,10 @@ function VoiceProfileDialog({
 export function VoiceProfilePage() {
 	const { t } = useTranslation();
 	const { profiles, loading: initialLoading } = useVoiceProfiles();
-	const queryClient = useQueryClient();
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [editProfile, setEditProfile] = useState<VoiceProfileRecord | null>(null);
 	const [deleteProfile, setDeleteProfile] = useState<VoiceProfileRecord | null>(null);
 	const { engineDetails } = useVoiceEngines();
-
-	const loadProfiles = useCallback(
-		() => queryClient.invalidateQueries({ queryKey: VOICE_PROFILES_KEY }),
-		[queryClient],
-	);
 
 	const getCredentialLabel = (profile: VoiceProfileRecord): string | null => {
 		if (!profile.data.credential_id || !profile.data.engine) return null;
@@ -713,7 +716,7 @@ export function VoiceProfilePage() {
 		try {
 			await voiceProfileApi.delete(deleteProfile.id);
 			setDeleteProfile(null);
-			await loadProfiles();
+			await notifyVoiceProfilesChanged();
 		} catch {
 			// Keep the dialog open; the API client already displays the error.
 		}
@@ -825,7 +828,7 @@ export function VoiceProfilePage() {
 					open={dialogOpen}
 					onOpenChange={setDialogOpen}
 					profile={editProfile}
-					onSaved={loadProfiles}
+					onSaved={notifyVoiceProfilesChanged}
 				/>
 			)}
 

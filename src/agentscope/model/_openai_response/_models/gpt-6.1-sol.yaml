@@ -2,6 +2,8 @@
 name: gpt-6.1-sol
 label: GPT-6.1 Sol (Responses API)
 status: active
+# Release date source: https://developers.openai.com/api/docs/changelog
+release_date: 2026-09-29
 
 input_types:
   - text/plain

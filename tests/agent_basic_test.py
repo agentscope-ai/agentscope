@@ -7,7 +7,13 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
+from agentscope.event import DataBlockStartEvent
 from agentscope.model import ChatResponse, ChatUsage, FinishedReason
+from agentscope.event import (
+    DataBlockDeltaEvent,
+    ToolCallEndEvent,
+    ToolCallStartEvent,
+)
 from agentscope.tool import (
     ToolBase,
     Toolkit,
@@ -19,6 +25,7 @@ from agentscope.permission import (
     PermissionContext,
 )
 from agentscope.message import (
+    AssistantMsg,
     Base64Source,
     DataBlock,
     URLSource,
@@ -104,7 +111,9 @@ class MockConcurrentTool(ToolBase):
         )
 
 
-class AgentBasicTest(IsolatedAsyncioTestCase):
+class AgentBasicTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """The basic test of the agent class."""
 
     async def asyncSetUp(self) -> None:
@@ -225,6 +234,31 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(agent.context_config.context_buffer_ratio, 0.3)
+
+    async def test_deprecated_override_does_not_mutate_the_caller_config(
+        self,
+    ) -> None:
+        """Migrating the deprecated ratio must not write through a config
+        object that another agent shares."""
+        context_config = ContextConfig()
+        with self.assertWarns(DeprecationWarning):
+            overriding = Agent(
+                name="overriding",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=context_config,
+                injection_config=InjectionConfig(context_buffer_ratio=0.5),
+            )
+        sharing = Agent(
+            name="sharing",
+            system_prompt="You are an agent.",
+            model=MockModel(),
+            context_config=context_config,
+        )
+
+        self.assertEqual(overriding.context_config.context_buffer_ratio, 0.5)
+        self.assertEqual(context_config.context_buffer_ratio, 0.2)
+        self.assertEqual(sharing.context_config.context_buffer_ratio, 0.2)
 
     async def test_streaming_reasoning(self) -> None:
         """Test the streaming model inference without tool calls generated,
@@ -1524,6 +1558,56 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         self.assertListEqual(context_dicts, expected_context)
         self.assertEqual(self.agent.state.cur_iter, 2)
 
+    async def test_tool_call_boundaries_with_audio_chunks(self) -> None:
+        """Keep A open across audio and close it when B arrives with audio."""
+        tool = MockSequentialTool()
+        self.agent.toolkit = Toolkit(tools=[tool])
+        first = ToolCallBlock(id="a", name=tool.name, input='{"input": "abc"}')
+        first_part = first.model_copy(update={"input": '{"input": '})
+        last_part = first.model_copy(update={"input": '"abc"}'})
+        second = ToolCallBlock(id="b", name=tool.name, input='{"input": "b"}')
+        audio = DataBlock(
+            id="audio",
+            source=Base64Source(data="AAAA", media_type="audio/pcm"),
+        )
+        done = TextBlock(text="done")
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(content=[first_part], is_last=False),
+                    ChatResponse(content=[audio], is_last=False),
+                    ChatResponse(content=[last_part], is_last=False),
+                    ChatResponse(content=[second, audio], is_last=False),
+                    ChatResponse(content=[first, audio, second], is_last=True),
+                ],
+                [
+                    ChatResponse(content=[done], is_last=False),
+                    ChatResponse(content=[done], is_last=True),
+                ],
+            ],
+        )
+
+        boundaries = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            if isinstance(event, (ToolCallStartEvent, ToolCallEndEvent)):
+                boundaries.append((event.type.value, event.tool_call_id))
+            elif isinstance(event, DataBlockDeltaEvent):
+                boundaries.append((event.type.value, event.block_id))
+
+        self.assertListEqual(
+            boundaries,
+            [
+                ("TOOL_CALL_START", "a"),
+                ("DATA_BLOCK_DELTA", "audio"),
+                ("TOOL_CALL_START", "b"),
+                ("TOOL_CALL_END", "a"),
+                ("DATA_BLOCK_DELTA", "audio"),
+                ("TOOL_CALL_END", "b"),
+            ],
+        )
+
     async def test_streaming_concurrent_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.
 
@@ -2132,8 +2216,64 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         self.assertListEqual(context_dicts, expected_context)
         self.assertEqual(self.agent.state.cur_iter, 2)
 
+    async def test_model_data_block_name_on_start_and_replay(self) -> None:
+        """Replay names and omit unset names from serialized start events."""
+        blocks = [
+            DataBlock(
+                id=block_id,
+                name=name,
+                source=Base64Source(data="YQ==", media_type="audio/wav"),
+            )
+            for block_id, name in (
+                ("named", "voice.wav"),
+                ("unnamed", None),
+                ("empty", ""),
+            )
+        ]
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(content=blocks, is_last=False),
+                    ChatResponse(content=blocks, is_last=True),
+                ],
+            ],
+        )
+        events = [
+            event
+            async for event in self.agent.reply_stream(
+                UserMsg(name="user", content="Send audio"),
+            )
+        ]
+        reply = AssistantMsg(
+            id=self.agent.state.reply_id,
+            name=self.agent.name,
+            content=[],
+        )
+        starts = []
+        for event in events:
+            reply.append_event(event)
+            if isinstance(event, DataBlockStartEvent):
+                starts.append(
+                    event.model_dump(
+                        include={"block_id", "name"},
+                        exclude_unset=True,
+                    ),
+                )
+        self.assertListEqual(
+            starts,
+            [
+                {"block_id": "named", "name": "voice.wav"},
+                {"block_id": "unnamed"},
+                {"block_id": "empty", "name": ""},
+            ],
+        )
+        self.assertListEqual(
+            [block.name for block in reply.content],
+            ["voice.wav", None, ""],
+        )
+
     async def test_event_block_id_matches_data_block_id(self) -> None:
-        """Base64 and URL DataBlocks keep their id on the emitted event."""
+        """Base64 and URL data blocks keep their ID and name on the event."""
         agent = Agent(
             name="test",
             system_prompt="",
@@ -2144,6 +2284,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         chunks = [
             DataBlock(
                 id="b64-block",
+                name="recording.wav",
                 source=Base64Source(
                     data=base64.b64encode(b"hello").decode("ascii"),
                     media_type="audio/wav",
@@ -2151,6 +2292,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             ),
             DataBlock(
                 id="url-block",
+                name="linked.wav",
                 source=URLSource(
                     url="https://example.com/a.wav",
                     media_type="audio/wav",
@@ -2166,10 +2308,10 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             )
         ]
         self.assertListEqual(
-            [(type(e).__name__, e.block_id) for e in events],
+            [(type(e).__name__, e.block_id, e.name) for e in events],
             [
-                ("ToolResultDataDeltaEvent", "b64-block"),
-                ("ToolResultDataDeltaEvent", "url-block"),
+                ("ToolResultDataDeltaEvent", "b64-block", "recording.wav"),
+                ("ToolResultDataDeltaEvent", "url-block", "linked.wav"),
             ],
         )
 

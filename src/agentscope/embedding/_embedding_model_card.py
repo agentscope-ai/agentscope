@@ -96,7 +96,7 @@ class EmbeddingModelCard(BaseModel):
     Empty ``properties`` means nothing to configure (e.g. fixed
     dimensions)."""
 
-    parameter_overrides: dict[str, dict] = Field(
+    parameter_overrides: dict[str, dict | None] = Field(
         default_factory=dict,
         description="Raw parameter overrides from the YAML file.",
     )
@@ -136,8 +136,10 @@ class EmbeddingModelCard(BaseModel):
         base_schema = parameter_class.model_json_schema()
         properties = copy.deepcopy(base_schema.get("properties", {}))
 
-        # Apply parameter_overrides (same logic as ModelCard.from_yaml)
-        overrides = config.get("parameter_overrides", {})
+        # A bare YAML key means no overrides.
+        overrides = config.get("parameter_overrides")
+        if overrides is None:
+            overrides = {}
         for param_name, override in overrides.items():
             if override is None:
                 # null means remove
@@ -156,11 +158,18 @@ class EmbeddingModelCard(BaseModel):
                         **override,
                     }
 
+        required = [
+            name
+            for name in base_schema.get("required", [])
+            if name in properties
+        ]
         final_schema = {
             "type": "object",
             "properties": properties,
-            "required": base_schema.get("required", []),
+            "required": required,
         }
+        if "$defs" in base_schema:
+            final_schema["$defs"] = copy.deepcopy(base_schema["$defs"])
 
         return cls(
             name=config["name"],

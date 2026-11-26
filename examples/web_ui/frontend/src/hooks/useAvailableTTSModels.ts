@@ -32,7 +32,18 @@ export function useAvailableTTSModels() {
 					try {
 						const { models } = await ttsModelApi.list(type);
 						if (models.length > 0) {
-							result[type].push({ credential, models });
+							result[type].push({
+								credential,
+								models: [...models].sort((a, b) => {
+									const byReleaseDate = (b.release_date ?? '').localeCompare(
+										a.release_date ?? '',
+									);
+									return (
+										byReleaseDate ||
+										b.name.localeCompare(a.name, undefined, { numeric: true })
+									);
+								}),
+							});
 						}
 					} catch {
 						// Provider doesn't support TTS — skip silently
