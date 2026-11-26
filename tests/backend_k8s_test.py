@@ -10,10 +10,63 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from agentscope.tool import LocalBackend
 from agentscope.workspace._k8s._k8s_backend import K8sBackend
+from agentscope.workspace._overwrite import WriteUnconfirmedError
+
+
+class TestK8sOverwrite(unittest.IsolatedAsyncioTestCase):
+    """Deliver remote command status frames after sending a draft."""
+
+    async def test_write_requires_terminal_status(self) -> None:
+        """Only an explicit success frame acknowledges the write."""
+        client = MagicMock()
+        api = client.CoreV1Api.return_value
+        socket_context = MagicMock()
+        socket = socket_context.__aenter__.return_value
+        socket.send_bytes = AsyncMock()
+        api.connect_get_namespaced_pod_exec = AsyncMock(
+            return_value=socket_context,
+        )
+        pod = K8sBackend(MagicMock(), "ns", "pod", "container", "/work")
+        modules = {
+            "kubernetes_asyncio": SimpleNamespace(client=client),
+            "kubernetes_asyncio.stream": SimpleNamespace(
+                WsApiClient=MagicMock(),
+            ),
+        }
+        with patch.dict("sys.modules", modules):
+            for frame, expected in (
+                (b'\x03{"status":"Success"}', None),
+                (b'\x03{"status":"Failure"}', RuntimeError),
+                (b'\x03{"status":', WriteUnconfirmedError),
+                (b"\x03{}", WriteUnconfirmedError),
+                (b'\x01{"status":"Success"}', WriteUnconfirmedError),
+                (None, WriteUnconfirmedError),
+            ):
+                with self.subTest(frame=frame):
+                    socket.__aiter__.return_value = (
+                        []
+                        if frame is None
+                        else [SimpleNamespace(type=2, data=frame)]
+                    )
+                    socket.send_bytes.reset_mock()
+                    if expected is None:
+                        await pod.overwrite_file("/work/doc", b"draft")
+                    else:
+                        with self.assertRaises(expected) as ctx:
+                            await pod.overwrite_file("/work/doc", b"draft")
+                        self.assertIs(type(ctx.exception), expected)
+                    self.assertEqual(
+                        socket.send_bytes.await_args_list,
+                        [call(b"\0draft"), call(b"\0")],
+                    )
+            socket.send_bytes.side_effect = [None, ConnectionResetError()]
+            with self.assertRaises(WriteUnconfirmedError):
+                await pod.overwrite_file("/work/doc", b"draft")
 
 
 @unittest.skipUnless(

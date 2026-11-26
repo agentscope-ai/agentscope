@@ -64,8 +64,11 @@ async function extractErrorDetail(res: Response): Promise<{ detail: string; code
 		if (typeof json.detail === 'string') return { detail: json.detail };
 		if (json.detail && typeof json.detail === 'object') {
 			const detail = json.detail as { message?: unknown; code?: unknown };
-			if (typeof detail.message === 'string' && typeof detail.code === 'string')
-				return { detail: detail.message, code: detail.code };
+			if (typeof detail.message === 'string')
+				return {
+					detail: detail.message,
+					code: typeof detail.code === 'string' ? detail.code : undefined,
+				};
 		}
 		if (json.detail !== undefined) return { detail: JSON.stringify(json.detail) };
 	} catch {

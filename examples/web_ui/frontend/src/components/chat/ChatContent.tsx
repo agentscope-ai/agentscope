@@ -8,9 +8,13 @@ import {
 	type TextBlock,
 	type ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
-import { GitBranch, TriangleAlert } from 'lucide-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import { FolderOpen, GitBranch, TriangleAlert } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { ArtifactDrawer } from './artifacts/ArtifactDrawer';
+import { type FileArtifact, fileChangeVersion } from './artifacts/artifacts';
+import { useFileChanges } from './artifacts/useFileChanges';
+import { WorkspaceFilesDrawer } from './artifacts/WorkspaceFilesDrawer';
 import type { GitStatus } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
 import { getBaseUrl, getUserId } from '@/api/client';
@@ -21,7 +25,7 @@ import { ExternalExecutionCard } from '@/components/chat/ExternalExecutionCard.t
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
 import { ManualClientToolCard } from '@/components/chat/ManualClientToolCard';
 import { QueuedMessages } from '@/components/chat/QueuedMessages.tsx';
-import { TextInput } from '@/components/chat/TextInput.tsx';
+import { TextInput, type TextInputRef } from '@/components/chat/TextInput.tsx';
 import { DiffStats } from '@/components/chat/tool-renderers/_shared';
 import { WorkingDirectoryDialog } from '@/components/dialog/WorkingDirectoryDialog';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
@@ -210,7 +214,27 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onRefreshGit,
 }) => {
 	const { t, i18n } = useTranslation();
-	const draftKey = JSON.stringify([getBaseUrl(), getUserId(), agentId, sessionId]);
+	const inputRef = useRef<TextInputRef>(null);
+	const scope = JSON.stringify([getBaseUrl(), getUserId(), agentId, sessionId]);
+	const fileChanges = useFileChanges(msgs, scope, loading);
+	const [fileView, setFileView] = useState<
+		| { scope: string; kind: 'preview'; artifact: FileArtifact }
+		| { scope: string; kind: 'browse' }
+		| null
+	>(null);
+	useEffect(() => setFileView(null), [scope]);
+	const openArtifact = useCallback(
+		(artifact: FileArtifact) => {
+			setFileView({ scope, kind: 'preview', artifact });
+		},
+		[scope],
+	);
+	const referenceFile = (path: string) => {
+		inputRef.current?.insertText(t('artifacts.referenceText', { path: JSON.stringify(path) }));
+		setFileView(null);
+		requestAnimationFrame(() => inputRef.current?.focus());
+	};
+
 	const { deferredItems, steeringMessages } = useMemo(() => {
 		const deferred: ChatQueueItem[] = [];
 		const steering: Pick<Msg, 'id' | 'content' | 'created_at'>[] = [];
@@ -304,6 +328,33 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				className,
 			)}
 		>
+			{!loading &&
+				agentId &&
+				sessionId &&
+				fileView?.scope === scope &&
+				(fileView.kind === 'preview' ? (
+					<ArtifactDrawer
+						key={JSON.stringify([scope, fileView.artifact.path])}
+						artifact={fileView.artifact}
+						changeVersion={fileChangeVersion(fileChanges, fileView.artifact.path)}
+						agentId={agentId}
+						sessionId={sessionId}
+						onClose={() => setFileView(null)}
+						referenceDisabled={disabled}
+						onReference={referenceFile}
+					/>
+				) : (
+					<WorkspaceFilesDrawer
+						key={scope}
+						agentId={agentId}
+						sessionId={sessionId}
+						initialPath={cwd ?? ''}
+						fileChanges={fileChanges}
+						onClose={() => setFileView(null)}
+						referenceDisabled={disabled}
+						onReference={referenceFile}
+					/>
+				))}
 			{loading ? (
 				<div className="flex flex-1 w-full items-center justify-center">
 					{showSpinner ? <Spinner className="size-5 text-muted-foreground" /> : null}
@@ -342,6 +393,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 											<ASMessageBubble
 												message={message}
 												onUserConfirm={onUserConfirm}
+												onOpenArtifact={
+													agentId && sessionId ? openArtifact : undefined
+												}
 											/>
 										</MessageScrollerItem>
 									);
@@ -477,8 +531,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				    edges parallel — a plain rectangle here would show the
 				    pill's corners cutting into it. */}
 					<TextInput
-						key={draftKey}
-						draftKey={draftKey}
+						key={scope}
+						ref={inputRef}
+						draftKey={scope}
 						className="min-w-full max-w-full w-full rounded-[32px] bg-muted p-1"
 						onSend={handleSend}
 						disabled={disabled}
@@ -500,14 +555,25 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						asrDisabled={asrDisabled}
 						asrResetKey={asrResetKey}
 						headerSlot={
-							<div className="flex w-full items-center justify-between px-2 py-1 text-sm text-muted-foreground">
-								<WorkingDirectoryDialog
-									agentId={agentId}
-									sessionId={sessionId}
-									value={cwd}
-									onChange={onCwdChange}
-								/>
-								<div className="flex items-center gap-1.5">
+							<div className="flex w-full flex-wrap items-center justify-between gap-1 px-2 py-1 text-sm text-muted-foreground">
+								<div className="flex min-w-0 flex-wrap items-center gap-1">
+									<WorkingDirectoryDialog
+										agentId={agentId}
+										sessionId={sessionId}
+										value={cwd}
+										onChange={onCwdChange}
+									/>
+									<Button
+										variant="ghost"
+										size="sm"
+										disabled={!agentId || !sessionId || loading}
+										onClick={() => setFileView({ scope, kind: 'browse' })}
+									>
+										<FolderOpen />
+										{t('artifacts.browseFiles')}
+									</Button>
+								</div>
+								<div className="flex flex-wrap items-center gap-1.5">
 									<ClientToolsMenu agentId={agentId} sessionId={sessionId} />
 									{git && (
 										<Button

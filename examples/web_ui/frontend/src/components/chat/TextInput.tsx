@@ -116,6 +116,7 @@ interface TextInputProps {
 
 export interface TextInputRef {
 	focus: () => void;
+	insertText: (text: string) => void;
 }
 
 /** One line box of textarea text: ``text-sm`` (14px) at a 1.5 line-height. */
@@ -192,6 +193,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			};
 		}, []);
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
+		const moveCaretAfterInsert = useRef(false);
 		const fileInputRef = useRef<HTMLInputElement>(null);
 		const measureRef = useRef<HTMLSpanElement>(null);
 		const ghostColumnRef = useRef<HTMLDivElement>(null);
@@ -311,6 +313,13 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 
 		useImperativeHandle(ref, () => ({
 			focus: () => textareaRef.current?.focus(),
+			insertText: (text: string) => {
+				moveCaretAfterInsert.current = true;
+				updateDraft((current) => ({
+					...current,
+					value: `${current.value}${current.value && !current.value.endsWith('\n') ? '\n' : ''}${text} `,
+				}));
+			},
 		}));
 
 		// Grow the textarea with its content. The ``auto`` reset is what lets it
@@ -320,6 +329,10 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			if (!textarea) return;
 			textarea.style.height = 'auto';
 			textarea.style.height = `${textarea.scrollHeight}px`;
+			if (moveCaretAfterInsert.current) {
+				textarea.setSelectionRange(value.length, value.length);
+				moveCaretAfterInsert.current = false;
+			}
 			// Stacking widens the textarea, so the line count has to be redone.
 		}, [value, isStacked, composerWidth]);
 
