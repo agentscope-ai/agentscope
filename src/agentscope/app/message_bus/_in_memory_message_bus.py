@@ -85,6 +85,9 @@ class InMemoryMessageBus(
         # key -> monotonic expiry deadline; ``acquire_lock`` has no
         # lease, so it stores infinity.
         self._lock_holders: dict[str, float] = {}
+        self._lock_released: dict[str, asyncio.Event] = defaultdict(
+            asyncio.Event
+        )
 
         # Mode F — registry maps: namespace -> {field: value}
         self._registries: dict[str, dict[str, str]] = defaultdict(dict)
@@ -513,6 +516,16 @@ class InMemoryMessageBus(
         """
         lock = self._locks[key]
         async with lock:
+            released = self._lock_released[key]
+            while True:
+                remaining = self._lock_holders.get(key, 0.0) - time.monotonic()
+                if remaining <= 0:
+                    break
+                released.clear()
+                try:
+                    await asyncio.wait_for(released.wait(), timeout=remaining)
+                except TimeoutError:
+                    pass  # A try_lock lease can expire without an unlock.
             self._lock_holders[key] = math.inf
             try:
                 yield
@@ -544,6 +557,9 @@ class InMemoryMessageBus(
     async def unlock(self, key: str) -> None:
         """Release a ``try_lock`` claim."""
         self._lock_holders.pop(key, None)
+        released = self._lock_released.get(key)
+        if released is not None:
+            released.set()
 
     # ------------------------------------------------------------------
     # Mode F — registry map
