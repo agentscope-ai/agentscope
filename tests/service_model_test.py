@@ -150,6 +150,41 @@ class OpenAICredentialModelTest(IsolatedAsyncioTestCase):
                 )
 
 
+class CredentialWithoutChatModelTest(IsolatedAsyncioTestCase):
+    """A classifier-only credential is a caller error, not a 500."""
+
+    async def test_rejects_credential_without_chat_model(self) -> None:
+        """Both class-resolution paths report the documented ValueError."""
+        access = MagicMock(
+            resolve_credential=AsyncMock(
+                return_value=SimpleNamespace(
+                    data={
+                        "type": "typesafe_credential",
+                        "api_key": "test",
+                    },
+                ),
+            ),
+        )
+        for model_class in ("", "jev_classifier"):
+            with self.subTest(model_class=model_class):
+                with self.assertRaises(ValueError) as raised:
+                    await get_model(
+                        "user-1",
+                        ChatModelConfig(
+                            type="typesafe_credential",
+                            credential_id="cred-1",
+                            model="classifier-model",
+                            model_class=model_class,
+                            parameters={},
+                        ),
+                        access,
+                    )
+                self.assertEqual(
+                    str(raised.exception),
+                    "Credential 'cred-1' does not support chat models.",
+                )
+
+
 class GetModelContextSizeTest(IsolatedAsyncioTestCase):
     """The factory must forward the model card's ``context_size``."""
 
