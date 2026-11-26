@@ -138,13 +138,15 @@ def _make_pptx_with_alternate_content(kind: str = "text") -> bytes:
             equation). ``"picture"``: an empty text box, with a picture as
             the fallback. ``"ink"``: an ink ``p:contentPart``, with a
             picture as the fallback. ``"group"``: the ``"text"`` case inside
-            a group.
+            a group. An "embedded" picture has a text fallback, and a
+            "linked" picture has an embedded picture fallback.
 
     Returns:
         `bytes`: The PPTX file.
     """
     from lxml import etree
     from pptx import Presentation
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
     from pptx.util import Inches
 
     mc = "http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -166,6 +168,7 @@ def _make_pptx_with_alternate_content(kind: str = "text") -> bytes:
         return box.element
 
     add_text_box("Before")
+    requires = ("a14", a14)
     if kind == "ink":
         choice = etree.SubElement(
             slide.shapes.element,
@@ -173,10 +176,20 @@ def _make_pptx_with_alternate_content(kind: str = "text") -> bytes:
         )
         choice.set(f"{{{rel}}}id", "rId99")
         requires = ("p14", p14)
+    elif kind in ("embedded", "linked"):
+        choice = slide.shapes.add_picture(io.BytesIO(_PNG_PIXEL), 0, 0).element
+        if kind == "linked":
+            blip = choice.xpath(".//a:blip")[0]
+            del blip.attrib[f"{{{rel}}}embed"]
+            link_id = slide.part.relate_to(
+                "https://example.org/picture.png",
+                RT.IMAGE,
+                is_external=True,
+            )
+            blip.set(f"{{{rel}}}link", link_id)
     else:
         choice = add_text_box("" if kind == "picture" else "Growth rate")
-        requires = ("a14", a14)
-    if kind in ("picture", "ink"):
+    if kind in ("picture", "ink", "linked"):
         picture = slide.shapes.add_picture(io.BytesIO(_PNG_PIXEL), 0, 0)
         fallback = picture.element
     else:
@@ -1902,6 +1915,33 @@ class PPTParserAlternateContentTest(IsolatedAsyncioTestCase):
         ink's fallback picture instead of failing on the slide."""
         self.assertEqual(
             await self._parse("ink", slide_prefix=None, slide_suffix=None),
+            [
+                self._text_section("Before"),
+                self._picture_section(),
+                self._text_section("After"),
+            ],
+        )
+
+    async def test_picture_choice_respects_include_image(self) -> None:
+        """Use the text fallback only when the embedded image is disabled."""
+        options = {"slide_prefix": None, "slide_suffix": None}
+        self.assertEqual(
+            await self._parse("embedded", include_image=False, **options),
+            [self._text_section("Before\nFallback copy\nAfter")],
+        )
+        self.assertEqual(
+            await self._parse("embedded", **options),
+            [
+                self._text_section("Before"),
+                self._picture_section(),
+                self._text_section("After"),
+            ],
+        )
+
+    async def test_linked_picture_uses_embedded_fallback(self) -> None:
+        """A linked picture has no bytes to emit from the deck."""
+        self.assertEqual(
+            await self._parse("linked", slide_prefix=None, slide_suffix=None),
             [
                 self._text_section("Before"),
                 self._picture_section(),
