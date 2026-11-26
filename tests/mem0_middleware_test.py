@@ -391,6 +391,8 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         """Persist the structured payload instead of its status text."""
 
         class Availability(BaseModel):
+            """Structured reply containing remaining seat availability."""
+
             seats_available: int
 
         fake = _FakeAsyncMem0Client()
@@ -431,7 +433,6 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
             fake.add_calls[0]["messages"][1]["content"],
             '{"seats_available": 13}',
         )
-
 
     async def test_memory_message_lands_after_user_message(self) -> None:
         """Mirroring AgentScope 1.x's ReActAgent placement: the memory
