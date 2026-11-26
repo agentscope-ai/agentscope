@@ -2155,6 +2155,56 @@ class PPTParserAlternateContentTest(IsolatedAsyncioTestCase):
         )
 
 
+class ExcelParserValueIdentityTest(IsolatedAsyncioTestCase):
+    """Regression coverage for mixed native Excel scalar values."""
+
+    async def test_boolean_and_numeric_cells_keep_their_values(self) -> None:
+        """Equal boolean/numeric values must not overwrite one another."""
+        from openpyxl import Workbook
+
+        for values in ([True, 1, False, 0], [1, True, 0, False]):
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Value", "Other"])
+            for value in values:
+                sheet.append([value, None])
+            sheet.append([1.25, "00123"])
+            sheet.append([2.0, "#DIV/0!"])
+            sheet.append(["=1/0", "NA"])
+            payload = io.BytesIO()
+            workbook.save(payload)
+            workbook.close()
+            rows = [
+                ["Value", "Other"],
+                *[[str(value), ""] for value in values],
+                ["1.25", "00123"],
+                ["2", "#DIV/0!"],
+                ["", "NA"],
+            ]
+            for table_format in ("json", "markdown"):
+                with self.subTest(values=values, table_format=table_format):
+                    sections = await ExcelParser(
+                        table_format=table_format,
+                        include_sheet_names=False,
+                        include_image=False,
+                    ).parse(payload.getvalue(), "mixed.xlsx")
+                    text = sections[0].content.text
+                    if table_format == "json":
+                        self.assertEqual(
+                            [
+                                json.loads(line)
+                                for line in text.splitlines()[1:]
+                            ],
+                            rows,
+                        )
+                    else:
+                        expected = ["| Value | Other |", "| --- | --- |"]
+                        expected.extend(
+                            f"| {left} | {right} |" for left, right in rows[1:]
+                        )
+                        self.assertEqual(text.strip().splitlines(), expected)
+
+
 class ExcelParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`ExcelParser`."""
 

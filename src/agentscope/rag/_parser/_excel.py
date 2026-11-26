@@ -84,20 +84,22 @@ def _extract_table_data(df: Any) -> list[list[str]]:
     return rows
 
 
-def _restore_native_excel_errors(
+def _restore_native_excel_values(
     df: Any,
     excel_file: Any,
     sheet_name: str,
 ) -> None:
-    """Restore native Excel error text that pandas converted to NaN.
+    """Restore native Excel errors and boolean/numeric cell identities.
 
     The openpyxl reader maps cells of Excel type ``e`` (``#DIV/0!``,
     ``#N/A``, and the other stored error values) to NaN before
     ``dtype=object`` and ``keep_default_na=False`` can preserve them.
-    Those values are copied back from the workbook pandas already
-    opened, and only into cells that are still missing.  Blanks, text,
-    and numbers are left as pandas read them.  Formulas are not
-    evaluated, and ``.xls`` workbooks are left unchanged.
+    Error values are copied back only into missing cells. Older pandas
+    versions also intern equal object values, conflating True/1 and
+    False/0 even with dtype=object. Restore boolean and numeric values
+    from the workbook pandas already opened, retaining its integer
+    normalization. Blanks, text and dates stay as pandas read them.
+    Formulas are not evaluated; ``.xls`` workbooks are left unchanged.
 
     Args:
         df (`pandas.DataFrame`):
@@ -109,7 +111,7 @@ def _restore_native_excel_errors(
     """
     import pandas as pd
 
-    if df.empty or not df.isna().any().any():
+    if df.empty:
         return
 
     # ``sheetnames`` is openpyxl-only.  xlrd books (``.xls``) are skipped
@@ -126,16 +128,17 @@ def _restore_native_excel_errors(
         return
 
     # Local import: openpyxl is an optional RAG dependency.
-    from openpyxl.cell.cell import TYPE_ERROR
+    from openpyxl.cell.cell import TYPE_BOOL, TYPE_ERROR, TYPE_NUMERIC
 
     n_rows, n_cols = df.shape
     for row in worksheet.iter_rows():
         for cell in row:
-            # Empty padding cells use data type "n", not TYPE_ERROR.
-            if getattr(cell, "data_type", None) != TYPE_ERROR:
+            data_type = getattr(cell, "data_type", None)
+            if data_type not in (TYPE_BOOL, TYPE_ERROR, TYPE_NUMERIC):
                 continue
             value = getattr(cell, "value", None)
-            if not isinstance(value, str) or not value:
+            # Padding and uncached formula results must remain blank.
+            if value is None:
                 continue
             row_idx = getattr(cell, "row", 0) - 1
             col_idx = getattr(cell, "column", 0) - 1
@@ -146,7 +149,14 @@ def _restore_native_excel_errors(
                 or col_idx >= n_cols
             ):
                 continue
-            if pd.isna(df.iat[row_idx, col_idx]):
+            if data_type == TYPE_ERROR:
+                if isinstance(value, str) and pd.isna(
+                    df.iat[row_idx, col_idx],
+                ):
+                    df.iat[row_idx, col_idx] = value
+            else:
+                if isinstance(value, float) and value.is_integer():
+                    value = int(value)
                 df.iat[row_idx, col_idx] = value
 
 
@@ -400,14 +410,13 @@ class ExcelParser(ParserBase):
         # Keep the first row as cell data: pandas column labels would rename
         # duplicate headers and replace blank headers with "Unnamed: ...".
         if not df.empty:
-            # Pandas turns native Excel error cells into NaN.  Copy the
-            # stored error text back before those NaNs are rendered as
-            # blanks.  Other missing cells stay empty.
+            # Restore errors and distinct boolean/numeric cell values
+            # before rendering. Other missing cells stay empty.
             try:
-                _restore_native_excel_errors(df, excel_file, sheet_name)
+                _restore_native_excel_values(df, excel_file, sheet_name)
             except Exception as e:
                 logger.warning(
-                    "Failed to restore native Excel errors in sheet '%s': "
+                    "Failed to restore native Excel values in sheet '%s': "
                     "%s",
                     sheet_name,
                     e,
