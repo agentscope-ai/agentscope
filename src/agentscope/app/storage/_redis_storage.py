@@ -4,6 +4,7 @@
 
 import warnings
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any, TYPE_CHECKING, Self
 
 from pydantic import BaseModel
@@ -52,6 +53,11 @@ def _watch_error() -> type[BaseException]:
     from redis.exceptions import WatchError
 
     return WatchError
+
+
+def _index_member(value: str | bytes) -> str:
+    """Read an ID from either a text or a binary Redis connection pool."""
+    return value.decode() if isinstance(value, bytes) else value
 
 
 class RedisStorage(StorageBase):
@@ -245,6 +251,8 @@ class RedisStorage(StorageBase):
             pool = self._owned_pool
 
         self._client = aioredis.Redis(connection_pool=pool)
+        # Previously written rows may expire even if new writes have no TTL.
+        await self._backfill_document_aliases()
         return self
 
     async def aclose(self) -> None:
@@ -2204,15 +2212,12 @@ class RedisStorage(StorageBase):
         """
         # Cascade: drop every document record so the sweeper does not
         # later try to redispatch leases for a KB that no longer exists.
-        documents = await self.list_knowledge_documents(
-            user_id,
-            knowledge_base_id,
-        )
-        for document in documents:
+        index = self._document_index_key(user_id, knowledge_base_id)
+        for document_id in await self._client.smembers(index):
             await self.delete_knowledge_document(
                 user_id,
                 knowledge_base_id,
-                document.id,
+                _index_member(document_id),
             )
 
         key = self._key(
@@ -2271,6 +2276,94 @@ class RedisStorage(StorageBase):
         """Encode (user_id, kb_id, doc_id) for the global sweeper index."""
         return f"{user_id}:{knowledge_base_id}:{document_id}"
 
+    def _primary_sdk_index(self, user_id: str, kb: str) -> str:
+        """Upload IDs whose primary tilde slot is available to SDK callers."""
+        return f"{self._document_index_key(user_id, kb)}:primary_sdk_ids"
+
+    def _record_alias_layout(
+        self,
+        pipe: Any,
+        doc: KnowledgeDocumentRecord,
+    ) -> None:
+        """Commit layout evidence in the same transaction as the upload."""
+        index = self._primary_sdk_index(doc.user_id, doc.knowledge_base_id)
+        if doc.data.has_legacy_alias:
+            pipe.srem(index, doc.id)
+        else:
+            pipe.sadd(index, doc.id)
+
+    async def _backfill_document_aliases(self) -> None:
+        """Preserve known layouts before live pre-upgrade rows expire."""
+        index = self.key_config.knowledge_document_global_index
+        checkpoint = f"{index}:primary_sdk_layouts_indexed"
+        if await self._client.exists(checkpoint):
+            return
+
+        async def backfill(pipe: Any, keys: list[str]) -> None:
+            rows = await pipe.mget(keys)
+            pipe.multi()
+            for raw in rows:
+                if raw:
+                    doc = KnowledgeDocumentRecord.model_validate_json(raw)
+                    self._record_alias_layout(pipe, doc)
+
+        cursor = 0
+        while True:
+            cursor, tokens = await self._client.sscan(index, cursor, count=256)
+            keys = [
+                self._document_key(*parts)
+                for token in tokens
+                if len(parts := _index_member(token).rsplit(":", 2)) == 3
+            ]
+            if keys:
+                await self._client.transaction(
+                    partial(backfill, keys=keys),
+                    *keys,
+                )
+            if not cursor:
+                break
+        await self._client.set(checkpoint, "1")
+
+    async def get_knowledge_vector_ownership(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        ids: set[str] | None,
+    ) -> tuple[set[str], set[str]]:
+        """Reserve historical aliases without a known SDK layout."""
+        index = self._document_index_key(user_id, knowledge_base_id)
+        sdk = self._primary_sdk_index(user_id, knowledge_base_id)
+        async with self._client.pipeline(transaction=True) as pipe:
+            if ids is None:
+                pipe.smembers(index)
+                pipe.sdiff(index, sdk)
+                owned, reserved = await pipe.execute()
+                return set(map(_index_member, owned)), {
+                    f"~{_index_member(key)}" for key in reserved
+                }
+            parents = sorted(key[1:] for key in ids if key.startswith("~"))
+            keys = sorted(ids.union(parents))
+            for key in keys:
+                pipe.sismember(index, key)
+            for key in parents:
+                pipe.sismember(sdk, key)
+            result = await pipe.execute()
+        owned = {
+            key
+            for key, hit in zip(keys, result[: len(keys)], strict=True)
+            if hit
+        }
+        reserved = {
+            f"~{key}"
+            for key, free in zip(
+                parents,
+                result[len(keys) :],
+                strict=True,
+            )
+            if key in owned and not free
+        }
+        return owned & ids, reserved
+
     async def upsert_knowledge_document(
         self,
         user_id: str,
@@ -2310,19 +2403,16 @@ class RedisStorage(StorageBase):
             record.created_at = existing.created_at
         record.updated_at = datetime.now()
 
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(
-            self._document_index_key(user_id, record.knowledge_base_id),
-            record.id,
-        )
-        await self._client.sadd(
-            self.key_config.knowledge_document_global_index,
-            self._document_global_token(
-                user_id,
-                record.knowledge_base_id,
-                record.id,
-            ),
-        )
+        kb = record.knowledge_base_id
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
+            pipe.sadd(self._document_index_key(user_id, kb), record.id)
+            self._record_alias_layout(pipe, record)
+            pipe.sadd(
+                self.key_config.knowledge_document_global_index,
+                self._document_global_token(user_id, kb, record.id),
+            )
+            await pipe.execute()
         return record
 
     async def get_knowledge_document(
@@ -2356,7 +2446,11 @@ class RedisStorage(StorageBase):
         if not ids:
             return []
         keys = [
-            self._document_key(user_id, knowledge_base_id, document_id)
+            self._document_key(
+                user_id,
+                knowledge_base_id,
+                _index_member(document_id),
+            )
             for document_id in ids
         ]
         return [
@@ -2373,19 +2467,25 @@ class RedisStorage(StorageBase):
     ) -> bool:
         """Delete a document record and remove it from the indexes."""
         key = self._document_key(user_id, knowledge_base_id, document_id)
-        deleted = await self._client.delete(key)
-        await self._client.srem(
-            self._document_index_key(user_id, knowledge_base_id),
-            document_id,
-        )
-        await self._client.srem(
-            self.key_config.knowledge_document_global_index,
-            self._document_global_token(
-                user_id,
-                knowledge_base_id,
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.delete(key)
+            pipe.srem(
+                self._document_index_key(user_id, knowledge_base_id),
                 document_id,
-            ),
-        )
+            )
+            pipe.srem(
+                self._primary_sdk_index(user_id, knowledge_base_id),
+                document_id,
+            )
+            pipe.srem(
+                self.key_config.knowledge_document_global_index,
+                self._document_global_token(
+                    user_id,
+                    knowledge_base_id,
+                    document_id,
+                ),
+            )
+            deleted, *_ = await pipe.execute()
         return deleted > 0
 
     async def update_knowledge_document_status(
@@ -2429,6 +2529,7 @@ class RedisStorage(StorageBase):
                         record.data.slot_layout = "migrated"
                     record.updated_at = datetime.now()
                     pipe.multi()
+                    self._record_alias_layout(pipe, record)
                     pipe.set(key, record.model_dump_json())
                     if self.key_ttl is not None:
                         pipe.expire(key, self.key_ttl)

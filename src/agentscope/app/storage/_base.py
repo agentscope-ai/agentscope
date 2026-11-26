@@ -1166,6 +1166,20 @@ class StorageBase(ABC):
                 All knowledge base records belonging to the user.
         """
 
+    async def get_knowledge_vector_ownership(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        ids: set[str] | None,
+    ) -> tuple[set[str], set[str]]:
+        """Return upload IDs and reserved primary aliases retained after TTL.
+
+        Restrict both sets to the physical IDs requested, or return all
+        for a bulk exclusion. Stores without expiring rows need no markers.
+        """
+        del user_id, knowledge_base_id, ids
+        return set(), set()
+
     async def list_pending_knowledge_base_reindexes(
         self,
     ) -> list[KnowledgeBaseRecord]:

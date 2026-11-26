@@ -821,11 +821,27 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             after=True,
         )
 
-    async def test_cancellation_after_redis_set_preserves_source_blob(
+    async def test_cancellation_after_redis_commit_preserves_source_blob(
         self,
     ) -> None:
-        """The document SET can commit before the first index SADD."""
-        await self._assert_persisted_blob(self._fr, "sadd")
+        """An acknowledged EXEC preserves both the row and its ownership."""
+        pipe = self._fr.pipeline(transaction=True)
+        with patch.object(self._fr, "pipeline", return_value=pipe):
+            await self._assert_persisted_blob(pipe, "execute", after=True)
+        async with self._app.state.storage as storage:
+            records = await storage.list_knowledge_documents(
+                "user-1",
+                self._kb_id,
+            )
+            self.assertEqual(len(records), 1)
+            self.assertEqual(
+                await storage.get_knowledge_vector_ownership(
+                    "user-1",
+                    self._kb_id,
+                    None,
+                ),
+                ({records[0].id}, set()),
+            )
 
     async def _assert_persisted_blob(
         self,

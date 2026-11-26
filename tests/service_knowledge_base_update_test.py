@@ -39,6 +39,8 @@ from agentscope.app.storage import (
     KnowledgeBaseRecord,
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
+    RedisStorage,
+    StorageBase,
 )
 from agentscope.message import TextBlock
 from agentscope.rag import (
@@ -188,6 +190,476 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
             ),
         )
         await self._storage.upsert_knowledge_document("user-1", record)
+
+    async def test_redis_expired_upload_is_not_an_sdk_document(self) -> None:
+        """A live KB must not expose the old four chunks after row expiry."""
+        owner, kb = "user-1", self._knowledge_base_id
+        self._storage.key_ttl = 60
+        worker = IndexWorker(
+            self._storage,
+            self._service._blob_store,
+            self._manager,
+            [TextParser()],
+            "worker",
+            message_bus=self._bus,
+        )
+        await self._configure_chunk_size(1)
+        content = b"abcdefghijklmnop"
+        doc = await self._service.register_document(
+            owner,
+            kb,
+            "file.txt",
+            BytesIO(content),
+            len(content),
+            "text/plain",
+        )
+        await worker.process(owner, kb, doc.id)
+        primary = await self._manager.get_write_knowledge(owner, kb)
+        reader = await self._manager.get_published_knowledge(owner, kb)
+        self.assertEqual(len(await primary.list_chunks(doc.id)), 4)
+        await self._configure_chunk_size(4)
+        await worker.process(owner, kb, doc.id)
+        self.assertEqual(
+            [h.chunk.content.text for h in await reader.search(["query"])],
+            [content.decode()],
+        )
+        sdk_id = f"~{doc.id}"
+        sdk_chunk = Chunk(
+            content=TextBlock(text="SDK"),
+            source="sdk",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        await reader.insert_document([sdk_chunk], sdk_id)
+        await self._service.update_knowledge_base(owner, kb, name="renamed")
+        key = self._storage._document_key(owner, kb, doc.id)
+        self.assertGreater(await self._redis.ttl(key), 0)
+        await self._redis.expire(key, 0)
+        self.assertIsNone(
+            await self._storage.get_knowledge_document(owner, kb, doc.id),
+        )
+        self.assertEqual(
+            (
+                [
+                    (h.document_id, h.chunk.content.text)
+                    for h in await reader.search(["query"])
+                ],
+                [d.document_id for d in await reader.list_documents()],
+                await reader.list_chunks(doc.id),
+                await reader.list_chunks(sdk_id),
+            ),
+            ([(sdk_id, "SDK")], [sdk_id], [], [sdk_chunk]),
+        )
+
+    async def test_search_does_not_revive_chunks_during_deletion(self) -> None:
+        """Delete after the vector read and before the visibility check."""
+        owner, kb, key = "user-1", self._knowledge_base_id, "doc"
+        await self._store_document(key, "ready")
+        row = await self._storage.get_knowledge_document(owner, kb, key)
+        row.data.slot_layout = "isolated"
+        row.data.alternate_index = True
+        await self._storage.upsert_knowledge_document(owner, row)
+        primary = await self._manager.get_write_knowledge(owner, kb)
+        reader = await self._manager.get_published_knowledge(owner, kb)
+        old = [
+            Chunk(
+                content=TextBlock(text=f"old {index}"),
+                source="file",
+                chunk_index=index,
+                total_chunks=4,
+            )
+            for index in range(4)
+        ]
+        new = Chunk(
+            content=TextBlock(text="published"),
+            source="file",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        await primary.insert_document(old, key)
+        await version_knowledge(primary).insert_document([new], key)
+        self.assertEqual([h.chunk for h in await reader.search(["q"])], [new])
+        candidates = reader._candidates
+        delete = primary.vector_store.delete
+        primary_delete = asyncio.Event()
+        resume_delete = asyncio.Event()
+
+        async def pause_primary_delete(collection: str, doc_id: str) -> None:
+            if collection == primary.collection:
+                primary_delete.set()
+                await resume_delete.wait()
+            await delete(collection, doc_id)
+
+        async def finish_delete_after_read(*args: Any, **kwargs: Any) -> dict:
+            windows = await candidates(*args, **kwargs)
+            if not resume_delete.is_set():
+                self.assertEqual(windows[True], [])
+                self.assertEqual([h.chunk for h in windows[False]], old[::-1])
+                resume_delete.set()
+                await deletion
+            return windows
+
+        with patch.object(
+            primary.vector_store,
+            "delete",
+            pause_primary_delete,
+        ):
+            deletion = asyncio.create_task(
+                self._service.delete_document(owner, kb, key),
+            )
+            try:
+                await asyncio.wait_for(primary_delete.wait(), timeout=5)
+                with patch.object(
+                    reader,
+                    "_candidates",
+                    finish_delete_after_read,
+                ):
+                    during = await reader.search(["q"])
+            finally:
+                resume_delete.set()
+                await deletion
+        self.assertEqual((during, await reader.search(["q"])), ([], []))
+        await reader.insert_document([new], key)
+        self.assertEqual([h.chunk for h in await reader.search(["q"])], [new])
+
+    async def test_listing_during_deletion_discards_replaced_summary(
+        self,
+    ) -> None:
+        """Delete after the primary returns a superseded summary."""
+        owner, kb, key = "user-1", self._knowledge_base_id, "doc"
+        await self._store_document(key, "ready")
+        row = await self._storage.get_knowledge_document(owner, kb, key)
+        row.data.slot_layout = "isolated"
+        row.data.alternate_index = True
+        await self._storage.upsert_knowledge_document(owner, row)
+        primary = await self._manager.get_write_knowledge(owner, kb)
+        reader = await self._manager.get_published_knowledge(owner, kb)
+        old = Chunk(
+            content=TextBlock(text="old"),
+            source="old",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        await primary.insert_document([old], key)
+        await version_knowledge(primary).insert_document(
+            [old.model_copy(update={"source": "new"})],
+            key,
+        )
+        await reader.insert_document([old], "sdk")
+        sdk = DocumentSummary(document_id="sdk", source="old", chunk_count=1)
+        new = DocumentSummary(document_id=key, source="new", chunk_count=1)
+        self.assertCountEqual(await reader.list_documents(), [sdk, new])
+        listing = reader._primary.list_documents
+        deleted = False
+
+        async def delete_after_primary() -> list[DocumentSummary]:
+            nonlocal deleted
+            docs = await listing()
+            if not deleted:
+                self.assertIn(new.model_copy(update={"source": "old"}), docs)
+                await self._service.delete_document(owner, kb, key)
+                deleted = True
+            return docs
+
+        with patch.object(
+            reader._primary,
+            "list_documents",
+            delete_after_primary,
+        ):
+            during = await reader.list_documents()
+        self.assertEqual(
+            (deleted, during, await reader.list_documents()),
+            (True, [sdk], [sdk]),
+        )
+
+    async def test_expired_unknown_tilde_alias_is_quarantined(self) -> None:
+        """An expired old row has no evidence authorizing its primary alias."""
+        owner, kb, key = "user-1", self._knowledge_base_id, "legacy"
+        alias = f"~{key}"
+        primary = await self._manager.get_write_knowledge(owner, kb)
+        old = Chunk(
+            content=TextBlock(text="expired"),
+            source="upload",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        await primary.insert_document([old], alias)
+        # Only the old per-KB index survives. The old sweeper may already
+        # have removed the global entry, and an earlier migration may have run.
+        await self._redis.sadd(
+            self._storage._document_index_key(owner, kb),
+            key,
+        )
+        global_index = self._storage.key_config.knowledge_document_global_index
+        await self._redis.set(f"{global_index}:legacy_aliases_indexed", "1")
+        async with RedisStorage(
+            connection_pool=self._redis.connection_pool,
+            key_ttl=60,
+        ) as upgraded:
+            manager = _FakeKbManager(
+                storage=upgraded,
+                vector_store=primary.vector_store,
+            )
+            reader = await manager.get_published_knowledge(owner, kb)
+            versions = version_knowledge(primary)
+            for companion_exists in (False, True):
+                with self.subTest(companion_exists=companion_exists):
+                    if companion_exists:
+                        await versions.ensure_collection()
+                    self.assertEqual(
+                        (
+                            await reader.search(["q"]),
+                            await reader.list_documents(),
+                            await reader.list_chunks(alias),
+                            await primary.list_chunks(alias),
+                            await primary.vector_store.has_collection(
+                                versions.collection,
+                            ),
+                        ),
+                        ([], [], [], [old], companion_exists),
+                    )
+
+    async def test_upgrade_retains_primary_sdk_layout_after_expiry(
+        self,
+    ) -> None:
+        """A live isolated layout preserves its primary SDK tilde ID."""
+        owner, kb, key = "user-1", self._knowledge_base_id, "doc"
+        self._storage.key_ttl = 60
+        await self._store_document(key, "ready")
+        doc = await self._storage.get_knowledge_document(owner, kb, key)
+        doc.data.slot_layout = "isolated"
+        await self._storage.upsert_knowledge_document(owner, doc)
+        await self._redis.delete(self._storage._primary_sdk_index(owner, kb))
+        primary = await self._manager.get_write_knowledge(owner, kb)
+        sdk = Chunk(
+            content=TextBlock(text="SDK"),
+            source="sdk",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        alias = f"~{key}"
+        await primary.insert_document([sdk], alias)
+        async with RedisStorage(
+            connection_pool=self._redis.connection_pool,
+        ) as upgraded:
+            manager = _FakeKbManager(
+                storage=upgraded,
+                vector_store=primary.vector_store,
+            )
+            reader = await manager.get_published_knowledge(owner, kb)
+            await self._redis.expire(
+                self._storage._document_key(owner, kb, key),
+                0,
+            )
+            self.assertEqual(
+                (
+                    [hit.chunk for hit in await reader.search(["q"])],
+                    await reader.list_documents(),
+                    await reader.list_chunks(alias),
+                ),
+                (
+                    [sdk],
+                    [
+                        DocumentSummary(
+                            document_id=alias,
+                            source="sdk",
+                            chunk_count=1,
+                        ),
+                    ],
+                    [sdk],
+                ),
+            )
+
+    async def test_expired_legacy_alias_preserves_sdk_shadow(self) -> None:
+        """Backfill a live pre-upgrade record before its TTL elapses."""
+        await self._check_legacy_alias_upgrade(expire_first=False)
+
+    async def test_upgrade_after_legacy_alias_expired(self) -> None:
+        """Recover the companion SDK copy when the upload row is gone."""
+        await self._check_legacy_alias_upgrade(expire_first=True)
+
+    async def _check_legacy_alias_upgrade(self, expire_first: bool) -> None:
+        """Exercise both orders of expiration and migration."""
+        owner, kb, key = "user-1", self._knowledge_base_id, "legacy"
+        self._storage.key_ttl = 60
+        await self._store_document(key, "ready")
+        await self._storage.update_knowledge_document_status(
+            owner,
+            kb,
+            key,
+            "ready",
+            alternate_index=True,
+        )
+        primary = await self._manager.get_write_knowledge(owner, kb)
+        reader = await self._manager.get_published_knowledge(owner, kb)
+        old = Chunk(
+            content=TextBlock(text="upload"),
+            source="old",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        sdk = old.model_copy(
+            update={"content": TextBlock(text="SDK"), "source": "sdk"},
+        )
+        alias = f"~{key}"
+        await primary.insert_document([old], alias)
+        await reader.insert_document([sdk], alias)
+        self.assertEqual(await reader.list_chunks(key), [old])
+        await self._redis.delete(self._storage._primary_sdk_index(owner, kb))
+        record_key = self._storage._document_key(owner, kb, key)
+        if expire_first:
+            await self._redis.expire(record_key, 0)
+        async with RedisStorage(
+            connection_pool=self._redis.connection_pool,
+            key_ttl=60,
+        ) as upgraded:
+            manager = _FakeKbManager(
+                storage=upgraded,
+                vector_store=primary.vector_store,
+            )
+            reader = await manager.get_published_knowledge(owner, kb)
+            if not expire_first:
+                await self._redis.expire(record_key, 0)
+            self.assertEqual(
+                (
+                    [
+                        (h.document_id, h.chunk.content.text)
+                        for h in await reader.search(["query"])
+                    ],
+                    [
+                        (d.document_id, d.source)
+                        for d in await reader.list_documents()
+                    ],
+                    await reader.list_chunks(key),
+                    await reader.list_chunks(alias),
+                ),
+                ([(alias, "SDK")], [(alias, "sdk")], [], [sdk]),
+            )
+            await reader.delete_document(alias)
+            self.assertEqual(
+                (await reader.list_chunks(alias), await reader.search(["q"])),
+                ([], []),
+            )
+            await upgraded.delete_knowledge_base(owner, kb)
+            self.assertEqual(
+                await upgraded.get_knowledge_vector_ownership(owner, kb, None),
+                (set(), set()),
+            )
+
+    async def test_page_and_total_follow_the_same_publication(self) -> None:
+        """Both populated and empty pages follow a switch between reads."""
+        owner, kb = "user-1", self._knowledge_base_id
+        reader = await self._manager.get_published_knowledge(owner, kb)
+        primary = await self._manager.get_write_knowledge(owner, kb)
+        target = version_knowledge(primary)
+        chunk = Chunk(
+            content=TextBlock(text="new"),
+            source="note",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        await target.insert_document([chunk], "doc")
+        get_page = reader.list_chunks
+
+        async def switched(*args: Any, **kwargs: Any) -> list:
+            await self._storage.update_knowledge_document_status(
+                owner,
+                kb,
+                "doc",
+                "ready",
+                alternate_index=True,
+                chunk_count=1,
+            )
+            return await get_page(*args, **kwargs)
+
+        for page in (1, 2):
+            with self.subTest(page=page):
+                await self._store_document("doc", "ready")
+                row = await self._storage.get_knowledge_document(
+                    owner,
+                    kb,
+                    "doc",
+                )
+                row.data.begin_reindex("batch")
+                row.data.chunk_count = 4
+                await self._storage.upsert_knowledge_document(owner, row)
+                with patch.object(
+                    self._service,
+                    "_resolve_knowledge",
+                    return_value=reader,
+                ), patch.object(reader, "list_chunks", switched):
+                    result = await self._service.list_document_chunks(
+                        owner,
+                        kb,
+                        "doc",
+                        page=page,
+                        page_size=1,
+                    )
+                self.assertEqual(result, ([chunk] if page == 1 else [], 1))
+
+    async def test_metadata_edit_works_with_original_manager(self) -> None:
+        """A metadata-only update uses the original manager signature."""
+        update = self._manager.update_knowledge_base
+
+        async def legacy(
+            user_id: str,
+            knowledge_base_id: str,
+            name: str | None = None,
+            description: str | None = None,
+        ) -> KnowledgeBaseRecord | None:
+            return await update(user_id, knowledge_base_id, name, description)
+
+        with patch.object(self._manager, "update_knowledge_base", legacy):
+            await self._service.update_knowledge_base(
+                "user-1",
+                self._knowledge_base_id,
+                name="new",
+            )
+            row = await self._service.update_knowledge_base(
+                "user-1",
+                self._knowledge_base_id,
+                description="edited",
+            )
+        self.assertEqual(
+            (row.data.name, row.data.description),
+            ("new", "edited"),
+        )
+
+    async def test_rebuild_requires_batch_recovery_before_save(self) -> None:
+        """An unsupported scanner must not strand a saved reindex batch."""
+        owner, kb = "user-1", self._knowledge_base_id
+        with patch.object(
+            type(self._storage),
+            "list_pending_knowledge_base_reindexes",
+            StorageBase.list_pending_knowledge_base_reindexes,
+        ):
+            before = await self._service.update_knowledge_base(
+                owner,
+                kb,
+                chunker_config=ChunkerConfig(type="alternate_approx_token"),
+            )
+            self.assertEqual(
+                (before.data.reindex_id, before.data.reindex_pending),
+                (None, False),
+            )
+            await self._store_document("doc", "ready")
+            docs = await self._storage.list_knowledge_documents(owner, kb)
+            with self.assertRaises(HTTPException) as error:
+                await self._service.update_knowledge_base(
+                    owner,
+                    kb,
+                    chunker_config=self._original_chunker,
+                )
+        self.assertEqual(error.exception.status_code, 501)
+        self.assertEqual(
+            await self._storage.get_knowledge_base(owner, kb),
+            before,
+        )
+        self.assertEqual(
+            await self._storage.list_knowledge_documents(owner, kb),
+            docs,
+        )
+        await self._assert_dispatched([])
 
     async def test_legacy_uploads_finish_and_reindex_is_rejected(self) -> None:
         """A legacy writer can finish uploads but cannot rebuild documents."""
@@ -495,7 +967,170 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
                         texts.append([hit.chunk.content.text for hit in hits])
                     self.assertEqual(texts, [["B"], ["C"], ["C"]])
 
-    async def _configure_es_chunks(self, size: int) -> None:
+    async def test_chunk_page_discards_partial_failed_replacement(
+        self,
+    ) -> None:
+        """A delayed primary read sees a partial write before its cleanup."""
+        owner, kb = "user-1", self._knowledge_base_id
+        content = b"abcdefghijklmnop"
+        worker = IndexWorker(
+            self._storage,
+            self._service._blob_store,
+            self._manager,
+            [TextParser()],
+            "worker",
+            message_bus=self._bus,
+        )
+        await self._configure_chunk_size(1)
+        doc = await self._service.register_document(
+            owner,
+            kb,
+            "note.txt",
+            BytesIO(content),
+            len(content),
+            "text/plain",
+        )
+        key = (owner, kb, doc.id)
+        await worker.process(*key)
+        reader = await self._manager.get_published_knowledge(owner, kb)
+        read_primary = reader._primary.list_chunks
+        insert = reader.vector_store.insert
+        captured: list[Chunk] = []
+        published: list[Chunk] = []
+
+        async def delayed_page(*args: Any, **kwargs: Any) -> list[Chunk]:
+            await self._configure_chunk_size(4)
+            await worker.process(*key)
+            published.extend(await reader.list_chunks(doc.id))
+            await self._configure_chunk_size(2)
+
+            async def fail_after_one(collection: str, records: list) -> None:
+                await insert(collection, records[:1])
+                captured.extend(await read_primary(*args, **kwargs))
+                raise RuntimeError("partial write")
+
+            with patch.object(reader.vector_store, "insert", fail_after_one):
+                await worker.process(*key)
+            return captured
+
+        with patch.object(reader._primary, "list_chunks", delayed_page):
+            during = await reader.list_chunks(doc.id)
+        row = await self._storage.get_knowledge_document(*key)
+        self.assertEqual(
+            (
+                row.status,
+                row.data.error,
+                row.data.alternate_index,
+                [c.content.text for c in captured],
+                [c.content.text for c in published],
+            ),
+            (
+                "error",
+                "RuntimeError: partial write",
+                True,
+                ["abcdefgh"],
+                ["abcdefghijklmnop"],
+            ),
+        )
+        self.assertEqual(
+            (during, await reader.list_chunks(doc.id)),
+            (published, published),
+        )
+
+    async def test_chunk_pages_recheck_batch_when_primary_is_reused(
+        self,
+    ) -> None:
+        """Recheck both full and empty pages across a return to primary."""
+        owner, kb = "user-1", self._knowledge_base_id
+        reader = await self._manager.get_published_knowledge(owner, kb)
+        primary = reader._primary
+        companion = version_knowledge(primary)
+
+        def chunks(texts: list[str]) -> list[Chunk]:
+            return [
+                Chunk(
+                    content=TextBlock(text=text),
+                    source="doc",
+                    chunk_index=index,
+                    total_chunks=len(texts),
+                )
+                for index, text in enumerate(texts)
+            ]
+
+        async def check_page(old: list[str], new: list[str]) -> None:
+            key = "doc"
+            await self._store_document(key, "ready")
+            row = await self._storage.get_knowledge_document(
+                owner,
+                kb,
+                key,
+            )
+            row.data.slot_layout = "isolated"
+            await self._storage.upsert_knowledge_document(owner, row)
+            initial, final = chunks(old), chunks(new)
+            await primary.delete_document(key)
+            await primary.insert_document(initial, key)
+            read_primary = primary.list_chunks
+            pages = []
+
+            async def publish_twice(*args: Any, **kwargs: Any) -> list:
+                page = await read_primary(*args, **kwargs)
+                if not pages:
+                    for batch, target in (
+                        ("B", companion),
+                        ("C", primary),
+                    ):
+                        row.data.begin_reindex(batch)
+                        row.data.publish_index(target is companion)
+                        await target.delete_document(key)
+                        await target.insert_document(final, key)
+                        await self._storage.upsert_knowledge_document(
+                            owner,
+                            row,
+                        )
+                pages.append(page)
+                return page
+
+            with patch.object(primary, "list_chunks", publish_twice):
+                result = await reader.list_chunks(key, offset=1, limit=1)
+            self.assertEqual(
+                (pages, result),
+                ([initial[1:2], final[1:2]], final[1:2]),
+            )
+
+        # At offset one the old page can be full or out of range.
+        for old, new in ((["a", "b"], ["c"]), (["a"], ["c", "d", "e"])):
+            with self.subTest(old=old):
+                await check_page(old, new)
+
+    async def test_chunk_page_rechecks_ownership_after_upload_deletion(
+        self,
+    ) -> None:
+        """An SDK write can reuse a deleted upload's primary ID."""
+        owner, kb, key = "user-1", self._knowledge_base_id, "doc"
+        await self._store_document(key, "ready")
+        reader = await self._manager.get_published_knowledge(owner, kb)
+        old = Chunk(
+            content=TextBlock(text="upload"),
+            source="file",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        sdk = old.model_copy(update={"content": TextBlock(text="SDK")})
+        await reader._primary.insert_document([old], key)
+        read = reader._primary.list_chunks
+
+        async def replace_after_read(*args: Any, **kwargs: Any) -> list:
+            page = await read(*args, **kwargs)
+            if page == [old]:
+                await self._service.delete_document(owner, kb, key)
+                await reader.insert_document([sdk], key)
+            return page
+
+        with patch.object(reader._primary, "list_chunks", replace_after_read):
+            self.assertEqual(await reader.list_chunks(key), [sdk])
+
+    async def _configure_chunk_size(self, size: int) -> None:
         await self._service.update_knowledge_base(
             "user-1",
             self._knowledge_base_id,
@@ -524,7 +1159,7 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
         )
 
         content = b"abcdefghijklmnop"
-        await self._configure_es_chunks(1)
+        await self._configure_chunk_size(1)
         doc = await self._service.register_document(
             owner,
             kb,
@@ -546,7 +1181,7 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
             ("ready", 4, 4),
         )
         client.indices.refresh.assert_not_awaited()
-        await self._configure_es_chunks(2)
+        await self._configure_chunk_size(2)
         await worker.process(*key)
         row = await self._storage.get_knowledge_document(*key)
         self.assertEqual((row.status, row.data.chunk_count), ("ready", 2))
@@ -569,7 +1204,7 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
             return await client.refresh_index(index)
 
         client.indices.refresh.side_effect = refresh
-        await self._configure_es_chunks(4)
+        await self._configure_chunk_size(4)
         task = asyncio.create_task(worker.process(*key))
         try:
             await asyncio.wait_for(refreshing.wait(), 3)
@@ -599,7 +1234,7 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
         )
 
         # A failed pre-delete refresh must leave both slots untouched.
-        await self._configure_es_chunks(2)
+        await self._configure_chunk_size(2)
         client.delete_by_query.reset_mock()
         client.bulk.reset_mock()
         client.indices.refresh.side_effect = None

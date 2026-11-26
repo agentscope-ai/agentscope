@@ -208,6 +208,10 @@ class QdrantMetricTest(IsolatedAsyncioTestCase):
                         ),
                     )
                     storage = AsyncMock()
+                    storage.get_knowledge_vector_ownership.return_value = (
+                        set(),
+                        set(),
+                    )
                     storage.get_knowledge_document.side_effect = (
                         lambda _owner, _kb, key, row=far: (
                             row if key == row.id else None

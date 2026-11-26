@@ -377,16 +377,20 @@ class KnowledgeBaseService:
                         ),
                     )
                 if documents:
-                    self._require_index_publication()
+                    await self._require_recoverable_reindex()
                     reindex_id = uuid.uuid4().hex
 
+        options = {}
+        if chunker_config is not None:
+            options["chunker_config"] = chunker_config
+        if reindex_id is not None:
+            options["reindex_id"] = reindex_id
         record = await self._manager.update_knowledge_base(
             user_id=owner_id,
             knowledge_base_id=knowledge_base_id,
             name=name,
             description=description,
-            chunker_config=chunker_config,
-            reindex_id=reindex_id,
+            **options,
         )
         if record is None:
             raise HTTPException(
@@ -407,6 +411,17 @@ class KnowledgeBaseService:
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
                 detail="Storage cannot publish an index with a lease check.",
             )
+
+    async def _require_recoverable_reindex(self) -> None:
+        """Check both publication and crash recovery before saving a batch."""
+        self._require_index_publication()
+        try:
+            await self._storage.list_pending_knowledge_base_reindexes()
+        except NotImplementedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="Storage cannot recover reindex batches.",
+            ) from exc
 
     def _validate_chunker_config(
         self,
@@ -815,8 +830,7 @@ class KnowledgeBaseService:
         """List one page of a document's chunks in ``chunk_index`` order.
 
         ``page`` / ``page_size`` translate to the dense-``chunk_index``
-        slice ``[(page - 1) * page_size, page * page_size)`` — stable
-        under concurrent writes because chunk indices never move.  The
+        slice ``[(page - 1) * page_size, page * page_size)``. The
         total comes from the document record's ``chunk_count`` rather
         than a vector-store count, so a document that is still
         indexing reports the chunks persisted so far with a total
@@ -851,21 +865,29 @@ class KnowledgeBaseService:
             document_id,
         )
         knowledge = await self._resolve_knowledge(user_id, knowledge_base_id)
-        try:
-            chunks = await knowledge.list_chunks(
+        while True:
+            before = document.data.model_copy()
+            try:
+                chunks = await knowledge.list_chunks(
+                    document_id,
+                    offset=(page - 1) * page_size,
+                    limit=page_size,
+                )
+            except NotImplementedError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail=(
+                        "The configured vector store does not support "
+                        "chunk listing."
+                    ),
+                ) from exc
+            document = await self.get_document(
+                user_id,
+                knowledge_base_id,
                 document_id,
-                offset=(page - 1) * page_size,
-                limit=page_size,
             )
-        except NotImplementedError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                detail=(
-                    "The configured vector store does not support "
-                    "chunk listing."
-                ),
-            ) from exc
-        return chunks, document.data.chunk_count
+            if document.data == before:
+                return chunks, document.data.chunk_count
 
     async def stream_document_content(
         self,

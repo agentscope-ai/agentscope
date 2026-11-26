@@ -2,6 +2,8 @@
 """Resolve hosted document IDs to their last fully published vectors."""
 
 import asyncio
+from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ....rag import KnowledgeBase
@@ -13,49 +15,114 @@ if TYPE_CHECKING:
     from ...storage import KnowledgeDocumentRecord, StorageBase
 
 
-def _visible_id(
-    alternate: bool,
-    key: str,
-    records: dict[str, "KnowledgeDocumentRecord"],
-    retired: set[str],
-) -> str | None:
-    """Resolve a physical hit using the upload's publication record."""
-    record = records.get(key)
-    if record:
-        data = record.data
-        if data.vector_id(key) == key and data.alternate_index == alternate:
-            return key
-        return None
-    if key.startswith("~"):
-        owner = records.get(key[1:])
-        if owner and owner.data.has_legacy_alias:
-            if not alternate and owner.data.vector_id(owner.id) == key:
-                return owner.id
-            return key if alternate else None
-    return key if alternate == (key in retired) else None
+@dataclass(frozen=True)
+class _DocumentAddress:
+    """Physical page location and the upload generation that selected it."""
+
+    handle: KnowledgeBase | None
+    physical_id: str
+    upload_created_at: datetime | None = None
+    reindex_id: str | None = None
 
 
-def _inactive_slots(
-    records: dict[str, "KnowledgeDocumentRecord"],
-    retired: set[str],
-    collections: set[bool],
-) -> set[tuple[bool, str]]:
-    """Build document filters for the collections that need more hits."""
-    ids = (
-        records.keys()
-        | retired
-        | {
-            f"~{row.id}"
-            for row in records.values()
-            if row.data.has_legacy_alias
+@dataclass
+class _Publications:
+    """One observation of upload records and surviving ownership markers."""
+
+    records: dict[str, "KnowledgeDocumentRecord"]
+    expired: set[str]
+    retired: set[str]
+    queried: set[str] | None
+
+    def visible_id(self, alternate: bool, key: str) -> str | None:
+        """Resolve a physical hit using the upload's publication record."""
+        if key in self.expired:
+            return None
+        record = self.records.get(key)
+        if record:
+            data = record.data
+            if (
+                data.vector_id(key) == key
+                and data.alternate_index == alternate
+            ):
+                return key
+            return None
+        if key.startswith("~"):
+            owner = self.records.get(key[1:])
+            if owner and owner.data.has_legacy_alias:
+                if not alternate and owner.data.vector_id(owner.id) == key:
+                    return owner.id
+                return key if alternate else None
+        return key if alternate == (key in self.retired) else None
+
+    def confirms_hit(
+        self,
+        previous: "_Publications | None",
+        lane: bool,
+        key: str,
+        logical: str,
+    ) -> bool:
+        """Check ownership on both sides of a reusable or SDK slot read."""
+        row = self.records.get(logical)
+        if (
+            row
+            and not row.data.alternate_index
+            and row.data.reindex_id is None
+        ):
+            return True
+        if previous is None or (
+            previous.queried is not None and key not in previous.queried
+        ):
+            return False
+        if previous.visible_id(lane, key) != logical:
+            return False
+        prior = previous.records.get(logical)
+        if row and prior:
+            return row.data.reindex_id == prior.data.reindex_id
+        return row is None and prior is None
+
+    def physical_ids(self) -> set[str]:
+        """Return physical IDs whose default SDK routing can be overridden."""
+        return (
+            self.records.keys()
+            | self.expired
+            | self.retired
+            | {
+                f"~{row.id}"
+                for row in self.records.values()
+                if row.data.has_legacy_alias
+            }
+        )
+
+    def summary_versions(
+        self,
+        alternate: bool,
+    ) -> dict[str, tuple[str, str | None] | None]:
+        """Track publication changes that invalidate collection summaries."""
+        versions: dict[str, tuple[str, str | None] | None] = {}
+        for key in self.physical_ids():
+            logical = self.visible_id(alternate, key)
+            if logical is None:
+                if not alternate:
+                    versions[key] = None
+            else:
+                row = self.records.get(logical)
+                if row or alternate:
+                    versions[key] = (
+                        logical,
+                        row.data.reindex_id if row else None,
+                    )
+        return versions
+
+    def inactive_slots(self, collections: set[bool]) -> set[tuple[bool, str]]:
+        """Exclude all inactive or expired uploads in a single refill."""
+        ids = self.physical_ids()
+        return {
+            (lane, key)
+            for lane in collections
+            for key in ids
+            if self.visible_id(lane, key) is None
         }
-    )
-    return {
-        (lane, key)
-        for lane in collections
-        for key in ids
-        if _visible_id(lane, key, records, retired) is None
-    }
 
 
 class PublishedKnowledge(KnowledgeBase):
@@ -83,38 +150,31 @@ class PublishedKnowledge(KnowledgeBase):
         self._primary = knowledge
         self._versions = version_knowledge(knowledge)
 
-    async def _retired(self) -> set[str]:
-        kb = await self._storage.get_knowledge_base(self._owner, self._kb_id)
-        return kb.data.retired_vector_aliases if kb else set()
-
-    async def _address(self, document_id: str) -> tuple[KnowledgeBase, str]:
-        record = await self._storage.get_knowledge_document(
-            self._owner,
-            self._kb_id,
-            document_id,
-        )
+    async def _address(
+        self,
+        document_id: str,
+    ) -> _DocumentAddress:
+        view = await self._publications({document_id})
+        if document_id in view.expired:
+            return _DocumentAddress(None, document_id)
+        record = view.records.get(document_id)
         if record:
             data = record.data
-            if data.alternate_index and data.slot_layout != "legacy":
-                return self._versions, document_id
-            return self._primary, data.vector_id(document_id)
-        if document_id.startswith("~"):
-            owner = await self._storage.get_knowledge_document(
-                self._owner,
-                self._kb_id,
-                document_id[1:],
+            alternate = data.alternate_index and data.slot_layout != "legacy"
+            return _DocumentAddress(
+                self._versions if alternate else self._primary,
+                data.vector_id(document_id),
+                record.created_at,
+                data.reindex_id,
             )
-            if (
-                owner and owner.data.has_legacy_alias
-            ) or document_id in await self._retired():
-                return self._versions, document_id
-        return self._primary, document_id
+        if view.visible_id(True, document_id) is not None:
+            return _DocumentAddress(self._versions, document_id)
+        return _DocumentAddress(self._primary, document_id)
 
     async def _records(
         self,
         ids: set[str],
     ) -> dict[str, "KnowledgeDocumentRecord"]:
-        logical = ids | {key[1:] for key in ids if key.startswith("~")}
         records = await asyncio.gather(
             *(
                 self._storage.get_knowledge_document(
@@ -122,7 +182,7 @@ class PublishedKnowledge(KnowledgeBase):
                     self._kb_id,
                     key,
                 )
-                for key in logical
+                for key in ids
             ),
         )
         return {record.id: record for record in records if record}
@@ -185,19 +245,49 @@ class PublishedKnowledge(KnowledgeBase):
         ids = {doc.document_id for doc in docs}
         if not ids:
             return False
-        records = await self._records(ids)
-        retired = await self._retired()
-        return any(
-            _visible_id(True, key, records, retired) is not None for key in ids
-        )
+        view = await self._publications(ids)
+        return any(view.visible_id(True, key) is not None for key in ids)
 
-    async def _all_records(self) -> dict[str, "KnowledgeDocumentRecord"]:
-        """Load the current publication map for a bulk exclusion."""
-        records = await self._storage.list_knowledge_documents(
-            self._owner,
-            self._kb_id,
-        )
-        return {record.id: record for record in records}
+    async def _publications(
+        self,
+        ids: set[str],
+        *,
+        bulk: bool = False,
+    ) -> _Publications:
+        """Resolve durable ownership for candidates missing a live record."""
+        if bulk:
+            rows = await self._storage.list_knowledge_documents(
+                self._owner,
+                self._kb_id,
+            )
+            records = {row.id: row for row in rows}
+            missing = None
+        else:
+            logical = ids | {key[1:] for key in ids if key.startswith("~")}
+            records = await self._records(logical)
+            missing = logical - records.keys()
+        owned, retired = set(), set()
+        if missing is None or missing:
+            (
+                owned,
+                retired,
+            ) = await self._storage.get_knowledge_vector_ownership(
+                self._owner,
+                self._kb_id,
+                missing,
+            )
+        # Live rows describe their own layout. An unclassified expired
+        # upload reserves its primary tilde slot just like a known old alias.
+        retired = {key for key in retired if key[1:] not in records}
+        if bulk or any(key.startswith("~") for key in ids):
+            kb = await self._storage.get_knowledge_base(
+                self._owner,
+                self._kb_id,
+            )
+            if kb:
+                retired = retired | kb.data.retired_vector_aliases
+        expired = owned - records.keys()
+        return _Publications(records, expired, retired, None if bulk else ids)
 
     async def _search_vector(
         self,
@@ -211,11 +301,11 @@ class PublishedKnowledge(KnowledgeBase):
         refreshed_destinations: set[bool] = set()
         refill = {True, False}
         windows: dict[bool, list[VectorSearchResult]] = {}
-        publications: dict[str, tuple[bool, str | None]] = {}
-        before_read: dict[bool, dict[str, tuple[bool, str | None]]] = {}
+        view: _Publications | None = None
+        before_read: dict[bool, _Publications | None] = {}
         while True:
             for lane in refill:
-                before_read[lane] = publications
+                before_read[lane] = view
             windows.update(
                 await self._candidates(vector, top_k, excluded, refill),
             )
@@ -226,23 +316,8 @@ class PublishedKnowledge(KnowledgeBase):
             ]
             keys = {key for key, _ in candidates} | excluded
             ids = {key for _, key in keys}
-            records = (
-                await self._all_records() if bulk else await self._records(ids)
-            )
-            publications = {
-                key: (row.data.alternate_index, row.data.reindex_id)
-                for key, row in records.items()
-                if row.data.alternate_index or row.data.reindex_id is not None
-            }
-            retired = (
-                await self._retired()
-                if any(key.startswith("~") for key in ids)
-                else set()
-            )
-            visible = {
-                (lane, key): _visible_id(lane, key, records, retired)
-                for lane, key in keys
-            }
+            view = await self._publications(ids, bulk=bulk)
+            visible = {addr: view.visible_id(*addr) for addr in keys}
             hidden = {addr for addr, _ in candidates if visible[addr] is None}
             published = {
                 addr for addr in excluded if visible[addr] is not None
@@ -278,22 +353,22 @@ class PublishedKnowledge(KnowledgeBase):
             destinations = {
                 not lane
                 for lane, key in hidden
-                if _visible_id(not lane, key, records, retired) is not None
+                if view.visible_id(not lane, key) is not None
             } - refreshed_destinations
             refill.update(destinations)
             refreshed_destinations.update(destinations)
-            # For a reusable slot, bracket the candidate read with the same
-            # published slot and rebuild batch. Its score and index can stay
-            # identical across writes even when its content changes.
             for (lane, key), _ in ranked:
                 logical = visible[lane, key]
-                if logical in publications and (
-                    before_read[lane].get(logical) != publications[logical]
-                ):
+                assert logical is not None
+                prior = before_read[lane]
+                if not view.confirms_hit(prior, lane, key, logical):
                     refill.add(lane)
-                    # Approximate search can return different tied documents
-                    # on each read. Cover unseen winners together next time.
-                    if before_read[lane] and logical not in before_read[lane]:
+                    # Approximate search may return a different tied winner.
+                    if (
+                        prior
+                        and prior.queried is not None
+                        and key not in prior.queried
+                    ):
                         bulk = True
             if not refill:
                 return [
@@ -304,12 +379,11 @@ class PublishedKnowledge(KnowledgeBase):
             # If the score bound is insufficient, exclude known inactive
             # uploads together after the first targeted refill misses.
             if excluded and not bulk:
-                records = await self._all_records()
-                retired = await self._retired()
+                view = await self._publications(ids, bulk=True)
                 bulk = True
             excluded.update(hidden)
             if bulk:
-                excluded.update(_inactive_slots(records, retired, refill))
+                excluded.update(view.inactive_slots(refill))
 
     async def list_chunks(
         self,
@@ -319,21 +393,23 @@ class PublishedKnowledge(KnowledgeBase):
         limit: int = 30,
     ) -> list["Chunk"]:
         """Read the published page, retrying a concurrent slot switch."""
-        handle, published = await self._address(document_id)
-        chunks = await handle.list_chunks(
-            published,
-            offset=offset,
-            limit=limit,
-        )
-        if not chunks:
-            current_handle, current = await self._address(document_id)
-            if (current_handle, current) != (handle, published):
-                return await current_handle.list_chunks(
-                    current,
+        address = await self._address(document_id)
+        while address.handle is not None:
+            handle = address.handle
+            chunks = []
+            if handle is not self._versions or (
+                await self.vector_store.has_collection(handle.collection)
+            ):
+                chunks = await handle.list_chunks(
+                    address.physical_id,
                     offset=offset,
                     limit=limit,
                 )
-        return chunks
+            current = await self._address(document_id)
+            if current == address:
+                return chunks
+            address = current
+        return []
 
     async def insert_document(
         self,
@@ -348,29 +424,54 @@ class PublishedKnowledge(KnowledgeBase):
                 None,
                 document_metadata,
             )
-        handle, published = await self._address(document_id)
-        await handle.insert_document(chunks, published, document_metadata)
+        address = await self._address(document_id)
+        if address.handle is None:
+            raise ValueError(
+                f"Document ID {document_id!r} belongs to an expired upload.",
+            )
+        await address.handle.insert_document(
+            chunks,
+            address.physical_id,
+            document_metadata,
+        )
         return document_id
 
     async def delete_document(self, document_id: str) -> None:
         """Delete the published chunks of a logical document."""
-        handle, published = await self._address(document_id)
-        await handle.delete_document(published)
+        address = await self._address(document_id)
+        if address.handle is not None:
+            await address.handle.delete_document(address.physical_id)
 
     async def list_documents(self) -> list[DocumentSummary]:
         """Expose one summary per published logical document."""
-        docs = [(False, doc) for doc in await self._primary.list_documents()]
-        if await self.vector_store.has_collection(self._versions.collection):
-            docs.extend(
-                (True, doc) for doc in await self._versions.list_documents()
-            )
-        by_id = await self._all_records()
-        retired = await self._retired()
+        view = await self._publications(set(), bulk=True)
+        collections = [False, True]
+        docs: dict[bool, list[DocumentSummary]] = {}
+        while collections:
+            for alternate in collections:
+                if not alternate:
+                    docs[False] = await self._primary.list_documents()
+                elif await self.vector_store.has_collection(
+                    self._versions.collection,
+                ):
+                    docs[True] = await self._versions.list_documents()
+                else:
+                    docs[True] = []
+            current = await self._publications(set(), bulk=True)
+            collections = [
+                lane
+                for lane in docs
+                if view.summary_versions(lane)
+                != current.summary_versions(lane)
+            ]
+            view = current
+
         summaries = []
-        for alternate, doc in docs:
-            logical = _visible_id(alternate, doc.document_id, by_id, retired)
-            if logical is not None:
-                summaries.append(
-                    doc.model_copy(update={"document_id": logical}),
-                )
+        for lane, documents in docs.items():
+            for doc in documents:
+                logical = view.visible_id(lane, doc.document_id)
+                if logical is not None:
+                    summaries.append(
+                        doc.model_copy(update={"document_id": logical}),
+                    )
         return summaries
