@@ -24,6 +24,7 @@
 		"editLoadFailed": "Could not load editable content. Please try again.",
 		"editTooLarge": "Editing and saving are limited to 2 MiB. Reduce the content or use a local editor.",
 		"saveFailed": "Could not save. Your changes are preserved; please try again.",
+		"saveUnconfirmed": "Could not confirm the save. Your draft is still here. Copy any changes you want to keep, then reload the file to check what was saved.",
 		"editConflict": "The file was changed elsewhere. Your draft is preserved. Copy any changes you want to keep before reloading.",
 		"reloadFile": "Reload file",
 		"fileUpdated": "The workspace file has changed. Your current content is preserved. Reload to view the latest version.",

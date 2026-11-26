@@ -14,13 +14,15 @@ import json
 import ntpath
 import os
 import posixpath
+import stat
+import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import AsyncIterator
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest import IsolatedAsyncioTestCase, skipUnless
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI, HTTPException, status
 from httpx import ASGITransport, AsyncClient
@@ -56,9 +58,11 @@ from agentscope.app.storage import (
 )
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.state import AgentState
-from agentscope.tool import BackendBase, DirEntry, ExecResult, LocalBackend
+from agentscope.tool import BackendBase, DirEntry, Edit, ExecResult
+from agentscope.tool import LocalBackend, Read
 from agentscope.tool._builtin._backend import PathResolutionUnavailable
-from agentscope.workspace import LocalWorkspace
+from agentscope.workspace import DockerBackend, K8sBackend, LocalWorkspace
+from agentscope.workspace._overwrite import WriteUnconfirmedError
 
 SECRET = "test-signing-secret"
 
@@ -94,6 +98,7 @@ class _FakeBackend:
     dirname = BackendBase.dirname
     isabs = BackendBase.isabs
     abspath = BackendBase.abspath
+    overwrite_file = BackendBase.overwrite_file
 
     def __init__(self, files: dict[str, bytes] | None = None) -> None:
         self._files: dict[str, bytes] = {}
@@ -842,16 +847,20 @@ class _WorkspaceTextFixture(_WorkspaceEndpointTestBase):
         revision: str,
         **kwargs: str,
     ) -> TextFileSnapshot:
-        """Save through the endpoint with a required revision."""
+        """Save with the fixture's resolved path unless a snapshot is given."""
+        path = kwargs.get("path", "notes.txt")
         return await save_workspace_text(
             body=TextFileSaveRequest(
                 text=text,
                 revision=revision,
-                expected_path=kwargs.get("expected_path"),
+                expected_path=kwargs.get(
+                    "expected_path",
+                    self._backend.abspath(path, cwd=self._workspace.workdir),
+                ),
             ),
             agent_id=kwargs.get("agent_id", "a"),
             session_id=kwargs.get("session_id", "s"),
-            path=kwargs.get("path", "notes.txt"),
+            path=path,
             user_id=kwargs.get("user_id", "u"),
             workspace_service=self._service,
         )
@@ -859,6 +868,29 @@ class _WorkspaceTextFixture(_WorkspaceEndpointTestBase):
 
 class WorkspaceTextEndpointTests(_WorkspaceTextFixture):
     """Validate revision-checked editing with an in-memory backend."""
+
+    async def test_unconfirmed_save_returns_no_revision(self) -> None:
+        """Unacknowledged writes return an actionable error to the UI."""
+        original = await self._text()
+        with (
+            patch.object(
+                self._backend,
+                "overwrite_file",
+                side_effect=WriteUnconfirmedError(original.path),
+            ),
+            self.assertRaises(HTTPException) as ctx,
+        ):
+            await self._save("draft", original.revision)
+        self.assertEqual(
+            (ctx.exception.status_code, ctx.exception.detail),
+            (
+                502,
+                {
+                    "code": "save_unconfirmed",
+                    "message": "Save unconfirmed. Reload to check the file.",
+                },
+            ),
+        )
 
     async def test_http_text_contract(self) -> None:
         """HTTP validation, authorization and conflict codes are preserved."""
@@ -884,11 +916,16 @@ class WorkspaceTextEndpointTests(_WorkspaceTextFixture):
                 (response.status_code, original),
                 (200, (await self._text()).model_dump()),
             )
+            preconditions = {
+                "revision": original["revision"],
+                "expected_path": original["path"],
+            }
             for body, expected in (
-                ({"text": "draft"}, 422),
-                ({"text": "draft", "revision": "bad"}, 422),
-                ({"text": "draft", "revision": original["revision"]}, 200),
-                ({"text": "late", "revision": original["revision"]}, 409),
+                ({"text": "draft", "expected_path": original["path"]}, 422),
+                ({"text": "draft", **preconditions, "revision": "bad"}, 422),
+                ({"text": "draft", "revision": original["revision"]}, 422),
+                ({"text": "draft", **preconditions}, 200),
+                ({"text": "late", **preconditions}, 409),
             ):
                 response = await client.put(
                     "/workspace/files/text",
@@ -913,7 +950,7 @@ class WorkspaceTextEndpointTests(_WorkspaceTextFixture):
             response = await client.put(
                 "/workspace/files/text",
                 params={**params, "token": "download-only"},
-                json={"text": "bad", "revision": original["revision"]},
+                json={"text": "bad", **preconditions},
             )
             self.assertEqual(response.status_code, 422)
         self.assertEqual(
@@ -1161,7 +1198,11 @@ class WorkspaceTextEndpointTests(_WorkspaceTextFixture):
             ("a" * (MAX_EDIT_BYTES + 1), "a" * 64),
         ):
             with self.assertRaises(ValidationError):
-                TextFileSaveRequest(text=text, revision=revision)
+                TextFileSaveRequest(
+                    text=text,
+                    revision=revision,
+                    expected_path="/workspace/notes.txt",
+                )
 
 
 class WorkspaceEditorSafetyTests(_WorkspaceTextFixture):
@@ -1209,7 +1250,7 @@ class WorkspaceEditorSafetyTests(_WorkspaceTextFixture):
                     await self._save("bad", "a" * 64, path=path)
                 self.assertEqual(
                     (ctx.exception.status_code, ctx.exception.detail["code"]),
-                    (403, "outside_edit_roots"),
+                    (409, "path_changed"),
                 )
                 # Excluding cwd must not revoke the configured workspace.
                 inside = await self._service.file_edit_access(
@@ -1377,7 +1418,7 @@ class WorkspaceEditorSafetyTests(_WorkspaceTextFixture):
                 saved.revision,
                 path="/elsewhere/outside.txt",
             )
-        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(ctx.exception.status_code, 409)
 
     async def test_edit_access_http_contract(self) -> None:
         """Access hints share server policy and cannot grant a client cwd."""
@@ -1432,7 +1473,11 @@ class WorkspaceEditorSafetyTests(_WorkspaceTextFixture):
                     "path": "notes.txt",
                 },
                 headers={"X-User-ID": "u"},
-                json={"text": "a\r\nb\n", "revision": "a" * 64},
+                json={
+                    "text": "a\r\nb\n",
+                    "revision": "a" * 64,
+                    "expected_path": "/workspace/notes.txt",
+                },
             )
             self.assertEqual(
                 (response.status_code, response.json()),
@@ -1552,13 +1597,13 @@ class WorkspaceEditorSafetyTests(_WorkspaceTextFixture):
             "../elsewhere/outside.txt",
             "/workspace-other/file.txt",
         ):
-            for operation in (
-                self._text(path),
-                self._save("bad", revision, path=path),
+            for operation, expected in (
+                (self._text(path), 403),
+                (self._save("bad", revision, path=path), 409),
             ):
                 with self.assertRaises(HTTPException) as ctx:
                     await operation
-                self.assertEqual(ctx.exception.status_code, 403)
+                self.assertEqual(ctx.exception.status_code, expected)
         with patch.object(
             self._backend,
             "realpath",
@@ -1577,7 +1622,7 @@ class WorkspaceEditorSafetyTests(_WorkspaceTextFixture):
                 ctx.exception.status_code,
                 await self._backend.read_file("/elsewhere/outside.txt"),
             ),
-            (403, b"outside the workspace"),
+            (409, b"outside the workspace"),
         )
 
     async def test_save_rejects_different_target_with_same_content(
@@ -1790,6 +1835,85 @@ class WorkspaceEditorSafetyTests(_WorkspaceTextFixture):
 class WorkspaceEditorLocalPathTests(_WorkspaceTextFixture):
     """Validate containment against the real local filesystem."""
 
+    @skipUnless(os.name == "posix", "requires POSIX executable modes")
+    async def test_container_save_invalidates_agent_read(self) -> None:
+        """Exercise both container commands on a real executable file."""
+        with tempfile.TemporaryDirectory() as root:
+            local = LocalWorkspace(workdir=root)
+            backend = local.get_backend()
+            target = Path(root).resolve() / "script with spaces.py"
+            path = str(target)
+
+            def run(cmd: list[str], data: bytes) -> None:
+                subprocess.run(cmd, input=data, check=True)
+
+            async def pod_stdin(
+                cmd: list[str],
+                chunks: list[bytes],
+                dest: str,
+            ) -> None:
+                self.assertEqual(dest, path)
+                await asyncio.to_thread(run, cmd, b"".join(chunks))
+
+            container = AsyncMock()
+            process = MagicMock()
+            container.exec.return_value = process
+            stream = process.start.return_value.__aenter__.return_value
+            process.inspect = AsyncMock(return_value={"ExitCode": 0})
+
+            async def docker_stdin(data: bytes) -> None:
+                cmd = container.exec.await_args.kwargs["cmd"]
+                await asyncio.to_thread(run, cmd, data)
+
+            stream.write_in.side_effect = docker_stdin
+            stream.read_out.return_value = None
+            pod = K8sBackend(None, "ns", "pod", "container", root)
+            docker = DockerBackend(container, root)
+            with (
+                patch.object(pod, "_exec_ws_stdin", pod_stdin),
+                patch.object(self._wm, "get_workspace", return_value=local),
+            ):
+                for writer in (pod, docker):
+                    with (
+                        self.subTest(backend=type(writer).__name__),
+                        patch.object(
+                            backend,
+                            "overwrite_file",
+                            writer.overwrite_file,
+                        ),
+                    ):
+                        target.write_bytes(b"original script\n")
+                        target.chmod(0o755)
+                        os.utime(target, (0, 0))
+                        state = AgentState()
+                        await Read(backend=backend)(
+                            file_path=path,
+                            _agent_state=state,
+                        )
+                        cached = await state.tool_context.get_cache(
+                            path,
+                            mtime=0,
+                        )
+                        self.assertEqual(cached.lines, ["original script\n"])
+                        snapshot = await self._text(path)
+                        await self._save("web\n", snapshot.revision, path=path)
+                        result = await Edit(backend=backend)(
+                            file_path=path,
+                            old_string="original",
+                            new_string="stale",
+                            _agent_state=state,
+                        )
+                        info = target.stat()
+                        self.assertEqual(
+                            (
+                                stat.S_IMODE(info.st_mode),
+                                info.st_mtime != 0,
+                                result.state,
+                                target.read_bytes(),
+                            ),
+                            (0o755, True, "error", b"web\n"),
+                        )
+
     async def test_project_symlink_roots_and_escapes(self) -> None:
         """Allow cwd aliases and reject links escaping both roots."""
         with tempfile.TemporaryDirectory() as directory:
@@ -1815,7 +1939,12 @@ class WorkspaceEditorLocalPathTests(_WorkspaceTextFixture):
                 AsyncMock(return_value=LocalWorkspace(workdir=str(root))),
             ):
                 original = await self._text(str(target))
-                await self._save("after", original.revision, path=str(target))
+                await self._save(
+                    "after",
+                    original.revision,
+                    path=str(target),
+                    expected_path=original.path,
+                )
                 access = await self._service.file_edit_access(
                     "u",
                     "a",
@@ -1866,7 +1995,7 @@ class WorkspaceEditorLocalPathTests(_WorkspaceTextFixture):
                             hashlib.sha256(b"outside").hexdigest(),
                             path=path,
                         )
-                    self.assertEqual(ctx.exception.status_code, 403)
+                    self.assertEqual(ctx.exception.status_code, 409)
                 original = await self._text("alias.txt")
                 saved = await self._save(
                     "updated",
@@ -1888,59 +2017,77 @@ class WorkspaceEditorLocalPathTests(_WorkspaceTextFixture):
             )
 
     async def test_local_workspaces_share_file_locks(self) -> None:
-        """Distinct local workspaces referencing one path share the lock."""
+        """Hard links and case aliases share one local save lock."""
         with tempfile.TemporaryDirectory() as root:
-            target = Path(root) / "file.txt"
+            target = Path(root).resolve() / "Notes.txt"
             target.write_text("original")
-            first = LocalWorkspace(workdir=root)
-            second = LocalWorkspace(workdir=root)
-            entered, release = asyncio.Event(), asyncio.Event()
-            original_write = first.get_backend().write_file
+            link = target.with_name("hard-link.txt")
+            os.link(target, link)
+            aliases = [link]
+            case_alias = target.with_name("notes.txt")
+            if case_alias.exists() and case_alias.samefile(target):
+                aliases.append(case_alias)
+            for alias in aliases:
+                with self.subTest(alias=alias.name):
+                    target.write_text("original")
+                    await self._check_alias_saves(target, alias)
 
-            async def slow_write(path: str, data: bytes) -> None:
-                entered.set()
-                await release.wait()
-                await original_write(path, data)
+    async def _check_alias_saves(self, target: Path, alias: Path) -> None:
+        """Pause the first writer until the second reaches its lock."""
+        root = str(target.parent)
+        first = LocalWorkspace(workdir=root)
+        second = LocalWorkspace(workdir=root)
+        entered, release = asyncio.Event(), asyncio.Event()
+        write = first.get_backend().write_file
 
-            with (
-                patch.object(
-                    first.get_backend(),
-                    "write_file",
-                    slow_write,
-                ),
-                patch.object(
-                    self._wm,
-                    "get_workspace",
-                    AsyncMock(side_effect=[first, first, second]),
-                ),
-            ):
-                original = await self._text(str(target))
-                first_save = asyncio.create_task(
-                    self._save(
-                        "first",
-                        original.revision,
-                        path=str(target),
-                    ),
-                )
-                second_save = None
-                try:
-                    await asyncio.wait_for(entered.wait(), 1)
-                    second_save = asyncio.create_task(
-                        self._save(
-                            "second",
-                            original.revision,
-                            path=str(target),
-                        ),
+        async def slow_write(path: str, data: bytes) -> None:
+            entered.set()
+            await release.wait()
+            await write(path, data)
+
+        with (
+            patch.object(first.get_backend(), "write_file", slow_write),
+            patch.object(
+                self._wm,
+                "get_workspace",
+                AsyncMock(side_effect=[first, second, first, second]),
+            ),
+        ):
+            original = await self._text(str(target))
+            alternate = await self._text(str(alias))
+            first_save = asyncio.create_task(
+                self._save("first", original.revision, path=original.path),
+            )
+            await asyncio.wait_for(entered.wait(), 2)
+            acquire_lock = asyncio.Lock.acquire
+
+            async def acquire(lock: asyncio.Lock) -> bool:
+                release.set()
+                self.assertTrue(lock.locked())
+                return await acquire_lock(lock)
+
+            try:
+                with (
+                    patch.object(asyncio.Lock, "acquire", acquire),
+                    self.assertRaises(HTTPException) as ctx,
+                ):
+                    await self._save(
+                        "second",
+                        alternate.revision,
+                        path=alternate.path,
                     )
-                    await asyncio.sleep(0)
-                    self.assertFalse(second_save.done())
-                finally:
-                    release.set()
-                    await first_save
-                with self.assertRaises(HTTPException) as ctx:
-                    await second_save
-                self.assertEqual(ctx.exception.status_code, 409)
-            self.assertEqual(target.read_text(), "first")
+            finally:
+                release.set()
+                saved = await first_save
+        self.assertEqual(
+            (
+                ctx.exception.status_code,
+                ctx.exception.detail["code"],
+                target.read_text(),
+                saved.text,
+            ),
+            (409, "file_changed", "first", "first"),
+        )
 
     async def test_backend_path_helpers_respect_target_os(self) -> None:
         """Reject other Windows volumes and POSIX prefix siblings."""

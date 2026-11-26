@@ -515,6 +515,10 @@ class BackendBase(ABC):  # pylint: disable=too-many-public-methods
                 The raw bytes to write.
         """
 
+    async def overwrite_file(self, path: str, data: bytes) -> None:
+        """Edit a file in place. Archive-based writers override this."""
+        await self.write_file(path, data)
+
     async def write_stream(
         self,
         path: str,

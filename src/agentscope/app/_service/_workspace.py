@@ -2,6 +2,7 @@
 """Workspace service — resolution, download tokens, uploads, git."""
 import asyncio
 import hashlib
+import os
 import re
 import tarfile
 from contextlib import asynccontextmanager
@@ -22,6 +23,7 @@ from ..._logging import logger
 from ...tool import BackendBase, LocalBackend
 from ...tool._builtin._backend import PathResolutionUnavailable
 from ...workspace import WorkspaceBase
+from ...workspace._overwrite import WriteUnconfirmedError
 
 #: Ceilings on one upload. Peak memory is a chunk per concurrent
 #: install; these bound the sandbox's disk and how long a slot is held.
@@ -85,8 +87,7 @@ class TextFileSaveRequest(BaseModel):
     # Pydantic limits characters; saving also checks UTF-8 byte length.
     text: str = Field(max_length=MAX_EDIT_BYTES)
     revision: str = Field(pattern=r"^[0-9a-f]{64}$")
-    expected_path: str | None = Field(
-        default=None,
+    expected_path: str = Field(
         description="Resolved path returned in the editor snapshot.",
     )
 
@@ -107,6 +108,14 @@ async def _file_backend_errors(
         yield
     except HTTPException:
         raise
+    except WriteUnconfirmedError as exc:
+        raise HTTPException(
+            502,
+            {
+                "code": "save_unconfirmed",
+                "message": "Save unconfirmed. Reload to check the file.",
+            },
+        ) from exc
     except PathResolutionUnavailable as exc:
         logger.exception("Workspace Python path resolver is unavailable.")
         raise HTTPException(
@@ -312,7 +321,7 @@ class WorkspaceService:
         #: unbounded number of open sandbox writes.
         self._install_slots = asyncio.Semaphore(MAX_CONCURRENT_INSTALLS)
         self._file_locks: WeakValueDictionary[
-            tuple[str, str],
+            tuple[int, int] | tuple[str, str],
             asyncio.Lock,
         ] = WeakValueDictionary()
 
@@ -394,24 +403,28 @@ class WorkspaceService:
             raise
         return FileEditAccess(editable=True)
 
-    def _editor_lock(
+    @asynccontextmanager
+    async def _editor_lock(
         self,
         workspace: WorkspaceBase,
         target: str,
-    ) -> asyncio.Lock:
+    ) -> AsyncIterator[None]:
         """Share locks across sessions and local workspace instances."""
         backend = workspace.get_backend()
-        storage = (
-            "local"
-            if isinstance(backend, LocalBackend)
-            else f"{type(backend).__module__}:{workspace.workspace_id}"
-        )
-        key = (storage, backend.path_key(target))
+        key: tuple[int, int] | tuple[str, str]
+        if isinstance(backend, LocalBackend):
+            async with _file_backend_errors(backend):
+                info = await asyncio.to_thread(os.stat, target)
+            key = (info.st_dev, info.st_ino)
+        else:
+            storage = f"{type(backend).__module__}:{workspace.workspace_id}"
+            key = (storage, backend.path_key(target))
         lock = self._file_locks.get(key)
         if lock is None:
             lock = asyncio.Lock()
             self._file_locks[key] = lock
-        return lock
+        async with lock:
+            yield
 
     async def read_text_file(
         self,
@@ -436,20 +449,19 @@ class WorkspaceService:
         workspace: WorkspaceBase,
         record: SessionRecord,
         path: str,
-        expected_path: str | None,
+        expected_path: str,
     ) -> str:
         """Resolve the requested path and check its snapshot precondition."""
         try:
             target = await self._editor_target(workspace, record, path)
         except HTTPException as exc:
             if (
-                expected_path is None
-                or not isinstance(exc.detail, dict)
+                not isinstance(exc.detail, dict)
                 or exc.detail.get("code") != "outside_edit_roots"
             ):
                 raise
         else:
-            if expected_path is None or target == expected_path:
+            if target == expected_path:
                 return target
         raise HTTPException(
             409,
@@ -526,7 +538,7 @@ class WorkspaceService:
                 )
             await self._save_target(workspace, latest, path, target)
             async with _file_backend_errors(backend):
-                await backend.write_file(target, data)
+                await backend.overwrite_file(target, data)
         return TextFileSnapshot(
             path=target,
             text=request.text,

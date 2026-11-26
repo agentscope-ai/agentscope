@@ -162,10 +162,13 @@ export function ArtifactPreviewContent({
 	const [editAccess, setEditAccess] = useState<FileEditAccess | null>(null);
 	const [accessError, setAccessError] = useState<string | null>(null);
 	const [accessAttempt, setAccessAttempt] = useState(0);
-	const normalize = (value: string) => value.replace(/\r\n?/g, '\n');
+	const normalize = (value: string) => value.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
 	const dirty = snapshot !== null && draft !== normalize(snapshot.text);
 	const editable = ['markdown', 'html', 'csv', 'text'].includes(kind);
 	const reopenRequired = editError === 'editSessionChanged' || editError === 'editPathChanged';
+	const reloadRequired =
+		externalChange || editError === 'editConflict' || editError === 'saveUnconfirmed';
+	const saveDisabled = !dirty || saving || editLoading || reopenRequired || reloadRequired;
 
 	useEffect(() => {
 		if (!editable) return;
@@ -243,14 +246,14 @@ export function ArtifactPreviewContent({
 	};
 
 	const save = async () => {
-		if (!snapshot || !dirty || saving || editLoading || reopenRequired || externalChange)
-			return;
+		if (!snapshot || saveDisabled) return;
 		// The backend rejects mixed endings. Preserve the source's single style.
-		const text = snapshot.text.includes('\r\n')
+		const body = snapshot.text.includes('\r\n')
 			? draft.replace(/\n/g, '\r\n')
 			: snapshot.text.includes('\r')
 				? draft.replace(/\n/g, '\r')
 				: draft;
+		const text = snapshot.text.startsWith('\uFEFF') ? '\uFEFF' + body : body;
 		if (new Blob([text]).size > TEXT_PREVIEW_LIMIT) {
 			setEditError('editTooLarge');
 			return;
@@ -276,6 +279,10 @@ export function ArtifactPreviewContent({
 			toast.success(t('artifacts.saved'));
 		} catch (error) {
 			if (controller.signal.aborted) return;
+			if (error instanceof ApiError && error.code === 'save_unconfirmed') {
+				setEditError('saveUnconfirmed');
+				return;
+			}
 			setEditError(
 				error instanceof ApiError && error.code === 'session_changed'
 					? 'editSessionChanged'
@@ -459,18 +466,7 @@ export function ArtifactPreviewContent({
 							{t('artifacts.edit')}
 						</Button>
 						{snapshot && (
-							<Button
-								size="sm"
-								disabled={
-									!dirty ||
-									saving ||
-									editLoading ||
-									reopenRequired ||
-									externalChange ||
-									editError === 'editConflict'
-								}
-								onClick={() => void save()}
-							>
+							<Button size="sm" disabled={saveDisabled} onClick={() => void save()}>
 								{saving ? <Loader2 className="animate-spin" /> : <Save />}
 								{t(saving ? 'artifacts.saving' : 'artifacts.save')}
 							</Button>
@@ -496,11 +492,7 @@ export function ArtifactPreviewContent({
 						onClick={refresh}
 					>
 						<RotateCw className={editLoading ? 'animate-spin' : undefined} />
-						{t(
-							externalChange || editError === 'editConflict'
-								? 'artifacts.reloadFile'
-								: 'artifacts.refresh',
-						)}
+						{t(reloadRequired ? 'artifacts.reloadFile' : 'artifacts.refresh')}
 					</Button>
 					{externalChange && (
 						<p role="status" className="text-xs text-muted-foreground">
@@ -544,7 +536,7 @@ export function ArtifactPreviewContent({
 						<ArtifactEditor
 							path={artifact.path}
 							value={draft}
-							onChange={setDraft}
+							onChange={(value) => setDraft(value.replace(/\r\n?/g, '\n'))}
 							readOnly={saving || editLoading || reopenRequired}
 						/>
 					</Suspense>

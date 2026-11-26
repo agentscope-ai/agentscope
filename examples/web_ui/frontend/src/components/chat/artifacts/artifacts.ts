@@ -27,7 +27,10 @@ function isAbsoluteFilePath(path: string): boolean {
 }
 
 /** Keep operation IDs so repeated changes to one file remain distinguishable. */
-export function extractFileChanges(content: ContentBlock[]): (FileArtifact & { id: string })[] {
+export function extractFileChanges(
+	content: ContentBlock[],
+	seen?: ReadonlySet<string>,
+): (FileArtifact & { id: string })[] {
 	const calls = new Map<string, ToolCallBlock>();
 	for (const block of content) {
 		if (block.type === 'tool_call') calls.set(block.id, block);
@@ -35,6 +38,7 @@ export function extractFileChanges(content: ContentBlock[]): (FileArtifact & { i
 	const changes: (FileArtifact & { id: string })[] = [];
 	for (const result of content) {
 		if (result.type !== 'tool_result' || result.state !== 'success') continue;
+		if (seen?.has(result.id)) continue;
 		const call = calls.get(result.id);
 		if (!call || (call.name !== 'Write' && call.name !== 'Edit')) continue;
 		let input: unknown;
