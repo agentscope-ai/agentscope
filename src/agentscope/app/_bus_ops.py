@@ -27,8 +27,8 @@ import uuid
 from time import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
-from itertools import islice
-from typing import AsyncGenerator, TYPE_CHECKING, Literal
+from itertools import chain, islice
+from typing import AsyncGenerator, Iterator, TYPE_CHECKING, Literal
 
 from .._logging import logger
 from ..event import CustomEvent
@@ -1477,6 +1477,26 @@ async def _pending_input_count(
 _CHAT_ADMISSION_BATCH_SIZE = 8
 
 
+def _redis_pool_exhausted(error: BaseException) -> bool:
+    """Recognize pool exhaustion without requiring the Redis extra."""
+    try:
+        from redis import exceptions as redis_errors
+    except ImportError:
+        return False
+    # Blocking pools and older nonblocking pools use plain ConnectionError.
+    return isinstance(
+        error,
+        getattr(redis_errors, "MaxConnectionsError", ()),
+    ) or (
+        type(error) is redis_errors.ConnectionError
+        and error.args
+        in (
+            ("Too many connections",),
+            ("No connection available.",),
+        )
+    )
+
+
 @asynccontextmanager
 async def _chat_admission(
     bus: "MessageBus",
@@ -1487,7 +1507,7 @@ async def _chat_admission(
     enqueue: bool,
     receipt_slots: int,
 ) -> AsyncGenerator[int, None]:
-    """Check both quotas against one FIFO read per session before writing."""
+    """Check pending and receipt quotas under the user lock before writing."""
     async with _chat_input_user_quota(bus, user_id):
         sessions = await bus.registry_getall(
             MessageBusKeys.chat_input_user_sessions(user_id),
@@ -1529,17 +1549,29 @@ async def _chat_admission(
 
         # Other sessions may drain during the scan. Admissions share the
         # user lock. Read the target FIFO under its own mutation lock.
-        others = (sid for sid in sessions if sid != session_id)
-        while batch := tuple(islice(others, _CHAT_ADMISSION_BATCH_SIZE)):
-            # Finish all reads before releasing the lock, even on failure.
-            results = await asyncio.gather(
-                *(count_session(sid) for sid in batch),
-                return_exceptions=True,
-            )
-            for result in results:
-                if isinstance(result, BaseException):
-                    raise result
-                _, count, used = result
+        others: Iterator[str] = (sid for sid in sessions if sid != session_id)
+        batch_size = _CHAT_ADMISSION_BATCH_SIZE
+        while batch := tuple(islice(others, batch_size)):
+            if len(batch) == 1:
+                usage = [await count_session(batch[0])]
+            else:
+                results = await asyncio.gather(
+                    *(count_session(sid) for sid in batch),
+                    return_exceptions=True,
+                )
+                usage = []
+                for result in results:
+                    if isinstance(result, BaseException):
+                        if not _redis_pool_exhausted(result):
+                            raise result
+                    else:
+                        usage.append(result)
+                if len(usage) != len(batch):
+                    # No totals from this batch have been applied yet.
+                    others = chain(batch, others)
+                    batch_size = 1
+                    continue
+            for _, count, used in usage:
                 add_usage(count, used)
             if receipts > MessageBusKeys.CHAT_RECEIPT_USER_MAX_LEN:
                 break
@@ -1554,7 +1586,13 @@ async def _chat_admission(
                 if used:
                     await track_receipts(bus, user_id, session_id, agent_id)
                 kind = "Chat" if enqueue else "Voice"
-                raise ChatQueueFullError(f"{kind} receipt quota is full.")
+                minutes = MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS // 60
+                raise ChatQueueFullError(
+                    f"{kind} receipt quota is full. Pending messages and "
+                    "recent receipts share this limit. Retry after a message "
+                    "finishes or an old receipt is cleared. Completed "
+                    f"receipts are normally kept for {minutes} minutes.",
+                )
             yield queue_size
 
 

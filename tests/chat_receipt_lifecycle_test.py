@@ -4,11 +4,15 @@
 import asyncio
 import json
 from contextlib import ExitStack
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, call, patch
 from uuid import uuid4
 
 import fakeredis.aioredis
+from fakeredis.aioredis import FakeAsyncRedisConnection
+from redis.asyncio import BlockingConnectionPool, ConnectionPool
+from redis.exceptions import ConnectionError as RedisConnectionError
 from service_message_bus_test import _make_bus
 from service_wakeup_dispatcher_test import (
     _FakeBus,
@@ -34,7 +38,11 @@ from agentscope.app._chat_receipts import (
     receipt_count,
     track_receipts,
 )
-from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
+from agentscope.app.message_bus import (
+    InMemoryMessageBus,
+    MessageBusKeys,
+    RedisMessageBus,
+)
 from agentscope.message import UserMsg
 
 
@@ -137,15 +145,116 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                 )
             self.assertEqual((peak, target_overlap), (8, [0, 0]))
 
+    async def test_chat_admission_with_small_redis_pool(self) -> None:
+        """Both Redis pool types can admit text up to the pending limit."""
+        for pool_type, options in (
+            (ConnectionPool, {}),
+            (BlockingConnectionPool, {"timeout": 0}),
+        ):
+            with self.subTest(pool=pool_type.__name__):
+                pool = pool_type(
+                    connection_class=FakeAsyncRedisConnection,
+                    server=fakeredis.FakeServer(),
+                    decode_responses=True,
+                    max_connections=4,
+                    **options,
+                )
+                self.addAsyncCleanup(pool.aclose)
+                await self._assert_small_pool_admission(pool)
+
+    async def _assert_small_pool_admission(
+        self,
+        pool: ConnectionPool,
+    ) -> None:
+        """Admit 21 messages without losing or double-counting quota."""
+        async with RedisMessageBus(connection_pool=pool) as bus:
+            for i in range(8):
+                await enqueue_chat_input(
+                    bus,
+                    "u",
+                    str(i),
+                    "a",
+                    UserMsg("u", "seed"),
+                )
+            parse_response = bus._client.parse_response
+
+            async def read_response(*args: Any, **kwargs: Any) -> Any:
+                # Yield with a connection checked out, as socket I/O would.
+                await asyncio.sleep(0)
+                return await parse_response(*args, **kwargs)
+
+            with patch.object(
+                bus._client,
+                "parse_response",
+                read_response,
+            ), patch.object(MessageBusKeys, "CHAT_INPUT_USER_MAX_LEN", 29):
+                accepted = []
+                for i in range(21):
+                    accepted.append(
+                        await enqueue_chat_input(
+                            bus,
+                            "u",
+                            "target",
+                            "a",
+                            UserMsg("u", str(i)),
+                        ),
+                    )
+                with self.assertRaisesRegex(ChatQueueFullError, "pending"):
+                    await enqueue_chat_input(
+                        bus,
+                        "u",
+                        "target",
+                        "a",
+                        UserMsg("u", "full"),
+                    )
+                self.assertEqual(
+                    await list_chat_inputs(bus, "target"),
+                    accepted,
+                )
+
+    async def test_retained_receipts_explain_text_quota(self) -> None:
+        """An empty queue can still have receipts awaiting expiration."""
+        async with InMemoryMessageBus() as bus:
+            await bus.registry_set(
+                MessageBusKeys.chat_submissions("s"),
+                "recent",
+                json.dumps({"state": "finished", "retire_at": self.now + 60}),
+            )
+            with patch.object(
+                MessageBusKeys,
+                "CHAT_RECEIPT_SESSION_MAX_LEN",
+                1,
+            ), self.assertRaises(ChatQueueFullError) as caught:
+                await enqueue_chat_input(
+                    bus,
+                    "u",
+                    "s",
+                    "a",
+                    UserMsg("u", "hello"),
+                )
+            self.assertEqual(
+                str(caught.exception),
+                "Chat receipt quota is full. Pending messages and recent "
+                "receipts share this limit. Retry after a message finishes "
+                "or an old receipt is cleared. Completed receipts are "
+                "normally kept for 60 minutes.",
+            )
+            self.assertEqual(await list_chat_inputs(bus, "s"), [])
+
     async def test_quota_read_failure_prevents_enqueue(self) -> None:
         """An unreadable session cannot be treated as unused capacity."""
         async with InMemoryMessageBus() as bus:
             await create_chat_submission(bus, "u", "other", "a")
+            await create_chat_submission(bus, "u", "another", "a")
+            disconnected = RedisConnectionError("Connection closed by server.")
             with patch.object(
                 bus,
                 "registry_get",
-                side_effect=OSError("quota read failed"),
-            ), self.assertRaisesRegex(OSError, "quota read failed"):
+                side_effect=[
+                    RedisConnectionError("Too many connections"),
+                    disconnected,
+                ],
+            ), self.assertRaises(RedisConnectionError) as caught:
                 await enqueue_chat_input(
                     bus,
                     "u",
@@ -153,6 +262,7 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     "a",
                     UserMsg("u", "hello"),
                 )
+            self.assertIs(caught.exception, disconnected)
             self.assertEqual(await list_chat_inputs(bus, "target"), [])
 
     async def test_last_pending_slot_is_atomic_across_sessions(self) -> None:
