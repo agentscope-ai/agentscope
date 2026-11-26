@@ -1496,3 +1496,47 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                         ),
                         {},
                     )
+
+
+class ReceiptProbeFailureTest(IsolatedAsyncioTestCase):
+    """A failed cached probe must not abort the sweep that reads it."""
+
+    async def test_immediate_probe_failure_reports_unfinished(self) -> None:
+        """An immediate storage error does not stop later receipts."""
+        probes = ReceiptProbes()
+
+        async def lookup(*_args: str) -> dict:
+            raise RuntimeError("storage exploded")
+
+        self.assertFalse(
+            await probes.finished(lookup, "u", "s", "a", "k", {}),
+        )
+
+    async def test_failed_cached_probe_reports_unfinished(self) -> None:
+        """The stored result of a failed lookup is not re-raised."""
+        probes = ReceiptProbes()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def lookup(*_args: str) -> dict:
+            started.set()
+            await release.wait()
+            raise RuntimeError("storage exploded")
+
+        record = {"message_ids": ["m"]}
+        with patch.object(
+            MessageBusKeys,
+            "CHAT_RECEIPT_QUERY_TIMEOUT_SECS",
+            0.05,
+        ):
+            self.assertFalse(
+                await probes.finished(lookup, "u", "s", "a", "k", record),
+            )
+            await asyncio.wait_for(started.wait(), 1)
+            release.set()
+            task = probes._pending["k"][1]
+            await asyncio.gather(task, return_exceptions=True)
+            self.assertTrue(task.done())
+            self.assertFalse(
+                await probes.finished(lookup, "u", "s", "a", "k", record),
+            )
