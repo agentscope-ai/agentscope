@@ -590,8 +590,6 @@ class FeishuChannel(ChannelBase):
                         element.get("text") or element.get("href") or "",
                     )
                 elif tag in ("img", "media"):
-                    # A ``media`` element is a video with a cover picture,
-                    # like a ``media`` message: the video is the file key.
                     if tag == "img":
                         key = element.get("image_key") or element.get(
                             "file_key",
@@ -1315,10 +1313,7 @@ class FeishuChannel(ChannelBase):
             `DataBlock | None`: The downloaded block, or ``None`` on error.
         """
         content = json.loads(getattr(message, "content", None) or "{}")
-        # A ``media`` (video) message carries the video under ``file_key``
-        # and its cover picture under ``image_key``. The video is what the
-        # user sent, and the cover has to be requested with ``type=image``,
-        # so only an ``image`` message prefers the image key.
+        # For videos, file_key identifies the clip and image_key its cover.
         if msg_type == "image":
             key = content.get("image_key") or content.get("file_key")
         else:
