@@ -2056,7 +2056,12 @@ class WorkspaceEditorLocalPathTests(_WorkspaceTextFixture):
             original = await self._text(str(target))
             alternate = await self._text(str(alias))
             first_save = asyncio.create_task(
-                self._save("first", original.revision, path=original.path),
+                self._save(
+                    "first",
+                    original.revision,
+                    path=original.path,
+                    expected_path=original.path,
+                ),
             )
             await asyncio.wait_for(entered.wait(), 2)
             acquire_lock = asyncio.Lock.acquire
@@ -2075,6 +2080,7 @@ class WorkspaceEditorLocalPathTests(_WorkspaceTextFixture):
                         "second",
                         alternate.revision,
                         path=alternate.path,
+                        expected_path=alternate.path,
                     )
             finally:
                 release.set()
