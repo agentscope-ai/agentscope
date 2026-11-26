@@ -212,8 +212,10 @@ class SessionHistoryValidationTest(IsolatedAsyncioTestCase):
                 if not heartbeat:
                     await publish_reply()
                 for name in ("start", "delta", "end"):
+                    while (frame := await anext(stream)) == ":\n\n":
+                        pass
                     self.assertEqual(
-                        await anext(stream),
+                        frame,
                         f'data: {{"frame": "{name}"}}\n\n',
                     )
                 await publish_session_event(bus, sid, {"frame": "next"})
