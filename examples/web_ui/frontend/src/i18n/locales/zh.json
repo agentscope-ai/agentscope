@@ -217,6 +217,7 @@
 		"thinkingFor": "思考 {{duration}}",
 		"audioGenerating": "正在生成音频…",
 		"playAudio": "播放音频",
+		"replayAfterPipelineVoice": "退出组合语音后可重播音频。",
 		"pauseAudio": "暂停音频",
 		"running": "运行中...",
 		"hintSource": {
@@ -251,6 +252,8 @@
 	"chat": {
 		"ttsFailed": "语音生成失败，文字回复继续。",
 		"inputPlaceholder": "输入消息...",
+		"sendFailedInSession": "消息未能发送到「{{session}}」，可在该会话的草稿中重新发送。",
+		"continueFailedInSession": "未能继续「{{session}}」中的对话。请返回该会话，再次点击「继续」。",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
 		"askUser": {
@@ -263,6 +266,10 @@
 		"externalExecution": {
 			"title": "{{name}} 正在等待外部执行器",
 			"rejected": "提交的结果未被接受，请检查回答后重新提交。",
+			"unconfirmed": "连接中断时，工具结果尚未确认。如果工具仍在等待，你可以重新提交。",
+			"endedWithoutResult": "工具调用已结束，本次提交的结果未被采用。",
+			"unknownAnswer": "工具调用已完成，服务端未指明采用了哪次提交的答案。",
+			"reconnecting": "请等待聊天重新连接后，再提交工具结果。",
 			"description": "该工具需要由宿主应用提供的集成完成。"
 		},
 		"newSession": "新会话",
@@ -568,6 +575,36 @@
 		"addCredential": "添加凭证",
 		"clear": "清除选择",
 		"noFallback": "无兜底模型"
+	},
+	"pipelineVoice": {
+		"selectASR": "选择识别模型",
+		"selectTTS": "选择语音模型",
+		"modelSettings": "模型设置",
+		"followChat": "跟随聊天模型",
+		"followingModel": "当前跟随：{{model}}。修改 LLM 参数后将使用独立语音配置。",
+		"llm": "组合语音 LLM",
+		"parameters": "组合语音参数",
+		"models": "组合语音模型",
+		"mode": "语音模式",
+		"realtime": "原生实时语音",
+		"pipeline": "组合语音",
+		"unsupportedPCM": "组合语音暂不支持裸 PCM，请在模型设置中将 TTS 输出格式改为 WAV 或 MP3。",
+		"configure": "请在“模型设置”中配置 ASR、LLM 和 TTS。LLM 可跟随聊天模型。",
+		"description": "说完后自动发送，播报结束后继续聆听。可随时手动结束语音。",
+		"busy": "请等待当前回复和队列结束，并完成待确认操作。",
+		"failed": "组合语音已停止",
+		"disconnected": "会话连接已断开，组合语音已停止。",
+		"states": {
+			"idle": "ASR + Chat + TTS",
+			"connecting": "正在准备麦克风和语音识别…",
+			"listening": "正在聆听",
+			"transcribing": "正在识别…",
+			"thinking": "正在思考…",
+			"speaking": "正在播报",
+			"awaiting_confirmation": "请在下方完成确认操作",
+			"stopping": "正在结束语音，等待本轮结束确认…",
+			"error": "语音已停止，可重试"
+		}
 	},
 	"realtime": {
 		"selectModel": "语音模型",

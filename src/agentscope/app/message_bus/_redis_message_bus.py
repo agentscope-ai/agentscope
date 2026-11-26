@@ -8,7 +8,11 @@ from contextlib import asynccontextmanager
 from typing import Any, Callable, Self, TYPE_CHECKING
 
 from ..._logging import logger
-from ._base import MessageBus
+from ._base import (
+    MessageBus,
+    RegisterSubscriptionBarrier,
+    _stream_cursor_precedes,
+)
 
 if TYPE_CHECKING:
     from redis.asyncio import ConnectionPool, Redis
@@ -25,6 +29,14 @@ for _, entry in ipairs(entries) do
   redis.call('XDEL', KEYS[1], entry[1])
 end
 return entries
+"""
+
+# Return only the two IDs across the wire, never the previous audio payload.
+_LOG_APPEND_WITH_PREVIOUS_LUA = """
+local tail = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
+local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[1],
+                      '*', 'payload', ARGV[2])
+return {id, tail[1] and tail[1][1] or ''}
 """
 
 
@@ -487,6 +499,31 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             await self._client.expire(key, ttl_secs)
         return entry_id
 
+    async def log_append_with_previous(
+        self,
+        key: str,
+        payload: dict,
+        *,
+        max_len: int,
+    ) -> tuple[str, str | None]:
+        """Append and identify the previous entry in the same Redis call."""
+        if type(self).log_append is not RedisMessageBus.log_append:
+            return await super().log_append_with_previous(
+                key,
+                payload,
+                max_len=max_len,
+            )
+        entry_id, previous = await self._client.eval(
+            _LOG_APPEND_WITH_PREVIOUS_LUA,
+            1,
+            key,
+            max_len,
+            json.dumps(payload, ensure_ascii=False),
+        )
+        return entry_id, previous
+
+    log_cursor_precedes = staticmethod(_stream_cursor_precedes)
+
     async def log_read(
         self,
         key: str,
@@ -649,6 +686,10 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         """
         return bool(await self._client.hexists(namespace, field))
 
+    async def registry_has_entries(self, namespace: str) -> bool:
+        """Check for entries without fetching hash fields or values."""
+        return bool(await self._client.hlen(namespace))
+
     async def registry_getall(
         self,
         namespace: str,
@@ -713,6 +754,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
     # drops idle connections) surfaces as a benign per-poll timeout that
     # we ignore, instead of a fatal error that tears down the generator.
     _SUBSCRIBE_POLL_TIMEOUT_SECS = 1.0
+    _BARRIER_ATTEMPT_TIMEOUT_SECS = 5.0
 
     async def publish(
         self,
@@ -738,6 +780,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         key: str,
         *,
         on_ready: Callable[[], None] | None = None,
+        on_barrier: RegisterSubscriptionBarrier | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Yield broadcast payloads on ``key`` until the consumer
         closes the generator.
@@ -751,6 +794,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 a "subscription is live" event so they can publish
                 immediately after starting a subscriber without losing
                 the first message to a SUBSCRIBE/PUBLISH race.
+            on_barrier (optional):
+                Register an ordered flush operation for this subscription.
 
         Yields:
             `dict`:
@@ -759,14 +804,35 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         from redis import exceptions as redis_exceptions
 
         pubsub = self._client.pubsub()
+        flushed = asyncio.Event()
+        marker = ""
+
+        async def flush() -> None:
+            nonlocal marker
+            for _ in range(3):
+                marker = uuid.uuid4().hex
+                flushed.clear()
+                try:
+                    async with asyncio.timeout(
+                        self._BARRIER_ATTEMPT_TIMEOUT_SECS,
+                    ):
+                        await pubsub.ping(marker)
+                        await flushed.wait()
+                    return
+                except asyncio.TimeoutError:
+                    continue
+            raise TimeoutError("Redis subscription barrier timed out.")
+
         try:
             await pubsub.subscribe(key)
+            if on_barrier is not None:
+                on_barrier(flush)
             if on_ready is not None:
                 on_ready()
             while True:
                 try:
-                    message = await pubsub.get_message(
-                        ignore_subscribe_messages=True,
+                    response = await pubsub.parse_response(
+                        block=False,
                         timeout=self._SUBSCRIBE_POLL_TIMEOUT_SECS,
                     )
                 except redis_exceptions.TimeoutError:
@@ -775,8 +841,23 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     # connections). No message arrived in this window;
                     # keep listening rather than crashing the loop.
                     continue
+                if response is None:
+                    continue
+                # RESP3 returns the PING payload as a scalar. Normalize it
+                # before redis-py can discard a decoded string as an ack.
+                if isinstance(response, (str, bytes)):
+                    response = ["pong", response]
+                message = await pubsub.handle_message(
+                    response,
+                    ignore_subscribe_messages=True,
+                )
                 if message is None:
-                    # No payload within the poll window — keep waiting.
+                    continue
+                if message.get("type") == "pong" and message.get("data") in (
+                    marker,
+                    marker.encode(),
+                ):
+                    flushed.set()
                     continue
                 if message.get("type") != "message":
                     # Skip ``subscribe`` ack and similar control frames.

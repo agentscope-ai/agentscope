@@ -2,6 +2,7 @@
 """The chat endpoint schema."""
 
 from typing import Annotated, Literal, TypeAlias
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -18,6 +19,25 @@ NonEmptyMsgList: TypeAlias = Annotated[list[Msg], Field(min_length=1)]
 
 class ChatRequest(BaseModel):
     """Request body for the chat endpoint."""
+
+    mode: Literal["chat", "pipeline_voice"] = "chat"
+    submission_id: UUID | None = None
+    client_request_id: UUID | None = Field(
+        default=None,
+        description="Correlation ID echoed when the queue item starts.",
+    )
+
+    @model_validator(mode="after")
+    def validate_voice_input(self) -> "ChatRequest":
+        """Only new messages may request a pipeline voice configuration."""
+        if self.submission_id is not None and self.mode != "pipeline_voice":
+            raise ValueError("Submission identity requires pipeline voice.")
+        if self.mode == "pipeline_voice" and not isinstance(
+            self.input,
+            (Msg, list),
+        ):
+            raise ValueError("Pipeline voice requires a new input message.")
+        return self
 
     agent_id: str = Field(
         description="Agent ID for the chat endpoint.",

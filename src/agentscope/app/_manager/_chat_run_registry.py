@@ -35,6 +35,8 @@ class ChatRunRegistry:
     def __init__(self) -> None:
         """Initialise an empty registry."""
         self._tasks: dict[str, asyncio.Task] = {}
+        self._reply_ids: dict[asyncio.Task, str] = {}
+        self._queue_ids: dict[asyncio.Task, str] = {}
 
     def spawn(
         self,
@@ -87,6 +89,8 @@ class ChatRunRegistry:
         self._tasks[session_id] = task
 
         def _cleanup(t: asyncio.Task) -> None:
+            self._reply_ids.pop(t, None)
+            self._queue_ids.pop(t, None)
             # Only remove the entry if it still points at this task —
             # a fresh spawn for the same sid may have replaced it.
             if self._tasks.get(session_id) is t:
@@ -95,19 +99,72 @@ class ChatRunRegistry:
         task.add_done_callback(_cleanup)
         return task
 
-    def get(self, session_id: str) -> asyncio.Task | None:
+    def set_reply(self, session_id: str, reply_id: str | None) -> None:
+        """Bind or clear the reply owned by the current registered task.
+
+        Args:
+            session_id (`str`):
+                Session whose registered task is executing this call.
+            reply_id (`str | None`):
+                Active reply, or ``None`` after its terminal event.
+        """
+        task = asyncio.current_task()
+        if task is None or self._tasks.get(session_id) is not task:
+            return
+        if reply_id is None:
+            self._reply_ids.pop(task, None)
+        else:
+            # Queue targeting ends permanently at the first reply start.
+            self._queue_ids.pop(task, None)
+            self._reply_ids[task] = reply_id
+
+    def set_queue_input(
+        self,
+        session_id: str,
+        queue_item_id: str | None,
+    ) -> None:
+        """Bind the current task only while its queued input initializes."""
+        task = asyncio.current_task()
+        if task is None or self._tasks.get(session_id) is not task:
+            return
+        if queue_item_id is None:
+            self._queue_ids.pop(task, None)
+        else:
+            self._queue_ids[task] = queue_item_id
+
+    def get(
+        self,
+        session_id: str,
+        *,
+        reply_id: str | None = None,
+        queue_item_id: str | None = None,
+    ) -> asyncio.Task | None:
         """Return the registered task for ``session_id``, or ``None``.
 
         Args:
             session_id (`str`):
                 The session whose task to look up.
+            reply_id (`str | None`, optional):
+                Require the task to own this active reply when provided.
+            queue_item_id (`str | None`, optional):
+                Require this input to still be initializing, before reply.
 
         Returns:
             `asyncio.Task | None`:
                 The task if one is currently registered for the
                 session, else ``None``.
         """
-        return self._tasks.get(session_id)
+        task = self._tasks.get(session_id)
+        if task is None:
+            return None
+        if reply_id is not None and self._reply_ids.get(task) != reply_id:
+            return None
+        if (
+            queue_item_id is not None
+            and self._queue_ids.get(task) != queue_item_id
+        ):
+            return None
+        return task
 
     async def __aenter__(self) -> Self:
         """No-op enter; the registry has no startup work.
@@ -138,3 +195,5 @@ class ChatRunRegistry:
         # Wait for every cancel to land; swallow CancelledError per task.
         await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+        self._reply_ids.clear()
+        self._queue_ids.clear()

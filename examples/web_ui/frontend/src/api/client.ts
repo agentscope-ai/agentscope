@@ -3,6 +3,12 @@ import { toast } from 'sonner';
 export const getBaseUrl = () => localStorage.getItem('server_url') ?? '';
 export const getUserId = () => localStorage.getItem('username') ?? '';
 
+/** Fixed destination and identity for work that outlives the current view. */
+export interface ApiScope {
+	readonly baseUrl: string;
+	readonly userId: string;
+}
+
 /**
  * Structured error thrown for non-2xx HTTP responses.
  * `message` contains the human-readable detail extracted from the backend.
@@ -10,12 +16,14 @@ export const getUserId = () => localStorage.getItem('username') ?? '';
 export class ApiError extends Error {
 	readonly status: number;
 	readonly detail: string;
+	readonly code?: string;
 
-	constructor(status: number, detail: string) {
+	constructor(status: number, detail: string, code?: string) {
 		super(detail);
 		this.name = 'ApiError';
 		this.status = status;
 		this.detail = detail;
+		this.code = code;
 	}
 }
 
@@ -34,6 +42,11 @@ interface RequestOptions {
 	timeoutMs?: number;
 }
 
+export type ApiRequestOptions = Pick<
+	RequestOptions,
+	'baseUrl' | 'userId' | 'silent' | 'signal' | 'timeoutMs'
+>;
+
 /** Reported when `timeoutMs` elapses. Real 408s come from a server, so either way the request did not complete in time. */
 export const TIMEOUT_STATUS = 408;
 
@@ -44,16 +57,21 @@ function buildHeaders(hasJsonBody: boolean, userId?: string): Record<string, str
 }
 
 /** Parse the response body and extract the `detail` field if the backend returned JSON. */
-async function extractErrorDetail(res: Response): Promise<string> {
+async function extractErrorDetail(res: Response): Promise<{ detail: string; code?: string }> {
 	const text = await res.text();
 	try {
 		const json = JSON.parse(text) as { detail?: unknown };
-		if (typeof json.detail === 'string') return json.detail;
-		if (json.detail !== undefined) return JSON.stringify(json.detail);
+		if (typeof json.detail === 'string') return { detail: json.detail };
+		if (json.detail && typeof json.detail === 'object') {
+			const detail = json.detail as { message?: unknown; code?: unknown };
+			if (typeof detail.message === 'string' && typeof detail.code === 'string')
+				return { detail: detail.message, code: detail.code };
+		}
+		if (json.detail !== undefined) return { detail: JSON.stringify(json.detail) };
 	} catch {
 		// not JSON – fall through
 	}
-	return text || res.statusText;
+	return { detail: text || res.statusText };
 }
 
 async function streamRequest(path: string, options: RequestOptions = {}): Promise<Response> {
@@ -107,8 +125,8 @@ async function streamRequest(path: string, options: RequestOptions = {}): Promis
 	}
 
 	if (!res.ok) {
-		const detail = await extractErrorDetail(res);
-		const error = new ApiError(res.status, detail);
+		const { detail, code } = await extractErrorDetail(res);
+		const error = new ApiError(res.status, detail, code);
 		if (!silent) toast.error(detail);
 		throw error;
 	}
@@ -123,22 +141,13 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 export const client = {
-	get: <T>(
-		path: string,
-		params?: Record<string, string>,
-		options?: {
-			silent?: boolean;
-			signal?: AbortSignal;
-			baseUrl?: string;
-			userId?: string;
-			timeoutMs?: number;
-		},
-	) => request<T>(path, { method: 'GET', params, ...options }),
+	get: <T>(path: string, params?: Record<string, string>, options?: ApiRequestOptions) =>
+		request<T>(path, { method: 'GET', params, ...options }),
 	post: <T>(
 		path: string,
 		body?: unknown,
 		params?: Record<string, string>,
-		options?: { silent?: boolean; signal?: AbortSignal; timeoutMs?: number },
+		options?: ApiRequestOptions,
 	) => request<T>(path, { method: 'POST', body, params, ...options }),
 	patch: <T>(
 		path: string,
@@ -146,7 +155,10 @@ export const client = {
 		params?: Record<string, string>,
 		options?: { silent?: boolean },
 	) => request<T>(path, { method: 'PATCH', body, params, silent: options?.silent }),
-	delete: <T = void>(path: string, params?: Record<string, string>) =>
-		request<T>(path, { method: 'DELETE', params }),
+	delete: <T = void>(
+		path: string,
+		params?: Record<string, string>,
+		options?: ApiRequestOptions,
+	) => request<T>(path, { method: 'DELETE', params, ...options }),
 	stream: (path: string, options?: RequestOptions) => streamRequest(path, options),
 };
