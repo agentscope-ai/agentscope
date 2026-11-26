@@ -141,6 +141,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         self.instructions = instructions
 
         self._sandbox: Sandbox | None = None
+        self._sandbox_created = False
         self._backend: OpenSandboxBackend | None = None
 
     @property
@@ -160,11 +161,14 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         bootstrap step is idempotent, so an interrupted bootstrap
         re-runs cleanly on the next ``initialize``.
         """
+        # Only resources created by this attempt may be deleted on failure.
+        self._sandbox_created = False
         existing = await self._find_existing_sandbox()
         if existing is not None:
             self._sandbox = await self._attach_existing_sandbox(existing)
         else:
             self._sandbox = await self._create_sandbox()
+            self._sandbox_created = True
         await self._wait_until_running()
 
         self._backend = OpenSandboxBackend(self._sandbox, SANDBOX_WORKDIR)

@@ -11,11 +11,13 @@ loops them:
 - **Executor** — writes the code, using the workspace's filesystem
   tools.
 - **Verifier** — an ordinary `Agent`, not a special kind of object. Its
-  verdict comes from structured output (`passed` plus a `message`
-  explaining what is missing), so a check that has to read files or run
-  commands does it with the same tools the executor has.
-- **The loop** — a refusal goes back to the executor verbatim as
-  feedback and it tries again, up to `max_iters` times.
+  verdict comes from structured output (`result`, one of `pass`, `fail`
+  or `impossible`, plus a `message` explaining what is missing), so a
+  check that has to read files or run commands does it with the same
+  tools the executor has.
+- **The loop** — on `fail` the `message` goes back to the executor
+  verbatim as feedback and it tries again, up to `max_iters` times;
+  `impossible` ends the run early.
 
 Because both agents share one workspace, the verifier judges what was
 actually written rather than what the executor claims it wrote.

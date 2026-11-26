@@ -1,0 +1,840 @@
+# -*- coding: utf-8 -*-
+"""Tests for per-run client external tool definitions."""
+import json
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import patch
+
+from jsonschema import Draft202012Validator
+from pydantic import ValidationError
+from utils import MockModel
+
+from agentscope.agent import Agent, InjectionConfig
+from agentscope.app._client_external_tool import (
+    ClientExternalTool,
+    ClientExternalToolDefinition,
+    parse_client_tool_capabilities,
+)
+from agentscope.app._router._schema import ChatRequest
+from agentscope.event import (
+    ExternalExecutionResultEvent,
+    RequireExternalExecutionEvent,
+)
+from agentscope.message import (
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+    UserMsg,
+)
+from agentscope.model import ChatResponse
+from agentscope.permission import (
+    PermissionBehavior,
+    PermissionContext,
+    PermissionDecision,
+)
+from agentscope.tool import AskUser, Toolkit
+
+
+def _definition(
+    name: str = "client__choose_option",
+    read_only: bool = False,
+) -> ClientExternalToolDefinition:
+    """Build a minimal valid client external tool definition."""
+    return ClientExternalToolDefinition(
+        name=name,
+        description="Ask the user to choose.",
+        read_only=read_only,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string"},
+            },
+            "required": ["question"],
+        },
+    )
+
+
+class ClientExternalToolDefinitionTest(TestCase):
+    """Validate the public request contract and its guardrails."""
+
+    def test_schema_recursion_is_a_validation_error(self) -> None:
+        """Every recursive validation stage rejects excessive nesting."""
+        definition = _definition().model_dump()
+        for target in (
+            "json.dumps",
+            "Draft202012Validator.check_schema",
+            "_validate_schema_metadata",
+        ):
+            with self.subTest(target=target), patch(
+                f"agentscope.app._client_external_tool.{target}",
+                side_effect=RecursionError,
+            ):
+                with self.assertRaises(ValidationError) as caught:
+                    ClientExternalToolDefinition.model_validate(definition)
+                self.assertEqual(
+                    caught.exception.errors(
+                        include_url=False,
+                        include_context=False,
+                        include_input=False,
+                    ),
+                    [
+                        {
+                            "type": "value_error",
+                            "loc": ("input_schema",),
+                            "msg": "Value error, Tool input_schema is "
+                            "nested too deeply.",
+                        },
+                    ],
+                )
+
+    def test_schema_size_precedes_recursive_validation(self) -> None:
+        """Oversized schemas never reach recursive JSON Schema validation."""
+        definition = _definition().model_dump()
+        definition["input_schema"]["description"] = "x" * (64 * 1024)
+        with patch(
+            "agentscope.app._client_external_tool."
+            "Draft202012Validator.check_schema",
+        ) as check_schema:
+            with self.assertRaises(ValidationError) as caught:
+                ClientExternalToolDefinition.model_validate(definition)
+        check_schema.assert_not_called()
+        self.assertEqual(
+            caught.exception.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            ),
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("input_schema",),
+                    "msg": "Value error, Tool input_schema exceeds 65536 "
+                    "bytes.",
+                },
+            ],
+        )
+
+    def test_capability_recursion_preserves_other_valid_tools(self) -> None:
+        """Optional capability failures cannot discard the other tool set."""
+        definition = _definition()
+        cases = (
+            ("_CLIENT_EXTERNAL_TOOLS_ADAPTER", ([], ["AskUser"])),
+            ("_CLIENT_BUILTIN_TOOLS_ADAPTER", ([definition], [])),
+        )
+        for adapter, expected in cases:
+            with self.subTest(adapter=adapter), patch(
+                f"agentscope.app._client_external_tool.{adapter}",
+            ) as mocked:
+                mocked.validate_python.side_effect = RecursionError
+                self.assertEqual(
+                    parse_client_tool_capabilities(
+                        [definition.model_dump()],
+                        ["AskUser"],
+                    ),
+                    expected,
+                )
+
+    def test_native_resume_validates_metadata_when_tool_is_disabled(
+        self,
+    ) -> None:
+        """An existing answer remains valid without enabling future calls."""
+        metadata = {
+            "answers": [
+                {"question": "Which?", "selected": ["A"], "other": None},
+            ],
+        }
+        event = ExternalExecutionResultEvent(
+            reply_id="r",
+            execution_results=[
+                ToolResultBlock(
+                    id="c",
+                    name="AskUser",
+                    output="Which?\nA",
+                    state=ToolResultState.SUCCESS,
+                    metadata=metadata,
+                ),
+            ],
+        )
+        request = ChatRequest(
+            agent_id="a",
+            session_id="s",
+            input=event,
+        )
+        self.assertEqual(request.client_builtin_tools, [])
+        self.assertEqual(
+            request.input.execution_results[0].metadata,
+            metadata,
+        )
+        event.execution_results[0].metadata = {}
+        with self.assertRaises(ValidationError):
+            ChatRequest(agent_id="a", session_id="s", input=event)
+
+    def test_native_capability_only_accepts_known_tools(self) -> None:
+        """Native declarations carry names, not client-owned schemas."""
+        request = ChatRequest(
+            agent_id="a",
+            session_id="s",
+            input=None,
+            client_builtin_tools=["AskUser"],
+        )
+        self.assertEqual(request.client_builtin_tools, ["AskUser"])
+        self.assertEqual(request.client_external_tools, [])
+        for names in (["Unknown"], ["AskUser", "AskUser"]):
+            with self.subTest(names=names), self.assertRaises(ValidationError):
+                ChatRequest(
+                    agent_id="a",
+                    session_id="s",
+                    input=None,
+                    client_builtin_tools=names,
+                )
+
+    def test_chat_request_preserves_valid_definition(self) -> None:
+        """A valid definition is available to the current chat run."""
+        request = ChatRequest(
+            agent_id="agent-1",
+            session_id="session-1",
+            input=None,
+            client_external_tools=[_definition()],
+        )
+
+        self.assertEqual(
+            request.model_dump(mode="json"),
+            {
+                "agent_id": "agent-1",
+                "session_id": "session-1",
+                "input": None,
+                "client_builtin_tools": [],
+                "client_external_tools": [
+                    {
+                        "name": "client__choose_option",
+                        "description": "Ask the user to choose.",
+                        "read_only": False,
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {
+                                "question": {"type": "string"},
+                            },
+                            "required": ["question"],
+                        },
+                    },
+                ],
+            },
+        )
+
+    def test_tool_name_rejects_unsupported_characters(self) -> None:
+        """Client tool names only allow provider-safe characters."""
+        with self.assertRaises(ValidationError):
+            _definition("client__invalid tool name")
+
+    def test_tool_name_requires_client_namespace(self) -> None:
+        """Client tools cannot shadow server or toolkit built-ins."""
+        with self.assertRaises(ValidationError):
+            _definition("ResetTools")
+
+    def test_invalid_json_schema_is_rejected(self) -> None:
+        """Malformed JSON Schema cannot enter the runtime toolkit."""
+        with self.assertRaises(ValidationError):
+            ClientExternalToolDefinition(
+                name="client__invalid_schema",
+                description="Invalid schema.",
+                input_schema={
+                    "type": 42,
+                    "properties": {},
+                },
+            )
+
+    def test_unsupported_schema_dialects_are_rejected(self) -> None:
+        """Root and nested declarations cannot switch execution dialects."""
+        for dialect in (
+            "http://json-schema.org/draft-07/schema#",
+            "https://json-schema.org/draft/2019-09/schema",
+            "https://example.com/unknown-schema",
+        ):
+            schema = {
+                "$schema": dialect,
+                "type": "object",
+                "properties": {},
+                "unevaluatedProperties": False,
+            }
+            for nested in (False, True):
+                with self.subTest(dialect=dialect, nested=nested):
+                    value = (
+                        {
+                            "type": "object",
+                            "properties": {},
+                            "$defs": {"nested": schema},
+                            "$ref": "#/$defs/nested",
+                        }
+                        if nested
+                        else schema
+                    )
+                    with self.assertRaises(ValidationError) as caught:
+                        ClientExternalToolDefinition(
+                            name="client__dialect",
+                            description="Check schema dialect.",
+                            input_schema=value,
+                        )
+                    self.assertEqual(
+                        caught.exception.errors(
+                            include_url=False,
+                            include_context=False,
+                            include_input=False,
+                        ),
+                        [
+                            {
+                                "type": "value_error",
+                                "loc": ("input_schema",),
+                                "msg": "Value error, Client tool schemas "
+                                "only support JSON Schema Draft 2020-12.",
+                            },
+                        ],
+                    )
+
+    def test_non_object_input_schema_is_rejected(self) -> None:
+        """Tool schemas must match the toolkit's object contract."""
+        with self.assertRaises(ValidationError):
+            ClientExternalToolDefinition(
+                name="client__string_tool",
+                description="Invalid root type.",
+                input_schema={
+                    "type": "string",
+                },
+            )
+
+    def test_remote_schema_reference_is_rejected(self) -> None:
+        """A client schema cannot trigger URI retrieval on the server."""
+        for keyword in ("$ref", "$dynamicRef", "$recursiveRef"):
+            with self.subTest(keyword=keyword):
+                with self.assertRaises(ValidationError):
+                    ClientExternalToolDefinition(
+                        name="client__remote_reference",
+                        description="Invalid remote reference.",
+                        input_schema={
+                            "type": "object",
+                            "properties": {
+                                "value": {
+                                    keyword: (
+                                        "https://example.com/schema.json"
+                                    ),
+                                },
+                            },
+                        },
+                    )
+
+    def test_schema_metadata_inside_literal_data_is_allowed(self) -> None:
+        """Literal objects do not declare references or schema dialects."""
+        literal = {
+            "$ref": "https://example.com/document",
+            "$dynamicRef": "https://example.com/dynamic",
+            "$recursiveRef": "https://example.com/recursive",
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "properties": {"nested": {"$ref": "https://example.com/nested"}},
+        }
+        for keyword, data in (
+            ("const", literal),
+            ("enum", [literal]),
+            ("default", literal),
+            ("examples", [literal]),
+            ("x-annotation", literal),
+        ):
+            with self.subTest(keyword=keyword):
+                schema = {
+                    "type": "object",
+                    "properties": {"document": {keyword: data}},
+                }
+                definition = ClientExternalToolDefinition(
+                    name="client__document",
+                    description="Accept literal documents.",
+                    input_schema=schema,
+                )
+                self.assertEqual(definition.input_schema, schema)
+                Draft202012Validator(schema).validate({"document": literal})
+
+    def test_remote_references_in_subschema_positions_are_rejected(
+        self,
+    ) -> None:
+        """All schema-bearing keywords still enforce local references."""
+        remote = {"$ref": "https://example.com/schema"}
+        positions = {
+            **{
+                key: remote
+                for key in (
+                    "additionalProperties",
+                    "unevaluatedProperties",
+                    "propertyNames",
+                    "items",
+                    "contains",
+                    "unevaluatedItems",
+                    "not",
+                    "if",
+                    "then",
+                    "else",
+                    "contentSchema",
+                )
+            },
+            **{
+                key: {"const": remote}
+                for key in (
+                    "properties",
+                    "patternProperties",
+                    "$defs",
+                    "definitions",
+                    "dependentSchemas",
+                    "dependencies",
+                )
+            },
+            **{
+                key: [remote]
+                for key in ("allOf", "anyOf", "oneOf", "prefixItems")
+            },
+        }
+        for keyword, child in positions.items():
+            with self.subTest(keyword=keyword):
+                with self.assertRaises(ValidationError) as caught:
+                    ClientExternalToolDefinition(
+                        name="client__remote",
+                        description="Reject nested remote references.",
+                        input_schema={
+                            "type": "object",
+                            "properties": {},
+                            keyword: child,
+                        },
+                    )
+                self.assertEqual(
+                    caught.exception.errors(include_url=False)[0]["msg"],
+                    "Value error, Client tool schemas only support local "
+                    "$ref values.",
+                )
+
+    def test_local_reference_targets_are_checked_as_schemas(self) -> None:
+        """References can turn otherwise literal data into active schemas."""
+        targets = (
+            ({"$ref": "https://example.com/schema"}, "local $ref values"),
+            (
+                {"$schema": "http://json-schema.org/draft-07/schema#"},
+                "Draft 2020-12",
+            ),
+        )
+        for target, error in targets:
+            for keyword in ("$ref", "$dynamicRef", "$recursiveRef"):
+                for embedded in (False, True):
+                    with self.subTest(
+                        target=target,
+                        keyword=keyword,
+                        embedded=embedded,
+                    ):
+                        node = {
+                            "default": {"a/b~c": [target]},
+                            keyword: "#/default/a~1b~0c/%30",
+                        }
+                        if embedded:
+                            node["$id"] = "https://example.com/embedded"
+                        schema = (
+                            {
+                                "type": "object",
+                                "properties": {"document": node},
+                            }
+                            if embedded
+                            else {
+                                "type": "object",
+                                "properties": {},
+                                **node,
+                            }
+                        )
+                        with self.assertRaises(ValidationError) as caught:
+                            ClientExternalToolDefinition(
+                                name="client__indirect",
+                                description="Reject indirect metadata.",
+                                input_schema=schema,
+                            )
+                        self.assertIn(error, str(caught.exception))
+
+    def test_recursive_local_references_preserve_literal_data(self) -> None:
+        """Following reference cycles terminates and preserves literals."""
+        schema = {
+            "type": "object",
+            "properties": {"child": {"$ref": "#/$defs/node"}},
+            "$defs": {
+                "node": {
+                    "$anchor": "node",
+                    "type": "object",
+                    "properties": {
+                        "next": {"$ref": "#/$defs/node"},
+                        "sibling": {"$ref": "#node"},
+                    },
+                    "default": {"$ref": "https://example.com/literal"},
+                },
+            },
+            "examples": [{"$ref": "#/$defs/node"}],
+        }
+        definition = ClientExternalToolDefinition(
+            name="client__recursive",
+            description="Allow recursive local schemas.",
+            input_schema=schema,
+        )
+        self.assertEqual(definition.input_schema, schema)
+        Draft202012Validator(schema).validate({"child": {"next": {}}})
+
+    def test_referenced_data_id_cannot_hide_a_remote_reference(self) -> None:
+        """Pointer targets retain the validator's reference resolution
+        scope."""
+        schema = {
+            "type": "object",
+            "properties": {},
+            "$ref": "#/default",
+            "default": {
+                "$id": "https://example.com/data",
+                "$ref": "#/x-target",
+            },
+            "x-target": {"$ref": "https://example.com/remote"},
+        }
+        with patch("urllib.request.urlopen") as retrieve:
+            with self.assertRaises(ValidationError) as caught:
+                ClientExternalToolDefinition(
+                    name="client__indirect",
+                    description="Reject references through literal IDs.",
+                    input_schema=schema,
+                )
+        retrieve.assert_not_called()
+        self.assertEqual(
+            caught.exception.errors(include_url=False)[0]["msg"],
+            "Value error, Client tool schemas only support local $ref values.",
+        )
+
+    def test_local_schema_reference_is_allowed(self) -> None:
+        """Local definitions remain available for structured schemas."""
+        definition = ClientExternalToolDefinition(
+            name="client__local_reference",
+            description="Valid local reference.",
+            input_schema={
+                "type": "object",
+                "$defs": {
+                    "value": {"type": "string"},
+                },
+                "properties": {
+                    "value": {"$ref": "#/$defs/value"},
+                },
+            },
+        )
+
+        self.assertEqual(
+            definition.input_schema["properties"],
+            {"value": {"$ref": "#/$defs/value"}},
+        )
+
+    def test_duplicate_names_are_rejected(self) -> None:
+        """One request cannot register ambiguous duplicate names."""
+        with self.assertRaises(ValidationError):
+            ChatRequest(
+                agent_id="agent-1",
+                session_id="session-1",
+                input=None,
+                client_external_tools=[
+                    _definition(),
+                    _definition(),
+                ],
+            )
+
+    def test_chat_request_enforces_client_tool_limit(self) -> None:
+        """A request accepts at most sixteen client tool definitions."""
+        definitions = [
+            _definition(f"client__tool_{index}") for index in range(17)
+        ]
+
+        request = ChatRequest(
+            agent_id="agent-1",
+            session_id="session-1",
+            input=None,
+            client_external_tools=definitions[:16],
+        )
+        self.assertEqual(request.client_external_tools, definitions[:16])
+
+        with self.assertRaises(ValidationError):
+            ChatRequest(
+                agent_id="agent-1",
+                session_id="session-1",
+                input=None,
+                client_external_tools=definitions,
+            )
+
+
+class ClientExternalToolRuntimeTest(IsolatedAsyncioTestCase):
+    """Validate failures at the agent's schema evaluation boundary."""
+
+    async def test_supported_dialects_enforce_unevaluated_properties(
+        self,
+    ) -> None:
+        """Saved schemas retain Draft 2020-12 constraints during execution."""
+        for dialect in (
+            None,
+            "https://json-schema.org/draft/2020-12/schema",
+            "https://json-schema.org/draft/2020-12/schema#",
+        ):
+            with self.subTest(dialect=dialect):
+                schema = {
+                    "type": "object",
+                    "properties": {"known": {"type": "string"}},
+                    "unevaluatedProperties": False,
+                }
+                if dialect is not None:
+                    schema["$schema"] = dialect
+                definition = ClientExternalToolDefinition(
+                    name="client__strict",
+                    description="Reject extra arguments.",
+                    read_only=True,
+                    input_schema=schema,
+                )
+                self.assertEqual(definition.input_schema, schema)
+                model = MockModel()
+                model.set_responses(
+                    [
+                        ChatResponse(
+                            content=[
+                                ToolCallBlock(
+                                    id="strict-call",
+                                    name=definition.name,
+                                    input='{"known":"ok","extra":true}',
+                                ),
+                            ],
+                            is_last=True,
+                        ),
+                        ChatResponse(
+                            content=[TextBlock(text="Rejected extra input.")],
+                            is_last=True,
+                        ),
+                    ],
+                )
+                agent = Agent(
+                    name="Friday",
+                    system_prompt="Help the user.",
+                    model=model,
+                    toolkit=Toolkit(tools=[ClientExternalTool(definition)]),
+                    injection_config=InjectionConfig(
+                        inject_runtime_state=False,
+                    ),
+                )
+                events = [
+                    event
+                    async for event in agent.reply_stream(
+                        UserMsg(name="user", content="Call the client tool."),
+                    )
+                ]
+                self.assertEqual(
+                    [
+                        event
+                        for event in events
+                        if isinstance(event, RequireExternalExecutionEvent)
+                    ],
+                    [],
+                )
+                self.assertEqual(
+                    [
+                        (result.id, result.name, result.state)
+                        for message in agent.state.context
+                        for result in message.content
+                        if isinstance(result, ToolResultBlock)
+                    ],
+                    [("strict-call", definition.name, "error")],
+                )
+
+    async def test_native_ask_user_parks_and_resumes_with_metadata(
+        self,
+    ) -> None:
+        """A native question uses the existing external execution loop."""
+        model = MockModel(context_size=10000)
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="ask",
+                            name="AskUser",
+                            input=json.dumps(
+                                {
+                                    "questions": [
+                                        {
+                                            "question": "Which?",
+                                            "header": "Choice",
+                                            "options": [
+                                                {
+                                                    "label": "A",
+                                                    "description": "First",
+                                                },
+                                                {
+                                                    "label": "B",
+                                                    "description": "Second",
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                },
+                            ),
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(content=[TextBlock(text="Done")], is_last=True),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="Help the user.",
+            model=model,
+            toolkit=Toolkit(tools=[AskUser()]),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        events = [
+            event
+            async for event in agent.reply_stream(
+                UserMsg(name="user", content="Ask me."),
+            )
+        ]
+        pending = [
+            event
+            for event in events
+            if isinstance(event, RequireExternalExecutionEvent)
+        ]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(
+            [call.name for call in pending[0].tool_calls],
+            ["AskUser"],
+        )
+        metadata = {
+            "answers": [
+                {"question": "Which?", "selected": ["B"], "other": None},
+            ],
+        }
+        reply = await agent.reply(
+            ExternalExecutionResultEvent(
+                reply_id=pending[0].reply_id,
+                execution_results=[
+                    ToolResultBlock(
+                        id="ask",
+                        name="AskUser",
+                        output="Which?\nB",
+                        state=ToolResultState.SUCCESS,
+                        metadata=metadata,
+                    ),
+                ],
+            ),
+        )
+        self.assertEqual(reply.get_text_content(), "Done")
+        results = [
+            result
+            for message in agent.state.context
+            for result in message.content
+            if isinstance(result, ToolResultBlock)
+        ]
+        self.assertEqual([result.metadata for result in results], [metadata])
+
+    async def test_permissions_follow_explicit_read_only_contract(
+        self,
+    ) -> None:
+        """Only explicitly read-only client tools bypass confirmation."""
+        effectful_tool = ClientExternalTool(_definition())
+        read_only_tool = ClientExternalTool(_definition(read_only=True))
+
+        self.assertEqual(
+            await effectful_tool.check_permissions(
+                {},
+                PermissionContext(),
+            ),
+            PermissionDecision(
+                behavior=PermissionBehavior.ASK,
+                message=(
+                    "Client external tool 'client__choose_option' "
+                    "may change client-side state."
+                ),
+                decision_reason=(
+                    "The active client did not declare "
+                    "'client__choose_option' read-only."
+                ),
+            ),
+        )
+        self.assertEqual(
+            await read_only_tool.check_permissions(
+                {},
+                PermissionContext(),
+            ),
+            PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=(
+                    "Client external tool 'client__choose_option' "
+                    "is read-only."
+                ),
+                decision_reason=(
+                    "The active client declared "
+                    "'client__choose_option' read-only."
+                ),
+            ),
+        )
+        self.assertFalse(effectful_tool.is_read_only)
+        self.assertTrue(read_only_tool.is_read_only)
+
+    async def test_unresolvable_local_reference_becomes_tool_error(
+        self,
+    ) -> None:
+        """A broken local reference must not terminate the reply run."""
+        definition = ClientExternalToolDefinition(
+            name="client__broken_reference",
+            description="A client tool with a broken local reference.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "value": {"$ref": "#/$defs/missing"},
+                },
+            },
+        )
+        model = MockModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="broken-reference-call",
+                            name=definition.name,
+                            input='{"value":"test"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="Recovered from schema error.")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            toolkit=Toolkit(tools=[ClientExternalTool(definition)]),
+            injection_config=InjectionConfig(
+                inject_runtime_state=False,
+            ),
+        )
+
+        response = await agent.reply(
+            UserMsg(name="user", content="Call the client tool."),
+        )
+
+        self.assertEqual(
+            response.get_content_blocks("text")[0].text,
+            "Recovered from schema error.",
+        )
+        tool_results = agent.state.context[-1].get_content_blocks(
+            "tool_result",
+        )
+        self.assertEqual(len(tool_results), 1)
+        self.assertEqual(
+            {
+                "id": tool_results[0].id,
+                "name": tool_results[0].name,
+                "state": tool_results[0].state,
+            },
+            {
+                "id": "broken-reference-call",
+                "name": definition.name,
+                "state": "error",
+            },
+        )

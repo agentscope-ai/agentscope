@@ -622,6 +622,63 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
             ["v2-chunk0", "v2-chunk1"],
         )
 
+    async def test_none_metadata_filter_value_is_rejected(self) -> None:
+        """None filter values raise instead of a Milvus parse error."""
+        await self.store.create_collection("kb", dimensions=2)
+        await self.store.insert(
+            "kb",
+            [
+                VectorRecord(
+                    vector=[1.0, 0.0],
+                    document_id=doc,
+                    chunk=Chunk(
+                        content=TextBlock(text=doc),
+                        source=doc,
+                        chunk_index=0,
+                        total_chunks=1,
+                        metadata=metadata,
+                    ),
+                )
+                for doc, metadata in (
+                    ("explicit-null", {"reviewer": None}),
+                    ("missing", {}),
+                    ("set", {"reviewer": "alice"}),
+                )
+            ],
+        )
+        scope = {"reviewer": None}
+        calls = {
+            "search": lambda: self.store.search(
+                "kb",
+                [1.0, 0.0],
+                metadata_filter=scope,
+            ),
+            "list_documents": lambda: self.store.list_documents(
+                "kb",
+                metadata_filter=scope,
+            ),
+            "list_chunks": lambda: self.store.list_chunks(
+                "kb",
+                "explicit-null",
+                metadata_filter=scope,
+            ),
+            "delete": lambda: self.store.delete(
+                "kb",
+                "explicit-null",
+                metadata_filter=scope,
+            ),
+        }
+        for name, call_store in calls.items():
+            with self.subTest(method=name):
+                with self.assertRaisesRegex(ValueError, "'reviewer'"):
+                    await call_store()
+
+        documents = await self.store.list_documents("kb")
+        self.assertEqual(
+            sorted(document.document_id for document in documents),
+            ["explicit-null", "missing", "set"],
+        )
+
 
 class MilvusDeleteFilterTest(IsolatedAsyncioTestCase):
     """Check delete predicates without starting a Milvus service."""
@@ -668,6 +725,35 @@ class MilvusReadLoadsCollectionTest(IsolatedAsyncioTestCase):
         """Create a store without connecting to Milvus."""
         self.store = MilvusLiteStore()
         self.client = Mock()
+
+    async def test_none_filter_is_rejected_before_connecting(self) -> None:
+        """Invalid filters fail before creating or loading a client."""
+        calls = {
+            "search": lambda: self.store.search(
+                "kb_1",
+                [1.0, 0.0],
+                metadata_filter={"reviewer": None},
+            ),
+            "list_documents": lambda: self.store.list_documents(
+                "kb_1",
+                metadata_filter={"reviewer": None},
+            ),
+        }
+        for name, call_store in calls.items():
+            with self.subTest(method=name), patch.object(
+                self.store,
+                "get_client",
+                side_effect=AssertionError("must not connect to Milvus"),
+            ) as get_client:
+                with self.assertRaises(ValueError) as error:
+                    await call_store()
+                self.assertEqual(
+                    str(error.exception),
+                    "MilvusLiteStore does not support None values in "
+                    "metadata_filter (keys: 'reviewer'): the backend cannot "
+                    "tell an explicitly null field from a missing key.",
+                )
+                get_client.assert_not_called()
 
     async def test_search_loads_collection_first(self) -> None:
         """search() loads the collection before issuing the search."""

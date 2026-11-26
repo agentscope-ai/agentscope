@@ -23,6 +23,8 @@ max_context_tokens: 131072
 max_session_duration_s: 900
 
 parameter_overrides:
+  thinking_level:
+    hidden: true
   voice:
     enum: ["Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus",
            "Aoede", "Callirrhoe", "Autonoe", "Enceladus", "Iapetus",

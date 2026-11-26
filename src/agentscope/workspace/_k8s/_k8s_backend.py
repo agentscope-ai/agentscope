@@ -225,6 +225,11 @@ class K8sBackend(BackendBase):
         dirname = posixpath.dirname(path) or "/"
         basename = posixpath.basename(path)
 
+        # Prefix option-like names with './'; BSD tar still interprets
+        # a bare '-C' specially even after an option terminator ('--').
+        if basename.startswith("-"):
+            basename = f"./{basename}"
+
         result = await self.exec_shell(
             ["tar", "cf", "-", "-C", dirname, basename],
             cwd="/",

@@ -16,6 +16,7 @@ import { ReadRenderer } from './ReadRenderer';
 import { TaskCreateRenderer } from './TaskCreateRenderer';
 import type { TFunction, ToolCallWithResult, ToolRenderer } from './types';
 import { WriteRenderer } from './WriteRenderer';
+import { getClientExternalToolRegistration } from '@/lib/client-external-tools';
 
 const renderers: Record<string, ToolRenderer> = {
 	Bash: BashRenderer,
@@ -28,7 +29,9 @@ const renderers: Record<string, ToolRenderer> = {
 };
 
 function getRenderer(toolName: string): ToolRenderer {
-	return renderers[toolName] ?? {};
+	return (
+		getClientExternalToolRegistration(toolName)?.historyRenderer ?? renderers[toolName] ?? {}
+	);
 }
 
 export function getDisplayName(call: ToolCallBlock, t: TFunction): string {

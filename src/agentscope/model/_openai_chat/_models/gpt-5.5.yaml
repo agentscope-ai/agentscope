@@ -1,6 +1,8 @@
 name: gpt-5.5
 label: GPT-5.5
 status: active
+# Release date source: https://developers.openai.com/api/docs/changelog
+release_date: 2026-04-24
 
 input_types:
   - text/plain

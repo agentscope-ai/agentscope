@@ -104,7 +104,7 @@ class DashScopeRealtimeASRModel(ASRModelBase):
         self._started = asyncio.Event()
         self._finished = asyncio.Event()
         self._error: Exception | None = None
-        self._responses: asyncio.Queue[ASRResponse] = asyncio.Queue()
+        self._latest_partial: ASRResponse | None = None
         self._task_id = ""
         self._committed_sentences: list[str] = []
         self._current_sentence = ""
@@ -126,7 +126,7 @@ class DashScopeRealtimeASRModel(ASRModelBase):
         self._started.clear()
         self._finished.clear()
         self._error = None
-        self._responses = asyncio.Queue()
+        self._latest_partial = None
         self._task_id = uuid4().hex
         self._committed_sentences = []
         self._current_sentence = ""
@@ -340,38 +340,26 @@ class DashScopeRealtimeASRModel(ASRModelBase):
         text = sentence.get("text")
         if not isinstance(text, str):
             return
-        text = text.strip()
         self._current_sentence = text
         transcript = self._complete_text()
         if transcript:
-            self._responses.put_nowait(
-                ASRResponse(
-                    content=TextBlock(text=transcript),
-                    is_last=False,
-                ),
+            # Partial transcripts are cumulative; older snapshots are stale.
+            self._latest_partial = ASRResponse(
+                content=TextBlock(text=transcript),
+                is_last=False,
             )
         if sentence.get("sentence_end") and text:
             self._committed_sentences.append(text)
             self._current_sentence = ""
 
     def _complete_text(self) -> str:
-        """Return committed sentences plus the active partial sentence."""
-        parts = [*self._committed_sentences]
-        if self._current_sentence:
-            parts.append(self._current_sentence)
-        result = ""
-        for part in parts:
-            if result and result[-1].isalnum() and part[0].isalnum():
-                result = f"{result} {part}"
-            else:
-                result = f"{result}{part}"
-        return result
+        """Concatenate committed and current text without normalization."""
+        return "".join([*self._committed_sentences, self._current_sentence])
 
     def _drain_latest_response(self) -> ASRResponse:
-        """Return the newest queued partial response without blocking."""
-        latest: ASRResponse | None = None
-        while not self._responses.empty():
-            latest = self._responses.get_nowait()
+        """Return and clear the latest pending partial response."""
+        latest = self._latest_partial
+        self._latest_partial = None
         return latest or ASRResponse(content=None, is_last=False)
 
     def _raise_provider_error(self) -> None:

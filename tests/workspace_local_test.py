@@ -105,6 +105,101 @@ class _LongResultTool(ToolBase):
 class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
     """Test cases for LocalWorkspace builtin tools."""
 
+    async def _assert_search_result(
+        self,
+        workspace: LocalWorkspace,
+        expected: Path,
+        path: str | None = None,
+    ) -> None:
+        """Both search tools find the same file in the requested directory."""
+        tools = await workspace.list_tools()
+        for tool in tools:
+            if isinstance(tool, (Glob, Grep)):
+                pattern = "**/*.txt" if isinstance(tool, Glob) else "needle"
+                result = await tool(pattern=pattern, path=path)
+                self.assertEqual(result.content[0].text, str(expected))
+
+    async def test_search_defaults_to_each_workspace(self) -> None:
+        """Independent workspaces search their own roots without chdir."""
+        process_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as root:
+            for name in ("first", "second"):
+                workdir = Path(root) / name
+                workdir.mkdir()
+                expected = workdir / "match.txt"
+                expected.write_text("needle\n", encoding="utf-8")
+                workspace = LocalWorkspace(workdir=str(workdir))
+                await self._assert_search_result(workspace, expected)
+                tools = await workspace.list_tools()
+                for tool in tools:
+                    if isinstance(tool, (Glob, Grep)):
+                        suggestions = await tool.generate_suggestions({})
+                        self.assertEqual(
+                            suggestions[0].rule_content,
+                            str(workdir).rstrip("/\\") + "/**",
+                        )
+                self.assertEqual(os.getcwd(), process_cwd)
+
+    async def test_search_paths_resolve_from_workspace(self) -> None:
+        """Dot and nested paths use the workspace; absolute paths override."""
+        with tempfile.TemporaryDirectory() as root:
+            workdir = Path(root) / "project"
+            source = workdir / "src"
+            source.mkdir(parents=True)
+            expected = source / "match.txt"
+            expected.write_text("needle\n", encoding="utf-8")
+            external_dir = Path(root) / "external"
+            external_dir.mkdir()
+            external = external_dir / "match.txt"
+            external.write_text("needle\n", encoding="utf-8")
+            workspace = LocalWorkspace(workdir=str(workdir))
+            await self._assert_search_result(workspace, expected, ".")
+            await self._assert_search_result(workspace, expected, "src")
+            await self._assert_search_result(
+                workspace,
+                external,
+                str(external_dir),
+            )
+
+    async def test_search_preserves_symlink_parent_paths(self) -> None:
+        """Preserve native filesystem semantics for symlink parent paths."""
+        with tempfile.TemporaryDirectory() as root:
+            workdir = Path(root) / "project"
+            workdir.mkdir()
+            external = Path(root) / "external"
+            target = external / "nested"
+            target.mkdir(parents=True)
+            link = workdir / "link"
+            try:
+                link.symlink_to(target, target_is_directory=True)
+            except OSError as exc:
+                if getattr(exc, "winerror", None) == 1314:
+                    self.skipTest("Creating symlinks requires privileges.")
+                raise
+            (workdir / "wrong.txt").write_text("needle\n", encoding="utf-8")
+            (external / "match.txt").write_text("needle\n", encoding="utf-8")
+            workspace = LocalWorkspace(workdir=str(workdir))
+            tools = await workspace.list_tools()
+            expected = [
+                str(entry)
+                for entry in (link / "..").iterdir()
+                if entry.suffix == ".txt"
+            ]
+            for path in (os.path.join("link", ".."), str(link / "..")):
+                for tool in tools:
+                    if isinstance(tool, (Glob, Grep)):
+                        with self.subTest(path=path, tool=tool.name):
+                            pattern = (
+                                "**/*.txt"
+                                if isinstance(tool, Glob)
+                                else "needle"
+                            )
+                            result = await tool(pattern=pattern, path=path)
+                            self.assertEqual(
+                                [block.text for block in result.content],
+                                expected,
+                            )
+
     async def test_list_tools_builtin_posix_uses_bash(self) -> None:
         """A POSIX local workspace returns Bash and filesystem tools."""
         with tempfile.TemporaryDirectory() as workdir:
