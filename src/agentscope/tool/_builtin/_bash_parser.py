@@ -140,6 +140,18 @@ FIND_MUTATING_PREDICATES = {
     "-okdir",
 }
 
+# Only split shell text whose words have literal values. Quoted globs are
+# literal; unquoted globs, expansions and line continuations need review.
+_LITERAL_SHELL_TEXT = re.compile(
+    r"""(?:
+        [\w./:+,=@% \t-]             # Unquoted literal or word separator
+        | '[^']*'                    # Single-quoted literal
+        | "(?:[^"$`\\!]|\\[^\n$`!])*"  # Static double-quoted literal
+        | \\[^\n]                     # One escaped character
+    )+""",
+    re.VERBOSE,
+)
+
 
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
@@ -218,24 +230,8 @@ class BashCommandParser:
             ):
                 return False
 
-        # ``rg --pre <program>`` executes <program> on every file it
-        # searches; ``tree -o <file>`` writes the listing to a file. Both
-        # make an otherwise read-only command mutate state.
         if cmd.startswith(("rg ", "tree ")):
-            try:
-                tokens = shlex.split(cmd)
-            except ValueError:
-                return False
-            args = tokens[1:]
-            if tokens[0] == "rg" and any(
-                tok == "--pre" or tok.startswith("--pre=") for tok in args
-            ):
-                return False
-            if tokens[0] == "tree" and any(
-                tok.startswith("-") and not tok.startswith("--") and "o" in tok
-                for tok in args
-            ):
-                return False
+            return self._is_read_only_search_command(cmd)
 
         # Check if it starts with a read-only prefix
         for readonly_cmd in READ_ONLY_COMMANDS:
@@ -258,6 +254,29 @@ class BashCommandParser:
                 return True
 
         return False
+
+    @staticmethod
+    def _is_read_only_search_command(cmd: str) -> bool:
+        """Allow common rg/tree invocations with literal arguments."""
+        if not _LITERAL_SHELL_TEXT.fullmatch(cmd):
+            return False
+        args = iter(shlex.split(cmd))
+        if next(args) == "rg":
+            flags = {"-n", "-i", "-F", "--line-number", "--pretty"}
+            options_with_value = {"-e", "--regexp", "-g", "--glob"}
+        else:
+            flags = {"-a", "-d"}
+            options_with_value = {"-I", "-P", "-L"}
+
+        for arg in args:
+            if arg == "--":
+                break
+            if arg in options_with_value:
+                if next(args, None) is None:
+                    return False
+            elif arg.startswith("-") and arg not in flags:
+                return False
+        return True
 
     def _is_mutating_find_command(self, cmd: str) -> bool:
         """Check if a find command contains mutating predicates via AST."""
