@@ -756,7 +756,11 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
             engine = PermissionEngine(PermissionContext(mode=mode))
             for command, expected in (
                 ("rg -- --pre", PermissionBehavior.ALLOW),
+                ("rg --files", PermissionBehavior.ALLOW),
+                ("rg -l pattern src", PermissionBehavior.ALLOW),
+                ("rg -S pattern src", PermissionBehavior.ALLOW),
                 ("tree -I '-old*' src", PermissionBehavior.ALLOW),
+                ("tree -f src", PermissionBehavior.ALLOW),
                 ('rg "$PATTERN" README.md', unresolved),
                 ("tree $DIRECTORY", unresolved),
                 ("rg -ne pattern README.md", unresolved),

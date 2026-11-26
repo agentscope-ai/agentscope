@@ -262,10 +262,19 @@ class BashCommandParser:
             return False
         args = iter(shlex.split(cmd))
         if next(args) == "rg":
-            flags = {"-n", "-i", "-F", "--line-number", "--pretty"}
+            flags = {
+                "-n",
+                "-i",
+                "-F",
+                "-l",
+                "-S",
+                "--files",
+                "--line-number",
+                "--pretty",
+            }
             options_with_value = {"-e", "--regexp", "-g", "--glob"}
         else:
-            flags = {"-a", "-d"}
+            flags = {"-a", "-d", "-f"}
             options_with_value = {"-I", "-P", "-L"}
 
         for arg in args:
