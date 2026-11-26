@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 from agentscope.app.channel import FeishuChannel
 
 _BOT_OPEN_ID = "ou-bot"
-_BOT_MENTION = ("@_user_1", _BOT_OPEN_ID, "机器人")
+_BOT_MENTION = ("@_user_1", _BOT_OPEN_ID, "Bot")
 
 
 def _channel(only_at_reply: bool) -> FeishuChannel:
@@ -77,15 +77,15 @@ class FeishuMentionCleanupTest(IsolatedAsyncioTestCase):
         for only_at_reply in (False, True):
             with self.subTest(only_at_reply=only_at_reply):
                 await self._assert_group_text(
-                    "@_user_1 你好",
+                    "@_user_1 hello",
                     [_BOT_MENTION],
-                    "你好",
+                    "hello",
                     only_at_reply=only_at_reply,
                 )
 
     async def test_member_mention_alone_is_preserved(self) -> None:
         """Keep the addressee even when the mention is the entire message."""
-        for name, expected in [("张三", "@张三"), ("", "@ou-member")]:
+        for name, expected in [("Alex", "@Alex"), ("", "@ou-member")]:
             with self.subTest(name=name):
                 await self._assert_group_text(
                     "@_user_1",
@@ -96,8 +96,8 @@ class FeishuMentionCleanupTest(IsolatedAsyncioTestCase):
     async def test_numbered_mention_keys_match_in_full(self) -> None:
         """Resolve overlapping keys in a message addressed to the bot."""
         await self._assert_group_text(
-            "@_user_1 请把报告发给 @_user_10",
-            [_BOT_MENTION, ("@_user_10", "ou-member", "张三")],
-            "请把报告发给 @张三",
+            "@_user_1 send the report to @_user_10",
+            [_BOT_MENTION, ("@_user_10", "ou-member", "Alex")],
+            "send the report to @Alex",
             only_at_reply=True,
         )
