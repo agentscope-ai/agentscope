@@ -21,11 +21,13 @@ other's internals.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from time import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
+from itertools import islice
 from typing import AsyncGenerator, TYPE_CHECKING, Literal
 
 from .._logging import logger
@@ -1472,6 +1474,9 @@ async def _pending_input_count(
     return len(queued_ids) + (item_id not in queued_ids)
 
 
+_CHAT_ADMISSION_BATCH_SIZE = 8
+
+
 @asynccontextmanager
 async def _chat_admission(
     bus: "MessageBus",
@@ -1501,35 +1506,46 @@ async def _chat_admission(
                 if sid != session_id and sid not in sessions
             )
 
-        async def count_session(sid: str) -> tuple[int, int]:
-            """Accumulate user totals and return local queue/receipt usage."""
-            nonlocal pending, receipts
+        async def count_session(sid: str) -> tuple[int, int, int]:
+            """Return FIFO length, pending inputs and reserved receipts."""
             entries = await bus.queue_read(
                 MessageBusKeys.chat_inputs(sid),
                 max_count=MessageBusKeys.CHAT_INPUT_MAX_LEN,
             )
             ids = {item["id"] for _, item in entries}
-            if enqueue:
-                pending += await _pending_input_count(bus, sid, ids)
-                if pending >= MessageBusKeys.CHAT_INPUT_USER_MAX_LEN:
-                    raise ChatQueueFullError(
-                        "Your pending message quota is full; wait for a "
-                        "message to finish or remove one before sending "
-                        "another.",
-                    )
+            count = await _pending_input_count(bus, sid, ids) if enqueue else 0
             used = await receipt_count(bus, sid, ids) if receipt_slots else 0
+            return len(entries), count, used
+
+        def add_usage(count: int, used: int) -> None:
+            nonlocal pending, receipts
+            pending += count
             receipts += used
-            return len(entries), used
+            if enqueue and pending >= MessageBusKeys.CHAT_INPUT_USER_MAX_LEN:
+                raise ChatQueueFullError(
+                    "Your pending message quota is full; wait for a "
+                    "message to finish or remove one before sending another.",
+                )
 
         # Other sessions may drain during the scan. Admissions share the
         # user lock. Read the target FIFO under its own mutation lock.
-        for sid in sessions:
-            if sid != session_id:
-                await count_session(sid)
-                if receipts > MessageBusKeys.CHAT_RECEIPT_USER_MAX_LEN:
-                    break
+        others = (sid for sid in sessions if sid != session_id)
+        while batch := tuple(islice(others, _CHAT_ADMISSION_BATCH_SIZE)):
+            # Finish all reads before releasing the lock, even on failure.
+            results = await asyncio.gather(
+                *(count_session(sid) for sid in batch),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+                _, count, used = result
+                add_usage(count, used)
+            if receipts > MessageBusKeys.CHAT_RECEIPT_USER_MAX_LEN:
+                break
         async with chat_input_mutation(bus, session_id):
-            queue_size, used = await count_session(session_id)
+            queue_size, count, used = await count_session(session_id)
+            add_usage(count, used)
             if receipt_slots and (
                 used + receipt_slots
                 > MessageBusKeys.CHAT_RECEIPT_SESSION_MAX_LEN

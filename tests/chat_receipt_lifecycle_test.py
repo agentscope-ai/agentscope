@@ -100,6 +100,102 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                 ],
             )
 
+    async def test_chat_admission_bounds_concurrent_reads(self) -> None:
+        """Overlap other FIFO reads, then read the target on its own."""
+        async with InMemoryMessageBus() as bus:
+            sessions = MessageBusKeys.chat_input_user_sessions("u")
+            for i in range(17):
+                await bus.registry_set(sessions, str(i), "a")
+            await bus.registry_set(sessions, "target", "a")
+            read = bus.queue_read
+            active = peak = 0
+            target_overlap = []
+
+            async def traced_read(
+                key: str,
+                **kwargs: int,
+            ) -> list[tuple[str, dict]]:
+                nonlocal active, peak
+                if key == MessageBusKeys.chat_inputs("target"):
+                    target_overlap.append(active)
+                active += 1
+                peak = max(peak, active)
+                try:
+                    # Yield once so every read in this batch can start.
+                    await asyncio.sleep(0)
+                    return await read(key, **kwargs)
+                finally:
+                    active -= 1
+
+            with patch.object(bus, "queue_read", traced_read):
+                await enqueue_chat_input(
+                    bus,
+                    "u",
+                    "target",
+                    "a",
+                    UserMsg("u", "hello"),
+                )
+            self.assertEqual((peak, target_overlap), (8, [0, 0]))
+
+    async def test_quota_read_failure_prevents_enqueue(self) -> None:
+        """An unreadable session cannot be treated as unused capacity."""
+        async with InMemoryMessageBus() as bus:
+            await create_chat_submission(bus, "u", "other", "a")
+            with patch.object(
+                bus,
+                "registry_get",
+                side_effect=OSError("quota read failed"),
+            ), self.assertRaisesRegex(OSError, "quota read failed"):
+                await enqueue_chat_input(
+                    bus,
+                    "u",
+                    "target",
+                    "a",
+                    UserMsg("u", "hello"),
+                )
+            self.assertEqual(await list_chat_inputs(bus, "target"), [])
+
+    async def test_last_pending_slot_is_atomic_across_sessions(self) -> None:
+        """Only one ordinary send can take the last pending slot."""
+        for bus in self.backends:
+            with self.subTest(backend=type(bus).__name__):
+                async with bus:
+                    await enqueue_chat_input(
+                        bus,
+                        "u",
+                        "seed",
+                        "a",
+                        UserMsg("u", "first"),
+                    )
+                    targets = ["one", "two"]
+                    with patch.object(
+                        MessageBusKeys,
+                        "CHAT_INPUT_USER_MAX_LEN",
+                        2,
+                    ):
+                        results = await asyncio.gather(
+                            *(
+                                enqueue_chat_input(
+                                    bus,
+                                    "u",
+                                    sid,
+                                    "a",
+                                    UserMsg("u", sid),
+                                )
+                                for sid in targets
+                            ),
+                            return_exceptions=True,
+                        )
+                    self.assertCountEqual(
+                        [type(result) for result in results],
+                        [dict, ChatQueueFullError],
+                    )
+                    for sid, result in zip(targets, results):
+                        self.assertEqual(
+                            await list_chat_inputs(bus, sid),
+                            [result] if isinstance(result, dict) else [],
+                        )
+
     async def test_legacy_receipt_stops_at_unfinished_input(self) -> None:
         """Only a fully finished batch starts its retention period."""
         key = MessageBusKeys.chat_submissions("s")
