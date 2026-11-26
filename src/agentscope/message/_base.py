@@ -199,7 +199,7 @@ class Msg(BaseModel):
     @overload
     def get_content_blocks(
         self,
-        block_type: None = None,
+        block_type: list[ContentBlockTypes] | None = None,
     ) -> list[ContentBlock]:
         ...
 
@@ -479,9 +479,16 @@ class Msg(BaseModel):
                         merge_target.source.media_type = (
                             src.media_type or merge_target.source.media_type
                         )
+                        # Delta events carry the block name only when the
+                        # provider sends it, so keep the one already known.
+                        merge_target.name = event.name or merge_target.name
                     else:
                         block.output.append(
-                            DataBlock(id=event.block_id, source=src),
+                            DataBlock(
+                                id=event.block_id,
+                                source=src,
+                                name=event.name,
+                            ),
                         )
                 else:
                     assert isinstance(block, ToolResultBlock)

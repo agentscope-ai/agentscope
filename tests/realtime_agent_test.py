@@ -845,6 +845,38 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_malformed_control_frames_do_not_kill_the_stream(
+        self,
+    ) -> None:
+        """A malformed remote control frame is dropped, not fatal.
+
+        The DataChannel is an untrusted input boundary: a browser page
+        that is out of date, or does not validate before posting, must
+        not be able to end the voice session with one bad frame.
+        """
+        for frame in (
+            ControlFrame(type=ControlFrameType.TEXT, data={}),
+            ControlFrame(type=ControlFrameType.USER_CONFIRM, data={}),
+            ControlFrame(
+                type=ControlFrameType.EXTERNAL_EXECUTION_RESULT,
+                data={},
+            ),
+        ):
+            model = ScriptedModel([[]])
+            agent = RealtimeAgent("Friday", "be brief", model)
+            transport = GatedTransport([frame])
+            transport.gate.set()
+
+            async with agent, transport:
+                async for _ in agent.reply_stream(transport):
+                    pass
+
+            self.assertListEqual(
+                agent.state.context,
+                [],
+                msg=f"{frame.type} frame was not dropped",
+            )
+
     async def test_provider_timeout_reconnects_on_next_audio(self) -> None:
         """When the provider closes the session, nothing reconnects until
         the next user audio, which reconnects with the current context."""

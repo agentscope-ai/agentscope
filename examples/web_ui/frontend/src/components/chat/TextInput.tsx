@@ -84,11 +84,7 @@ interface TextInputProps {
 	 * Runs concurrently for all selected files; the UI shows a loading state per file while processing.
 	 */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
-	/**
-	 * The current reply lifecycle phase from ``useMessages``. A running
-	 * reply adds a separate Stop action while Send remains available for
-	 * appending another turn to the queue.
-	 */
+	/** A running reply can be stopped when the draft is empty. */
 	phase?: ReplyPhase;
 	/** Allow sending while a reply is parked awaiting structured input. */
 	acceptsInput?: boolean;
@@ -432,13 +428,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		};
 
 		const replyActive = phase !== 'idle';
-		const voiceActive = voiceState === 'active' || voiceState === 'connecting';
 
-		/**
-		 * The primary action controls realtime voice when it is connected,
-		 * otherwise it sends a normal or queued text turn. A running text
-		 * reply gets its own Stop button so sending remains available.
-		 */
 		const actionButton: {
 			icon: LucideIcon;
 			tooltip: string;
@@ -464,7 +454,17 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					onClick: onVoiceToggle,
 				};
 			}
-			if (hasContent || replyActive || submitting) {
+			if (replyActive && !hasContent && !hasProcessing) {
+				const stopping = phase === 'interrupting';
+				return {
+					icon: Square,
+					tooltip: stopping ? t('textInput.stopping') : t('textInput.stop'),
+					disabled: stopping || !onInterrupt,
+					variant: 'default',
+					onClick: onInterrupt,
+				};
+			}
+			if (hasContent || hasProcessing || submitting) {
 				return {
 					icon: submitting ? Loader2 : ArrowUp,
 					tooltip:
@@ -626,7 +626,6 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								<div className="size-9" />
 								<div className="size-9" />
 								<div className="size-9" />
-								{replyActive && !voiceActive && <div className="size-9" />}
 							</div>
 						</div>
 
@@ -746,32 +745,6 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								<TooltipContent>{speechInputTooltip}</TooltipContent>
 							</Tooltip>
 
-							{/* Keep Stop and Send separate while a reply is active:
-							    users can enqueue another turn without losing the
-							    ability to interrupt the current generation. */}
-							{replyActive && !voiceActive && (
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<Button
-											type="button"
-											variant="outline"
-											onClick={onInterrupt}
-											disabled={phase === 'interrupting'}
-											size="icon-lg"
-											className="shrink-0 rounded-full"
-										>
-											<Square className="h-4 w-4" />
-										</Button>
-									</TooltipTrigger>
-									<TooltipContent>
-										{phase === 'interrupting'
-											? t('textInput.stopping')
-											: t('textInput.stop')}
-									</TooltipContent>
-								</Tooltip>
-							)}
-
-							{/* Voice or Send — driven by ``actionButton`` config. */}
 							<Tooltip>
 								<TooltipTrigger asChild>
 									<span
@@ -794,8 +767,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 											<actionButton.icon
 												className={cn(
 													'h-4 w-4',
-													(voiceState === 'connecting' || submitting) &&
-														'animate-spin',
+													actionButton.icon === Loader2 && 'animate-spin',
 												)}
 											/>
 										</Button>

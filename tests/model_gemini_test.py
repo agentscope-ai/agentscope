@@ -1911,6 +1911,104 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         self.assertIn("anyOf", pet)
         FunctionDeclaration(name="pet", parameters=result)
 
+    def test_sanitize_converts_prefix_items_to_items(self) -> None:
+        """A fixed-length tuple's `prefixItems` becomes an `items` schema."""
+
+        class Args(BaseModel):
+            """A fixed-length pair."""
+
+            pair: tuple[int, str]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Args.model_json_schema()),
+        )
+        self.assertEqual(
+            result,
+            {
+                "type": "object",
+                "title": "Args",
+                "description": "A fixed-length pair.",
+                "properties": {
+                    "pair": {
+                        "type": "array",
+                        "title": "Pair",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                            "anyOf": [{"type": "integer"}, {"type": "string"}],
+                        },
+                    },
+                },
+                "required": ["pair"],
+            },
+        )
+        FunctionDeclaration(name="pair", parameters=result)
+
+    def test_sanitize_prefix_items_tail(self) -> None:
+        """Preserve the tail and length constraints of tuple schemas."""
+        integer = {"type": "integer"}
+        string = {"type": "string"}
+        union = {"anyOf": [integer, string]}
+        cases: list[tuple[dict[str, object], dict[str, object]]] = [
+            ({"items": False}, {"maxItems": 1, "items": integer}),
+            (
+                {"items": False, "maxItems": 0},
+                {"maxItems": 0, "items": integer},
+            ),
+            (
+                {"items": False, "maxItems": 2},
+                {"maxItems": 1, "items": integer},
+            ),
+            ({"items": True}, {"items": {}}),
+            ({"items": {}}, {"items": {}}),
+            ({}, {"items": {}}),
+            ({"maxItems": 2}, {"maxItems": 2, "items": {}}),
+            ({"items": string}, {"items": union}),
+        ]
+        for tail, expected in cases:
+            with self.subTest(tail=tail):
+                result = _sanitize_schema_for_gemini(
+                    {"type": "array", "prefixItems": [integer], **tail},
+                )
+                self.assertEqual(result, {"type": "array", **expected})
+                FunctionDeclaration(
+                    name="series",
+                    parameters={
+                        "type": "object",
+                        "properties": {"values": result},
+                    },
+                )
+
+    def test_sanitize_removes_deprecated_and_pattern_properties(self) -> None:
+        """Keywords Gemini's Schema lacks are removed from tool parameters."""
+
+        class Args(BaseModel):
+            """Tool parameters using a deprecated field and a patterned map."""
+
+            old: int = Field(default=0, deprecated=True)
+            headers: dict[Annotated[str, Field(pattern=r"^x-")], str]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Args.model_json_schema()),
+        )
+        self.assertEqual(
+            result,
+            {
+                "title": "Args",
+                "description": (
+                    "Tool parameters using a deprecated field and a patterned "
+                    "map."
+                ),
+                "type": "object",
+                "properties": {
+                    "old": {"default": 0, "title": "Old", "type": "integer"},
+                    "headers": {"title": "Headers", "type": "object"},
+                },
+                "required": ["headers"],
+            },
+        )
+        FunctionDeclaration(name="args", parameters=result)
+
     def test_sanitize_converts_const_to_enum(self) -> None:
         """`const` is converted into a single-value `enum` for Gemini."""
         self.assertEqual(

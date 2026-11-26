@@ -1296,58 +1296,71 @@ class SearchAcrossFailureIsolation(IsolatedAsyncioTestCase):
                 score_threshold=None,
             )
 
-    async def test_cancellation_reaches_the_caller_while_a_sibling_blocks(
-        self,
-    ) -> None:
-        """A cancelled search propagates without waiting for a stalled
-        sibling: the caller must see the cancellation before the other
-        knowledge base is released."""
-        blocked_started = asyncio.Event()
-        blocked_released = asyncio.Event()
+    async def test_cancelled_sibling_stops_a_fallback_search(self) -> None:
+        """A recovered provider still receives the sibling's cancellation."""
+        await self._check_fallback_cancellation(cancel_caller=False)
 
-        class _BlockingKnowledgeBase(_StubKnowledgeBase):
-            async def search(
-                self,
-                queries: list[str | TextBlock | DataBlock],
-                top_k: int = 5,
-                score_threshold: float | None = None,
-            ) -> list[VectorSearchResult]:
-                blocked_started.set()
-                await blocked_released.wait()
-                return self.results
+    async def test_caller_cancellation_preserves_slow_cleanup(self) -> None:
+        """Caller cancellation reaches each search exactly once."""
+        await self._check_fallback_cancellation(cancel_caller=True)
 
-        cancelled = _StubKnowledgeBase(
-            [],
-            error=asyncio.CancelledError(),
-            name="catalog",
-        )
-        blocking = _BlockingKnowledgeBase([], name="policies")
+    async def _check_fallback_cancellation(self, cancel_caller: bool) -> None:
+        fallback_started = asyncio.Event()
+        release = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        cleanup_finished = asyncio.Event()
 
-        search_task = asyncio.ensure_future(
+        async def fail_primary() -> None:
+            raise OSError("primary unavailable")
+
+        async def search_with_fallback(**_: Any) -> list[VectorSearchResult]:
+            with self.assertRaises(ExceptionGroup):
+                async with asyncio.TaskGroup() as group:
+                    group.create_task(fail_primary())
+            fallback_started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cleanup_started.set()
+                await release.wait()
+                cleanup_finished.set()
+                raise
+            return []
+
+        stop = asyncio.Event()
+
+        async def other_search(**_: Any) -> list[VectorSearchResult]:
+            await stop.wait()
+            raise asyncio.CancelledError("stop")
+
+        search_task = asyncio.create_task(
             _search_across(
-                [blocking, cancelled],
-                ["Where is Paris?"],
+                [
+                    SimpleNamespace(search=search_with_fallback),
+                    SimpleNamespace(search=other_search),
+                ],
+                ["query"],
                 top_k=2,
                 score_threshold=None,
             ),
         )
-        await asyncio.wait_for(blocked_started.wait(), timeout=2)
         try:
-            # The blocked search is still running, so this only returns
-            # if the sibling's own cancellation was propagated at once.
-            await asyncio.wait_for(
-                asyncio.shield(search_task),
-                timeout=2,
-            )
-            self.fail("the cancellation was swallowed")
-        except asyncio.CancelledError:
-            pass
+            await asyncio.wait_for(fallback_started.wait(), timeout=2)
+            if cancel_caller:
+                search_task.cancel("stop")
+            else:
+                stop.set()
+            done, _ = await asyncio.wait([search_task], timeout=2)
+            self.assertEqual(done, {search_task})
+            with self.assertRaisesRegex(asyncio.CancelledError, "stop"):
+                search_task.result()
+            await asyncio.wait_for(cleanup_started.wait(), timeout=2)
+            self.assertFalse(cleanup_finished.is_set())
         finally:
-            # Releasing the sibling afterwards must not resurrect the
-            # turn or raise an unhandled exception of its own.
-            blocked_released.set()
+            release.set()
+            stop.set()
             await asyncio.gather(search_task, return_exceptions=True)
-            self.assertTrue(search_task.done())
+        await asyncio.wait_for(cleanup_finished.wait(), timeout=2)
 
     async def test_failure_is_not_reported_as_no_hits(self) -> None:
         """If the knowledge bases that worked found nothing, the error

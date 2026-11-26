@@ -38,6 +38,23 @@ def _get_callable_docstring(tool_func: Callable) -> str:
 
         documented_func = documented_func.func
 
+    if not (
+        inspect.isroutine(documented_func) or inspect.isclass(documented_func)
+    ):
+        # Prefer instance docs, then __call__ docs, then class docs.
+        own_attrs = getattr(documented_func, "__dict__", None) or {}
+        if "__doc__" not in own_attrs:
+            call_doc = getattr(
+                type(documented_func).__call__,
+                "__doc__",
+                None,
+            )
+            if inspect.ismemberdescriptor(type(documented_func).__doc__):
+                # An unset slot falls back; an explicitly stored None wins.
+                return getattr(documented_func, "__doc__", call_doc) or ""
+            if call_doc:
+                return call_doc
+
     return documented_func.__doc__ or ""
 
 
