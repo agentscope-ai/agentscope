@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Callable, Coroutine
 from datetime import datetime
+from weakref import WeakValueDictionary
 from zoneinfo import ZoneInfoNotFoundError
 
 from typing import Self, TYPE_CHECKING
@@ -95,6 +96,13 @@ class SchedulerManager:
         # both call it, and a slow read must not apply its stale snapshot
         # after a newer reconcile has already changed the job set.
         self._reconcile_lock = asyncio.Lock()
+        # Concurrent deletes of the same user's schedule share a lock.
+        # Once the last caller leaves, the lock can be collected.
+        self._delete_locks: WeakValueDictionary[
+            tuple[str, str],
+            asyncio.Lock,
+        ] = WeakValueDictionary()
+        self._deleting: set[str] = set()
         self._tasks: list[asyncio.Task] = []
 
     # ------------------------------------------------------------------
@@ -440,6 +448,45 @@ class SchedulerManager:
             return OrTrigger([trigger, weekday_trigger])
         return trigger
 
+    async def delete_schedule(self, user_id: str, schedule_id: str) -> bool:
+        """Stop the user's local timer before deleting its sessions."""
+        # The service package also imports the manager at module load.
+        from ..._service import SessionService
+
+        service = SessionService(
+            storage=self._storage,
+            message_bus=self._message_bus,
+        )
+        lock = self._delete_locks.setdefault(
+            (user_id, schedule_id),
+            asyncio.Lock(),
+        )
+        async with lock:
+            if await self._storage.get_schedule(user_id, schedule_id) is None:
+                return False
+
+            if self._enabled:
+                async with self._reconcile_lock:
+                    self._remove_job(schedule_id)
+                    self._deleting.add(schedule_id)
+            deleted = False
+            try:
+                deleted = await service.delete_schedule(user_id, schedule_id)
+            finally:
+                self._deleting.discard(schedule_id)
+                if self._enabled and not deleted:
+                    try:
+                        await self.reconcile()
+                    except Exception:
+                        logger.exception(
+                            "Failed to restore schedule %s after deletion",
+                            schedule_id,
+                        )
+
+        if deleted:
+            await self.notify_changed(schedule_id)
+        return deleted
+
     async def notify_changed(self, schedule_id: str) -> None:
         """Tell the timer-owning node that a schedule was written.
 
@@ -483,13 +530,18 @@ class SchedulerManager:
 
     async def _reconcile_locked(self) -> None:
         """Apply one storage snapshot; caller must hold the reconcile lock."""
+        # A cascade may finish while storage returns an older snapshot.
+        # New cascades cannot start until this reconcile releases the lock.
+        deleting = self._deleting.copy()
         try:
             records = await self._storage.list_all_schedules()
         except Exception:  # pylint: disable=broad-except
             logger.exception("Schedule reconcile: failed to list schedules")
             return
 
-        desired = {r.id: r for r in records if r.data.enabled}
+        desired = {
+            r.id: r for r in records if r.data.enabled and r.id not in deleting
+        }
 
         for schedule_id in set(self._versions) - set(desired):
             self._remove_job(schedule_id)
@@ -651,9 +703,6 @@ class SchedulerManager:
             ),
             ScheduleDelete(
                 user_id=user_id,
-                scheduler=self._scheduler,
-                storage=self._storage,
-                message_bus=self._message_bus,
                 scheduler_manager=self,
             ),
             ScheduleList(
