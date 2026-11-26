@@ -203,8 +203,22 @@ async def reap_receipts(
                     del records[key]
                 continue
             if state == "queued":
-                # A failed enqueue can leave its reservation but no input.
-                if record.get("expires_at", 0) > now:
+                fence = cancellations.get(record["queue_item_id"])
+                if fence and (
+                    fence.get("user_id") == record["user_id"]
+                    and fence.get("agent_id") == record["agent_id"]
+                ):
+                    # Retire both proofs together after a queue deletion.
+                    record.update(
+                        state="cancelled",
+                        retire_at=fence.get(
+                            "retire_at",
+                            now + MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS,
+                        ),
+                    )
+                    await bus.registry_set(namespace, key, json.dumps(record))
+                elif record.get("expires_at", 0) > now:
+                    # A failed enqueue can leave its reservation but no input.
                     continue
             if state == "claimed" and "retire_at" not in record:
                 deferred.append((key, record))

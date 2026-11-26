@@ -3,6 +3,7 @@
 from contextlib import aclosing
 from typing import AsyncGenerator, Awaitable, Callable, TYPE_CHECKING
 
+from ..._logging import logger
 from ...event import CustomEvent, ReplyStartEvent
 from ...message import Msg
 from ...middleware import MiddlewareBase, TTSMiddleware
@@ -45,7 +46,14 @@ class ChatTTSMiddleware(MiddlewareBase):
         self._next_config = (self._default_config, False)
         middleware = None
         if config is not None:
-            config, model = await self._create_model(config, use_snapshot)
+            try:
+                config, model = await self._create_model(config, use_snapshot)
+            except Exception as exc:
+                logger.warning(
+                    "TTS initialization failed: %s",
+                    type(exc).__name__,
+                )
+                model = None
             if model is not None:
                 middleware = TTSMiddleware(model, continue_on_error=True)
             else:

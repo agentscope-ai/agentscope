@@ -21,6 +21,7 @@ from service_chat_locking_test import (
 
 from agentscope.app._bus_ops import (
     cancel_chat_submission,
+    delete_chat_input,
     enqueue_chat_input,
     list_chat_inputs,
 )
@@ -66,6 +67,7 @@ from agentscope.event import (
     ExternalExecutionResultEvent,
     ReplyEndEvent,
     ReplyStartEvent,
+    TextBlockDeltaEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
@@ -1023,6 +1025,107 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
         )
         self.create_tts.assert_not_awaited()
         self.validate.assert_not_awaited()
+
+    async def test_deleted_submission_has_terminal_result(self) -> None:
+        """Deleting a queued item settles only that exact submission."""
+        scope = ("user-1", "session-1", "agent-1")
+        items = []
+        for submission in ("first", "second"):
+            await _reserve(self.bus, submission, *scope)
+            items.append(
+                await enqueue_chat_input(
+                    self.bus,
+                    *scope,
+                    UserMsg("user", "voice", id="shared"),
+                    submission_id=submission,
+                ),
+            )
+        unknown = {"state": "unknown", "reply_id": None}
+        finished = {
+            "state": "finished",
+            "reply_id": None,
+            "queue_item_id": items[0]["id"],
+        }
+        for _ in range(2):
+            await delete_chat_input(self.bus, *scope, items[0]["id"])
+            self.assertEqual(
+                [
+                    await self.service.input_result(*scope, mid, sub)
+                    for mid, sub in (
+                        ("shared", "first"),
+                        (None, "first"),
+                        ("other", "first"),
+                        ("shared", "second"),
+                    )
+                ],
+                [
+                    finished,
+                    finished,
+                    unknown,
+                    {**unknown, "queue_item_id": items[1]["id"]},
+                ],
+            )
+
+    async def test_tts_factory_failure_preserves_text_and_cancel(self) -> None:
+        """An invalid provider URL disables speech only for this reply."""
+        config = TTSModelConfig(
+            type="minimax_credential",
+            credential_id="c",
+            model="speech-2.8-hd",
+            parameters={},
+        )
+        access = self.service._access
+        access.resolve_credential.return_value = SimpleNamespace(
+            user_id="user-1",
+            data={
+                "type": config.type,
+                "api_key": "fake",
+                "base_url": "https://example.invalid:bad",
+            },
+        )
+        await validate_tts_model_config("user-1", config, access, self.storage)
+
+        async def build(cfg: TTSModelConfig, snapshot: bool) -> tuple:
+            return await build_reply_tts_model(
+                "user-1",
+                cfg,
+                access,
+                self.storage,
+                use_snapshot=snapshot,
+            )
+
+        text = TextBlockDeltaEvent(reply_id="r", block_id="t", delta="Hello")
+
+        async def reply(**_: object) -> AsyncGenerator:
+            yield text
+
+        inputs = {"inputs": [UserMsg("user", "hi", id="input")]}
+        events = [
+            event
+            async for event in ChatTTSMiddleware(config, None, build).on_reply(
+                MagicMock(),
+                inputs,
+                reply,
+            )
+        ]
+        self.assertEqual(
+            [(events[0].name, events[0].value), *events[1:]],
+            [
+                (
+                    "tts_error",
+                    {
+                        "stage": "configuration",
+                        "message_ids": ["input"],
+                        "reply_id": None,
+                    },
+                ),
+                text,
+            ],
+        )
+        cancelled = AsyncMock(side_effect=asyncio.CancelledError)
+        middleware = ChatTTSMiddleware(config, None, cancelled)
+        with self.assertRaises(asyncio.CancelledError):
+            await anext(middleware.on_reply(MagicMock(), inputs, reply))
 
     async def test_followup_in_same_run_uses_default(self) -> None:
         """An inbox followup cannot inherit the voice turn's settings."""

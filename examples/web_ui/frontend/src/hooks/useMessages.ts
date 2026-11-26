@@ -75,7 +75,7 @@ const INTERRUPT_TIMEOUT_MS = 10_000;
 
 const EXTERNAL_REQUEST_ID = '_agentscope_external_request_id';
 
-type ToolSubmissionIssue = 'superseded' | 'unconfirmed';
+type ToolSubmissionIssue = 'superseded' | 'unconfirmed' | 'rejected';
 
 /** The tool call has finished, but this submission has no success receipt. */
 export class UnacknowledgedToolSubmission extends Error {
@@ -86,7 +86,7 @@ export class UnacknowledgedToolSubmission extends Error {
 
 interface ExternalSubmission {
 	replyId: string;
-	toolCallIds: Set<string>;
+	pendingResults: Map<string, ToolResultBlock>;
 	ambiguousCalls: Set<string>;
 	issue?: ToolSubmissionIssue;
 	allowRetry: () => void;
@@ -98,17 +98,33 @@ function settleToolResult(
 	submission: ExternalSubmission,
 	requestId: string,
 	callId: string,
-	metadata?: Record<string, unknown>,
+	{ state, metadata }: Pick<ToolResultEndEvent, 'state' | 'metadata'>,
 ): boolean {
+	const expected = submission.pendingResults.get(callId);
+	if (!expected || state === 'running') return false;
+	submission.pendingResults.delete(callId);
 	const owner = metadata?.[EXTERNAL_REQUEST_ID];
-	if (owner !== undefined && typeof owner !== 'string') return false;
-	if (!submission.toolCallIds.delete(callId)) return false;
-	if (owner === undefined && submission.ambiguousCalls.has(callId)) {
-		submission.issue ??= 'unconfirmed';
-	} else if (owner !== undefined && owner !== requestId) {
-		submission.issue = 'superseded';
+	if (state !== expected.state) {
+		submission.finish('rejected');
+		return true;
 	}
-	if (submission.toolCallIds.size) return false;
+	if (typeof owner === 'string' && owner !== requestId) {
+		submission.issue = 'superseded';
+	} else if (owner !== requestId) {
+		// Older servers echo AskUser answers without a submission ID.
+		const answers = parseAskUserResult(metadata);
+		if (
+			owner !== undefined ||
+			submission.ambiguousCalls.has(callId) ||
+			(expected.name === ASK_USER_TOOL_NAME &&
+				(!answers ||
+					JSON.stringify(answers) !==
+						JSON.stringify(parseAskUserResult(expected.metadata))))
+		) {
+			submission.issue ??= 'unconfirmed';
+		}
+	}
+	if (submission.pendingResults.size) return false;
 	submission.finish(submission.issue);
 	return true;
 }
@@ -306,7 +322,7 @@ export function useMessages(
 					const pending = externalSubmissionsRef.current.get(failure.request_id);
 					if (
 						pending?.replyId === failure.reply_id &&
-						failure.tool_call_ids.some((id) => pending.toolCallIds.has(id))
+						failure.tool_call_ids.some((id) => pending.pendingResults.has(id))
 					) {
 						externalSubmissionsRef.current.delete(failure.request_id);
 						const error = new Error(t('chat.externalExecution.rejected'));
@@ -411,7 +427,7 @@ export function useMessages(
 				for (const [id, request] of externalSubmissionsRef.current) {
 					if (
 						request.replyId === result.reply_id &&
-						settleToolResult(request, id, result.tool_call_id, result.metadata)
+						settleToolResult(request, id, result.tool_call_id, result)
 					) {
 						externalSubmissionsRef.current.delete(id);
 					}
@@ -683,8 +699,7 @@ export function useMessages(
 							for (const block of reply?.content ?? []) {
 								if (
 									block.type === 'tool_result' &&
-									block.state !== 'running' &&
-									settleToolResult(request, id, block.id, block.metadata)
+									settleToolResult(request, id, block.id, block)
 								) {
 									externalSubmissionsRef.current.delete(id);
 									requests.delete(id);
@@ -983,15 +998,15 @@ export function useMessages(
 					// Register first so even an immediate SSE response is matched.
 					const receipt = new Promise<void>((resolve, reject) => {
 						let notice: Error | undefined;
-						const toolCallIds = new Set(
-							event.execution_results.map((result) => result.id),
+						const pendingResults = new Map(
+							event.execution_results.map((result) => [result.id, result] as const),
 						);
 						const ambiguousCalls = new Set<string>();
 						// An untagged legacy result stays ambiguous even after one attempt settles.
 						for (const previous of externalSubmissionsRef.current.values()) {
 							if (previous.replyId !== event.reply_id) continue;
-							for (const callId of toolCallIds) {
-								if (previous.toolCallIds.has(callId)) {
+							for (const callId of pendingResults.keys()) {
+								if (previous.pendingResults.has(callId)) {
 									previous.ambiguousCalls.add(callId);
 									ambiguousCalls.add(callId);
 								}
@@ -999,7 +1014,7 @@ export function useMessages(
 						}
 						externalSubmissionsRef.current.set(event.id, {
 							replyId: event.reply_id,
-							toolCallIds,
+							pendingResults,
 							ambiguousCalls,
 							allowRetry: () => {
 								if (notice) return;
@@ -1020,7 +1035,13 @@ export function useMessages(
 										]),
 									});
 								}
-								if (issue) reject(new UnacknowledgedToolSubmission(issue));
+								if (issue === 'rejected') {
+									const error = new Error(
+										t('chat.externalExecution.endedWithoutResult'),
+									);
+									toast.error(error.message, { id: event.id });
+									reject(error);
+								} else if (issue) reject(new UnacknowledgedToolSubmission(issue));
 								else resolve();
 							},
 							reject,

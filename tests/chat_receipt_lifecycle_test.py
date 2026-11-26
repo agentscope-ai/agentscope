@@ -1167,6 +1167,41 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     await queue._recover_pending_chat_inputs_locked()
                     self.assertEqual(await bus.registry_getall(key), {})
 
+    async def test_deleted_submission_expires_with_queue_receipt(self) -> None:
+        """Late recovery cannot give a deleted submission a new lifetime."""
+        for bus in self.backends:
+            with self.subTest(backend=type(bus).__name__):
+                self.now = 1000
+                async with bus:
+                    submission = await create_chat_submission(
+                        bus,
+                        "u",
+                        "s",
+                        "a",
+                    )
+                    item = await enqueue_chat_input(
+                        bus,
+                        "u",
+                        "s",
+                        "a",
+                        UserMsg("u", "voice"),
+                        submission_id=submission["submission_id"],
+                    )
+                    await delete_chat_input(bus, "u", "s", "a", item["id"])
+                    self.now += MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS + 1
+                    collector = self.collector(bus)
+                    await collector._recover_pending_chat_inputs_locked()
+                    self.assertEqual(
+                        [
+                            await bus.registry_getall(namespace)
+                            for namespace in (
+                                MessageBusKeys.chat_submissions("s"),
+                                MessageBusKeys.chat_input_cancellations("s"),
+                            )
+                        ],
+                        [{}, {}],
+                    )
+
     async def test_unused_lease_and_partial_deletion_collection(self) -> None:
         """Expiry cannot erase a fence protecting a failed queue removal."""
         for bus in self.backends:

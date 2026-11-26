@@ -39,6 +39,7 @@ from .._chat_input_store import (
     INPUT_EXECUTION,
     REPLY_SUBMISSION,
     get_submission,
+    is_input_cancelled,
 )
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
@@ -1054,7 +1055,18 @@ class ChatService:
                     return unknown
                 if queue_id := receipt.get("queue_item_id"):
                     identity["queue_item_id"] = queue_id
-                if receipt.get("state") in ("cancelled", "finished"):
+                state = receipt.get("state")
+                if state in ("cancelled", "finished") or (
+                    state == "queued"
+                    and queue_id
+                    and await is_input_cancelled(
+                        self._message_bus,
+                        session_id,
+                        queue_id,
+                        user_id,
+                        agent_id,
+                    )
+                ):
                     return {
                         **identity,
                         "state": "finished",
