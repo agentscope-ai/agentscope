@@ -29,9 +29,9 @@ AgentScope 欢迎使用 AI 编码助手的贡献者——Claude Code、Cursor、
 
 涉及 AI 时的几条要求：
 
-- **作者是人，不是 AI**。在 push 之前，请逐行阅读 diff，运行代码，确认理解了**改了什么**和**为什么改**。“Claude Code / Cursor / Codex 就是这么写的”并不是一个合适的理由，也不利于开源社区的健康发展。
+- **作者是人，不是 AI**。在 push 之前，请逐行阅读 diff，运行代码，确认理解了**改了什么**和**为什么改**。“Claude Code / Cursor / Codex 就是这么写的”并不是一个合适的理由，也不利于开源社区的健康发展。如果 PR 作者无法解释自己的改动，该 PR 将被关闭。
 
-- **创建 PR 前先自行评审 AI 生成的代码**。所有人的事件都是宝贵的资源，请不要将没有审阅过的 AI 代码/改动直接丢给维护者评审。
+- **创建 PR 前先自行评审 AI 生成的代码**。所有人的时间都是宝贵的资源，请不要将没有审阅过的 AI 代码/改动直接丢给维护者评审。
 
 - **保持 PR 原子化**。不要提交 AI 一次性生成的 10K+ 行 PR，这种 PR 无法评审，会被拒绝。请把改动拆成若干个聚焦原子化功能的、具有单一目标的 PR。
 
@@ -66,6 +66,7 @@ AgentScope 欢迎使用 AI 编码助手的贡献者——Claude Code、Cursor、
    git pull upstream main
    git checkout -b feat/<short-description>
    ```
+   分支名请与改动类型保持一致，例如 `feat/redis-memory`、`fix/react-agent-leak`、`docs/contributing-update`。
 
 ### 第 3 步：搭建本地环境
 
@@ -115,7 +116,7 @@ pre-commit run --all-files
 pytest tests
 ```
 
-如果 pre-commit hook 失败，请修复格式问题（多数会自动修复），然后重新 commit。
+如果 pre-commit hook 失败，请修复格式问题（多数会自动修复），然后重新 commit。不要用 `--no-verify` 绕过 hook。
 
 **改代码的同时请更新文档**。
 
