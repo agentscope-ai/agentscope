@@ -732,6 +732,68 @@ class IndexWorkerCsvLegacyExcelTypeTest(IsolatedAsyncioTestCase):
         self.assertEqual(manager.knowledge.inserted_metadata, {})
 
 
+class IndexWorkerYamlFilenameInferenceTest(IsolatedAsyncioTestCase):
+    """YAML uploads without a usable MIME mapping must index as text."""
+
+    payload = b"name: AgentScope\nenabled: true\n"
+
+    async def test_yaml_filename_without_mime_mapping_indexes_as_text(
+        self,
+    ) -> None:
+        """Missing, empty, and generic types route by the YAML extension."""
+        for content_type in (None, "", "application/octet-stream"):
+            for filename in ("config.yaml", "CONFIG.YAML", "config.yml"):
+                with self.subTest(
+                    content_type=content_type,
+                    filename=filename,
+                ):
+                    storage = _Storage(
+                        content_type,
+                        filename=filename,
+                        size=len(self.payload),
+                    )
+                    worker, manager = _worker(storage, [TextParser()])
+                    worker.blob_content = self.payload
+
+                    with patch(
+                        "mimetypes.guess_type",
+                        return_value=(None, None),
+                    ):
+                        await worker.run_pipeline()
+
+                    self.assertEqual(
+                        storage.statuses,
+                        ["parsing", "chunking", "indexing", "ready"],
+                    )
+                    self.assertEqual(
+                        [
+                            chunk.content.text
+                            for chunk in manager.knowledge.inserted_chunks
+                        ],
+                        [self.payload.decode()],
+                    )
+                    self.assertEqual(
+                        manager.knowledge.inserted_metadata["media_type"],
+                        "application/yaml",
+                    )
+
+    async def test_yaml_mapping_requires_registered_parser(self) -> None:
+        """Without a parser for ``application/yaml`` the error is kept."""
+        storage = _Storage(None, filename="config.yaml")
+        parser = _PptxParser()
+        worker, _ = _worker(storage, [parser])
+
+        with patch("mimetypes.guess_type", return_value=(None, None)):
+            with self.assertRaisesRegex(
+                ValueError,
+                "Cannot determine media type for 'config.yaml'",
+            ):
+                await worker.run_pipeline()
+
+        self.assertEqual(storage.statuses, [])
+        self.assertEqual(parser.calls, [])
+
+
 class IndexWorkerPPTImageTest(IsolatedAsyncioTestCase):
     """Index a deck according to the selected embedding model."""
 
