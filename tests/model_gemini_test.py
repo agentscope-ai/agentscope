@@ -1721,3 +1721,29 @@ class TestFlattenEscapedDiscriminators(unittest.TestCase):
                     ),
                     {"discriminator": discriminator},
                 )
+
+    def test_flatten_matches_the_full_discriminator_reference(self) -> None:
+        """A matching final token alone does not identify a definition."""
+        for keyword, other in (
+            ("$defs", "definitions"),
+            ("definitions", "$defs"),
+        ):
+            for ref in (
+                f"#/{other}/Ring~1Named",
+                f"#/{keyword}/Missing/properties/Ring~1Named",
+            ):
+                with self.subTest(keyword=keyword, ref=ref):
+                    discriminator = {
+                        "propertyName": "kind",
+                        "mapping": {"ring": ref},
+                    }
+                    self.assertEqual(
+                        _flatten_json_schema(
+                            {
+                                keyword: {"Ring/Named": {"type": "object"}},
+                                other: {"Other": {"type": "object"}},
+                                "discriminator": discriminator,
+                            },
+                        ),
+                        {"discriminator": discriminator},
+                    )
