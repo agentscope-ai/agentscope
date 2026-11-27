@@ -195,15 +195,12 @@ def _parse_chat_response(
     """Flatten an AgentScope ``ChatResponse`` into the str/dict shape
     mem0 expects from ``LLMBase.generate_response``."""
     text_parts: list[str] = []
-    thinking_parts: list[str] = []
     tool_parts: list[dict] = []
 
     for block in response.content or []:
         block_type = getattr(block, "type", None)
         if block_type == "text":
             text_parts.append(block.text or "")
-        elif block_type == "thinking":
-            thinking_parts.append(f"[Thinking: {block.thinking or ''}]")
         elif block_type == "tool_call":
             # AgentScope 2.0 stores tool args as a JSON string; mem0
             # expects an arguments' dict.
@@ -217,7 +214,9 @@ def _parse_chat_response(
             )
         # DataBlock and other types are not part of mem0's contract.
 
-    text_out = "\n".join(thinking_parts + text_parts)
+    # Reasoning can contain discarded JSON drafts. Only final text is
+    # part of mem0's extraction response; never turn reasoning into facts.
+    text_out = "\n".join(text_parts)
     if has_tool:
         return {"content": text_out, "tool_calls": tool_parts}
     return text_out
