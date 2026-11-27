@@ -90,12 +90,29 @@ async def _run_reply(
 
     task = asyncio.ensure_future(consume())
     loop = asyncio.get_running_loop()
+    sigint_hooked = False
+    plain_sigint_hooked = False
+    plain_sigint_previous = None
     try:
         loop.add_signal_handler(signal.SIGINT, task.cancel)
         sigint_hooked = True
     except (NotImplementedError, RuntimeError):
-        # e.g. Windows event loop — fall back to KeyboardInterrupt
-        sigint_hooked = False
+        # Windows event loops have no ``add_signal_handler``; without a
+        # hook, Ctrl+C cancels the whole console task and the process
+        # dies with a traceback instead of just interrupting the reply.
+        # Install a plain SIGINT handler that cancels ``task`` alone, so
+        # the behavior matches the hooked path above.
+        try:
+            plain_sigint_previous = signal.getsignal(signal.SIGINT)
+            signal.signal(
+                signal.SIGINT,
+                lambda *_: loop.call_soon_threadsafe(task.cancel),
+            )
+            sigint_hooked = True
+            plain_sigint_hooked = True
+        except (ValueError, OSError):
+            # e.g. a non-main thread without signal support
+            pass
 
     try:
         await task
@@ -106,7 +123,9 @@ async def _run_reply(
         if caller is not None and caller.cancelling():
             raise
     finally:
-        if sigint_hooked:
+        if plain_sigint_hooked:
+            signal.signal(signal.SIGINT, plain_sigint_previous)
+        elif sigint_hooked:
             loop.remove_signal_handler(signal.SIGINT)
 
     return pending_requests.pop(0) if pending_requests else None
