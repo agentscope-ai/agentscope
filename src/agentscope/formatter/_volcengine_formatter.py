@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """The Volcengine Ark formatter module."""
 
-from fnmatch import fnmatch
+import base64
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from pydantic import Field
 
@@ -21,6 +24,15 @@ from ..message import (
 )
 
 
+_AUDIO_FORMATS = {
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/wav": "wav",
+    "audio/aac": "aac",
+    "audio/mp4": "m4a",
+}
+
+
 class _VolcengineFormatterBase(_OpenAIFormatterBase):
     """Base formatter with shared Ark multimodal conversion logic."""
 
@@ -28,7 +40,7 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
-        """Format supported image and video data for the Ark Chat API.
+        """Format supported image, video, and audio for the Ark Chat API.
 
         Args:
             block (`DataBlock`):
@@ -38,10 +50,10 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
             `dict[str, Any] | None`:
                 The formatted content block, or ``None`` when unsupported.
         """
-        if not any(
-            fnmatch(block.source.media_type, pattern)
-            for pattern in self.supported_input_media_types
-        ):
+        # Normalize the MIME type (lowercase, matched case-insensitively)
+        # before the checks below and the payload built from it.
+        supported = self._get_supported_tool_result_block(block)
+        if supported is None:
             logger.warning(
                 "Unsupported media type %s for Volcengine Ark API. "
                 "Supported types: %s. This block will be skipped.",
@@ -49,12 +61,15 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
                 ", ".join(self.supported_input_media_types),
             )
             return None
+        block = supported
 
         main_type = block.source.media_type.split("/")[0]
         if main_type == "image":
-            return self._format_image_source(block.source)
+            return self._format_image_source(block.source, block.model_extra)
         if main_type == "video":
-            return self._format_video_source(block.source)
+            return self._format_video_source(block.source, block.model_extra)
+        if main_type == "audio":
+            return self._format_ark_audio_source(block.source)
 
         logger.warning(
             "Unsupported main media type %s for Volcengine Ark API. "
@@ -63,9 +78,42 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
         )
         return None
 
+    @staticmethod
+    def _format_ark_audio_source(
+        source: URLSource | Base64Source,
+    ) -> dict[str, Any]:
+        """Convert audio to Ark's URL or raw base64 input_audio payload.
+
+        Remote URLs are passed through. Local file URIs are decoded using
+        the platform's path conversion, including Windows drive/UNC paths.
+        """
+        if source.media_type not in _AUDIO_FORMATS:
+            raise TypeError(
+                f"Unsupported audio media type: {source.media_type}. "
+                "Ark supports MP3, WAV, AAC, and M4A audio.",
+            )
+
+        payload = {"format": _AUDIO_FORMATS[source.media_type]}
+        if isinstance(source, Base64Source):
+            payload["data"] = source.data
+        else:
+            url = str(source.url)
+            parsed = urlsplit(url)
+            if parsed.scheme == "file":
+                path = parsed.path
+                if parsed.netloc and parsed.netloc != "localhost":
+                    path = "//" + parsed.netloc + path
+                data = Path(url2pathname(path)).read_bytes()
+                payload["data"] = base64.b64encode(data).decode("ascii")
+            else:
+                payload["url"] = url
+
+        return {"type": "input_audio", "input_audio": payload}
+
     def _format_video_source(
         self,
         source: URLSource | Base64Source,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Convert a video source to Ark's ``video_url`` format. Ark takes
         the same URL / base64 data URI as images, so reuse that conversion.
@@ -73,6 +121,9 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
         Args:
             source (`URLSource | Base64Source`):
                 A remote, local, or base64-encoded video source.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific video parameters to merge into the nested
+                ``video_url`` object.
 
         Returns:
             `dict[str, Any]`:
@@ -80,7 +131,7 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
         """
         return {
             "type": "video_url",
-            "video_url": self._format_image_source(source)["image_url"],
+            "video_url": self._format_image_source(source, extra)["image_url"],
         }
 
 
@@ -91,10 +142,15 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
     """
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*", "video/*"],
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "video/*",
+            *_AUDIO_FORMATS,
+        ],
         description=(
-            "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "video/*"]``.'
+            "The supported input types: text, images, video, and "
+            "MP3, WAV, AAC, or M4A audio."
         ),
     )
 
@@ -311,10 +367,15 @@ class VolcengineMultiAgentFormatter(_VolcengineFormatterBase):
     )
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*", "video/*"],
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "video/*",
+            *_AUDIO_FORMATS,
+        ],
         description=(
-            "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "video/*"]``.'
+            "The supported input types: text, images, video, and "
+            "MP3, WAV, AAC, or M4A audio."
         ),
     )
 
@@ -339,12 +400,17 @@ class VolcengineMultiAgentFormatter(_VolcengineFormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    formatted_group = await self._format_agent_message(
+                    (
+                        formatted_group,
+                        has_history,
+                    ) = await self._format_agent_message_with_hints(
                         group,
                         is_first_agent_message,
+                        self._format_agent_message,
+                        prompt_requires_text=True,
                     )
                     formatted_msgs.extend(formatted_group)
-                    if formatted_group:
+                    if has_history:
                         is_first_agent_message = False
 
         return formatted_msgs
@@ -358,6 +424,22 @@ class VolcengineMultiAgentFormatter(_VolcengineFormatterBase):
         return await VolcengineChatFormatter(
             input_types=self.input_types,
         ).format(msgs)
+
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the Volcengine chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The Volcengine user-message representation.
+        """
+        return await self._format_tool_sequence(msgs)
 
     async def _format_agent_message(
         self,

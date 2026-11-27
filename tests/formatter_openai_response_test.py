@@ -295,6 +295,27 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_audio_is_skipped_regardless_of_mime_case(self) -> None:
+        """Both Responses formatters keep the text and skip the audio."""
+        text = TextBlock(text="Keep this text.")
+        for formatter_cls in (
+            OpenAIResponseFormatter,
+            OpenAIResponseMultiAgentFormatter,
+        ):
+            fmt = formatter_cls(input_types=["text/plain", "audio/wav"])
+            text_msg = UserMsg(name="user", content=[text])
+            expected = await fmt.format([text_msg])
+            for media_type in ("audio/wav", "AUDIO/WAV"):
+                with self.subTest(formatter=formatter_cls, mime=media_type):
+                    audio = DataBlock(
+                        source=Base64Source(
+                            data="YQ==",
+                            media_type=media_type,
+                        ),
+                    )
+                    msg = UserMsg(name="user", content=[text, audio])
+                    self.assertEqual(await fmt.format([msg]), expected)
+
     async def test_chat_formatter_base64_image(self) -> None:
         """Base64-encoded image becomes an input_image item with data URI."""
         fmt = OpenAIResponseFormatter()
@@ -325,6 +346,47 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "input_image",
                             "image_url": self.image_data_uri,
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_image_detail_extra_param(self) -> None:
+        """Responses API forwards image detail at input_image top level."""
+        fmt = OpenAIResponseFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=URLSource(
+                            url=self.image_url,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                        custom_param="value",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Inspect this image.",
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": self.image_url,
+                            "detail": "high",
+                            "custom_param": "value",
                         },
                     ],
                 },

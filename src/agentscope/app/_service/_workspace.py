@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 """Workspace service — resolution, download tokens, uploads, git."""
 import asyncio
+import hashlib
+import os
 import re
 import tarfile
+from contextlib import asynccontextmanager
 from typing import AsyncIterator, Literal
+from weakref import WeakValueDictionary
 
 from fastapi import HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
@@ -16,8 +20,10 @@ from ._download_token import (
 from ..storage import SessionRecord, StorageBase
 from ..workspace_manager import WorkspaceManagerBase
 from ..._logging import logger
-from ...tool import BackendBase
+from ...tool import BackendBase, LocalBackend
+from ...tool._builtin._backend import PathResolutionUnavailable
 from ...workspace import WorkspaceBase
+from ...workspace._overwrite import WriteUnconfirmedError
 
 #: Ceilings on one upload. Peak memory is a chunk per concurrent
 #: install; these bound the sandbox's disk and how long a slot is held.
@@ -25,6 +31,7 @@ MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_BYTES = 500 * 1024 * 1024
 MAX_FILE_COUNT = 100
 MAX_CONCURRENT_INSTALLS = 5
+MAX_EDIT_BYTES = 2 * 1024 * 1024
 
 _CHUNK_SIZE = 64 * 1024
 _TAR_BLOCK = 512
@@ -64,6 +71,129 @@ _BRANCH_AB_RE = re.compile(r"^\+(\d+) -(\d+)$")
 
 class SkillUploadError(ValueError):
     """Raised when an upload is malformed or over a limit."""
+
+
+class TextFileSnapshot(BaseModel):
+    """An editable UTF-8 file and the revision required to save it."""
+
+    path: str
+    text: str
+    revision: str
+
+
+class TextFileSaveRequest(BaseModel):
+    """Draft and preconditions from the editor's original snapshot."""
+
+    # Pydantic limits characters; saving also checks UTF-8 byte length.
+    text: str = Field(max_length=MAX_EDIT_BYTES)
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_path: str = Field(
+        description="Resolved path returned in the editor snapshot.",
+    )
+
+
+class FileEditAccess(BaseModel):
+    """Path-scope eligibility, not a guarantee of OS write permission."""
+
+    editable: bool
+    reason: Literal["outside_edit_roots"] | None = None
+
+
+@asynccontextmanager
+async def _file_backend_errors(
+    backend: BackendBase,
+) -> AsyncIterator[None]:
+    """Map storage failures while keeping details in server logs."""
+    try:
+        yield
+    except HTTPException:
+        raise
+    except WriteUnconfirmedError as exc:
+        raise HTTPException(
+            502,
+            {
+                "code": "save_unconfirmed",
+                "message": "Save unconfirmed. Reload to check the file.",
+            },
+        ) from exc
+    except PathResolutionUnavailable as exc:
+        logger.exception("Workspace Python path resolver is unavailable.")
+        raise HTTPException(
+            502,
+            {
+                "code": "path_resolver_unavailable",
+                "message": "Workspace path resolution requires python3.",
+            },
+        ) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "File not found.") from exc
+    except IsADirectoryError as exc:
+        raise HTTPException(400, "Requested path is a directory.") from exc
+    except PermissionError as exc:
+        raise HTTPException(403, "File access denied.") from exc
+    except Exception as exc:
+        logger.exception("Workspace editor storage operation failed.")
+        code = 500 if isinstance(backend, LocalBackend) else 502
+        raise HTTPException(
+            code,
+            "Could not access workspace file storage.",
+        ) from exc
+
+
+def _check_line_endings(text: str) -> None:
+    """Reject mixed line endings rather than silently normalizing them."""
+    remainder = text.replace("\r\n", "")
+    kinds = (
+        int("\r\n" in text) + int("\r" in remainder) + int("\n" in remainder)
+    )
+    if kinds > 1:
+        raise HTTPException(
+            422,
+            {
+                "code": "mixed_line_endings",
+                "message": "Mixed line endings cannot be edited.",
+            },
+        )
+
+
+async def _read_editable_file(
+    backend: BackendBase,
+    target: str,
+) -> TextFileSnapshot:
+    """Read a bounded, losslessly editable UTF-8 snapshot."""
+    async with _file_backend_errors(backend):
+        entry = await backend.stat(target)
+    if entry is None:
+        raise HTTPException(404, "File not found.")
+    if entry.is_dir:
+        raise HTTPException(400, "Requested path is a directory.")
+    if entry.size_bytes is not None and entry.size_bytes > MAX_EDIT_BYTES:
+        raise HTTPException(413, "File exceeds the 2 MiB editing limit.")
+    data = bytearray()
+    async with _file_backend_errors(backend):
+        stream = backend.read_stream(target)
+        try:
+            async for chunk in stream:
+                if len(data) + len(chunk) > MAX_EDIT_BYTES:
+                    raise HTTPException(
+                        413,
+                        "File exceeds the 2 MiB editing limit.",
+                    )
+                data.extend(chunk)
+        finally:
+            await stream.aclose()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(415, "Only UTF-8 text can be edited.") from exc
+    if "\0" in text:
+        raise HTTPException(415, "Binary files cannot be edited.")
+    _check_line_endings(text)
+    return TextFileSnapshot(
+        path=target,
+        text=text,
+        revision=hashlib.sha256(data).hexdigest(),
+    )
 
 
 class UploadEntry(BaseModel):
@@ -190,6 +320,230 @@ class WorkspaceService:
         #: Serializes installs, so a burst cannot multiply into an
         #: unbounded number of open sandbox writes.
         self._install_slots = asyncio.Semaphore(MAX_CONCURRENT_INSTALLS)
+        self._file_locks: WeakValueDictionary[
+            tuple[int, int] | tuple[str, str],
+            asyncio.Lock,
+        ] = WeakValueDictionary()
+
+    async def _editor_target(
+        self,
+        workspace: WorkspaceBase,
+        record: SessionRecord,
+        path: str,
+    ) -> str:
+        """Allow canonical workspace and persisted session cwd descendants.
+
+        Selecting cwd grants editing within it in trusted deployments.
+        A request path cannot itself grant access to another directory.
+        Exclude filesystem roots and home from additional cwd grants to
+        avoid accidental broad access, not to provide host isolation.
+        """
+        if "\0" in path:
+            raise HTTPException(400, "Invalid file path.")
+        backend = workspace.get_backend()
+        roots = [workspace.workdir]
+        cwd = backend.abspath(record.config.cwd or "", cwd=workspace.workdir)
+        has_cwd = backend.path_key(cwd) != backend.path_key(workspace.workdir)
+        if has_cwd:
+            roots.append(cwd)
+        async with _file_backend_errors(backend):
+            resolved = await backend.realpaths(
+                [*roots, backend.abspath(path, cwd=workspace.workdir)],
+                include_home=has_cwd,
+            )
+        home = resolved.pop() if len(resolved) == len(roots) + 2 else None
+        *resolved_roots, target = resolved
+        if has_cwd:
+            cwd_root = resolved_roots[-1]
+            is_root = backend.path_key(backend.dirname(cwd_root)) == (
+                backend.path_key(cwd_root)
+            )
+            is_home = home is not None and (
+                backend.path_key(cwd_root) == backend.path_key(home)
+            )
+            if is_root or is_home:
+                resolved_roots.pop()
+        if not any(backend.is_within(target, root) for root in resolved_roots):
+            raise HTTPException(
+                403,
+                {
+                    "code": "outside_edit_roots",
+                    "message": (
+                        "Editing is limited to the workspace and "
+                        "supported session project directories."
+                    ),
+                },
+            )
+        return target
+
+    async def file_edit_access(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        path: str,
+    ) -> FileEditAccess:
+        """Check editor scope without reading content or probing writes."""
+        record, workspace = await self._resolve_record(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        try:
+            await self._editor_target(workspace, record, path)
+        except HTTPException as exc:
+            if (
+                isinstance(exc.detail, dict)
+                and exc.detail.get("code") == "outside_edit_roots"
+            ):
+                return FileEditAccess(
+                    editable=False,
+                    reason="outside_edit_roots",
+                )
+            raise
+        return FileEditAccess(editable=True)
+
+    @asynccontextmanager
+    async def _editor_lock(
+        self,
+        workspace: WorkspaceBase,
+        target: str,
+    ) -> AsyncIterator[None]:
+        """Share locks across sessions and local workspace instances."""
+        backend = workspace.get_backend()
+        key: tuple[int, int] | tuple[str, str]
+        if isinstance(backend, LocalBackend):
+            async with _file_backend_errors(backend):
+                info = await asyncio.to_thread(os.stat, target)
+            key = (info.st_dev, info.st_ino)
+        else:
+            storage = f"{type(backend).__module__}:{workspace.workspace_id}"
+            key = (storage, backend.path_key(target))
+        lock = self._file_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._file_locks[key] = lock
+        async with lock:
+            yield
+
+    async def read_text_file(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        path: str,
+    ) -> TextFileSnapshot:
+        """Load an allowed editor snapshot, serialized with editor saves."""
+        record, workspace = await self._resolve_record(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        backend = workspace.get_backend()
+        target = await self._editor_target(workspace, record, path)
+        async with self._editor_lock(workspace, target):
+            return await _read_editable_file(backend, target)
+
+    async def _save_target(
+        self,
+        workspace: WorkspaceBase,
+        record: SessionRecord,
+        path: str,
+        expected_path: str,
+    ) -> str:
+        """Resolve the requested path and check its snapshot precondition."""
+        try:
+            target = await self._editor_target(workspace, record, path)
+        except HTTPException as exc:
+            if (
+                not isinstance(exc.detail, dict)
+                or exc.detail.get("code") != "outside_edit_roots"
+            ):
+                raise
+        else:
+            if target == expected_path:
+                return target
+        raise HTTPException(
+            409,
+            {
+                "code": "path_changed",
+                "message": "File path changed. Close and reopen the file.",
+            },
+        )
+
+    async def save_text_file(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        path: str,
+        request: TextFileSaveRequest,
+    ) -> TextFileSnapshot:
+        """Save a file within the workspace or persisted session cwd.
+
+        Locks coordinate only this service instance's editor calls.
+        Agent tools, other processes and filesystem relinking can race
+        between checking and writing. This is not an atomic filesystem
+        transaction or an authentication boundary.
+        """
+        data = request.text.encode("utf-8")
+        if len(data) > MAX_EDIT_BYTES:
+            raise HTTPException(413, "File exceeds the 2 MiB editing limit.")
+        if "\0" in request.text:
+            raise HTTPException(415, "Binary files cannot be edited.")
+        _check_line_endings(request.text)
+        record, workspace = await self._resolve_record(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        backend = workspace.get_backend()
+        target = await self._save_target(
+            workspace,
+            record,
+            path,
+            request.expected_path,
+        )
+        async with self._editor_lock(workspace, target):
+            current = await _read_editable_file(backend, target)
+            if current.revision != request.revision:
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "file_changed",
+                        "message": (
+                            "File changed since it was opened. "
+                            "Reload before saving."
+                        ),
+                    },
+                )
+            latest = await self._storage.get_session(
+                user_id,
+                agent_id,
+                session_id,
+            )
+            if (
+                latest is None
+                or latest.config.workspace_id != record.config.workspace_id
+                or latest.config.cwd != record.config.cwd
+            ):
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "session_changed",
+                        "message": (
+                            "Session changed. Close and reopen the file."
+                        ),
+                    },
+                )
+            await self._save_target(workspace, latest, path, target)
+            async with _file_backend_errors(backend):
+                await backend.overwrite_file(target, data)
+        return TextFileSnapshot(
+            path=target,
+            text=request.text,
+            revision=hashlib.sha256(data).hexdigest(),
+        )
 
     async def resolve(
         self,
@@ -359,9 +713,10 @@ class WorkspaceService:
             `str`: The single top-level directory every path sits under.
 
         Raises:
-            SkillUploadError: If a limit is exceeded, a path is unsafe,
-                the paths span more than one root, no ``SKILL.md`` is
-                present, or the parts do not match the manifest.
+            SkillUploadError: If a limit is exceeded, a path is unsafe
+                or duplicated, the paths span more than one root,
+                no ``SKILL.md`` is present, or the parts do not match
+                the manifest.
         """
         entries = manifest.entries
         if not entries:
@@ -379,6 +734,7 @@ class WorkspaceService:
 
         total = 0
         roots: set[str] = set()
+        paths: set[str] = set()
         for entry in entries:
             if entry.size > MAX_FILE_BYTES:
                 raise SkillUploadError(
@@ -387,11 +743,17 @@ class WorkspaceService:
                 )
             total += entry.size
 
-            parts = entry.path.replace("\\", "/").split("/")
+            path = entry.path.replace("\\", "/")
+            parts = path.split("/")
             if len(parts) < 2 or any(p in ("", ".", "..") for p in parts):
                 raise SkillUploadError(f"Unsafe upload path: {entry.path!r}")
             if entry.path.startswith("/"):
                 raise SkillUploadError(f"Unsafe upload path: {entry.path!r}")
+            if path in paths:
+                raise SkillUploadError(
+                    f"Duplicate upload path: {entry.path!r}",
+                )
+            paths.add(path)
             roots.add(parts[0])
 
         if total > MAX_TOTAL_BYTES:
@@ -405,7 +767,7 @@ class WorkspaceService:
             )
 
         root = roots.pop()
-        if not any(e.path == f"{root}/SKILL.md" for e in manifest.entries):
+        if f"{root}/SKILL.md" not in paths:
             raise SkillUploadError(f"No SKILL.md at the root of {root!r}.")
         return root
 
@@ -459,7 +821,7 @@ class WorkspaceService:
                 declared size.
         """
         for entry, upload in zip(manifest.entries, files):
-            info = tarfile.TarInfo(name=entry.path)
+            info = tarfile.TarInfo(name=entry.path.replace("\\", "/"))
             info.size = entry.size
             info.mtime = 0
             yield info.tobuf(tarfile.GNU_FORMAT)

@@ -146,6 +146,7 @@ class ContextConfig(BaseModel):
     tool_result_limit: int = Field(
         title="Tool Result Limit",
         default=50000,
+        ge=0,
         description=(
             "The maximum length of the tool results in tokens. "
             "If exceeded, the tool result will be truncated."
@@ -190,6 +191,35 @@ class ContextConfig(BaseModel):
     workspace (if an offloader is provided) and replaced by a hint that
     records the offloaded path; otherwise they are dropped and replaced by a
     hint without path information."""
+
+
+def _validate_context_config_ratios(
+    context_config: ContextConfig,
+    inject_runtime_state: bool,
+) -> None:
+    """Validate that context compression thresholds leave room to operate."""
+    if context_config.reserve_ratio >= context_config.trigger_ratio:
+        raise ValueError(
+            "The 'reserve_ratio' of the context config must be smaller "
+            "than its 'trigger_ratio', got "
+            f"{context_config.reserve_ratio} and "
+            f"{context_config.trigger_ratio}.",
+        )
+
+    # The buffer is only consumed by runtime-state injection and the
+    # compression tool, so it is checked only when one of them is enabled.
+    if (
+        (inject_runtime_state or context_config.compression_tool_enabled)
+        and context_config.context_buffer_ratio >= context_config.trigger_ratio
+    ):
+        raise ValueError(
+            "The 'context_buffer_ratio' of the context config must be "
+            "smaller than its 'trigger_ratio', so that the context "
+            "length is injected and the compression tool takes effect "
+            "before the hard compression, got "
+            f"{context_config.context_buffer_ratio} and "
+            f"{context_config.trigger_ratio}.",
+        )
 
 
 class InjectionConfig(BaseModel):
@@ -365,6 +395,7 @@ class ReActConfig(BaseModel):
     max_iters: int = Field(
         title="Max Iterations",
         default=50,
+        ge=0,
         description="The maximum number of reasoning-acting iterations in "
         "one reply",
     )

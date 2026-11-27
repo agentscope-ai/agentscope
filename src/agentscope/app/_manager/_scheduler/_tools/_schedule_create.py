@@ -207,8 +207,14 @@ to complete the task independently.
         """
         try:
             perm_mode = PermissionMode(permission_mode)
-        except ValueError:
-            perm_mode = PermissionMode.DONT_ASK
+        except ValueError as exc:
+            # Falling back silently would run the schedule in the most
+            # restrictive mode, where every approval becomes a denial,
+            # without telling the caller its request was replaced.
+            raise ValueError(
+                f"Invalid permission_mode {permission_mode!r}; expected "
+                f"one of {[mode.value for mode in PermissionMode]}.",
+            ) from exc
 
         source_session_id = (
             _agent_state.session_id if _agent_state is not None else ""

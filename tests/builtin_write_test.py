@@ -183,6 +183,41 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         with open(file_path, "r", encoding="utf-8") as f:
             self.assertEqual(f.read(), "original")
 
+    async def test_write_failure_returns_error_chunk(self) -> None:
+        """A failed write is reported as an error chunk, not raised.
+
+        A regular file can never act as a parent directory, so the backend
+        write fails identically for every user and platform (root included).
+        """
+        blocker = os.path.join(self.temp_dir, "blocker.txt")
+        with open(blocker, "w", encoding="utf-8") as f:
+            f.write("not a directory\n")
+
+        chunk = await self.write_tool(
+            file_path=os.path.join(blocker, "report.csv"),
+            content="a,b\n",
+        )
+
+        self.assertEqual(
+            chunk.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": ToolResultState.ERROR,
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+        self.assertIn("Error writing file:", chunk.content[0].text)
+
     async def test_match_rule_glob_pattern(self) -> None:
         """Test match_rule with glob patterns."""
         # Test exact match
@@ -241,11 +276,29 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         suggestion_contents = [s.rule_content for s in suggestions]
         self.assertIn("/tmp/project/src/**", suggestion_contents)
 
-        # Test suggestion for file in root
-        suggestions = await self.write_tool.generate_suggestions(
-            {"file_path": "/test.py"},
-        )
-        self.assertGreater(len(suggestions), 0)
+        # A file with no parent directory must not suggest a
+        # catch-all: ``**`` matches every path in the repository.
+        for file_path in ("/test.py", "result.md"):
+            with self.subTest(file_path=file_path):
+                suggestions = await self.write_tool.generate_suggestions(
+                    {"file_path": file_path},
+                )
+                self.assertEqual(
+                    [s.rule_content for s in suggestions],
+                    [file_path],
+                )
+                self.assertTrue(
+                    await self.write_tool.match_rule(
+                        file_path,
+                        {"file_path": file_path},
+                    ),
+                )
+                self.assertFalse(
+                    await self.write_tool.match_rule(
+                        file_path,
+                        {"file_path": "/repo/main.py"},
+                    ),
+                )
 
     async def test_permission_suggestions_escape_parent(self) -> None:
         """Test approved suggestions cover only the literal parent."""

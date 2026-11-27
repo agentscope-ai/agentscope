@@ -8,10 +8,15 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
+from .._content_block import (
+    _normalize_openai_compatible_content_error,
+    _openai_compatible_response_block_error,
+)
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ..._utils._common import _generate_id
 from ...credential import VolcengineCredential
+from ...exception import ContentBlockedPhase
 from ...formatter import FormatterBase, VolcengineChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
@@ -88,6 +93,7 @@ class VolcengineChatModel(ChatModelBase):
         context_size: int = 256000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_content_filter: bool = False,
     ) -> None:
         """Initialize the Volcengine Ark chat model.
 
@@ -116,6 +122,10 @@ class VolcengineChatModel(ChatModelBase):
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
+            raise_on_content_filter (`bool`, defaults to `False`):
+                Raise ``ContentBlockedError`` for supported filter signals.
+                Disabled by default. See ``ChatModelBase.__init__`` for
+                compatibility, structured-output, and stream retry limits.
         """
         super().__init__(
             credential=credential,
@@ -125,6 +135,7 @@ class VolcengineChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_content_filter=raise_on_content_filter,
         )
         self.formatter = formatter or VolcengineChatFormatter()
         self.client_kwargs = client_kwargs or {}
@@ -155,6 +166,38 @@ class VolcengineChatModel(ChatModelBase):
         import openai
 
         return (openai.BadRequestError,)
+
+    def _normalize_exception(self, error: Exception) -> Exception:
+        """Normalize explicit Volcengine content-filter errors."""
+        if not self.raise_on_content_filter:
+            return error
+        for phase, codes in (
+            (
+                ContentBlockedPhase.INPUT,
+                {
+                    "sensitivecontentdetected",
+                    "sensitivecontentdetected.severeviolation",
+                    "sensitivecontentdetected.violence",
+                    "inputtextsensitivecontentdetected",
+                    "inputtextsensitivecontentdetected.policyviolation",
+                    "inputimagesensitivecontentdetected",
+                    "inputimagesensitivecontentdetected.policyviolation",
+                },
+            ),
+            (
+                ContentBlockedPhase.OUTPUT,
+                {"outputtextsensitivecontentdetected"},
+            ),
+        ):
+            normalized = _normalize_openai_compatible_content_error(
+                error,
+                provider="volcengine",
+                blocked_codes=codes,
+                phase=phase,
+            )
+            if normalized is not None:
+                return normalized
+        return error
 
     async def _call_api(
         self,
@@ -263,6 +306,7 @@ class VolcengineChatModel(ChatModelBase):
         thinking_id: str = _generate_id()
         # The mapping from index to tool call id
         tool_call_mapping: dict = OrderedDict()
+        has_output = False
 
         async with response as stream:
             async for chunk in stream:
@@ -302,6 +346,15 @@ class VolcengineChatModel(ChatModelBase):
                     continue
 
                 choice = chunk.choices[0]
+                blocked_error = _openai_compatible_response_block_error(
+                    choice,
+                    include_content_filter=self.raise_on_content_filter,
+                    provider="volcengine",
+                    request_id=response_id,
+                    partial_output=has_output,
+                )
+                if blocked_error is not None:
+                    raise blocked_error
                 delta = choice.delta
 
                 # Thinking block
@@ -342,6 +395,7 @@ class VolcengineChatModel(ChatModelBase):
                     )
 
                 if delta_res.content or usage:
+                    has_output = has_output or bool(delta_res.content)
                     delta_res.usage = usage
                     yield delta_res
 
@@ -366,6 +420,14 @@ class VolcengineChatModel(ChatModelBase):
 
         if response.choices:
             choice = response.choices[0]
+            blocked_error = _openai_compatible_response_block_error(
+                choice,
+                include_content_filter=self.raise_on_content_filter,
+                provider="volcengine",
+                request_id=getattr(response, "id", None),
+            )
+            if blocked_error is not None:
+                raise blocked_error
             reasoning = getattr(choice.message, "reasoning_content", None)
             if isinstance(reasoning, str) and reasoning:
                 content_blocks.append(ThinkingBlock(thinking=reasoning))

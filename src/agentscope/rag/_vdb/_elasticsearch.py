@@ -11,6 +11,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _reject_none_metadata_values,
 )
 
 if TYPE_CHECKING:
@@ -175,17 +176,31 @@ class ElasticsearchStore(VectorStoreBase):
             metadata_filter (`dict[str, Any] | None`, optional):
                 Restrict deletion to records matching every metadata pair
                 in addition to the document ID. ``None`` disables filtering.
+
+        Raises:
+            RuntimeError: If Elasticsearch reports an incomplete deletion.
         """
         query: dict[str, Any] = {"term": {"document_id": document_id}}
         if metadata_filter:
             filters = [query, *self._metadata_filters(metadata_filter)]
             query = {"bool": {"filter": filters}}
-        await self.get_client().delete_by_query(
+        response = await self.get_client().delete_by_query(
             index=collection,
             query=query,
             conflicts="proceed",
             refresh=self._refresh is not False,
         )
+        # A successful HTTP response can still report skipped deletions.
+        timed_out = response.get("timed_out", False)
+        version_conflicts = response.get("version_conflicts", 0)
+        failures = len(response.get("failures", []))
+        if timed_out or version_conflicts or failures:
+            raise RuntimeError(
+                "Elasticsearch document deletion was incomplete "
+                f"(timed_out={timed_out}, "
+                f"version_conflicts={version_conflicts}, "
+                f"failures={failures}).",
+            )
 
     async def search(
         self,
@@ -397,7 +412,12 @@ class ElasticsearchStore(VectorStoreBase):
     def _metadata_filters(
         metadata_filter: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
-        """Translate exact metadata matches into Elasticsearch filters."""
+        """Translate exact metadata matches into Elasticsearch filters.
+
+        ``None`` values are rejected: Elasticsearch does not index
+        ``null``, so it cannot tell an explicit null from a missing key.
+        """
+        _reject_none_metadata_values("ElasticsearchStore", metadata_filter)
         return [
             {"term": {f"metadata.{key}": value}}
             for key, value in (metadata_filter or {}).items()

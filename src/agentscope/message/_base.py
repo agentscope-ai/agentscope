@@ -152,10 +152,14 @@ class Msg(BaseModel):
         typs = [block_type] if isinstance(block_type, str) else block_type
         return any(b.type in typs for b in self.content)
 
-    def get_text_content(self, separator: str = "\n") -> str | None:
-        """Get the concatenated text from all TextBlocks."""
+    def get_text_content(self, separator: str = "\n") -> str:
+        """Join all top-level TextBlocks, returning "" if none are present.
+
+        Use ``has_content_blocks("text")`` to distinguish missing text
+        blocks from text blocks containing empty strings.
+        """
         gathered = [b.text for b in self.content if b.type == "text"]
-        return separator.join(gathered) if gathered else None
+        return separator.join(gathered)
 
     @overload
     def get_content_blocks(
@@ -195,7 +199,7 @@ class Msg(BaseModel):
     @overload
     def get_content_blocks(
         self,
-        block_type: None = None,
+        block_type: list[ContentBlockTypes] | None = None,
     ) -> list[ContentBlock]:
         ...
 
@@ -475,9 +479,16 @@ class Msg(BaseModel):
                         merge_target.source.media_type = (
                             src.media_type or merge_target.source.media_type
                         )
+                        # Delta events carry the block name only when the
+                        # provider sends it, so keep the one already known.
+                        merge_target.name = event.name or merge_target.name
                     else:
                         block.output.append(
-                            DataBlock(id=event.block_id, source=src),
+                            DataBlock(
+                                id=event.block_id,
+                                source=src,
+                                name=event.name,
+                            ),
                         )
                 else:
                     assert isinstance(block, ToolResultBlock)

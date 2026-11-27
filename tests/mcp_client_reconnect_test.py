@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """Tests for reconnecting stateful MCP clients."""
 import asyncio
+import sys
 from types import TracebackType
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import anyio
 
@@ -42,9 +43,11 @@ class _FakeClient:
         transport: _OneShotTransport,
         *,
         mode: str,
+        message_handler: Any = None,
     ) -> None:
         self.transport = transport
         self.mode = mode
+        self.message_handler = message_handler
         self.exit_count = 0
         self._entered = False
 
@@ -88,8 +91,9 @@ class _TaskBoundClient(_FakeClient):
         transport: _OneShotTransport,
         *,
         mode: str,
+        message_handler: Any = None,
     ) -> None:
-        super().__init__(transport, mode=mode)
+        super().__init__(transport, mode=mode, message_handler=message_handler)
         self.enter_task: asyncio.Task[Any] | None = None
         self.exit_task: asyncio.Task[Any] | None = None
         _TaskBoundClient.instance = self
@@ -113,6 +117,12 @@ class _TaskBoundClient(_FakeClient):
                 "Attempted to exit cancel scope in a different task",
             )
         return await super().__aexit__(exc_type, exc, traceback)
+
+
+async def _close_then_reconnect(client: MCPClient) -> None:
+    """Reconnect as soon as the first close returns."""
+    await client.close()
+    await client.connect()
 
 
 class MCPClientReconnectTest(IsolatedAsyncioTestCase):
@@ -148,6 +158,132 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(transports), 2)
         self.assertTrue(all(_.enter_count == 1 for _ in transports))
+
+    async def test_concurrent_close_preserves_replacement(self) -> None:
+        """Both waiters close the old session and leave the new one usable."""
+        exiting = asyncio.Event()
+        second_closing = asyncio.Event()
+        client = MCPClient(
+            name="concurrent_close",
+            is_stateful=True,
+            mcp_config=StdioMCPConfig(command="unused"),
+        )
+
+        async def finish_old_session(*_args: Any) -> None:
+            exiting.set()
+            await second_closing.wait()
+
+        async def second_close() -> None:
+            await exiting.wait()
+            second_closing.set()
+            await client.close()
+
+        old, new = AsyncMock(), AsyncMock()
+        old.__aexit__.side_effect = finish_old_session
+        with patch.object(
+            MCPClient,
+            "_create_sdk_client",
+            side_effect=[old, new],
+        ):
+            async with asyncio.timeout(5):
+                await client.connect()
+                await asyncio.gather(
+                    _close_then_reconnect(client),
+                    second_close(),
+                )
+                await client.close(ignore_errors=False)
+
+        old.__aexit__.assert_awaited_once()
+        new.__aexit__.assert_awaited_once()
+
+    async def test_concurrent_close_with_real_stdio(self) -> None:
+        """A replacement STDIO server accepts tool calls and closes cleanly."""
+        server = '''from uuid import uuid4
+from mcp.server import MCPServer
+
+server = MCPServer("reconnect")
+instance_id = uuid4().hex
+
+@server.tool()
+def get_instance_id() -> str:
+    """Return the ID generated when this server started."""
+    return instance_id
+
+server.run(transport="stdio")
+'''
+        client = MCPClient(
+            name="reconnect_stdio",
+            is_stateful=True,
+            mcp_config=StdioMCPConfig(
+                command=sys.executable,
+                args=["-u", "-c", server],
+            ),
+        )
+
+        async def instance_id() -> str:
+            tool = await client.get_tool("get_instance_id")
+            return (await tool()).content[0].text
+
+        async with asyncio.timeout(60):
+            await client.connect()
+            try:
+                old_id = await instance_id()
+                await asyncio.gather(
+                    _close_then_reconnect(client),
+                    client.close(),
+                )
+                self.assertNotEqual(await instance_id(), old_id)
+            finally:
+                await client.close(ignore_errors=False)
+            self.assertFalse(client.is_connected)
+
+    async def test_rejects_connect_during_handshake(self) -> None:
+        """The first handshake keeps ownership of the only transport."""
+        handshake_started = asyncio.Event()
+        finish_handshake = asyncio.Event()
+        transport = _OneShotTransport()
+
+        class _BlockingClient(_FakeClient):
+            """Hold the first handshake open while another caller connects."""
+
+            async def connect(self) -> None:
+                """Wait for the test to release the first connection."""
+                handshake_started.set()
+                await finish_handshake.wait()
+
+        with patch(
+            "agentscope.mcp._mcp_client.stdio_client",
+            return_value=transport,
+        ) as create_transport, patch(
+            "agentscope.mcp._mcp_client.SDKClient",
+            _BlockingClient,
+        ):
+            client = MCPClient(
+                name="concurrent_connect",
+                is_stateful=True,
+                mcp_config=StdioMCPConfig(command="unused"),
+            )
+            first = asyncio.create_task(client.connect())
+            try:
+                await asyncio.wait_for(handshake_started.wait(), timeout=5)
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "connection is already in progress",
+                ):
+                    await asyncio.wait_for(client.connect(), timeout=5)
+
+                self.assertFalse(first.done())
+                finish_handshake.set()
+                await asyncio.wait_for(first, timeout=5)
+            finally:
+                if not first.done():
+                    first.cancel()
+                    await asyncio.gather(first, return_exceptions=True)
+                if client.is_connected:
+                    await client.close()
+
+        create_transport.assert_called_once()
+        self.assertEqual((transport.enter_count, transport.exit_count), (1, 1))
 
     async def test_client_context_is_closed_by_its_owner_task(self) -> None:
         """Connect and close requests may run in different caller tasks."""
@@ -252,8 +388,13 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
                 transport: _OneShotTransport,
                 *,
                 mode: str,
+                message_handler: Any = None,
             ) -> None:
-                super().__init__(transport, mode=mode)
+                super().__init__(
+                    transport,
+                    mode=mode,
+                    message_handler=message_handler,
+                )
                 _BlockingClient.instance = self
 
             async def connect(self) -> None:

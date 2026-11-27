@@ -1,17 +1,25 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
 """Test cases for the tool-level onion middleware mechanism."""
+import asyncio
+import json
+import sys
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from mcp import Client, StdioServerParameters, stdio_client
 from utils import AnyString
 
 from agentscope.tool import (
+    FunctionTool,
+    MCPTool,
     ToolBase,
     ToolMiddlewareBase,
     ToolChunk,
+    Toolkit,
 )
-from agentscope.message import TextBlock, ToolResultState
+from agentscope.message import TextBlock, ToolCallBlock, ToolResultState
+from agentscope.state import AgentState
 from agentscope.permission import (
     PermissionDecision,
     PermissionBehavior,
@@ -155,6 +163,102 @@ def _make_recording_middleware(
 
 class ToolMiddlewareTest(IsolatedAsyncioTestCase):
     """Tests for the tool-level onion middleware mechanism."""
+
+    async def _assert_index_call(
+        self,
+        tool: ToolBase,
+        index: int | str,
+        expected: str,
+    ) -> None:
+        """Check the final Toolkit response for an index argument."""
+        call = ToolCallBlock(
+            id="lookup",
+            name=tool.name,
+            input=json.dumps({"index": index}),
+        )
+        results = [
+            result
+            async for result in Toolkit(tools=[tool]).call_tool(
+                call,
+                AgentState(),
+            )
+        ]
+        self.assertEqual(results[-1].state, ToolResultState.SUCCESS)
+        self.assertEqual([b.text for b in results[-1].content], [expected])
+
+    async def test_function_index_through_middleware(self) -> None:
+        """Both layers see the forwarded index, including an outer rewrite."""
+        events: list[tuple[str, dict]] = []
+
+        def lookup(index: int) -> str:
+            """Return the requested index."""
+            return str(index)
+
+        class RecordIndex(ToolMiddlewareBase):
+            """Capture each layer's inputs before optionally changing index."""
+
+            def __init__(self, name: str, rewrite: bool = False) -> None:
+                self.name = name
+                self.rewrite = rewrite
+
+            async def on_tool_call(
+                self,
+                tool: ToolBase,
+                input_kwargs: dict,
+                next_handler: Any,
+            ) -> AsyncGenerator[ToolChunk, None]:
+                """Record the incoming arguments and forward them."""
+                events.append((self.name, input_kwargs.copy()))
+                if self.rewrite:
+                    input_kwargs["index"] = 7
+                async for chunk in next_handler(**input_kwargs):
+                    yield chunk
+
+        for rewrite, expected in ((False, 1), (True, 7)):
+            with self.subTest(rewrite=rewrite):
+                events.clear()
+                tool = FunctionTool(
+                    lookup,
+                    middlewares=[
+                        RecordIndex("outer", rewrite),
+                        RecordIndex("inner"),
+                    ],
+                )
+                await self._assert_index_call(tool, 1, str(expected))
+                self.assertEqual(
+                    events,
+                    [("outer", {"index": 1}), ("inner", {"index": expected})],
+                )
+
+    async def test_stdio_mcp_index_through_middleware(self) -> None:
+        """The remote tool receives its string index through middleware."""
+        server = """
+from mcp.server import MCPServer
+
+server = MCPServer("lookup")
+
+@server.tool()
+def lookup(index: str) -> str:
+    return index
+
+server.run(transport="stdio")
+"""
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-u", "-c", server],
+        )
+        order: list[str] = []
+        async with asyncio.timeout(30):
+            async with Client(stdio_client(params), mode="auto") as session:
+                catalog = await session.list_tools()
+                tool = MCPTool(
+                    mcp_name="lookup",
+                    tool=catalog.tools[0],
+                    session=session,
+                    middlewares=[_make_recording_middleware("mcp", order)],
+                )
+                await self._assert_index_call(tool, "catalog", "catalog")
+        self.assertEqual(order, ["mcp-pre", "mcp-post"])
 
     async def _drain(self, result: Any) -> list[dict]:
         """Collect all chunks from a middleware-wrapped ``__call__`` result,

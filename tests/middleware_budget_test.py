@@ -6,9 +6,15 @@ from unittest.mock import MagicMock
 
 from pydantic import BaseModel
 
-from utils import MockModel
+from utils import AnyString, MockModel
 from agentscope.agent import Agent, ReActConfig
-from agentscope.message import UserMsg, TextBlock, ToolCallBlock, HintBlock
+from agentscope.message import (
+    UserMsg,
+    TextBlock,
+    ToolCallBlock,
+    HintBlock,
+    Msg,
+)
 from agentscope.middleware import MiddlewareBase, ReplyBudgetControlMiddleware
 from agentscope.model import ChatResponse, ChatUsage
 from agentscope.permission import (
@@ -209,6 +215,80 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
             if _has_hint_block(m, middleware.hint_message)
         ]
         self.assertGreater(len(hint_msgs), 0)
+
+    async def test_hint_does_not_join_the_previous_reply_message(
+        self,
+    ) -> None:
+        """A wrap-up hint belongs to the current reply message."""
+        middleware = ReplyBudgetControlMiddleware(token_budget=0)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=MockModel(),
+            toolkit=self.toolkit,
+            middlewares=[middleware],
+        )
+        middleware_key = await middleware.get_middleware_key()
+        old_reply = Msg(
+            id="previous-reply",
+            role="assistant",
+            name=agent.name,
+            content=[TextBlock(text="Earlier answer")],
+        )
+        old_reply_before = old_reply.model_dump()
+        agent.state.context.append(old_reply)
+        agent.state.middle_context[middleware_key] = {
+            agent.state.reply_id: 100,
+        }
+
+        async def next_handler(**_: Any) -> AsyncGenerator:
+            """Yield a sentinel and finish normally.
+
+            Args:
+                **_ (`Any`):
+                    Unused reasoning arguments.
+
+            Yields:
+                `None`:
+                    A sentinel forwarded by the middleware.
+            """
+            yield None
+
+        chain = middleware.on_reasoning(
+            agent=agent,
+            input_kwargs={},
+            next_handler=next_handler,
+        )
+        self.assertEqual([event async for event in chain], [None])
+        self.assertEqual(
+            [message.model_dump() for message in agent.state.context],
+            [
+                old_reply_before,
+                {
+                    "id": agent.state.reply_id,
+                    "name": agent.name,
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "hint",
+                            "hint": middleware.hint_message,
+                            "id": AnyString(),
+                            "source": '{"label": "System", "sublabel": '
+                            '"Reply Budget Exhausted"}',
+                            "created_at": AnyString(),
+                            "finished_at": AnyString(),
+                        },
+                    ],
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "usage": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+            ],
+        )
 
     async def test_budget_exceeded_forces_tool_choice_none(self) -> None:
         """When budget is exceeded, tool_choice forwarded to model is none.
@@ -438,6 +518,63 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         self.assertDictEqual(
             agent.state.middle_context[middleware_key],
             {agent.state.reply_id: 28},
+        )
+
+    async def test_new_reply_does_not_inherit_the_previous_budget_hint(
+        self,
+    ) -> None:
+        """A wrap-up hint belongs to one reply; the next reply starts clean.
+
+        Reply 1 spends its whole 300-token budget on the first step, so the
+        second step runs under the hint. Reply 2 starts with a fresh counter
+        and must not see that wrap-up instruction again.
+        """
+        toolkit = Toolkit(tools=[DummyTool()])
+
+        model = MockModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(id="tc_1", name="dummy", input="{}"),
+                    ],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=200,
+                        output_tokens=100,
+                        time=0.0,
+                    ),
+                ),
+                _response("wrapped up", input_tokens=5, output_tokens=5),
+                _response("fresh reply", input_tokens=5, output_tokens=5),
+            ],
+        )
+
+        middleware = ReplyBudgetControlMiddleware(token_budget=300)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=model,
+            toolkit=toolkit,
+            middlewares=[middleware],
+        )
+
+        await agent.reply(UserMsg("user", "first"))
+        self.assertTrue(
+            any(
+                _has_hint_block(message, middleware.hint_message)
+                for message in agent.state.context
+            ),
+            "the exhausted reply should have injected the wrap-up hint",
+        )
+
+        await agent.reply(UserMsg("user", "second"))
+        self.assertFalse(
+            any(
+                _has_hint_block(message, middleware.hint_message)
+                for message in agent.state.context
+            ),
+            "a fresh reply must not carry the previous reply's budget hint",
         )
 
     async def test_swallowed_reply_end_keeps_counting(self) -> None:
