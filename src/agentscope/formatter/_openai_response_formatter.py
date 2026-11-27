@@ -204,6 +204,9 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
+                    if function_calls:
+                        items.extend(function_calls)
+                        function_calls = []
                     text_type = (
                         "output_text"
                         if msg.role == "assistant"
@@ -216,6 +219,9 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                 elif isinstance(block, DataBlock):
                     formatted = self._format_response_data_block(block)
                     if formatted is not None:
+                        if function_calls:
+                            items.extend(function_calls)
+                            function_calls = []
                         content_parts.append(formatted)
 
                 elif isinstance(block, HintBlock):
@@ -292,6 +298,9 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         if reasoning_item_id in reasoning_item_ids:
                             continue
                         reasoning_item_ids.add(reasoning_item_id)
+                        if function_calls:
+                            items.extend(function_calls)
+                            function_calls = []
                         if content_parts and block.thinking:
                             items.append(
                                 {
@@ -338,6 +347,11 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                             )
 
                 elif isinstance(block, ToolCallBlock):
+                    if content_parts:
+                        items.append(
+                            {"role": msg.role, "content": content_parts},
+                        )
+                        content_parts = []
                     function_calls.append(
                         {
                             "type": "function_call",
