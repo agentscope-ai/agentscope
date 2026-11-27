@@ -81,19 +81,35 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
     @staticmethod
     def _format_ark_audio_source(
         source: URLSource | Base64Source,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """Convert audio to Ark's URL or raw base64 input_audio payload.
 
         Remote URLs are passed through. Local file URIs are decoded using
         the platform's path conversion, including Windows drive/UNC paths.
-        """
-        if source.media_type not in _AUDIO_FORMATS:
-            raise TypeError(
-                f"Unsupported audio media type: {source.media_type}. "
-                "Ark supports MP3, WAV, AAC, and M4A audio.",
-            )
 
-        payload = {"format": _AUDIO_FORMATS[source.media_type]}
+        Returns:
+            `dict[str, Any] | None`:
+                The ``input_audio`` block, or ``None`` when Ark cannot
+                encode the format and the block should be skipped.
+        """
+        audio_format = _AUDIO_FORMATS.get(source.media_type)
+        if audio_format is None:
+            # Admission above matches ``input_types`` with fnmatch,
+            # which ignores case on Windows and accepts anything
+            # under a widened ``audio/*`` policy; the encoder knows
+            # only these formats. Skip and warn like every other
+            # unencodable block (issue #2736) instead of raising out
+            # of ``format()``.
+            logger.warning(
+                "Unsupported audio media type %s for Volcengine Ark "
+                "API. Supported audio types: %s. This block will be "
+                "skipped.",
+                source.media_type,
+                ", ".join(sorted(_AUDIO_FORMATS)),
+            )
+            return None
+
+        payload = {"format": audio_format}
         if isinstance(source, Base64Source):
             payload["data"] = source.data
         else:
