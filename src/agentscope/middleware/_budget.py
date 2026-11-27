@@ -180,22 +180,15 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
                 }
 
             elif isinstance(event, ModelCallEndEvent):
-                # Update the used tokens. Missing keys are tolerated: a
-                # resumed reply never re-runs ReplyStartEvent for this
-                # middleware (e.g. it was added after the state was
-                # saved), and on_reasoning reads the same state
-                # defensively.
-                reply_costs = agent.state.middle_context.setdefault(
-                    middleware_key,
-                    {},
-                )
-                reply_costs[event.reply_id] = reply_costs.get(
-                    event.reply_id,
-                    0,
-                ) + (
+                # A resumed reply may have no saved counter.
+                costs = agent.state.middle_context.get(middleware_key, {})
+                cost = (
                     self.input_token_weight * event.input_tokens
                     + self.output_token_weight * event.output_tokens
                 )
+                agent.state.middle_context[middleware_key] = {
+                    event.reply_id: costs.get(event.reply_id, 0) + cost,
+                }
 
             yield event
 

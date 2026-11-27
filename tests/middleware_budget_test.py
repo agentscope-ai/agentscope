@@ -463,34 +463,25 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         self.assertGreater(len(hint_msgs), 0)
 
     async def test_model_call_end_for_unknown_reply(self) -> None:
-        """A ModelCallEndEvent for a reply this middleware never seeded
-        (e.g. middleware added after the state was saved, or a resumed
-        reply without a fresh ReplyStartEvent) accumulates instead of
-        raising KeyError."""
+        """An untracked reply starts at zero and replaces stale counters."""
         middleware = ReplyBudgetControlMiddleware(token_budget=1000)
+        key = await middleware.get_middleware_key()
         agent = MagicMock()
-        agent.state.middle_context = {}
-
-        async def handler(**kwargs: Any) -> AsyncGenerator:
-            yield ModelCallEndEvent(
-                reply_id="resumed-reply",
-                input_tokens=10,
-                output_tokens=5,
-            )
-
-        events = [
-            event async for event in middleware.on_reply(agent, {}, handler)
-        ]
-
-        self.assertEqual(len(events), 1)
-        middleware_key = await middleware.get_middleware_key()
-        self.assertEqual(
-            agent.state.middle_context[middleware_key]["resumed-reply"],
-            (
-                middleware.input_token_weight * 10
-                + middleware.output_token_weight * 5
-            ),
+        event = ModelCallEndEvent(
+            reply_id="resumed-reply",
+            input_tokens=10,
+            output_tokens=5,
         )
+
+        async def handler() -> AsyncGenerator:
+            yield event
+
+        for state in ({}, {key: {"old-reply": 28}}):
+            with self.subTest(state=state):
+                agent.state.middle_context = state
+                stream = middleware.on_reply(agent, {}, handler)
+                self.assertEqual([item async for item in stream], [event])
+                self.assertEqual(state, {key: {"resumed-reply": 15}})
 
     async def test_state_reset_on_next_reply(self) -> None:
         """middle_context only keeps the counter of the latest reply."""
