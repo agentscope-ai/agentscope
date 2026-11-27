@@ -20,6 +20,7 @@ from anthropic import types as anthropic_types
 
 from utils import AnyString
 
+from agentscope.agent import Agent
 from agentscope.message import (
     AssistantMsg,
     TextBlock,
@@ -27,6 +28,8 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
     ThinkingBlock,
+    Usage,
+    UserMsg,
 )
 from agentscope.model import AnthropicChatModel, ChatResponse, ChatUsage
 from agentscope.credential import AnthropicCredential
@@ -430,6 +433,59 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
                     ),
                 ],
             ),
+        )
+
+
+class TestAnthropicAgentReply(IsolatedAsyncioTestCase):
+    """Regression tests for Anthropic responses consumed by an agent."""
+
+    async def test_stream_with_null_input_tokens(self) -> None:
+        """Save the reply when a compatible endpoint reports null input."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-1",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-opus-4-5",
+                "content": [{"type": "text", "text": "Hello"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 0, "output_tokens": 5},
+            },
+        )
+        events = [
+            event.model_dump(exclude_unset=True)
+            for event in _completion_events(completion)
+        ]
+        events[0]["message"]["usage"]["input_tokens"] = None
+        body = "".join(
+            f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events
+        )
+        backend = (
+            httpx2
+            if issubclass(DefaultAsyncHttpxClient, httpx2.AsyncClient)
+            else httpx
+        )
+        response = backend.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=body,
+        )
+        async with DefaultAsyncHttpxClient(
+            transport=backend.MockTransport(lambda _: response),
+        ) as client:
+            model = AnthropicChatModel(
+                credential=AnthropicCredential(api_key="test"),
+                model=completion.model,
+                stream=True,
+                client_kwargs={"http_client": client},
+            )
+            agent = Agent(name="assistant", system_prompt="Hi", model=model)
+            await agent.reply(UserMsg("user", "Hi"))
+
+        saved = agent.state.context[-1]
+        self.assertEqual(
+            (saved.role, saved.get_text_content(), saved.usage),
+            ("assistant", "Hello", Usage(input_tokens=0, output_tokens=5)),
         )
 
 
