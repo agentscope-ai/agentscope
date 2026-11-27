@@ -91,9 +91,8 @@ class ASRModelBase(ABC):
     ) -> None:
         """Exit the model's asynchronous context.
 
-        Realtime models close their provider connection by calling
-        :meth:`close`, including when the context exits with an exception.
-        Exiting a batch model is a no-op.
+        Close provider resources by calling :meth:`close`, including when
+        the context exits with an exception.
 
         Args:
             exc_type (`Any`):
@@ -104,8 +103,7 @@ class ASRModelBase(ABC):
             traceback (`Any`):
                 The exception traceback, or ``None`` for a normal exit.
         """
-        if self.realtime:
-            await self.close()
+        await self.close()
 
     async def connect(self) -> None:
         """Establish the realtime provider connection.
@@ -118,11 +116,10 @@ class ASRModelBase(ABC):
         return
 
     async def close(self) -> None:
-        """Close the realtime provider connection.
+        """Release provider resources.
 
-        Realtime implementations must override this method and release any
-        resources created by :meth:`connect`. The default is a no-op so batch
-        implementations do not need lifecycle hooks.
+        Realtime implementations must override this method. Batch models
+        owning resources should override it as well. The default is a no-op.
         """
         return
 

@@ -48,6 +48,10 @@ class OpenAIASRModel(ASRModelBase):
             base_url=credential.base_url,
         )
 
+    async def close(self) -> None:
+        """Close the underlying asynchronous HTTP client."""
+        await self.client.close()
+
     async def transcribe(
         self,
         audio: bytes | None = None,

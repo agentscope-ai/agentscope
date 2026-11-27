@@ -85,6 +85,7 @@ class ASRRouterTest(TestCase):
     def test_transcribes_multipart_audio(self) -> None:
         """Pass uploaded bytes and filename to the resolved ASR model."""
         model = SimpleNamespace(
+            close=AsyncMock(),
             transcribe=AsyncMock(
                 return_value=ASRResponse(
                     content=TextBlock(text="hello from audio"),
@@ -130,6 +131,7 @@ class ASRRouterTest(TestCase):
         """A filename the model cannot encode is the caller's error, not an
         internal server error."""
         model = SimpleNamespace(
+            close=AsyncMock(),
             transcribe=AsyncMock(
                 side_effect=ValueError(
                     "Unsupported audio file format: .aiff",
