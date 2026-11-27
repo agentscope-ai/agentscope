@@ -6,11 +6,14 @@ Validates that the three backend primitives (``exec_shell``,
 ``read_file``, ``write_file``) and the inherited shell-based filesystem
 helpers behave correctly inside a real OpenSandbox sandbox.
 
-The whole module is skipped unless the ``OPENSANDBOX_DOMAIN`` environment
-variable is set, because every test requires a live OpenSandbox service.
+Most of the module is skipped unless the ``OPENSANDBOX_DOMAIN`` environment
+variable is set, because those tests require a live OpenSandbox service.
 CI runs without OpenSandbox access are therefore unaffected; when a
 domain *is* present the tests exercise the real ``commands.run`` /
 ``files.*`` APIs.
+
+``TestOpenSandboxWriteEntry`` runs everywhere: it only inspects the write
+entry passed by the backend, so it needs no live service.
 
 A live sandbox is obtained by initializing an :class:`OpenSandboxWorkspace`
 and reusing its already-wired :class:`OpenSandboxBackend` (``ws._backend``),
@@ -180,6 +183,45 @@ class TestOpenSandboxBackend(CheckoutWheelTestCase):
 
         # Deleting a non-existent path must not raise.
         await self.backend.delete_path(f"{SANDBOX_WORKDIR}/missing")
+
+
+# ── write entry (no live sandbox required) ─────────────────────────
+
+
+class TestOpenSandboxWriteEntry(IsolatedAsyncioTestCase):
+    """Test cases for the write entry ``write_file`` builds.
+
+    OpenSandbox's ``WriteEntry.mode`` carries the permission bits as an
+    integer whose *decimal digits* are the octal mode (the SDK default is
+    ``755``, and execd parses the value as octal). Sending ``0o644``
+    instead puts ``420`` on the wire, which execd reads as ``0o420`` —
+    owner read-only, so the second write to the same file fails with
+    ``permission denied``. These tests pin the decimal encoding without
+    needing a live sandbox.
+    """
+
+    async def test_write_file_sends_that_mode(self) -> None:
+        """``write_file`` passes the mode through to ``files.write_files``."""
+        run = AsyncMock(
+            return_value=SimpleNamespace(exit_code=0, stdout=b"", stderr=b""),
+        )
+        write_files = AsyncMock()
+        sandbox = SimpleNamespace(
+            commands=SimpleNamespace(run=run),
+            files=SimpleNamespace(write_files=write_files),
+        )
+        backend = OpenSandboxBackend(sandbox, workdir=SANDBOX_WORKDIR)
+
+        path = f"{SANDBOX_WORKDIR}/a/b.txt"
+        await backend.write_file(path, b"payload")
+
+        write_files.assert_awaited_once()
+        (entries,) = write_files.await_args.args
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry.path, path)
+        self.assertEqual(entry.data, b"payload")
+        self.assertEqual(entry.mode, 644)
 
 
 class TestOpenSandboxBackendExitCode(IsolatedAsyncioTestCase):
