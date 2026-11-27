@@ -23,7 +23,7 @@ _VALID_MODALITIES = frozenset({"image", "audio", "video"})
 
 def _get_modality(media_type: str) -> str:
     """Derive OTel modality from a MIME type string (e.g. 'image/png')."""
-    prefix = media_type.split("/")[0] if media_type else ""
+    prefix = media_type.strip().lower().split("/", 1)[0] if media_type else ""
     return prefix if prefix in _VALID_MODALITIES else "unknown"
 
 
