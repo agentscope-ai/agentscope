@@ -197,12 +197,13 @@ class FileEmbeddingCache(EmbeddingCacheBase):
                 )
                 rejected_oversized = True
 
-        files = [
-            (_.name, _.stat().st_mtime)
-            for _ in os.scandir(self.cache_dir)
-            if _.is_file() and _.name.endswith(".npy")
-        ]
-        files.sort(key=lambda x: x[1])
+        with os.scandir(self.cache_dir) as entries:
+            files = [
+                (entry.name, entry.stat())
+                for entry in entries
+                if entry.name.endswith(".npy") and entry.is_file()
+            ]
+        files.sort(key=lambda item: item[1].st_mtime)
 
         if (
             self.max_file_number is not None
@@ -222,16 +223,16 @@ class FileEmbeddingCache(EmbeddingCacheBase):
         if rejected_oversized:
             return
 
-        if (
-            self.max_cache_size is not None
-            and self._get_cache_size() > self.max_cache_size
-        ):
+        if self.max_cache_size is not None:
+            limit_bytes = self.max_cache_size * 1024 * 1024
+            total_bytes = sum(info.st_size for _, info in files)
             removed_files = []
-            for filename, _ in files:
+            for filename, info in files:
+                if total_bytes <= limit_bytes:
+                    break
                 os.remove(os.path.join(self.cache_dir, filename))
                 removed_files.append(filename)
-                if self._get_cache_size() <= self.max_cache_size:
-                    break
+                total_bytes -= info.st_size
 
             if removed_files:
                 logger.info(
