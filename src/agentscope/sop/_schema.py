@@ -389,7 +389,11 @@ class SOPStep(SOPStepBase):
         It sees what the step was given as well as what came back — a
         draft can only be judged against what was asked for.
         """
-        if inputs is not None:
+        if inputs is not None and not isinstance(inputs, (Msg, list)):
+            # A resumption event is the answer to a question the verifier
+            # asked, so it goes straight through. A plain message is not:
+            # the run was handed something new while the step was parked,
+            # and judging has to start from the question and the work.
             return inputs
         return [
             UserMsg(
