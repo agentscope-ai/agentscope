@@ -1,6 +1,6 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { Onborda, OnbordaProvider } from 'onborda';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider, useNavigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
@@ -11,6 +11,7 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { buildChatTour } from '@/components/tour/chatTourSteps';
 import { TourCard } from '@/components/tour/TourCard';
 import { UploadProvider } from '@/context/UploadContext';
+import { subscribeToVoiceProfileChanges } from '@/hooks/useVoiceProfiles';
 import { useTranslation } from '@/i18n/useI18n';
 import { queryClient } from '@/lib/query-client';
 import { ChannelPage } from '@/pages/channel';
@@ -71,6 +72,7 @@ function App() {
 	const { t } = useTranslation();
 	const [setupComplete, setSetupComplete] = useState(() => !!localStorage.getItem('server_url'));
 	const tours = useMemo(() => [buildChatTour(t)], [t]);
+	useEffect(subscribeToVoiceProfileChanges, []);
 
 	if (!setupComplete) {
 		return <SetupPage onComplete={() => setSetupComplete(true)} />;

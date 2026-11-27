@@ -2,6 +2,7 @@
 """The read tool in agentscope."""
 import base64
 import fnmatch
+import glob
 import os
 import re
 from typing import Any, List
@@ -245,7 +246,13 @@ Usage:
         parent = self._backend.dirname(file_path)
         # Glob patterns are POSIX-style strings (matched by fnmatch),
         # not real filesystem paths — do NOT use backend.join_path here.
-        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
+        # ``parent`` is a literal path, so its fnmatch metacharacters must be
+        # escaped, otherwise the suggested rule matches sibling directories.
+        stem = glob.escape(parent).rstrip("/\\")
+        # A file at the filesystem root (or given by a bare relative name)
+        # has no directory component left. ``**`` would match every path in
+        # the repository, so suggest the file itself instead.
+        pattern = f"{stem}/**" if stem else glob.escape(file_path)
 
         return [
             PermissionRule(

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
+from enum import Enum
 from typing import Any, Type
 
 from pydantic import BaseModel, Field, field_serializer, model_validator
@@ -18,6 +19,12 @@ from ..message import (
     HintBlock,
 )
 from ..permission import PermissionContext
+
+
+class _MtimeSource(Enum):
+    """Distinguish a legacy host lookup from an unavailable backend mtime."""
+
+    HOST = "host"
 
 
 class ReadCacheEntry(BaseModel):
@@ -46,7 +53,7 @@ class ToolContext(BaseModel):
     async def get_cache(
         self,
         file_path: str,
-        mtime: float | None = None,
+        mtime: float | None | _MtimeSource = _MtimeSource.HOST,
     ) -> ReadCacheEntry | None:
         """Get cached file content if still valid.
 
@@ -56,7 +63,10 @@ class ToolContext(BaseModel):
             mtime (`float | None`, optional):
                 The file's modification time, obtained from the same
                 filesystem that read the file, e.g. a workspace backend.
-                Falls back to the host filesystem when not provided.
+                Omitting this argument queries the host filesystem for
+                compatibility with local callers. Explicit ``None`` means
+                the backend timestamp is unavailable: invalidate the entry
+                without querying the host filesystem.
 
         Returns:
             `ReadCacheEntry | None`:
@@ -66,7 +76,7 @@ class ToolContext(BaseModel):
         # Find the cache entry
         for entry in self.read_file_cache:
             if entry.file_path == file_path:
-                if mtime is None:
+                if mtime is _MtimeSource.HOST:
                     try:
                         mtime = await aiofiles.os.path.getmtime(file_path)
                     except Exception:
@@ -91,7 +101,7 @@ class ToolContext(BaseModel):
         self,
         file_path: str,
         lines: list[str],
-        mtime: float | None = None,
+        mtime: float | None | _MtimeSource = _MtimeSource.HOST,
     ) -> None:
         """Cache file content with LRU eviction.
 
@@ -103,19 +113,16 @@ class ToolContext(BaseModel):
             mtime (`float | None`, optional):
                 The file's modification time, obtained from the same
                 filesystem that read the file, e.g. a workspace backend.
-                Falls back to the host filesystem when not provided.
+                Omitting this argument queries the host filesystem for
+                compatibility with local callers. Explicit ``None`` means
+                the backend timestamp is unavailable: remove any old entry
+                for this path and do not cache the content.
         """
-        if mtime is None:
+        if mtime is _MtimeSource.HOST:
             try:
                 mtime = await aiofiles.os.path.getmtime(file_path)
             except Exception:
-                # Cannot get mtime, skip caching
-                return
-
-        # Calculate size in KB
-        new_entry_bytes = (
-            sum(len(line.encode("utf-8")) for line in lines) / 1024
-        )
+                mtime = None
 
         # Remove existing cache for this file if present
         self.read_file_cache = [
@@ -123,6 +130,16 @@ class ToolContext(BaseModel):
             for entry in self.read_file_cache
             if entry.file_path != file_path
         ]
+
+        # Unknown backend metadata cannot validate this content against an
+        # unrelated host file, including after a successful write.
+        if mtime is None:
+            return
+
+        # Calculate size in KB
+        new_entry_bytes = (
+            sum(len(line.encode("utf-8")) for line in lines) / 1024
+        )
 
         # An entry that cannot fit even in an empty cache must not evict
         # unrelated entries or make the configured byte limit ineffective.
@@ -295,17 +312,16 @@ class AgentState(BaseModel):
     """The context that allow the middlewares to store/get data across
     different replies."""
 
-    def get_reply_message(self, name: str) -> Msg | None:
+    def get_reply_message(self, name: str | None = None) -> Msg | None:
         """Find this agent's current reply, even after later messages.
 
         Args:
-            name (`str`):
-                Author of the assistant reply to find.
+            name (`str | None`):
+                Optionally restrict the current reply to its author.
 
         Returns:
             `Msg | None`:
-                The assistant message matching both ``name`` and the current
-                ``reply_id``, or ``None`` if it has not been created.
+                The matching current reply, or ``None`` if absent.
         """
         return next(
             (
@@ -313,7 +329,7 @@ class AgentState(BaseModel):
                 for message in reversed(self.context)
                 if message.id == self.reply_id
                 and message.role == "assistant"
-                and message.name == name
+                and (name is None or message.name == name)
             ),
             None,
         )
@@ -343,16 +359,15 @@ class AgentState(BaseModel):
                 ),
             )
 
-    def has_awaiting_tool_calls(self, name: str) -> bool:
+    def has_awaiting_tool_calls(self, name: str | None = None) -> bool:
         """Whether the current reply written by ``name`` has
         any tool call still awaiting an outside response — an
         ``ASKING`` user confirmation or a ``SUBMITTED`` external
         execution with no matching tool result yet.
 
         Args:
-            name (`str`):
-                Only messages authored by this agent name are inspected;
-                observed messages from other agents are ignored.
+            name (`str | None`):
+                Optionally restrict the current reply to its author.
 
         Returns:
             `bool`:
@@ -360,15 +375,17 @@ class AgentState(BaseModel):
         """
         return bool(self.get_awaiting_tool_calls(name))
 
-    def get_awaiting_tool_calls(self, name: str) -> list[ToolCallBlock]:
+    def get_awaiting_tool_calls(
+        self,
+        name: str | None = None,
+    ) -> list[ToolCallBlock]:
         """Get the current reply's tool calls still awaiting an
         outside response — an ``ASKING`` user confirmation or a
         ``SUBMITTED`` external execution with no matching tool result yet.
 
         Args:
-            name (`str`):
-                Only messages authored by this agent name are inspected;
-                observed messages from other agents are ignored.
+            name (`str | None`):
+                Optionally restrict the current reply to its author.
 
         Returns:
             `list[ToolCallBlock]`:

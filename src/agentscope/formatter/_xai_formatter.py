@@ -9,12 +9,16 @@ other formatter, the ``format()`` method returns a list of
 """
 
 import base64
-from fnmatch import fnmatch
+from fnmatch import fnmatchcase
 from typing import Any, List
 
 from pydantic import Field
 
-from ._formatter_base import FormatterBase, file_url_to_path
+from ._formatter_base import (
+    FormatterBase,
+    _normalize_media_type,
+    file_url_to_path,
+)
 from .._logging import logger
 from ..message import (
     Msg,
@@ -61,8 +65,9 @@ def _xai_user_args_from_blocks(
         if isinstance(sub, TextBlock):
             args.append(sub.text)
         elif isinstance(sub, DataBlock):
-            if not sub.source.media_type.startswith("image/") or not any(
-                fnmatch(sub.source.media_type, pattern)
+            media_type = _normalize_media_type(sub.source.media_type)
+            if not media_type.startswith("image/") or not any(
+                fnmatchcase(media_type, pattern)
                 for pattern in supported_media_types
             ):
                 logger.warning(
@@ -83,8 +88,7 @@ def _xai_user_args_from_blocks(
                         )
                     args.append(
                         image(
-                            f"data:{sub.source.media_type};"
-                            f"base64,{encoded}",
+                            f"data:{media_type};base64,{encoded}",
                             **(sub.model_extra or {}),
                         ),
                     )
@@ -95,8 +99,7 @@ def _xai_user_args_from_blocks(
             elif isinstance(sub.source, Base64Source):
                 args.append(
                     image(
-                        f"data:{sub.source.media_type};"
-                        f"base64,{sub.source.data}",
+                        f"data:{media_type};base64,{sub.source.data}",
                         **(sub.model_extra or {}),
                     ),
                 )

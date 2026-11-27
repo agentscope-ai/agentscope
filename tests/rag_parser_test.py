@@ -15,14 +15,18 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
+from agentscope.message import DataBlock
 from agentscope.rag import (
+    Chunk,
     ImageParser,
     PDFParser,
     PPTParser,
+    Section,
     TextParser,
     WordParser,
     ExcelParser,
 )
+from agentscope.rag._parser._utils import _guess_image_media_type
 
 
 # Smallest valid PNG ever — a single transparent pixel.  Used wherever
@@ -32,6 +36,11 @@ _PNG_PIXEL: bytes = base64.b64decode(
     "AarVyFEAAAAASUVORK5CYII=",
 )
 _PNG_PIXEL_B64: str = base64.b64encode(_PNG_PIXEL).decode("utf-8")
+# A single-pixel GIF, for tests that need a second, different image.
+_GIF_PIXEL: bytes = base64.b64decode(
+    "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+)
+_GIF_PIXEL_B64: str = base64.b64encode(_GIF_PIXEL).decode("utf-8")
 
 
 def _make_pdf(pages: list[str]) -> bytes:
@@ -45,6 +54,14 @@ def _make_pdf(pages: list[str]) -> bytes:
         pdf.showPage()
     pdf.save()
     return buffer.getvalue()
+
+
+def _dump_pdf_text(item: Section | Chunk) -> dict[str, Any]:
+    """Allow one optional page-final newline across pypdf versions."""
+    result = item.model_dump()
+    content = result["content"]
+    content["text"] = content["text"].removesuffix("\n")
+    return result
 
 
 def _make_pptx_simple(slides: list[str]) -> bytes:
@@ -89,8 +106,8 @@ def _make_pptx_rich() -> bytes:
     ).table
     table.cell(0, 0).text = "A"
     table.cell(0, 1).text = "B"
-    table.cell(1, 0).text = "1"
-    table.cell(1, 1).text = "2"
+    table.cell(1, 0).text = " 1 "
+    table.cell(1, 1).text = " 2 "
     trailing = slide2.shapes.add_textbox(
         Inches(1),
         Inches(4),
@@ -123,6 +140,94 @@ def _make_pptx_with_image(image_bytes: bytes) -> bytes:
     slide.shapes.add_picture(io.BytesIO(image_bytes), 0, 0)
     buffer = io.BytesIO()
     presentation.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_pptx_with_alternate_content(kind: str = "text") -> bytes:
+    """Build a PPTX with content wrapped in ``mc:AlternateContent`` between
+    two plain text boxes, the way PowerPoint saves content older readers
+    cannot show.
+
+    Args:
+        kind (`str`, defaults to ``"text"``):
+            What is wrapped. ``"text"``: a text box, with a differently
+            worded copy as the fallback (the shape of a text box holding an
+            equation). ``"picture"``: an empty text box, with a picture as
+            the fallback. ``"ink"``: an ink ``p:contentPart``, with a
+            picture as the fallback. ``"group"``: the ``"text"`` case inside
+            a group. An "embedded" picture has a text fallback, and a
+            "linked" picture has an embedded picture fallback.
+
+    Returns:
+        `bytes`: The PPTX file.
+    """
+    from lxml import etree
+    from pptx import Presentation
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+    from pptx.util import Inches
+
+    mc = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+    pml = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    a14 = "http://schemas.microsoft.com/office/drawing/2010/main"
+    p14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+
+    def add_text_box(text: str) -> Any:
+        box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(0.5),
+            Inches(4),
+            Inches(0.5),
+        )
+        box.text_frame.text = text
+        return box.element
+
+    add_text_box("Before")
+    requires = ("a14", a14)
+    if kind == "ink":
+        choice = etree.SubElement(
+            slide.shapes.element,
+            f"{{{pml}}}contentPart",
+        )
+        choice.set(f"{{{rel}}}id", "rId99")
+        requires = ("p14", p14)
+    elif kind in ("embedded", "linked"):
+        choice = slide.shapes.add_picture(io.BytesIO(_PNG_PIXEL), 0, 0).element
+        if kind == "linked":
+            blip = choice.xpath(".//a:blip")[0]
+            del blip.attrib[f"{{{rel}}}embed"]
+            link_id = slide.part.relate_to(
+                "https://example.org/picture.png",
+                RT.IMAGE,
+                is_external=True,
+            )
+            blip.set(f"{{{rel}}}link", link_id)
+    else:
+        choice = add_text_box("" if kind == "picture" else "Growth rate")
+    if kind in ("picture", "ink", "linked"):
+        picture = slide.shapes.add_picture(io.BytesIO(_PNG_PIXEL), 0, 0)
+        fallback = picture.element
+    else:
+        fallback = add_text_box("Fallback copy")
+    if kind == "group":
+        members = [s for s in slide.shapes if s.element in (choice, fallback)]
+        slide.shapes.add_group_shape(members)
+    add_text_box("After")
+
+    alternate = etree.Element(f"{{{mc}}}AlternateContent", nsmap={"mc": mc})
+    choice.addprevious(alternate)
+    etree.SubElement(
+        alternate,
+        f"{{{mc}}}Choice",
+        nsmap={requires[0]: requires[1]},
+        Requires=requires[0],
+    ).append(choice)
+    etree.SubElement(alternate, f"{{{mc}}}Fallback").append(fallback)
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
     return buffer.getvalue()
 
 
@@ -525,6 +630,158 @@ def _make_docx_with_image_in_table_text_box() -> bytes:
     return buffer.getvalue()
 
 
+_DOCX_PICTURE_NS = (
+    f"{_DOCX_TEXT_BOX_NS} "
+    'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" '
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/'
+    'relationships" '
+    'xmlns:wpg="http://schemas.microsoft.com/office/word/2010/'
+    'wordprocessingGroup"'
+)
+
+# An inline DrawingML picture of the image related as ``{rid}``.
+_DOCX_PICTURE = """
+<w:drawing {ns}><wp:inline distT="0" distB="0" distL="0" distR="0">
+  <wp:extent cx="9525" cy="9525"/>
+  <wp:docPr id="{shape_id}" name="Picture {shape_id}"/>
+  <a:graphic><a:graphicData
+      uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+    <pic:pic><pic:blipFill><a:blip r:embed="{rid}"/></pic:blipFill></pic:pic>
+  </a:graphicData></a:graphic>
+</wp:inline></w:drawing>
+"""
+
+
+def _make_docx_with_text_box_pictures(
+    template: str,
+    pictures: tuple[bytes, ...] = (_PNG_PIXEL,),
+    *,
+    in_table: bool = False,
+    inside: str = "Caption",
+) -> bytes:
+    """Build a DOCX whose text box holds *pictures* after its text.
+
+    *template* is one of the text-box paragraphs above. Every copy of the
+    box gets the pictures, the ``mc:Fallback`` one included, as in a file
+    saved by Word. With *in_table*, the paragraph is in a table cell.
+    """
+    import docx
+    from docx.oxml.ns import qn
+    from lxml import etree
+
+    document = docx.Document()
+    document.add_paragraph("Before")
+    rel_ids = [
+        document.part.get_or_add_image(io.BytesIO(picture))[0]
+        for picture in pictures
+    ]
+    paragraph = etree.fromstring(
+        template.format(
+            ns=_DOCX_TEXT_BOX_NS,
+            before="Figure 1",
+            inside=inside,
+        ).strip(),
+    )
+    for box in paragraph.iter(qn("w:txbxContent")):
+        box_paragraph = box.find(qn("w:p"))
+        for shape_id, rel_id in enumerate(rel_ids, start=100):
+            run = etree.SubElement(box_paragraph, qn("w:r"))
+            run.append(
+                etree.fromstring(
+                    _DOCX_PICTURE.format(
+                        ns=_DOCX_PICTURE_NS,
+                        shape_id=shape_id,
+                        rid=rel_id,
+                    ).strip(),
+                ),
+            )
+
+    body = document.element.body
+    if in_table:
+        table = etree.fromstring(
+            f"<w:tbl {_DOCX_TEXT_BOX_NS}><w:tblGrid><w:gridCol/></w:tblGrid>"
+            "<w:tr><w:tc/></w:tr></w:tbl>",
+        )
+        table.find(f"{qn('w:tr')}/{qn('w:tc')}").append(paragraph)
+        body.insert(len(body) - 1, table)
+    else:
+        body.insert(len(body) - 1, paragraph)
+    document.add_paragraph("After")
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_docx_with_alternate_picture(
+    requires: str,
+    choice: str,
+    fallback: str,
+) -> bytes:
+    """Build a DOCX whose paragraph holds one ``mc:AlternateContent``.
+
+    In *choice* and *fallback*, ``{rid}`` is replaced by the relationship
+    id of an embedded PNG and ``{gif_rid}`` by that of an embedded GIF.
+    """
+    import docx
+    from lxml import etree
+
+    document = docx.Document()
+    document.add_paragraph("Before")
+    rel_id = document.part.get_or_add_image(io.BytesIO(_PNG_PIXEL))[0]
+    gif_rel_id = document.part.get_or_add_image(io.BytesIO(_GIF_PIXEL))[0]
+    paragraph = etree.fromstring(
+        (
+            f"<w:p {_DOCX_PICTURE_NS}><w:r><w:t>Figure 1</w:t></w:r>"
+            f'<w:r><mc:AlternateContent><mc:Choice Requires="{requires}">'
+            f"{choice}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback>"
+            "</mc:AlternateContent></w:r></w:p>"
+        )
+        .replace("{rid}", rel_id)
+        .replace("{gif_rid}", gif_rel_id),
+    )
+    body = document.element.body
+    body.insert(len(body) - 1, paragraph)
+    document.add_paragraph("After")
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _expected_word_picture_sections(
+    text: str,
+    images: list[tuple[str, str]],
+) -> list[dict]:
+    """Return the expected output: *text*, the images, then "After".
+
+    Each image is a ``(base64 data, media type)`` pair.
+    """
+    return [
+        *_expected_word_sections(text),
+        *(
+            {
+                "content": {
+                    "type": "data",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "source": {
+                        "type": "base64",
+                        "data": data,
+                        "media_type": media_type,
+                    },
+                    "name": "demo.docx",
+                },
+                "source": "demo.docx",
+                "metadata": {"media_type": media_type},
+            }
+            for data, media_type in images
+        ),
+        *_expected_word_sections("After"),
+    ]
+
+
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
@@ -749,12 +1006,12 @@ class PDFParserTest(IsolatedAsyncioTestCase):
         sections = await parser.parse(pdf_bytes, "demo.pdf")
 
         self.assertEqual(
-            [s.model_dump() for s in sections],
+            [_dump_pdf_text(section) for section in sections],
             [
                 {
                     "content": {
                         "type": "text",
-                        "text": "First page text\n",
+                        "text": "First page text",
                         "id": AnyString(),
                         "created_at": AnyString(),
                         "finished_at": None,
@@ -765,7 +1022,7 @@ class PDFParserTest(IsolatedAsyncioTestCase):
                 {
                     "content": {
                         "type": "text",
-                        "text": "Second page text\n",
+                        "text": "Second page text",
                         "id": AnyString(),
                         "created_at": AnyString(),
                         "finished_at": None,
@@ -1079,8 +1336,8 @@ class PPTParserTest(IsolatedAsyncioTestCase):
         )
 
     async def test_simple_deck_text_only(self) -> None:
-        """A simple text-only deck round-trips through wrapping tags."""
-        pptx_bytes = _make_pptx_simple(["Alpha", "Beta"])
+        """Preserve literal tags in text and omit empty slide wrappers."""
+        pptx_bytes = _make_pptx_simple(["<slide index=1>", "Beta", "   "])
         parser = PPTParser(include_image=False)
         sections = await parser.parse(pptx_bytes, "demo.pptx")
 
@@ -1090,7 +1347,7 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                 {
                     "content": {
                         "type": "text",
-                        "text": "<slide index=1>\nAlpha\n</slide>",
+                        "text": "<slide index=1>\n<slide index=1>\n</slide>",
                         "id": AnyString(),
                         "created_at": AnyString(),
                         "finished_at": None,
@@ -1179,17 +1436,6 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
-                },
-                {
-                    "content": {
-                        "type": "text",
-                        "text": "<slide index=3>\n</slide>",
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                    "source": "rich.pptx",
-                    "metadata": {"slide": 3},
                 },
             ],
         )
@@ -1288,17 +1534,6 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
                 },
-                {
-                    "content": {
-                        "type": "text",
-                        "text": "<slide index=3>\n</slide>",
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                    "source": "rich.pptx",
-                    "metadata": {"slide": 3},
-                },
             ],
         )
 
@@ -1359,17 +1594,6 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                 },
                 {
                     "content": {
-                        "type": "text",
-                        "text": "<slide index=3>",
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                    "source": "rich.pptx",
-                    "metadata": {"slide": 3},
-                },
-                {
-                    "content": {
                         "type": "data",
                         "id": AnyString(),
                         "created_at": AnyString(),
@@ -1386,17 +1610,6 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "slide": 3,
                         "media_type": "image/png",
                     },
-                },
-                {
-                    "content": {
-                        "type": "text",
-                        "text": "</slide>",
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                    "source": "rich.pptx",
-                    "metadata": {"slide": 3},
                 },
             ],
         )
@@ -1573,7 +1786,7 @@ class PPTParserTest(IsolatedAsyncioTestCase):
         buffer = io.BytesIO()
         presentation.save(buffer)
 
-        parser = PPTParser(slide_prefix=None, slide_suffix=None)
+        parser = PPTParser()
         sections = await parser.parse(buffer.getvalue(), "placeholder.pptx")
 
         self.assertEqual(
@@ -1582,7 +1795,7 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                 {
                     "content": {
                         "type": "text",
-                        "text": "Before picture",
+                        "text": "<slide index=1>\nBefore picture",
                         "id": AnyString(),
                         "created_at": AnyString(),
                         "finished_at": None,
@@ -1609,7 +1822,7 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                 {
                     "content": {
                         "type": "text",
-                        "text": "After picture",
+                        "text": "After picture\n</slide>",
                         "id": AnyString(),
                         "created_at": AnyString(),
                         "finished_at": None,
@@ -1661,7 +1874,7 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                         "text": (
                             "<system-info>A table loaded as a JSON "
                             "array:</system-info>\n"
-                            '[["A", "B"], ["1", "2"]]'
+                            '[["A", "B"], [" 1 ", " 2 "]]'
                         ),
                         "id": AnyString(),
                         "created_at": AnyString(),
@@ -1680,17 +1893,6 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                     },
                     "source": "rich.pptx",
                     "metadata": {"slide": 2},
-                },
-                {
-                    "content": {
-                        "type": "text",
-                        "text": "<slide index=3>\n</slide>",
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                    "source": "rich.pptx",
-                    "metadata": {"slide": 3},
                 },
             ],
         )
@@ -1839,6 +2041,126 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                     "source": "demo.pptx",
                     "metadata": {"slide": 1},
                 },
+            ],
+        )
+
+
+class PPTParserAlternateContentTest(IsolatedAsyncioTestCase):
+    """Content wrapped in ``mc:AlternateContent``, which python-pptx skips."""
+
+    @staticmethod
+    def _text_section(text: str) -> dict:
+        """Return the dump of a text section on slide 1 of ``demo.pptx``."""
+        return {
+            "content": {
+                "type": "text",
+                "text": text,
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
+            "source": "demo.pptx",
+            "metadata": {"slide": 1},
+        }
+
+    @staticmethod
+    def _picture_section() -> dict:
+        """Return the dump of the one-pixel PNG as a section on slide 1."""
+        return {
+            "content": {
+                "type": "data",
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "source": {
+                    "type": "base64",
+                    "data": _PNG_PIXEL_B64,
+                    "media_type": "image/png",
+                },
+                "name": "demo.pptx",
+            },
+            "source": "demo.pptx",
+            "metadata": {"slide": 1, "media_type": "image/png"},
+        }
+
+    async def _parse(self, kind: str, **kwargs: Any) -> list[dict]:
+        """Parse a deck from ``_make_pptx_with_alternate_content``."""
+        sections = await PPTParser(**kwargs).parse(
+            _make_pptx_with_alternate_content(kind),
+            "demo.pptx",
+        )
+        return [section.model_dump() for section in sections]
+
+    async def test_wrapped_shape_is_read_once(self) -> None:
+        """A wrapped shape is read from its choice, in place, and its
+        fallback copy is not read as well."""
+        self.assertEqual(
+            await self._parse("text", include_image=False),
+            [
+                self._text_section(
+                    "<slide index=1>\nBefore\nGrowth rate\nAfter\n</slide>",
+                ),
+            ],
+        )
+
+    async def test_wrapped_shape_inside_a_group_is_read_once(self) -> None:
+        """Content wrapped inside a group is read the same way."""
+        self.assertEqual(
+            await self._parse("group", include_image=False),
+            [
+                self._text_section(
+                    "<slide index=1>\nBefore\nGrowth rate\nAfter\n</slide>",
+                ),
+            ],
+        )
+
+    async def test_fallback_is_read_when_no_choice_is_readable(self) -> None:
+        """When no choice holds anything readable, the fallback is read."""
+        self.assertEqual(
+            await self._parse("picture", slide_prefix=None, slide_suffix=None),
+            [
+                self._text_section("Before"),
+                self._picture_section(),
+                self._text_section("After"),
+            ],
+        )
+
+    async def test_ink_falls_back_to_its_picture(self) -> None:
+        """python-pptx has no shape class for ink, so the parser reads the
+        ink's fallback picture instead of failing on the slide."""
+        self.assertEqual(
+            await self._parse("ink", slide_prefix=None, slide_suffix=None),
+            [
+                self._text_section("Before"),
+                self._picture_section(),
+                self._text_section("After"),
+            ],
+        )
+
+    async def test_picture_choice_respects_include_image(self) -> None:
+        """Use the text fallback only when the embedded image is disabled."""
+        options = {"slide_prefix": None, "slide_suffix": None}
+        self.assertEqual(
+            await self._parse("embedded", include_image=False, **options),
+            [self._text_section("Before\nFallback copy\nAfter")],
+        )
+        self.assertEqual(
+            await self._parse("embedded", **options),
+            [
+                self._text_section("Before"),
+                self._picture_section(),
+                self._text_section("After"),
+            ],
+        )
+
+    async def test_linked_picture_uses_embedded_fallback(self) -> None:
+        """A linked picture has no bytes to emit from the deck."""
+        self.assertEqual(
+            await self._parse("linked", slide_prefix=None, slide_suffix=None),
+            [
+                self._text_section("Before"),
+                self._picture_section(),
+                self._text_section("After"),
             ],
         )
 
@@ -2512,6 +2834,7 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
             ExcelParser(table_format="csv")  # type: ignore[arg-type]
 
 
+# pylint: disable-next=too-many-public-methods
 class WordParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`WordParser`."""
 
@@ -2624,6 +2947,45 @@ class WordParserTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(sections), 1)
         self.assertEqual(sections[0].content.text, "Paragraph one.")
+
+    async def test_deleted_text_with_and_without_paragraph_mark(self) -> None:
+        """A blank line survives only when its paragraph mark survives."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        doc = DocxDocument()
+        doc.add_paragraph("first")
+        paragraph = doc.element.body.add_p()
+        paragraph.append(
+            parse_xml(
+                f'<w:del {nsdecls("w")} w:id="1" w:author="test">'
+                "<w:r><w:delText>gone</w:delText></w:r></w:del>",
+            ),
+        )
+        doc.add_paragraph("third")
+        for mark_deleted, expected in (
+            (False, "first\n\nthird"),
+            (True, "first\nthird"),
+        ):
+            with self.subTest(mark_deleted=mark_deleted):
+                if mark_deleted:
+                    paragraph.get_or_add_pPr().append(
+                        parse_xml(
+                            f'<w:rPr {nsdecls("w")}>'
+                            '<w:del w:id="2" w:author="test"/></w:rPr>',
+                        ),
+                    )
+                buffer = io.BytesIO()
+                doc.save(buffer)
+                sections = await WordParser(include_image=False).parse(
+                    buffer.getvalue(),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [s.content.text for s in sections],
+                    [expected],
+                )
 
     async def test_table_merges_by_default(self) -> None:
         """``separate_table=False`` merges the table into surrounding
@@ -3326,6 +3688,82 @@ class WordParserInlineSeparatorTest(IsolatedAsyncioTestCase):
                     _expected_word_sections(expected),
                 )
 
+    async def test_table_deleted_breaks_are_omitted(self) -> None:
+        """Deleted breaks in a cell are omitted, like in paragraphs."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        for separator in ("br", "cr"):
+            with self.subTest(separator=separator):
+                document = DocxDocument()
+                table = document.add_table(rows=1, cols=1)
+                paragraph = parse_xml(
+                    f'<w:p {nsdecls("w")}>'
+                    "<w:r><w:t>kept</w:t></w:r>"
+                    '<w:del w:id="1" w:author="test">'
+                    f"<w:r><w:{separator}/></w:r></w:del>"
+                    "<w:r><w:t>after</w:t></w:r>"
+                    "</w:p>",
+                )
+                cell = table.cell(0, 0)
+                # pylint: disable-next=protected-access
+                cell._tc.replace(cell.paragraphs[0]._p, paragraph)
+                buffer = io.BytesIO()
+                document.save(buffer)
+
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format="markdown",
+                ).parse(buffer.getvalue(), "demo.docx")
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections("| keptafter |\n| --- |\n"),
+                )
+
+    async def test_table_deleted_text_is_omitted(self) -> None:
+        """Tracked deletions in a cell are omitted, like in paragraphs."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        document = DocxDocument()
+        table = document.add_table(rows=1, cols=1)
+        paragraph = parse_xml(
+            f'<w:p {nsdecls("w")}>'
+            "<w:r><w:t>kept</w:t></w:r>"
+            '<w:del w:id="1" w:author="test">'
+            "<w:r><w:t>deleted-secret</w:t></w:r></w:del>"
+            '<w:ins w:id="2" w:author="test">'
+            "<w:r><w:t>inserted</w:t></w:r></w:ins>"
+            "</w:p>",
+        )
+        cell = table.cell(0, 0)
+        # pylint: disable-next=protected-access
+        cell._tc.replace(cell.paragraphs[0]._p, paragraph)
+        buffer = io.BytesIO()
+        document.save(buffer)
+
+        for table_format, expected in (
+            ("markdown", "| keptinserted |\n| --- |\n"),
+            (
+                "json",
+                "<system-info>A table loaded as a JSON array:</system-info>"
+                '\n[["keptinserted"]]',
+            ),
+        ):
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format=table_format,
+                ).parse(buffer.getvalue(), "demo.docx")
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections(expected),
+                )
+
 
 class WordParserParagraphTest(IsolatedAsyncioTestCase):
     """Regression coverage for paragraph and text-box extraction."""
@@ -3648,6 +4086,223 @@ class WordParserParagraphTest(IsolatedAsyncioTestCase):
         )
 
 
+class WordParserPictureRevisionTest(IsolatedAsyncioTestCase):
+    """Picture visibility when Word tracks changes."""
+
+    async def test_removed_drawing_does_not_split_body_text(self) -> None:
+        """A tracked-deleted inline picture is absent from sections."""
+        from docx import Document
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        doc = Document()
+        run = doc.add_paragraph("Before").add_run()
+        run.add_picture(io.BytesIO(_PNG_PIXEL))
+        deleted = OxmlElement("w:del")
+        deleted.set(qn("w:id"), "1")
+        deleted.set(qn("w:author"), "Reviewer")
+        run_element = run._element  # pylint: disable=protected-access
+        run_element.addprevious(deleted)
+        deleted.append(run_element)
+        doc.add_paragraph("After")
+
+        sections = await WordParser().parse(_document_bytes(doc), "demo.docx")
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_sections("Before\nAfter"),
+        )
+
+    async def test_table_pictures_respect_revision_ancestry(self) -> None:
+        """Keep only the move-destination picture in a table paragraph."""
+        from docx import Document
+        from docx.oxml import parse_xml
+
+        doc = Document()
+        cell = doc.add_table(rows=1, cols=1).cell(0, 0)
+        rel_id, _ = doc.part.get_or_add_image(io.BytesIO(_GIF_PIXEL))
+        paragraph = cell.paragraphs[0]
+        element = paragraph._p  # pylint: disable=protected-access
+        moved_from = parse_xml(
+            f'<w:moveFrom {_DOCX_PICTURE_NS} w:id="1" w:author="Reviewer"/>',
+        )
+        element.append(moved_from)
+        source_run = paragraph.add_run()
+        source_run.add_picture(io.BytesIO(_GIF_PIXEL))
+        moved_from.append(source_run._r)  # pylint: disable=protected-access
+        element.append(
+            parse_xml(
+                f'<w:del {_DOCX_PICTURE_NS} w:id="2" w:author="Reviewer">'
+                "<w:r><w:pict><v:shape>"
+                f'<v:imagedata r:id="{rel_id}"/>'
+                "</v:shape></w:pict></w:r></w:del>",
+            ),
+        )
+        run = paragraph.add_run()
+        run.add_picture(io.BytesIO(_PNG_PIXEL))
+        moved_to = parse_xml(
+            f'<w:moveTo {_DOCX_PICTURE_NS} w:id="3" w:author="Reviewer"/>',
+        )
+        run_element = run._element  # pylint: disable=protected-access
+        run_element.addprevious(moved_to)
+        moved_to.append(run_element)
+
+        sections = await WordParser().parse(_document_bytes(doc), "demo.docx")
+        pictures = [
+            section.content.source.data
+            for section in sections
+            if isinstance(section.content, DataBlock)
+        ]
+
+        self.assertEqual(pictures, [_PNG_PIXEL_B64])
+
+
+class WordParserTextBoxPictureTest(IsolatedAsyncioTestCase):
+    """Regression coverage for pictures inside Word text boxes."""
+
+    async def test_picture_in_text_box_is_emitted_once(self) -> None:
+        """A picture in a text box is read once, with or without the VML
+        copy of the box that Word saves in ``mc:Fallback``."""
+        for name, template in (
+            ("drawing only", _DOCX_MODERN_TEXT_BOX),
+            ("with VML fallback", _DOCX_TEXT_BOX_WITH_VML_FALLBACK),
+        ):
+            with self.subTest(name):
+                sections = await WordParser().parse(
+                    _make_docx_with_text_box_pictures(template),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_picture_sections(
+                        "Before\nFigure 1\nCaption",
+                        [(_PNG_PIXEL_B64, "image/png")],
+                    ),
+                )
+
+    async def test_picture_in_table_text_box_is_emitted_once(self) -> None:
+        """A picture-only text box in a table cell is read once too."""
+        for name, template in (
+            ("drawing only", _DOCX_MODERN_TEXT_BOX),
+            ("with VML fallback", _DOCX_TEXT_BOX_WITH_VML_FALLBACK),
+        ):
+            with self.subTest(name):
+                sections = await WordParser().parse(
+                    _make_docx_with_text_box_pictures(
+                        template,
+                        in_table=True,
+                        inside="",
+                    ),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_picture_sections(
+                        "Before\n| Figure 1 |\n| --- |\n",
+                        [(_PNG_PIXEL_B64, "image/png")],
+                    ),
+                )
+
+    async def test_each_picture_in_a_text_box_is_kept(self) -> None:
+        """Different pictures, and a repeated one, each come out once per
+        place, in order."""
+        sections = await WordParser().parse(
+            _make_docx_with_text_box_pictures(
+                _DOCX_TEXT_BOX_WITH_VML_FALLBACK,
+                (_PNG_PIXEL, _GIF_PIXEL, _PNG_PIXEL),
+            ),
+            "demo.docx",
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_picture_sections(
+                "Before\nFigure 1\nCaption",
+                [
+                    (_PNG_PIXEL_B64, "image/png"),
+                    (_GIF_PIXEL_B64, "image/gif"),
+                    (_PNG_PIXEL_B64, "image/png"),
+                ],
+            ),
+        )
+
+    async def test_vml_copy_of_a_picture_group_is_skipped(self) -> None:
+        """A picture group's VML fallback does not repeat its picture."""
+        sections = await WordParser().parse(
+            _make_docx_with_alternate_picture(
+                "wpg",
+                '<w:drawing><wp:inline><wp:extent cx="9525" cy="9525"/>'
+                '<wp:docPr id="300" name="Group 300"/><a:graphic>'
+                "<a:graphicData uri="
+                '"http://schemas.microsoft.com/office/word/2010/'
+                'wordprocessingGroup"><wpg:wgp><pic:pic><pic:blipFill>'
+                '<a:blip r:embed="{rid}"/></pic:blipFill></pic:pic>'
+                "</wpg:wgp></a:graphicData></a:graphic></wp:inline>"
+                "</w:drawing>",
+                '<w:pict><v:group><v:shape><v:imagedata r:id="{rid}"/>'
+                "</v:shape></v:group></w:pict>",
+            ),
+            "demo.docx",
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_picture_sections(
+                "Before\nFigure 1",
+                [(_PNG_PIXEL_B64, "image/png")],
+            ),
+        )
+
+    async def test_choice_picture_is_read_before_fallback(self) -> None:
+        """When both branches hold a picture, only the choice's is read."""
+        sections = await WordParser().parse(
+            _make_docx_with_alternate_picture(
+                "wps",
+                '<w:drawing><wp:inline><wp:extent cx="9525" cy="9525"/>'
+                '<wp:docPr id="302" name="Picture 302"/><a:graphic>'
+                "<a:graphicData uri="
+                '"http://schemas.openxmlformats.org/drawingml/2006/picture">'
+                '<pic:pic><pic:blipFill><a:blip r:embed="{rid}"/>'
+                "</pic:blipFill></pic:pic></a:graphicData></a:graphic>"
+                "</wp:inline></w:drawing>",
+                '<w:pict><v:shape><v:imagedata r:id="{gif_rid}"/>'
+                "</v:shape></w:pict>",
+            ),
+            "demo.docx",
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_picture_sections(
+                "Before\nFigure 1",
+                [(_PNG_PIXEL_B64, "image/png")],
+            ),
+        )
+
+    async def test_fallback_picture_is_read_without_choice_picture(
+        self,
+    ) -> None:
+        """A fallback picture is still read when no choice has one."""
+        sections = await WordParser().parse(
+            _make_docx_with_alternate_picture(
+                "wps",
+                '<w:drawing><wp:inline><wp:extent cx="9525" cy="9525"/>'
+                '<wp:docPr id="301" name="Shape 301"/><a:graphic>'
+                "<a:graphicData uri="
+                '"http://schemas.microsoft.com/office/word/2010/'
+                'wordprocessingShape"><wps:wsp/></a:graphicData>'
+                "</a:graphic></wp:inline></w:drawing>",
+                '<w:pict><v:shape><v:imagedata r:id="{rid}"/></v:shape>'
+                "</w:pict>",
+            ),
+            "demo.docx",
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_picture_sections(
+                "Before\nFigure 1",
+                [(_PNG_PIXEL_B64, "image/png")],
+            ),
+        )
+
+
 class WordTrackedMovesTest(IsolatedAsyncioTestCase):
     """Keep moved text once, at its destination, in the public parser."""
 
@@ -3804,4 +4459,72 @@ class WordParserContentControlTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             [(s.content.text, s.source, s.metadata) for s in wrapped],
             [(s.content.text, s.source, s.metadata) for s in plain],
+        )
+
+
+class GuessImageMediaTypeTest(IsolatedAsyncioTestCase):
+    """Sniffing must not mislabel TIFF/AVIF bytes as JPEG.
+
+    This only fixes the fallback guess used when an embedded image has
+    no content type (e.g. an Office image part); it does not add TIFF
+    or AVIF as supported upload types.
+    """
+
+    def test_tiff_and_avif_signatures(self) -> None:
+        """TIFF (both byte orders) and AVIF get their own media type."""
+        self.assertEqual(
+            _guess_image_media_type(b"II*\x00" + b"\x00" * 10),
+            "image/tiff",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"MM\x00*" + b"\x00" * 10),
+            "image/tiff",
+        )
+        self.assertEqual(
+            _guess_image_media_type(
+                b"\x00\x00\x00\x18ftypavif" + b"\x00" * 10,
+            ),
+            "image/avif",
+        )
+
+    def test_avif_file_type_brands(self) -> None:
+        """Recognize AVIF only in brand fields inside the file type box."""
+        minor_version = bytes(4)
+        ftyp20 = (20).to_bytes(4, "big") + b"ftyp"
+        ftyp24 = (24).to_bytes(4, "big") + b"ftyp"
+        extended = (1).to_bytes(4, "big") + b"ftyp" + (28).to_bytes(8, "big")
+        next_box = (12).to_bytes(4, "big") + b"mdatavif"
+        cases = [
+            (ftyp20 + b"avis" + minor_version + b"msf1", "image/avif"),
+            (ftyp24 + b"mif1" + minor_version + b"miafavif", "image/avif"),
+            (ftyp20 + b"msf1" + minor_version + b"avis", "image/avif"),
+            (extended + b"mif1" + minor_version + b"avif", "image/avif"),
+            (bytes(4) + b"ftypmif1" + minor_version + b"avif", "image/avif"),
+            (ftyp24 + b"mif1avifxavisxxx", "image/jpeg"),
+            (
+                ftyp20 + b"mif1" + minor_version + b"miaf" + next_box,
+                "image/jpeg",
+            ),
+        ]
+        for data, expected in cases:
+            with self.subTest(data=data):
+                self.assertEqual(_guess_image_media_type(data), expected)
+
+    def test_known_signatures_and_fallback_are_unchanged(self) -> None:
+        """PNG/JPEG/WebP still sniff correctly; unknown bytes stay JPEG."""
+        self.assertEqual(
+            _guess_image_media_type(b"\x89PNG\r\n\x1a\n" + b"\x00" * 4),
+            "image/png",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"\xff\xd8\xff" + b"\x00" * 4),
+            "image/jpeg",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"RIFFxxxxWEBP" + b"\x00" * 4),
+            "image/webp",
+        )
+        self.assertEqual(
+            _guess_image_media_type(b"not an image at all"),
+            "image/jpeg",
         )

@@ -3,7 +3,6 @@
 
 import base64
 from typing import Any
-from fnmatch import fnmatch
 from abc import ABC
 
 from pydantic import Field
@@ -44,16 +43,6 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
     )
 
     @property
-    def supported_input_media_types(self) -> list[str]:
-        """Derive supported media types from :attr:`input_types`, excluding
-        ``text/plain`` and ``application/x-thinking``."""
-        return [
-            t
-            for t in self.input_types
-            if t not in ("text/plain", "application/x-thinking")
-        ]
-
-    @property
     def supports_thinking_input(self) -> bool:
         """Return ``True`` if ``application/x-thinking`` is listed in
         :attr:`input_types`, meaning the model accepts ``reasoning_content``
@@ -86,10 +75,10 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
                 A dictionary representing the formatted DataBlock, or ``None``
                 if the media type is unsupported.
         """
-        if not any(
-            fnmatch(block.source.media_type, pattern)
-            for pattern in self.supported_input_media_types
-        ):
+        # Normalize the MIME type (lowercase, matched case-insensitively)
+        # before the checks below and the data-URI / format built from it.
+        supported = self._get_supported_tool_result_block(block)
+        if supported is None:
             logger.warning(
                 "Unsupported media type %s for DashScope API. Supported "
                 "types: %s. This block will be skipped.",
@@ -97,6 +86,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
                 ", ".join(self.supported_input_media_types),
             )
             return None
+        block = supported
 
         main_type = block.source.media_type.split("/")[0]
 

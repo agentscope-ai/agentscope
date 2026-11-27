@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/attachment.tsx';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAudioRecorder } from '@/hooks/useAudioRecorder';
+import { useChatDraft, type ProcessedFile } from '@/hooks/useChatDraft';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useRealtimeAudioRecorder } from '@/hooks/useRealtimeAudioRecorder';
 import { useTranslation } from '@/i18n/useI18n.ts';
@@ -45,20 +46,9 @@ import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
 import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
 import { cn } from '@/lib/utils';
 
-/**
- * Represents a file that has been selected and processed (or is being processed).
- */
-interface ProcessedFile {
-	/** Original file name for display */
-	name: string;
-	/** Processing status */
-	status: 'processing' | 'done';
-	/** The resulting ContentBlock after processing (available when status === 'done') */
-	block: ContentBlock | null;
-}
-
 interface TextInputProps {
-	onSend: (blocks: ContentBlock[]) => Promise<void> | void;
+	draftKey: string;
+	onSend: (blocks: ContentBlock[], allowRetry?: () => void) => Promise<void> | void;
 	placeholder?: string;
 	autoComplete?: (input: string) => string | null;
 	disabled?: boolean;
@@ -84,11 +74,7 @@ interface TextInputProps {
 	 * Runs concurrently for all selected files; the UI shows a loading state per file while processing.
 	 */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
-	/**
-	 * The current reply lifecycle phase from ``useMessages``. A running
-	 * reply adds a separate Stop action while Send remains available for
-	 * appending another turn to the queue.
-	 */
+	/** A running reply can be stopped when the draft is empty. */
 	phase?: ReplyPhase;
 	/** Allow sending while a reply is parked awaiting structured input. */
 	acceptsInput?: boolean;
@@ -101,6 +87,7 @@ interface TextInputProps {
 	onVoiceToggle?: () => void;
 	/** Prevents voice start when no realtime model is configured. */
 	voiceDisabled?: boolean;
+	voiceDisabledReason?: string;
 	/** Audio formats accepted by the selected ASR model. */
 	asrInputTypes?: string[];
 	/** Upload one completed recording and return its transcription. */
@@ -129,6 +116,7 @@ interface TextInputProps {
 
 export interface TextInputRef {
 	focus: () => void;
+	insertText: (text: string) => void;
 }
 
 /** One line box of textarea text: ``text-sm`` (14px) at a 1.5 line-height. */
@@ -161,6 +149,7 @@ const TEXTAREA_PADDING_X_PX = 12;
 export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 	(
 		{
+			draftKey,
 			onSend,
 			placeholder,
 			autoComplete,
@@ -175,6 +164,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			voiceState = 'idle',
 			onVoiceToggle,
 			voiceDisabled = false,
+			voiceDisabledReason,
 			asrInputTypes = [],
 			onTranscribe,
 			asrRealtime = false,
@@ -187,10 +177,14 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 	) => {
 		const { t } = useTranslation();
 		const defaultPlaceholder = placeholder || t('chat.inputPlaceholder');
-		const [value, setValue] = useState('');
-		const [files, setFiles] = useState<ProcessedFile[]>([]);
+		const { draft, updateDraft } = useChatDraft(draftKey);
+		const { value, files } = draft;
+		const setValue = (text: string) => updateDraft((current) => ({ ...current, value: text }));
+		const setFiles = (change: (current: ProcessedFile[]) => ProcessedFile[]) =>
+			updateDraft((current) => ({ ...current, files: change(current.files) }));
 		const [isFocused, setIsFocused] = useState(false);
 		const [submitting, setSubmitting] = useState(false);
+		const submissionRef = useRef(0);
 		const mountedRef = useRef(false);
 		useLayoutEffect(() => {
 			mountedRef.current = true;
@@ -199,6 +193,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			};
 		}, []);
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
+		const moveCaretAfterInsert = useRef(false);
 		const fileInputRef = useRef<HTMLInputElement>(null);
 		const measureRef = useRef<HTMLSpanElement>(null);
 		const ghostColumnRef = useRef<HTMLDivElement>(null);
@@ -224,9 +219,10 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				toast.info(t('textInput.transcriptionEmpty'));
 				return;
 			}
-			setValue((current) =>
-				current.trimEnd() ? `${current.trimEnd()} ${transcript}` : transcript,
-			);
+			updateDraft((current) => ({
+				...current,
+				value: [current.value.trimEnd(), transcript].filter(Boolean).join(' '),
+			}));
 			requestAnimationFrame(() => textareaRef.current?.focus());
 		};
 
@@ -317,6 +313,13 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 
 		useImperativeHandle(ref, () => ({
 			focus: () => textareaRef.current?.focus(),
+			insertText: (text: string) => {
+				moveCaretAfterInsert.current = true;
+				updateDraft((current) => ({
+					...current,
+					value: `${current.value}${current.value && !current.value.endsWith('\n') ? '\n' : ''}${text} `,
+				}));
+			},
 		}));
 
 		// Grow the textarea with its content. The ``auto`` reset is what lets it
@@ -326,6 +329,10 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			if (!textarea) return;
 			textarea.style.height = 'auto';
 			textarea.style.height = `${textarea.scrollHeight}px`;
+			if (moveCaretAfterInsert.current) {
+				textarea.setSelectionRange(value.length, value.length);
+				moveCaretAfterInsert.current = false;
+			}
 			// Stacking widens the textarea, so the line count has to be redone.
 		}, [value, isStacked, composerWidth]);
 
@@ -411,34 +418,30 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				}
 			});
 
-			const submittedValue = value;
-			const submittedFiles = files;
+			const submission = ++submissionRef.current;
+			const isCurrent = () => mountedRef.current && submissionRef.current === submission;
+			const release = () => {
+				if (isCurrent()) setSubmitting(false);
+			};
 			setSubmitting(true);
 			// Start a fresh draft immediately. If the request fails, merge the
 			// submitted draft back without erasing anything typed meanwhile.
-			setValue('');
-			setFiles([]);
+			updateDraft(() => ({ value: '', files: [] }));
 			try {
-				await onSend(blocks);
+				await onSend(blocks, release);
 			} catch {
-				if (!mountedRef.current) return;
-				// The API layer reports the error; restore both the failed turn
-				// and any new draft content so neither is silently lost.
-				setValue((current) => (current ? `${submittedValue}\n${current}` : submittedValue));
-				setFiles((current) => [...submittedFiles, ...current]);
+				if (acceptsInput && !isCurrent()) return;
+				updateDraft((current) => ({
+					value: [value, current.value].filter(Boolean).join('\n'),
+					files: [...files, ...current.files],
+				}));
 			} finally {
-				if (mountedRef.current) setSubmitting(false);
+				release();
 			}
 		};
 
 		const replyActive = phase !== 'idle';
-		const voiceActive = voiceState === 'active' || voiceState === 'connecting';
 
-		/**
-		 * The primary action controls realtime voice when it is connected,
-		 * otherwise it sends a normal or queued text turn. A running text
-		 * reply gets its own Stop button so sending remains available.
-		 */
 		const actionButton: {
 			icon: LucideIcon;
 			tooltip: string;
@@ -464,7 +467,17 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					onClick: onVoiceToggle,
 				};
 			}
-			if (hasContent || replyActive || submitting) {
+			if (replyActive && !hasContent && !hasProcessing) {
+				const stopping = phase === 'interrupting';
+				return {
+					icon: Square,
+					tooltip: stopping ? t('textInput.stopping') : t('textInput.stop'),
+					disabled: stopping || !onInterrupt,
+					variant: 'default',
+					onClick: onInterrupt,
+				};
+			}
+			if (hasContent || hasProcessing || submitting) {
 				return {
 					icon: submitting ? Loader2 : ArrowUp,
 					tooltip:
@@ -482,7 +495,9 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			}
 			return {
 				icon: AudioLines,
-				tooltip: voiceDisabled ? t('realtime.selectFirst') : t('realtime.start'),
+				tooltip: voiceDisabled
+					? (voiceDisabledReason ?? t('realtime.selectFirst'))
+					: t('realtime.start'),
 				disabled: voiceDisabled || speechInputBusy,
 				variant: 'ghost',
 				onClick: onVoiceToggle,
@@ -511,7 +526,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							(prev) =>
 								prev
 									.map((f) =>
-										f.name === file.name && f.status === 'processing'
+										f === placeholder
 											? block
 												? { ...f, status: 'done', block }
 												: null
@@ -523,11 +538,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					.catch(() => {
 						// Caller is responsible for error notification (e.g. toast).
 						// Just silently remove the entry here.
-						setFiles((prev) =>
-							prev.filter(
-								(f) => !(f.name === file.name && f.status === 'processing'),
-							),
-						);
+						setFiles((prev) => prev.filter((f) => f !== placeholder));
 					});
 			});
 		};
@@ -542,7 +553,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				>
 					{files.length > 0 && (
 						<AttachmentGroup className={'w-full max-w-full px-1 mt-1'}>
-							{files.map((file, index) => {
+							{files.map((file) => {
 								const isImage =
 									file.block &&
 									file.block.type === 'data' &&
@@ -582,7 +593,9 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 										<AttachmentActions>
 											<AttachmentAction
 												onClick={() =>
-													setFiles(files.filter((_, i) => i !== index))
+													setFiles((current) =>
+														current.filter((f) => f !== file),
+													)
 												}
 											>
 												<XIcon />
@@ -626,7 +639,6 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								<div className="size-9" />
 								<div className="size-9" />
 								<div className="size-9" />
-								{replyActive && !voiceActive && <div className="size-9" />}
 							</div>
 						</div>
 
@@ -746,32 +758,6 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								<TooltipContent>{speechInputTooltip}</TooltipContent>
 							</Tooltip>
 
-							{/* Keep Stop and Send separate while a reply is active:
-							    users can enqueue another turn without losing the
-							    ability to interrupt the current generation. */}
-							{replyActive && !voiceActive && (
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<Button
-											type="button"
-											variant="outline"
-											onClick={onInterrupt}
-											disabled={phase === 'interrupting'}
-											size="icon-lg"
-											className="shrink-0 rounded-full"
-										>
-											<Square className="h-4 w-4" />
-										</Button>
-									</TooltipTrigger>
-									<TooltipContent>
-										{phase === 'interrupting'
-											? t('textInput.stopping')
-											: t('textInput.stop')}
-									</TooltipContent>
-								</Tooltip>
-							)}
-
-							{/* Voice or Send — driven by ``actionButton`` config. */}
 							<Tooltip>
 								<TooltipTrigger asChild>
 									<span
@@ -794,8 +780,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 											<actionButton.icon
 												className={cn(
 													'h-4 w-4',
-													(voiceState === 'connecting' || submitting) &&
-														'animate-spin',
+													actionButton.icon === Loader2 && 'animate-spin',
 												)}
 											/>
 										</Button>

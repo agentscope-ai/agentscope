@@ -35,11 +35,7 @@ from agentscope.message import (
 from agentscope.message._base import Usage
 from agentscope.model import GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
-from agentscope._utils._common import (
-    _flatten_json_schema,
-    _has_definition_block,
-    _points_into_definition_block,
-)
+from agentscope._utils._common import _flatten_json_schema
 from agentscope.credential import GeminiCredential
 from agentscope.tool import FunctionTool, ToolChoice
 
@@ -1783,7 +1779,7 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
-    def test_sanitize_rejects_ambiguous_type_array_with_anyof(
+    def test_sanitize_rejects_conjunctive_anyof_constraints(
         self,
     ) -> None:
         """Existing anyOf constraints are not overwritten silently."""
@@ -1801,6 +1797,32 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                     ],
                 },
             )
+
+        constraints: list[dict[str, Any]] = [
+            {"anyOf": [{"type": "string", "enum": ["auto"]}]},
+            {"type": ["string", "integer", "null"]},
+        ]
+        for constraint in constraints:
+            with self.subTest(constraint=constraint):
+                schema = {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "oneOf": [
+                                {"type": "string", "enum": ["auto"]},
+                                {"type": "string", "enum": ["manual"]},
+                            ],
+                            **constraint,
+                        },
+                    },
+                }
+                original = copy.deepcopy(schema)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "both oneOf and anyOf",
+                ):
+                    _sanitize_schema_for_gemini(schema)
+                self.assertEqual(schema, original)
 
     def test_sanitize_inlines_annotated_null_anyof(self) -> None:
         """Annotated null schemas in anyOf are treated as null branches."""
@@ -1859,6 +1881,133 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                 },
             },
         )
+
+    def test_sanitize_converts_oneof_from_discriminated_union(self) -> None:
+        """A discriminated union's `oneOf` becomes `anyOf` for Gemini."""
+
+        class Cat(BaseModel):
+            """Cat variant of the discriminated union."""
+
+            kind: Literal["cat"]
+            meow: str
+
+        class Dog(BaseModel):
+            """Dog variant of the discriminated union."""
+
+            kind: Literal["dog"]
+            bark: str
+
+        class Pet(BaseModel):
+            """Tool parameters containing a discriminated union."""
+
+            pet: Annotated[Cat | Dog, Field(discriminator="kind")]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Pet.model_json_schema()),
+        )
+        pet = result["properties"]["pet"]
+        self.assertNotIn("oneOf", pet)
+        self.assertNotIn("discriminator", pet)
+        self.assertIn("anyOf", pet)
+        FunctionDeclaration(name="pet", parameters=result)
+
+    def test_sanitize_converts_prefix_items_to_items(self) -> None:
+        """A fixed-length tuple's `prefixItems` becomes an `items` schema."""
+
+        class Args(BaseModel):
+            """A fixed-length pair."""
+
+            pair: tuple[int, str]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Args.model_json_schema()),
+        )
+        self.assertEqual(
+            result,
+            {
+                "type": "object",
+                "title": "Args",
+                "description": "A fixed-length pair.",
+                "properties": {
+                    "pair": {
+                        "type": "array",
+                        "title": "Pair",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                            "anyOf": [{"type": "integer"}, {"type": "string"}],
+                        },
+                    },
+                },
+                "required": ["pair"],
+            },
+        )
+        FunctionDeclaration(name="pair", parameters=result)
+
+    def test_sanitize_prefix_items_tail(self) -> None:
+        """Preserve the tail and length constraints of tuple schemas."""
+        integer = {"type": "integer"}
+        string = {"type": "string"}
+        union = {"anyOf": [integer, string]}
+        cases: list[tuple[dict[str, object], dict[str, object]]] = [
+            ({"items": False}, {"maxItems": 1, "items": integer}),
+            (
+                {"items": False, "maxItems": 0},
+                {"maxItems": 0, "items": integer},
+            ),
+            (
+                {"items": False, "maxItems": 2},
+                {"maxItems": 1, "items": integer},
+            ),
+            ({"items": True}, {"items": {}}),
+            ({"items": {}}, {"items": {}}),
+            ({}, {"items": {}}),
+            ({"maxItems": 2}, {"maxItems": 2, "items": {}}),
+            ({"items": string}, {"items": union}),
+        ]
+        for tail, expected in cases:
+            with self.subTest(tail=tail):
+                result = _sanitize_schema_for_gemini(
+                    {"type": "array", "prefixItems": [integer], **tail},
+                )
+                self.assertEqual(result, {"type": "array", **expected})
+                FunctionDeclaration(
+                    name="series",
+                    parameters={
+                        "type": "object",
+                        "properties": {"values": result},
+                    },
+                )
+
+    def test_sanitize_removes_deprecated_and_pattern_properties(self) -> None:
+        """Keywords Gemini's Schema lacks are removed from tool parameters."""
+
+        class Args(BaseModel):
+            """Tool parameters using a deprecated field and a patterned map."""
+
+            old: int = Field(default=0, deprecated=True)
+            headers: dict[Annotated[str, Field(pattern=r"^x-")], str]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Args.model_json_schema()),
+        )
+        self.assertEqual(
+            result,
+            {
+                "title": "Args",
+                "description": (
+                    "Tool parameters using a deprecated field and a patterned "
+                    "map."
+                ),
+                "type": "object",
+                "properties": {
+                    "old": {"default": 0, "title": "Old", "type": "integer"},
+                    "headers": {"title": "Headers", "type": "object"},
+                },
+                "required": ["headers"],
+            },
+        )
+        FunctionDeclaration(name="args", parameters=result)
 
     def test_sanitize_converts_const_to_enum(self) -> None:
         """`const` is converted into a single-value `enum` for Gemini."""
@@ -2398,17 +2547,20 @@ class TestGeminiSchemaUtilsNestedDefs(unittest.TestCase):
                 {
                     "properties": {
                         "conf": {
-                            "$defs": {"Entry": {"type": "integer"}},
+                            "$defs": {"Entry": {"minimum": 10}},
                             "type": "object",
                         },
-                        "e": {"$ref": "#/properties/conf/$defs/Entry"},
+                        "e": {
+                            "$ref": "#/properties/conf/$defs/Entry",
+                            "minimum": 0,
+                        },
                     },
                 },
             ),
             {
                 "properties": {
                     "conf": {"type": "object"},
-                    "e": {"type": "integer"},
+                    "e": {"minimum": 0, "allOf": [{"minimum": 10}]},
                 },
             },
         )
@@ -2418,14 +2570,20 @@ class TestGeminiSchemaUtilsNestedDefs(unittest.TestCase):
         self.assertEqual(
             _flatten_json_schema(
                 {
-                    "$defs": {"a/b": {"type": "string"}},
-                    "anyOf": [{"type": "null"}, {"$ref": "#/$defs/a~1b"}],
-                    "properties": {"x": {"$ref": "#/$defs/a~1b"}},
+                    "$defs": {"a/ b": {"type": "string"}, "a/%20b": {}},
+                    "anyOf": [{"type": "null"}, {"$ref": "#/$defs/a~1%20b"}],
+                    "properties": {
+                        "x": {"$ref": "#/anyOf/1"},
+                        "invalid": {"$ref": "#/anyOf/01"},
+                    },
                 },
             ),
             {
                 "anyOf": [{"type": "null"}, {"type": "string"}],
-                "properties": {"x": {"type": "string"}},
+                "properties": {
+                    "x": {"type": "string"},
+                    "invalid": {"$ref": "#/anyOf/01"},
+                },
             },
         )
 
@@ -2445,25 +2603,26 @@ class TestGeminiSchemaUtilsNestedDefs(unittest.TestCase):
         self,
     ) -> None:
         """A mapping into a nested definition block goes with that block."""
+        ref = "#/properties/properties/$defs/Entry"
         self.assertEqual(
             _flatten_json_schema(
                 {
                     "properties": {
-                        "conf": {
+                        "properties": {
                             "$defs": {"Entry": {"type": "object"}},
                             "type": "object",
                         },
-                        "e": {"$ref": "#/properties/conf/$defs/Entry"},
+                        "e": {"$ref": ref},
                     },
                     "discriminator": {
                         "propertyName": "kind",
-                        "mapping": {"a": "#/properties/conf/$defs/Entry"},
+                        "mapping": {"a": ref},
                     },
                 },
             ),
             {
                 "properties": {
-                    "conf": {"type": "object"},
+                    "properties": {"type": "object"},
                     "e": {"type": "object"},
                 },
             },
@@ -2545,33 +2704,121 @@ class TestGeminiSchemaUtilsNestedDefs(unittest.TestCase):
             },
         )
 
-    def test_definition_block_matchers_ignore_schema_map_names(self) -> None:
-        """Both matchers read `definitions` under a schema map as a name."""
-        self.assertFalse(
-            _has_definition_block(
-                {"properties": {"definitions": {"type": "object"}}},
-            ),
-        )
-        self.assertFalse(
-            _points_into_definition_block(
-                "#/properties/definitions/properties/a",
-            ),
-        )
-        self.assertFalse(
-            _points_into_definition_block("#/properties/$defs/properties/a"),
-        )
-        # A block nested inside that property is still a block.
-        self.assertTrue(
-            _has_definition_block(
-                {
-                    "properties": {
-                        "conf": {"$defs": {"Entry": {"type": "object"}}},
-                    },
-                },
-            ),
-        )
-        self.assertTrue(
-            _points_into_definition_block("#/properties/conf/$defs/Entry"),
-        )
-        self.assertTrue(_points_into_definition_block("#/$defs/Ring"))
-        self.assertTrue(_points_into_definition_block("#/definitions/Ghost"))
+    def test_definition_keywords_as_names_preserve_identity(self) -> None:
+        """Schema-map entry names do not themselves declare definitions."""
+        for name in ("definitions", "$defs"):
+            with self.subTest(name=name):
+                schema = {"properties": {name: {"type": "object"}}}
+                self.assertIs(_flatten_json_schema(schema), schema)
+
+    def test_named_resources_keep_their_definitions(self) -> None:
+        """Local references must still resolve against their own resource."""
+        cases: list[tuple[dict, dict, str]] = [
+            ({"$id": "urn:inner"}, {}, "#/$defs/A"),
+            ({}, {"$anchor": "entry"}, "#entry"),
+        ]
+        for metadata, target, ref in cases:
+            with self.subTest(ref=ref):
+                child = {
+                    **metadata,
+                    "$defs": {"A": target},
+                    "properties": {"value": {"$ref": ref}},
+                }
+                schema = {"properties": {"child": child}}
+                original = copy.deepcopy(schema)
+                self.assertEqual(_flatten_json_schema(schema), original)
+
+    def test_ref_siblings_do_not_change_other_uses_of_a_target(self) -> None:
+        """Inline each occurrence independently, including external targets."""
+        remote = {"$ref": "https://example.org/other"}
+        ref = {"$ref": "#/$defs/T"}
+        schema = {
+            "$defs": {"T": remote},
+            "anyOf": [{**ref, "minimum": 3}, ref],
+        }
+        expected = {"anyOf": [{**remote, "minimum": 3}, remote.copy()]}
+        self.assertEqual(_flatten_json_schema(schema), expected)
+
+    def test_same_name_in_different_definition_blocks(self) -> None:
+        """A cross-namespace reference with the same name is not a cycle."""
+        schema = {
+            "$defs": {"A": {"$ref": "#/definitions/A"}},
+            "definitions": {"A": {"type": "string"}},
+            "$ref": "#/$defs/A",
+        }
+        self.assertEqual(_flatten_json_schema(schema), {"type": "string"})
+
+
+class TestFlattenEscapedDiscriminators(unittest.TestCase):
+    """Test JSON Pointer decoding in discriminator mapping cleanup."""
+
+    def test_flatten_removes_discriminators_with_escaped_names(self) -> None:
+        """Decode local mapping tokens before checking removed definitions."""
+        branch = {"type": "object", "required": ["kind"]}
+        for keyword in ("$defs", "definitions"):
+            for name, token in (
+                ("Ring/Named", "Ring~1Named"),
+                ("Ring~Named", "Ring~0Named"),
+                ("Ring~1Named", "Ring~01Named"),
+            ):
+                with self.subTest(keyword=keyword, name=name):
+                    ref = f"#/{keyword}/{token}"
+                    schema = {
+                        keyword: {name: branch},
+                        "oneOf": [{"$ref": ref}],
+                        "discriminator": {
+                            "propertyName": "kind",
+                            "mapping": {"ring": ref},
+                        },
+                    }
+                    original = copy.deepcopy(schema)
+
+                    self.assertEqual(
+                        _flatten_json_schema(schema),
+                        {"oneOf": [branch]},
+                    )
+                    self.assertEqual(schema, original)
+
+    def test_flatten_keeps_unresolved_escaped_discriminators(self) -> None:
+        """An encoded token is not the literal name of its definition."""
+        for keyword in ("$defs", "definitions"):
+            with self.subTest(keyword=keyword):
+                discriminator = {
+                    "propertyName": "kind",
+                    "mapping": {"ring": f"#/{keyword}/Ring~1Named"},
+                }
+                self.assertEqual(
+                    _flatten_json_schema(
+                        {
+                            keyword: {"Ring~1Named": {"type": "object"}},
+                            "discriminator": discriminator,
+                        },
+                    ),
+                    {"discriminator": discriminator},
+                )
+
+    def test_flatten_matches_the_full_discriminator_reference(self) -> None:
+        """A matching final token alone does not identify a definition."""
+        for keyword, other in (
+            ("$defs", "definitions"),
+            ("definitions", "$defs"),
+        ):
+            for ref in (
+                f"#/{other}/Ring~1Named",
+                f"#/{keyword}/Missing/properties/Ring~1Named",
+            ):
+                with self.subTest(keyword=keyword, ref=ref):
+                    discriminator = {
+                        "propertyName": "kind",
+                        "mapping": {"ring": ref},
+                    }
+                    self.assertEqual(
+                        _flatten_json_schema(
+                            {
+                                keyword: {"Ring/Named": {"type": "object"}},
+                                other: {"Other": {"type": "object"}},
+                                "discriminator": discriminator,
+                            },
+                        ),
+                        {"discriminator": discriminator},
+                    )

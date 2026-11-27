@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Ollama formatter module."""
 import base64
-import fnmatch
 from abc import ABC
 from typing import Any
 
@@ -43,19 +42,17 @@ class _OllamaFormatterBase(FormatterBase, ABC):
                 Base64 encoded data as a string, or None if the media type
                 is not supported.
         """
-        source = block.source
-        media_type = source.media_type
-
-        # Check if media type is supported
-        if not any(
-            fnmatch.fnmatch(media_type, pattern)
-            for pattern in self.supported_input_media_types
-        ):
+        # Normalize the MIME type (lowercase, matched case-insensitively)
+        # before deciding whether the block is an image.
+        supported = self._get_supported_tool_result_block(block)
+        if supported is None:
             logger.warning(
                 "Media type %s is not supported, skipped.",
-                media_type,
+                block.source.media_type,
             )
             return None
+        source = supported.source
+        media_type = source.media_type
 
         # Ollama only supports images
         if not media_type.startswith("image/"):

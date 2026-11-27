@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """The common utilities for agentscope library."""
-import asyncio
 import base64
 import copy
-import functools
 import inspect
 import json
 import os
-import types
+import re
 import uuid
+from collections.abc import Iterator
 from datetime import datetime
 from typing import Any, Callable, Final
+from urllib.parse import unquote
 
 from .._logging import logger
 from ..exception import ToolJSONDecodeError
@@ -20,6 +20,7 @@ from ..exception import ToolJSONDecodeError
 _SCHEMA_MAP_KEYWORDS = frozenset(
     {"properties", "patternProperties", "dependentSchemas", "dependencies"},
 )
+_NAMED_SCHEMA_MAPS = _SCHEMA_MAP_KEYWORDS | {"$defs", "definitions"}
 # These keywords hold instance data, which must be kept verbatim.
 _INSTANCE_VALUE_KEYWORDS = frozenset(
     {"default", "const", "enum", "examples"},
@@ -254,28 +255,24 @@ def _get_timestamp(add_random_suffix: bool = False) -> str:
     return timestamp
 
 
-async def _is_async_func(func: Callable) -> bool:
-    """Check if the given function is an async function, including
-    coroutine functions, async generators, and coroutine objects.
-    """
-
-    return (
-        inspect.iscoroutinefunction(func)
-        or inspect.isasyncgenfunction(func)
-        or isinstance(func, types.CoroutineType)
-        or isinstance(func, types.GeneratorType)
-        and asyncio.iscoroutine(func)
-        or isinstance(func, functools.partial)
-        and await _is_async_func(func.func)
-    )
-
-
 async def _execute_async_or_sync_func(
     func: Callable,
     *args: Any,
     **kwargs: Any,
 ) -> Any:
-    """Execute an async or sync function based on its type.
+    """Execute an async or sync callable and return its result.
+
+    The callable is invoked first. If that call returns an awaitable,
+    the awaitable is awaited before the result is returned. Sync
+    callables that return a plain value are unchanged.
+
+    Deciding from the callable alone, with
+    ``inspect.iscoroutinefunction``, misses sync wrappers around
+    ``async def``: a ``functools.wraps`` decorator, ``functools.partial``
+    on older Python versions, and a callable object whose ``__call__``
+    is async. Those wrappers return a coroutine, and a coroutine object
+    is truthy, so a permission hook would match every input if the
+    coroutine were left un-awaited.
 
     Args:
         func (`Callable`):
@@ -290,10 +287,10 @@ async def _execute_async_or_sync_func(
             The result of the function execution.
     """
 
-    if await _is_async_func(func):
-        return await func(*args, **kwargs)
-
-    return func(*args, **kwargs)
+    result = func(*args, **kwargs)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
 
 
 def _get_bytes_from_web_url(
@@ -348,84 +345,88 @@ def _map_text_to_uuid(text: str) -> str:
 _MISSING: Final = object()
 
 
-def _has_definition_block(node: Any) -> bool:
-    """Whether any level of the schema declares ``$defs`` or ``definitions``.
-
-    A nested block is reachable through a local pointer such as
-    ``#/properties/conf/$defs/Entry``; checking only the root left such a
-    schema unflattened, and once a root block existed the walk dropped the
-    nested one while keeping its pointer.
-    """
+def _schema_objects(node: Any) -> Iterator[dict]:
+    """Visit schema objects without interpreting names or instance values."""
     if isinstance(node, dict):
-        if isinstance(node.get("$defs"), dict) or isinstance(
+        yield node
+        for key, value in node.items():
+            if key in _INSTANCE_VALUE_KEYWORDS or key == "discriminator":
+                continue
+            if key in _NAMED_SCHEMA_MAPS and isinstance(value, dict):
+                for sub in value.values():
+                    yield from _schema_objects(sub)
+            else:
+                yield from _schema_objects(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _schema_objects(item)
+
+
+def _can_flatten(schema: dict) -> bool:
+    """Keep named resources intact when moving them could break references."""
+    has_defs = False
+    for node in _schema_objects(schema):
+        if (node is not schema and "$id" in node) or node.keys() & {
+            "$anchor",
+            "$dynamicAnchor",
+            "$recursiveAnchor",
+        }:
+            return False
+        has_defs |= isinstance(node.get("$defs"), dict) or isinstance(
             node.get("definitions"),
             dict,
-        ):
-            return True
-        for key, value in node.items():
-            if key in _INSTANCE_VALUE_KEYWORDS:
-                continue
-            if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
-                # The keys under these keywords are names, so a property called
-                # ``definitions`` is a name rather than a block. Look at what
-                # those names hold, instead of reading the map as a schema.
-                if any(_has_definition_block(sub) for sub in value.values()):
-                    return True
-                continue
-            if _has_definition_block(value):
-                return True
-        return False
-    if isinstance(node, list):
-        return any(_has_definition_block(item) for item in node)
-    return False
+        )
+    return has_defs
 
 
-def _lookup_pointer(root: Any, pointer: str) -> Any:
-    """Resolve a local JSON Pointer against the schema as given.
+def _pointer_tokens(ref: Any) -> tuple[str, ...] | None:
+    """Decode a fragment once, before interpreting JSON Pointer escapes."""
+    if not isinstance(ref, str) or not ref.startswith("#"):
+        return None
+    if re.search(r"%(?![0-9A-Fa-f]{2})", ref):
+        return None
+    try:
+        fragment = unquote(ref[1:], errors="strict")
+    except UnicodeDecodeError:
+        return None
+    if not fragment:
+        return ()
+    if not fragment.startswith("/") or re.search(r"~(?![01])", fragment):
+        return None
+    return tuple(
+        raw.replace("~1", "/").replace("~0", "~")
+        for raw in fragment[1:].split("/")
+    )
 
-    Only ``#/...`` pointers are handled. Anything else, and any path that does
-    not resolve, answers `_MISSING` so the caller can leave the node untouched.
-    """
-    if pointer == "#":
-        return root
-    if not pointer.startswith("#/"):
-        return _MISSING
+
+def _lookup_pointer(root: Any, tokens: tuple[str, ...]) -> Any:
+    """Return the referenced value or the missing sentinel."""
     node = root
-    for raw in pointer[2:].split("/"):
-        token = raw.replace("~1", "/").replace("~0", "~")
-        if isinstance(node, dict):
-            if token not in node:
-                return _MISSING
+    for token in tokens:
+        if isinstance(node, dict) and token in node:
             node = node[token]
-        elif isinstance(node, list):
-            if not token.isdigit() or int(token) >= len(node):
-                return _MISSING
+        elif (
+            isinstance(node, list)
+            and re.fullmatch(r"0|[1-9][0-9]*", token)
+            and len(token) <= len(str(len(node)))
+            and int(token) < len(node)
+        ):
             node = node[int(token)]
         else:
             return _MISSING
     return node
 
 
-def _points_into_definition_block(pointer: str) -> bool:
-    """Whether a local pointer addresses an entry of a definition block.
-
-    The walk removes every ``$defs`` / ``definitions`` block it meets, at any
-    depth, so a discriminator mapping that resolves into one of them is left
-    pointing at nothing. Only ``#`` pointers can address a block at all.
-
-    A token that names an entry of a schema map is a property name rather than
-    a keyword: ``#/properties/definitions/...`` addresses a property called
-    ``definitions``, which the walk keeps.
-    """
-    if not pointer.startswith("#/"):
-        return False
-    tokens = pointer[2:].split("/")
-    for index, token in enumerate(tokens):
-        if token not in ("$defs", "definitions"):
-            continue
-        if index and tokens[index - 1] in _SCHEMA_MAP_KEYWORDS:
-            continue
-        return True
+def _points_into_definition_block(tokens: tuple[str, ...]) -> bool:
+    """Recognize removed blocks while skipping user-defined map keys."""
+    parts = iter(tokens)
+    for key in parts:
+        if key in _SCHEMA_MAP_KEYWORDS:
+            next(parts, None)
+        elif key in _INSTANCE_VALUE_KEYWORDS or key == "discriminator":
+            return False
+        elif key in ("$defs", "definitions"):
+            return True
     return False
 
 
@@ -446,9 +447,9 @@ def _flatten_json_schema(schema: dict) -> dict:
     are preserved. Other discriminators are left unchanged.
 
     Circular references are detected and replaced with a fallback object
-    schema to avoid infinite recursion.  Only local references of the
-    form ``#/$defs/<name>`` or ``#/definitions/<name>`` are expanded;
-    external ``$ref`` URLs are left unchanged.
+    schema to avoid infinite recursion. Local JSON Pointers resolve against
+    the input document. Schemas with embedded resource IDs or named anchors
+    retain their definition blocks so those references continue to resolve.
 
     Args:
         schema (`dict`):
@@ -459,20 +460,8 @@ def _flatten_json_schema(schema: dict) -> dict:
         `dict`:
             A flattened JSON schema with all references resolved inline.
     """
-    if not isinstance(schema, dict):
+    if not isinstance(schema, dict) or not _can_flatten(schema):
         return schema
-    if not _has_definition_block(schema):
-        return schema
-
-    # Pointers resolve against the schema as given: a nested `$defs` block
-    # lives below a property, and the walk drops that block while it
-    # descends, so it is gone by the time the reference is reached.
-    source: Final[dict[str, Any]] = copy.deepcopy(schema)
-    schema = copy.deepcopy(schema)
-    if isinstance(schema.get("$defs"), dict):
-        schema.pop("$defs")
-    if isinstance(schema.get("definitions"), dict):
-        schema.pop("definitions")
 
     def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
         if isinstance(obj, list):
@@ -481,15 +470,14 @@ def _flatten_json_schema(schema: dict) -> dict:
             return obj
 
         resolved: dict[str, Any] = {}
-        if "$ref" in obj:
-            ref_path = obj["$ref"]
-            if not isinstance(ref_path, str) or not ref_path.startswith("#"):
-                return obj
-
-            ref_name = ref_path.rsplit("/", 1)[-1]
-            # JSON Pointer tokens decode ~1 before ~0 (RFC 6901).
-            ref_name = ref_name.replace("~1", "/").replace("~0", "~")
-            if ref_path in visited:
+        siblings = {}
+        tokens = _pointer_tokens(obj.get("$ref"))
+        target = (
+            _lookup_pointer(schema, tokens) if tokens is not None else _MISSING
+        )
+        if target is not _MISSING:
+            if tokens in visited:
+                ref_name = tokens[-1] if tokens else "#"
                 logger.warning(
                     "Circular reference detected for '%s' in tool schema",
                     ref_name,
@@ -498,41 +486,50 @@ def _flatten_json_schema(schema: dict) -> dict:
                     "type": "object",
                     "description": f"(circular: {ref_name})",
                 }
-            target = _lookup_pointer(source, ref_path)
-            if target is _MISSING:
-                return obj
-
-            visited = visited | {ref_path}
-            resolved = _resolve_ref(target, visited)
+            resolved = _resolve_ref(target, visited | {tokens})
             if resolved is True:
                 # True adds no constraints; preserve the reference's siblings.
                 resolved = {}
             elif not isinstance(resolved, dict):
                 return resolved
+        elif "$ref" in obj:
+            siblings["$ref"] = copy.deepcopy(obj["$ref"])
 
         for key, value in obj.items():
             if key in ("$ref", "$defs", "definitions"):
                 continue
             if key in _INSTANCE_VALUE_KEYWORDS:
-                resolved[key] = value
+                siblings[key] = copy.deepcopy(value)
             elif key == "discriminator" and isinstance(value, dict):
                 mapping = value.get("mapping")
                 if isinstance(mapping, dict) and any(
-                    isinstance(ref, str)
-                    and _points_into_definition_block(ref)
-                    and _lookup_pointer(source, ref) is not _MISSING
+                    (tokens := _pointer_tokens(ref)) is not None
+                    and _points_into_definition_block(tokens)
+                    and _lookup_pointer(schema, tokens) is not _MISSING
                     for ref in mapping.values()
                 ):
                     continue
-                resolved[key] = value
+                siblings[key] = copy.deepcopy(value)
             elif key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
-                resolved[key] = {
+                siblings[key] = {
                     name: _resolve_ref(sub, visited)
                     for name, sub in value.items()
                 }
             else:
-                resolved[key] = _resolve_ref(value, visited)
-        return resolved
+                siblings[key] = _resolve_ref(value, visited)
+        if not resolved:
+            return siblings
+        # Adjacent applicators can interact even when their keys differ
+        # (e.g. properties beside a target's additionalProperties).
+        annotations = {"title", "description", "default", "examples"}
+        target_keys = resolved.keys() - annotations
+        sibling_keys = siblings.keys() - annotations
+        if target_keys & sibling_keys or (
+            target_keys - {"type", "$ref"} and sibling_keys - {"type"}
+        ):
+            siblings["allOf"] = [*siblings.get("allOf", []), resolved]
+            return siblings
+        return {**resolved, **siblings}
 
     return _resolve_ref(schema)
 

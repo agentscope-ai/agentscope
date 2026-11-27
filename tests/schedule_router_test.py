@@ -860,6 +860,33 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(storage.upserted, [])
 
+    async def test_tool_invalid_permission_mode_does_not_persist(self) -> None:
+        """An unrecognized permission mode is rejected, not replaced.
+
+        The tool validates the cron expression, timezone and time window
+        before writing; silently switching to DONT_ASK (where every
+        approval request becomes a denial) hides the mistake from both
+        the model and the user.
+        """
+        storage = _Storage()
+        scheduler = _Scheduler()
+        tool = ScheduleCreate(
+            user_id="user-1",
+            agent_id="agent-1",
+            chat_model_config=_request("0 9 * * *").chat_model_config,
+            storage=storage,
+            scheduler_manager=scheduler,
+        )
+
+        with self.assertRaises(ValueError):
+            await tool(
+                name="bad permission",
+                cron_expression="0 9 * * *",
+                permission_mode="accpet_edits",
+            )
+
+        self.assertEqual(storage.upserted, [])
+
     async def test_tool_invalid_time_window_does_not_persist(self) -> None:
         """The agent-facing tool rejects a reversed activation window."""
         storage = _Storage()

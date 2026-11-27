@@ -1,14 +1,33 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for Content-Type dispatch in ``IndexWorker``."""
+"""Regression tests for Content-Type dispatch and indexing status."""
+from io import BytesIO
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+from PIL import Image
+from pypdf import PdfWriter
+
+from rag_parser_test import (
+    _PNG_PIXEL,
+    _dump_pdf_text,
+    _make_pdf,
+    _make_pptx_rich,
+    _make_pptx_with_image,
+)
 from utils import AnyString
 
 from agentscope.app._service._index_worker import IndexWorker
-from agentscope.rag import Chunk, ExcelParser, Section, TextParser
-from agentscope.message import TextBlock
+from agentscope.rag import (
+    Chunk,
+    ExcelParser,
+    ImageParser,
+    PDFParser,
+    PPTParser,
+    Section,
+    TextParser,
+)
+from agentscope.message import DataBlock, TextBlock
 
 
 class _Parser:
@@ -81,6 +100,7 @@ class _Knowledge:
     def __init__(self) -> None:
         self.inserted_chunks: list[Chunk] = []
         self.inserted_metadata: dict[str, object] = {}
+        self.embedding_model = SimpleNamespace(supports_multimodal=False)
 
     async def delete_document(self, document_id: str) -> None:
         """Accept the worker's cleanup call."""
@@ -281,6 +301,122 @@ def _worker(
         node_id="test-node",
     )
     return worker, manager
+
+
+class IndexWorkerSearchableContentTest(IsolatedAsyncioTestCase):
+    """Documents with no searchable chunks must report an error."""
+
+    async def test_empty_text_document_reports_error(self) -> None:
+        """Empty and whitespace-only text fail before vector indexing."""
+        for payload in (b"", b" \t\n"):
+            with self.subTest(payload=payload):
+                storage = _Storage("text/plain", filename="empty.txt")
+                update = AsyncMock(
+                    wraps=storage.update_knowledge_document_status,
+                )
+                storage.update_knowledge_document_status = update
+                worker, manager = _worker(storage, [TextParser()])
+                worker.blob_content = payload
+
+                with (
+                    patch.multiple(
+                        storage,
+                        acquire_knowledge_document_lease=AsyncMock(
+                            return_value=True,
+                        ),
+                        release_knowledge_document_lease=AsyncMock(),
+                        create=True,
+                    ),
+                    patch.object(manager, "get_knowledge") as get_knowledge,
+                ):
+                    await worker.process("user-1", "kb-1", "doc-1")
+
+                self.assertEqual(
+                    storage.statuses,
+                    ["parsing", "chunking", "error"],
+                )
+                self.assertIn(
+                    "no indexable content",
+                    update.await_args.kwargs["error"],
+                )
+                get_knowledge.assert_not_awaited()
+
+    async def test_index_status_reflects_searchable_pdf_content(self) -> None:
+        """A scan needs OCR, while a mixed file indexes its text page."""
+        scan = BytesIO()
+        Image.new("RGB", (16, 16), "white").save(scan, format="PDF")
+        mixed = BytesIO()
+        writer = PdfWriter()
+        writer.append(BytesIO(scan.getvalue()))
+        writer.append(BytesIO(_make_pdf(["Cell structure"])))
+        writer.write(mixed)
+
+        for payload, status, expected in (
+            (
+                scan.getvalue(),
+                "error",
+                {
+                    "statuses": ["parsing", "chunking", "error"],
+                    "chunks": [],
+                },
+            ),
+            (
+                mixed.getvalue(),
+                "ready",
+                {
+                    "statuses": ["parsing", "chunking", "indexing", "ready"],
+                    "chunks": [
+                        {
+                            "content": {
+                                "type": "text",
+                                "text": "Cell structure",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            "source": "lesson.pdf",
+                            "chunk_index": 0,
+                            "total_chunks": 1,
+                            "metadata": {"page": 2},
+                        },
+                    ],
+                },
+            ),
+        ):
+            with self.subTest(status=status):
+                storage = _Storage("application/pdf", filename="lesson.pdf")
+                storage.update_knowledge_document_status = AsyncMock(
+                    wraps=storage.update_knowledge_document_status,
+                )
+                worker, manager = _worker(storage, [PDFParser()])
+                worker.blob_content = payload
+
+                with patch.multiple(
+                    storage,
+                    acquire_knowledge_document_lease=AsyncMock(
+                        return_value=True,
+                    ),
+                    release_knowledge_document_lease=AsyncMock(),
+                    create=True,
+                ):
+                    await worker.process("user-1", "kb-1", "doc-1")
+
+                self.assertEqual(
+                    {
+                        "statuses": storage.statuses,
+                        "chunks": [
+                            _dump_pdf_text(chunk)
+                            for chunk in manager.knowledge.inserted_chunks
+                        ],
+                    },
+                    expected,
+                )
+                if status == "error":
+                    update = storage.update_knowledge_document_status
+                    self.assertIn(
+                        "apply OCR before uploading it.",
+                        update.await_args.kwargs["error"],
+                    )
 
 
 class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):
@@ -594,3 +730,129 @@ class IndexWorkerCsvLegacyExcelTypeTest(IsolatedAsyncioTestCase):
         ):
             await worker.run_pipeline()
         self.assertEqual(manager.knowledge.inserted_metadata, {})
+
+
+class IndexWorkerPPTImageTest(IsolatedAsyncioTestCase):
+    """Index a deck according to the selected embedding model."""
+
+    async def test_mixed_deck_respects_embedding_capability(self) -> None:
+        """Retain dense text chunks and keep images for multimodal models."""
+        for supports_multimodal in (False, True):
+            with self.subTest(supports_multimodal=supports_multimodal):
+                storage = _Storage(
+                    PPTParser.supported_media_types[0],
+                    filename="lesson.pptx",
+                )
+                worker, manager = _worker(storage, [PPTParser()])
+                worker.blob_content = _make_pptx_rich()
+                manager.knowledge.embedding_model = SimpleNamespace(
+                    supports_multimodal=supports_multimodal,
+                )
+
+                await worker.run_pipeline()
+
+                chunks = manager.knowledge.inserted_chunks
+                self.assertTrue(chunks)
+                self.assertEqual(storage.statuses[-1], "ready")
+                self.assertEqual(
+                    any(
+                        isinstance(chunk.content, DataBlock)
+                        for chunk in chunks
+                    ),
+                    supports_multimodal,
+                )
+                self.assertEqual(
+                    [chunk.chunk_index for chunk in chunks],
+                    list(range(len(chunks))),
+                )
+                self.assertTrue(
+                    all(chunk.total_chunks == len(chunks) for chunk in chunks),
+                )
+
+    async def test_text_model_reports_image_only_input(self) -> None:
+        """Give image-only uploads a clear configuration error."""
+        storage = _Storage("image/png", filename="diagram.png")
+        worker, manager = _worker(storage, [ImageParser()])
+        worker.blob_content = _PNG_PIXEL
+        manager.knowledge.embedding_model = SimpleNamespace(
+            supports_multimodal=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires a multimodal"):
+            await worker.run_pipeline()
+
+        self.assertEqual(manager.knowledge.inserted_chunks, [])
+
+    async def test_text_model_rejects_image_only_pptx(self) -> None:
+        """Slide wrappers must not make an image-only deck indexable."""
+        for options in (
+            {},
+            {"slide_prefix": "Page {index}", "slide_suffix": "End"},
+            {"slide_prefix": None, "slide_suffix": None},
+        ):
+            with self.subTest(options=options):
+                storage = _Storage(
+                    PPTParser.supported_media_types[0],
+                    filename="diagram.pptx",
+                )
+                worker, manager = _worker(storage, [PPTParser(**options)])
+                worker.blob_content = _make_pptx_with_image(_PNG_PIXEL)
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "requires a multimodal",
+                ):
+                    await worker.run_pipeline()
+
+                self.assertEqual(
+                    {
+                        "statuses": storage.statuses,
+                        "chunks": manager.knowledge.inserted_chunks,
+                        "metadata": manager.knowledge.inserted_metadata,
+                    },
+                    {
+                        "statuses": ["parsing", "chunking", "indexing"],
+                        "chunks": [],
+                        "metadata": {},
+                    },
+                )
+
+    async def test_multimodal_model_indexes_image_only_pptx(self) -> None:
+        """Keep the image without creating synthetic text chunks."""
+        storage = _Storage(
+            PPTParser.supported_media_types[0],
+            filename="diagram.pptx",
+        )
+        worker, manager = _worker(storage, [PPTParser()])
+        worker.blob_content = _make_pptx_with_image(_PNG_PIXEL)
+        manager.knowledge.embedding_model.supports_multimodal = True
+
+        await worker.run_pipeline()
+
+        self.assertEqual(
+            {
+                "statuses": storage.statuses,
+                "chunks": [
+                    {
+                        "type": chunk.content.type,
+                        "source": chunk.source,
+                        "chunk_index": chunk.chunk_index,
+                        "total_chunks": chunk.total_chunks,
+                        "metadata": chunk.metadata,
+                    }
+                    for chunk in manager.knowledge.inserted_chunks
+                ],
+            },
+            {
+                "statuses": ["parsing", "chunking", "indexing", "ready"],
+                "chunks": [
+                    {
+                        "type": "data",
+                        "source": "diagram.pptx",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {"slide": 1, "media_type": "image/png"},
+                    },
+                ],
+            },
+        )

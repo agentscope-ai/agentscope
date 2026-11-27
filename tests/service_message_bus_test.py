@@ -20,6 +20,7 @@ from utils import AnyString
 from agentscope.app.message_bus import (
     InMemoryMessageBus,
     MessageBus,
+    MessageBusKeys,
     RedisMessageBus,
 )
 
@@ -501,6 +502,41 @@ class TestPubSubPrimitive(IsolatedAsyncioTestCase):
         await asyncio.wait_for(task, timeout=2.0)
         self.assertEqual([p["i"] for p in received], [1, 2])
 
+    async def test_subscription_barrier_orders_pending_messages(self) -> None:
+        """Flushing covers the reader backlog without yielding the PONG."""
+        barrier = asyncio.get_running_loop().create_future()
+        received = []
+        gate = asyncio.Event()
+
+        async def consume() -> None:
+            async for event in self.bus.subscribe(
+                "ch",
+                on_barrier=barrier.set_result,
+            ):
+                await gate.wait()
+                received.append(event)
+                if event == {"frame": "next"}:
+                    break
+
+        task = asyncio.create_task(consume())
+        try:
+            flush = await asyncio.wait_for(barrier, 2)
+            await self.bus.publish("ch", {"frame": "body"})
+            await self.bus.publish("ch", {"frame": "end"})
+            flushing = asyncio.create_task(flush())
+            gate.set()
+            await asyncio.wait_for(flushing, 2)
+            self.assertEqual(received, [{"frame": "body"}, {"frame": "end"}])
+            await self.bus.publish("ch", {"frame": "next"})
+            await asyncio.wait_for(task, 2)
+            self.assertEqual(
+                received,
+                [{"frame": f} for f in ("body", "end", "next")],
+            )
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def test_subscribe_cleanup_survives_cancellation(self) -> None:
         """A consumer cancelled again while closing the pubsub must not
         abort the close, otherwise the connection leaks from the pool."""
@@ -806,6 +842,10 @@ class TestSessionDomainHelpers(IsolatedAsyncioTestCase):
         task = asyncio.create_task(_consumer())
         await asyncio.wait_for(ready.wait(), timeout=2.0)
 
+        await self.bus.publish(
+            MessageBusKeys.session_events(sid),
+            {MessageBusKeys.SESSION_BARRIER_FIELD: "other"},
+        )
         await self.bus.session_publish_event(sid, {"hello": "world"})
         await asyncio.wait_for(task, timeout=2.0)
 
@@ -1135,6 +1175,109 @@ class TestBackgroundTaskRegistryHelpers(IsolatedAsyncioTestCase):
         await asyncio.wait_for(task, timeout=2.0)
 
         self.assertEqual(received, ["task-X"])
+
+
+class TestExternalConnectionPool(IsolatedAsyncioTestCase):
+    """External byte and text pools expose the same bus API."""
+
+    async def asyncSetUp(self) -> None:
+        self.buses = {}
+        for decode in (True, False):
+            client = await self.enterAsyncContext(
+                fakeredis.aioredis.FakeRedis(decode_responses=decode),
+            )
+            self.buses[decode] = await self.enterAsyncContext(
+                RedisMessageBus(connection_pool=client.connection_pool),
+            )
+
+    async def test_queue_round_trip(self) -> None:
+        """Peek and drain return the original payload and a usable ID."""
+        payload = {"text": "café"}
+        for decode, bus in self.buses.items():
+            with self.subTest(decode=decode):
+                entry_id = await bus.queue_push("q", payload)
+                self.assertRegex(entry_id, r"^\d+-\d+$")
+                expected = [(entry_id, payload)]
+                self.assertEqual(await bus.queue_read("q"), expected)
+                self.assertEqual(await bus.queue_drain("q"), expected)
+                self.assertEqual(await bus.queue_drain("q"), [])
+                ids = await bus.queue_replace("q", [payload])
+                self.assertEqual(
+                    await bus.queue_read("q"),
+                    [(ids[0], payload)],
+                )
+
+    async def test_log_cursors(self) -> None:
+        """Both append methods return text IDs that resume a replay."""
+        for decode, bus in self.buses.items():
+            with self.subTest(decode=decode):
+                first, previous = await bus.log_append_with_previous(
+                    "log",
+                    {"n": 1},
+                    max_len=10,
+                )
+                self.assertEqual(previous, "")
+                second = await bus.log_append("log", {"n": 2})
+                third, previous = await bus.log_append_with_previous(
+                    "log",
+                    {"n": 3},
+                    max_len=10,
+                )
+                self.assertEqual(previous, second)
+                self.assertRegex(third, r"^\d+-\d+$")
+                self.assertEqual(
+                    await bus.log_read("log", since=first),
+                    [(second, {"n": 2}), (third, {"n": 3})],
+                )
+
+    async def test_registry_text_and_missing_values(self) -> None:
+        """Hash reads preserve Unicode, empty strings and absent fields."""
+        for decode, bus in self.buses.items():
+            with self.subTest(decode=decode):
+                await bus.registry_set("reg", "clé", "été")
+                await bus.registry_set("reg", "empty", "")
+                value = await bus.registry_get("reg", "clé")
+                self.assertEqual(value, "été")
+                self.assertIsNone(await bus.registry_get("reg", "absent"))
+                self.assertEqual(
+                    await bus.registry_get_many("reg", ["empty", "x", "clé"]),
+                    ["", None, "été"],
+                )
+                self.assertEqual(
+                    await bus.registry_getall("reg"),
+                    {"clé": "été", "empty": ""},
+                )
+                value = await bus.registry_pop("reg", "clé")
+                self.assertEqual(value, "été")
+                self.assertIsNone(await bus.registry_pop("reg", "clé"))
+
+    async def test_reads_use_external_pool_encoding(self) -> None:
+        """Decode JSON bytes written in the external pool's encoding."""
+        client = await self.enterAsyncContext(
+            fakeredis.aioredis.FakeRedis(
+                decode_responses=False,
+                encoding="latin-1",
+            ),
+        )
+        bus = await self.enterAsyncContext(
+            RedisMessageBus(connection_pool=client.connection_pool),
+        )
+        raw_id = await client.xadd("q", {"payload": '{"text":"café"}'})
+        self.assertEqual(
+            await bus.queue_read("q"),
+            [(raw_id.decode("ascii"), {"text": "café"})],
+        )
+        ready = asyncio.Event()
+        events = bus.subscribe("channel", on_ready=ready.set)
+        try:
+            async with asyncio.timeout(2):
+                async with asyncio.TaskGroup() as group:
+                    event = group.create_task(anext(events))
+                    await ready.wait()
+                    await bus.publish("channel", {"text": "café"})
+                self.assertEqual(event.result(), {"text": "café"})
+        finally:
+            await events.aclose()
 
 
 class TestBaseClassIsAbstract(IsolatedAsyncioTestCase):

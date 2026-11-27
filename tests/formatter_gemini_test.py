@@ -31,7 +31,9 @@ from agentscope.message import (
 _FIXED_ID = "TESTID1234567"
 
 
-class TestGeminiFormatter(IsolatedAsyncioTestCase):
+class TestGeminiFormatter(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Comprehensive tests for Gemini Chat and MultiAgent formatters."""
 
     async def asyncSetUp(self) -> None:
@@ -548,6 +550,42 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                     "role": "model",
                     "parts": [
                         {"text": "Here is the map of Tokyo."},
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_uppercase_base64_image_media_type(
+        self,
+    ) -> None:
+        """A mixed-case MIME type is matched case-insensitively."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="IMAGE/PNG",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "inline_data": {
+                                "data": self.image_b64,
+                                "mime_type": "image/png",
+                            },
+                        },
                     ],
                 },
             ],

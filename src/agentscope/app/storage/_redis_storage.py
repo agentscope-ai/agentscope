@@ -1027,7 +1027,11 @@ class RedisStorage(StorageBase):
             )
             if raw:
                 records.append(SessionRecord.model_validate_json(raw))
-        records.sort(key=lambda r: r.created_at, reverse=True)
+        # ``(created_at, id)`` mirrors the SQL backend: ties on the
+        # timestamp used to fall back to the index set's iteration
+        # order, which no caller can predict and which changes as the
+        # set is rewritten.
+        records.sort(key=lambda r: (r.created_at, r.id), reverse=True)
         return records
 
     async def get_session(
@@ -1165,7 +1169,11 @@ class RedisStorage(StorageBase):
             )
             if raw:
                 records.append(SessionRecord.model_validate_json(raw))
-        records.sort(key=lambda r: r.created_at, reverse=True)
+        # ``(created_at, id)`` mirrors the SQL backend: ties on the
+        # timestamp used to fall back to the index set's iteration
+        # order, which no caller can predict and which changes as the
+        # set is rewritten.
+        records.sort(key=lambda r: (r.created_at, r.id), reverse=True)
         return records
 
     async def list_sessions_by_channel(
@@ -1191,7 +1199,11 @@ class RedisStorage(StorageBase):
             )
             if raw:
                 records.append(SessionRecord.model_validate_json(raw))
-        records.sort(key=lambda r: r.created_at, reverse=True)
+        # ``(created_at, id)`` mirrors the SQL backend: ties on the
+        # timestamp used to fall back to the index set's iteration
+        # order, which no caller can predict and which changes as the
+        # set is rewritten.
+        records.sort(key=lambda r: (r.created_at, r.id), reverse=True)
         return records
 
     async def upsert_schedule(
@@ -1755,7 +1767,11 @@ class RedisStorage(StorageBase):
             record = await self.get_sop_run(user_id, run_id)
             if record is not None and phase in (None, record.state.phase):
                 records.append(record)
-        return sorted(records, key=lambda _: _.created_at, reverse=True)
+        return sorted(
+            records,
+            key=lambda _: (_.created_at, _.id),
+            reverse=True,
+        )
 
     async def update_sop_run(
         self,

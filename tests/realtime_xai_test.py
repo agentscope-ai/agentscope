@@ -2,14 +2,19 @@
 """Unit tests for the xAI Grok voice realtime adapter: cards, session
 config and frame parsing. Nothing here opens a connection."""
 # pylint: disable=protected-access
+import asyncio
 import base64
+import json
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 from utils import AnyString
 
+from agentscope.agent import RealtimeAgent
 from agentscope.credential import XAICredential
-from agentscope.message import TextBlock, ToolResultBlock
+from agentscope.event import ModelCallEndEvent, ReplyEndEvent, ReplyStartEvent
+from agentscope.message import TextBlock, ToolResultBlock, Usage
 from agentscope.realtime import (
     ModelDisconnectedError,
     XAIRealtimeModel,
@@ -251,6 +256,50 @@ class XAIParseTest(unittest.TestCase):
             me.ResponseCreatedEvent(item_id="resp_002"),
         )
 
+    def test_failed_response_is_an_error(self) -> None:
+        """Keep the provider error and usage on the failed response."""
+        event = self.model._parse(
+            {
+                "type": "response.done",
+                "response": {
+                    "id": "resp_001",
+                    "status": "failed",
+                    "usage": {"input_tokens": 18, "output_tokens": 3},
+                    "status_details": {
+                        "error": {"code": "server_error", "message": "boom"},
+                    },
+                },
+            },
+        )
+        self.assertEqual(
+            event,
+            me.ModelErrorEvent(
+                response=me.ResponseDoneEvent(
+                    item_id="resp_001",
+                    input_tokens=18,
+                    output_tokens=3,
+                ),
+                code="server_error",
+                message="boom",
+            ),
+        )
+        self.assertEqual(self.model._response_id, "")
+
+    def test_failed_response_without_details_uses_a_generic_code(
+        self,
+    ) -> None:
+        """A failure without an error payload still ends as an error."""
+        event = self.model._parse(
+            {"type": "response.done", "response": {"status": "failed"}},
+        )
+        self.assertEqual(
+            event,
+            me.ModelErrorEvent(
+                response=me.ResponseDoneEvent(item_id="resp_001"),
+                code="response_failed",
+            ),
+        )
+
     def test_tool_call_done_frame_is_authoritative(self) -> None:
         """Accumulated deltas are only a fallback for a done frame that
         omits ``arguments``."""
@@ -315,6 +364,80 @@ class XAIParseTest(unittest.TestCase):
                     },
                     "non_blocking": False,
                 },
+            ],
+        )
+
+
+class XAIResponseFailureTest(IsolatedAsyncioTestCase):
+    """Replay failed responses through the adapter and agent."""
+
+    async def test_failed_response_preserves_user_turn_and_usage(
+        self,
+    ) -> None:
+        """A delayed input transcript still settles its original turn."""
+        model = XAIRealtimeModel("grok-voice-latest", CRED)
+        agent = RealtimeAgent("Friday", "", model)
+        frames = [
+            {"type": "input_audio_buffer.speech_started", "item_id": "u1"},
+            {"type": "input_audio_buffer.speech_stopped", "item_id": "u1"},
+            {"type": "response.created", "response": {"id": "r1"}},
+            {
+                "type": "response.done",
+                "response": {"id": "older", "status": "failed"},
+            },
+            {"type": "response.output_audio_transcript.delta", "delta": "Hi"},
+            {
+                "type": "response.done",
+                "response": {
+                    "status": "failed",
+                    "usage": {"input_tokens": 18, "output_tokens": 3},
+                },
+            },
+            {"type": TRANSCRIPTION_DONE, "item_id": "u1", "transcript": "Hi"},
+        ]
+        for frame in frames:
+            event = model._parse(frame)
+            assert event is not None
+            await agent._on_model_event(event)
+
+        lifecycle: list[
+            tuple[str, str] | tuple[str, str, str] | tuple[str, str, int, int]
+        ] = []
+        while not agent._out.empty():
+            public = agent._out.get_nowait().event
+            if isinstance(public, ReplyStartEvent):
+                lifecycle.append(("start", public.reply_id))
+            elif isinstance(public, ReplyEndEvent):
+                lifecycle.append(
+                    ("end", public.reply_id, public.finished_reason),
+                )
+            elif isinstance(public, ModelCallEndEvent):
+                lifecycle.append(
+                    (
+                        "usage",
+                        public.reply_id,
+                        public.input_tokens,
+                        public.output_tokens,
+                    ),
+                )
+        self.assertEqual(
+            lifecycle,
+            [
+                ("start", "u1"),
+                ("start", "r1"),
+                ("usage", "r1", 18, 3),
+                ("end", "r1", "error"),
+                ("end", "u1", "completed"),
+            ],
+        )
+        self.assertEqual(
+            [
+                (msg.id, msg.get_text_content(), msg.usage)
+                for msg in agent.state.context
+            ],
+            [
+                ("r1", "Hi", Usage(input_tokens=18, output_tokens=3)),
+                ("u1", "Hi", None),
             ],
         )
 
@@ -387,6 +510,29 @@ class XAIClientFramesTest(IsolatedAsyncioTestCase):
         self.assertListEqual(self.sent, [{"type": "response.cancel"}])
 
 
+class _OpenSocket:
+    """Record outgoing frames and stay open until closed."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+        self.closed = False
+
+    def __aiter__(self) -> "_OpenSocket":
+        return self
+
+    async def __anext__(self) -> str:
+        await asyncio.Future()
+        raise StopAsyncIteration
+
+    async def send(self, payload: str) -> None:
+        """Capture an outgoing WebSocket frame."""
+        self.sent.append(payload)
+
+    async def close(self) -> None:
+        """Record that the socket was closed."""
+        self.closed = True
+
+
 class XAIDisconnectTest(IsolatedAsyncioTestCase):
     """A closed WebSocket surfaces as ModelDisconnectedError."""
 
@@ -419,3 +565,34 @@ class XAIDisconnectTest(IsolatedAsyncioTestCase):
         model = XAIRealtimeModel("grok-voice-latest", CRED)
         with self.assertRaises(ModelDisconnectedError):
             await model.commit_turn()
+
+    async def test_reconnect_forgets_the_previous_response(self) -> None:
+        """A reopened session cannot cancel the closed session's reply."""
+        model = XAIRealtimeModel("grok-voice-latest", CRED)
+        model._parse(
+            {"type": "response.created", "response": {"id": "r1"}},
+        )
+        model._parse(
+            {
+                "type": "response.function_call_arguments.delta",
+                "call_id": "c1",
+                "delta": "{}",
+            },
+        )
+        socket = _OpenSocket()
+
+        with patch(
+            "websockets.connect",
+            new=AsyncMock(return_value=socket),
+        ):
+            await model.connect(instructions="test")
+        await model.request_response()
+        await asyncio.sleep(0)
+
+        self.assertListEqual(
+            [json.loads(payload)["type"] for payload in socket.sent],
+            ["session.update", "response.create"],
+        )
+        self.assertEqual(model._response_id, "")
+        self.assertDictEqual(model._tool_args, {})
+        await model.close()

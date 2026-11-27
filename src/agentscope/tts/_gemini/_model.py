@@ -6,6 +6,7 @@ import os
 import wave
 from contextlib import aclosing, asynccontextmanager
 from datetime import datetime
+from email.message import Message
 from typing import (
     Any,
     AsyncGenerator,
@@ -40,19 +41,19 @@ _STRUCTURED_SPEECH_MODELS = {
 
 def _audio_encoding(mime_type: str | None) -> str:
     """Validate the WAV or default PCM format used by this adapter."""
-    encoding, *parameters = (mime_type or "audio/l16").lower().split(";")
-    encoding = encoding.strip()
+    content_type = Message()
+    content_type["Content-Type"] = mime_type or "audio/l16"
+    encoding = content_type.get_content_type()
     if encoding == "audio/wav":
         return encoding
     if encoding == "audio/l16":
-        options = {}
-        for parameter in parameters:
-            key, _, value = parameter.strip().partition("=")
-            options[key] = value
+        options = dict((content_type.get_params() or [])[1:])
+        codec = options.get("codec", "pcm")
         if (
             options.get("rate", "24000") == "24000"
             and options.get("channels", "1") == "1"
-            and options.get("codec", "pcm") == "pcm"
+            and isinstance(codec, str)
+            and codec.lower() == "pcm"
         ):
             return encoding
     raise ValueError(f"Unsupported Gemini TTS audio format: {mime_type!r}")

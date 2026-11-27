@@ -329,14 +329,19 @@ Usage:
                 mtime=mtime,
             )
             if cache is None:
-                # Haven't read this file before
+                if mtime is None:
+                    message = (
+                        "Error: The backend could not report the file's "
+                        "modification time. Once it is available, read the "
+                        "file again before editing it."
+                    )
+                else:
+                    message = (
+                        "Error: To edit a file, you must first read "
+                        "it using the Read tool."
+                    )
                 return ToolChunk(
-                    content=[
-                        TextBlock(
-                            text="Error: To edit a file, you must first read "
-                            "it using the Read tool.",
-                        ),
-                    ],
+                    content=[TextBlock(text=message)],
                     state=ToolResultState.ERROR,
                     is_last=True,
                 )

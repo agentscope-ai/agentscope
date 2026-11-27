@@ -34,6 +34,7 @@ from agentscope.app._router._schema._voice_profile import (
 from agentscope.app._service._tts_model import (
     _validate_voice_binding,
     _config_error_detail,
+    build_reply_tts_model,
     get_tts_model,
     validate_tts_model_config,
 )
@@ -505,6 +506,49 @@ class TestVoiceProfileTenantIsolation(IsolatedAsyncioTestCase):
             "user-a",
             "profile-b",
         )
+
+    async def test_saved_voice_rechecks_profile_and_credential(self) -> None:
+        """Saved voices require current profile and credential access."""
+        config = _custom_config()
+        for denied in ("profile", "revoked", "shared"):
+            with self.subTest(denied=denied):
+                storage = AsyncMock()
+                access = AsyncMock()
+                storage.get_voice_profile.return_value = (
+                    None
+                    if denied == "profile"
+                    else _profile(credential_id="new")
+                )
+                credential = access.resolve_credential
+                if denied == "revoked":
+                    credential.side_effect = HTTPException(403)
+                elif denied == "shared":
+                    credential.return_value = CredentialRecord(
+                        id="credential-a",
+                        user_id="other",
+                        data={"type": "openai_credential", "api_key": "test"},
+                    )
+                self.assertEqual(
+                    await build_reply_tts_model(
+                        "user-a",
+                        config,
+                        access,
+                        storage,
+                        use_snapshot=True,
+                    ),
+                    (config, None),
+                )
+                storage.get_voice_profile.assert_awaited_once_with(
+                    "user-a",
+                    "profile-a",
+                )
+                if denied == "profile":
+                    credential.assert_not_awaited()
+                else:
+                    credential.assert_awaited_once_with(
+                        "user-a",
+                        "credential-a",
+                    )
 
     async def test_shared_credential_is_rejected_for_custom_voice(
         self,
