@@ -1,0 +1,20 @@
+name: x-ai/grok-4-1-fast-reasoning
+label: Grok 4.1 Fast Reasoning
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 2000000
+output_size: 1999000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 1999000
+  voice:
+    hidden: true
