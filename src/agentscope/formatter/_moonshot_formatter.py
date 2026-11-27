@@ -2,7 +2,6 @@
 """The Moonshot AI formatter for agentscope."""
 
 import asyncio
-from fnmatch import fnmatch
 from typing import Any
 
 from pydantic import Field
@@ -117,14 +116,13 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
-        media_type = block.source.media_type
-        if media_type.startswith("video/") and any(
-            fnmatch(media_type, pattern)
-            for pattern in self.supported_input_media_types
+        supported = self._get_supported_tool_result_block(block)
+        if supported is not None and supported.source.media_type.startswith(
+            "video/",
         ):
             return await _moonshot_format_media_source(
-                block.source,
-                block.model_extra,
+                supported.source,
+                supported.model_extra,
             )
         return await super()._format_openai_data_block(block)
 
@@ -388,14 +386,13 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
-        media_type = block.source.media_type
-        if media_type.startswith("video/") and any(
-            fnmatch(media_type, pattern)
-            for pattern in self.supported_input_media_types
+        supported = self._get_supported_tool_result_block(block)
+        if supported is not None and supported.source.media_type.startswith(
+            "video/",
         ):
             return await _moonshot_format_media_source(
-                block.source,
-                block.model_extra,
+                supported.source,
+                supported.model_extra,
             )
         return await super()._format_openai_data_block(block)
 

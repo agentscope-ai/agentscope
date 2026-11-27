@@ -368,22 +368,34 @@ def _flatten_json_schema(schema: dict) -> dict:
         `dict`:
             A flattened JSON schema with all references resolved inline.
     """
-    has_defs = isinstance(schema.get("$defs"), dict) or isinstance(
-        schema.get("definitions"),
-        dict,
-    )
-    if not has_defs:
+    definition_blocks = {
+        key: schema[key]
+        for key in ("$defs", "definitions")
+        if isinstance(schema.get(key), dict)
+    }
+    if not definition_blocks:
         return schema
 
     schema = copy.deepcopy(schema)
     defs: dict[str, Any] = {}
-    if isinstance(schema.get("$defs"), dict):
-        defs.update(schema.pop("$defs"))
-    if isinstance(schema.get("definitions"), dict):
-        defs.update(schema.pop("definitions"))
+    for key in definition_blocks:
+        defs.update(schema.pop(key))
 
     if not defs:
         return schema
+
+    def _decode_token(token: str) -> str:
+        """Decode a JSON Pointer token in RFC 6901 order."""
+        return token.replace("~1", "/").replace("~0", "~")
+
+    def _targets_removed_definition(ref: Any) -> bool:
+        if not isinstance(ref, str):
+            return False
+        match ref.split("/", 3):
+            case ["#", keyword, token]:
+                block = definition_blocks.get(keyword, {})
+                return _decode_token(token) in block
+        return False
 
     def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
         if isinstance(obj, list):
@@ -399,9 +411,7 @@ def _flatten_json_schema(schema: dict) -> dict:
             ):
                 return obj
 
-            def_name = ref_path.split("/")[-1]
-            # JSON Pointer tokens decode ~1 before ~0 (RFC 6901).
-            def_name = def_name.replace("~1", "/").replace("~0", "~")
+            def_name = _decode_token(ref_path.rsplit("/", 1)[-1])
             if def_name in visited:
                 logger.warning(
                     "Circular reference detected for '%s' in tool schema",
@@ -430,9 +440,7 @@ def _flatten_json_schema(schema: dict) -> dict:
             elif key == "discriminator" and isinstance(value, dict):
                 mapping = value.get("mapping")
                 if isinstance(mapping, dict) and any(
-                    isinstance(ref, str)
-                    and ref.startswith(("#/$defs/", "#/definitions/"))
-                    and ref.rsplit("/", 1)[-1] in defs
+                    _targets_removed_definition(ref)
                     for ref in mapping.values()
                 ):
                     continue
