@@ -7,7 +7,7 @@ from pydantic import ConfigDict, Field, SecretStr
 from ._base import CredentialBase
 
 if TYPE_CHECKING:
-    from ..model import ChatModelBase
+    from ..model import ChatModelBase, ModelCard
 
 
 class TypeSafeCredential(CredentialBase):
@@ -31,3 +31,8 @@ class TypeSafeCredential(CredentialBase):
     def get_chat_model_class(cls) -> Type["ChatModelBase"]:
         """TypeSafe credentials serve classifier models only."""
         raise NotImplementedError(f"{cls.__name__} has no chat model.")
+
+    @classmethod
+    def list_models(cls) -> list["ModelCard"]:
+        """Return no chat models for classifier-only credentials."""
+        return []

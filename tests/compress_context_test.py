@@ -6,15 +6,17 @@ import json
 import os
 import tempfile
 from datetime import datetime
+from itertools import product
 from typing import Any
 
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from utils import MockModel, AnyString
 
 from agentscope.model import ChatResponse, ChatUsage, StructuredResponse
 from agentscope.agent import Agent, ContextConfig, InjectionConfig
+from agentscope.exception import ContentBlockedError
 from agentscope.state import AgentState
 from agentscope.message import (
     UserMsg,
@@ -2829,6 +2831,66 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         await agent.compress_context()
 
         self.assertEqual(agent.state, expected_state)
+
+    async def test_content_block_stops_compression(self) -> None:
+        """Stop errors survive every compression entry and failure path."""
+        cases = product(
+            ("requires_review", "partial_output"),
+            ((False, False), (True, False), (True, True)),
+            (False, True),
+            (False, True),
+        )
+        for flag, (overflow, retry), via_tool, truncate in cases:
+            with self.subTest(
+                flag=flag,
+                overflow=overflow,
+                retry=retry,
+                via_tool=via_tool,
+                truncate=truncate,
+            ):
+                agent, model = _make_failing_compression_agent()
+                agent.context_config.compression_fallback_to_truncation = (
+                    truncate
+                )
+                expected_state = agent.state.model_copy(deep=True)
+                error = ContentBlockedError("blocked", **{flag: True})
+                errors = (
+                    [RuntimeError("temporary failure"), error]
+                    if retry
+                    else [error]
+                )
+                with (
+                    patch.object(
+                        model,
+                        "count_tokens",
+                        new=AsyncMock(return_value=200 if overflow else 95),
+                    ),
+                    patch.object(
+                        agent,
+                        "_split_context_for_compression",
+                        new=AsyncMock(
+                            return_value=(
+                                agent.state.context[:1],
+                                agent.state.context[1:],
+                            ),
+                        ),
+                    ),
+                    patch.object(
+                        model,
+                        "_call_api_with_structured_output",
+                        new=AsyncMock(side_effect=errors),
+                    ) as call,
+                ):
+                    with self.assertRaises(ContentBlockedError) as caught:
+                        if via_tool:
+                            await agent._compress_context_tool()
+                        else:
+                            await agent.compress_context()
+
+                self.assertEqual(
+                    (caught.exception, call.await_count, agent.state),
+                    (error, len(errors), expected_state),
+                )
 
     async def test_summary_failure_raises_without_truncation_fallback(
         self,

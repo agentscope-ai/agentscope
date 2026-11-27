@@ -25,6 +25,10 @@ class PowerShellInterfaceTest(IsolatedAsyncioTestCase):
         self.assertFalse(tool.is_concurrency_safe)
         self.assertIn("command", tool.input_schema["properties"])
         self.assertEqual(tool.input_schema["required"], ["command"])
+        self.assertEqual(
+            tool.input_schema["properties"]["timeout"]["minimum"],
+            1,
+        )
         self.assertEqual(tool._cwd, "workspace")
         self.assertIs(tool._backend, backend)
         self.assertIn("Glob", tool.description)
@@ -225,10 +229,9 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(
-            chunks[0].content[0].text,
-            "x" * 30000 + "\n... (output truncated)",
-        )
+        notice, output = chunks[0].content[0].text.split("\n", 1)
+        self.assertIn("the first 30000 of 30001 characters", notice)
+        self.assertEqual(output, "x" * 30000)
 
     async def test_success_includes_stderr(self) -> None:
         """Preserve stderr even when the command exits successfully."""
@@ -269,11 +272,34 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
             )
         ]
 
-        suffix = "\n... (output truncated)"
         text = chunks[0].content[0].text
         self.assertEqual(chunks[0].state, "error")
-        self.assertTrue(text.endswith(suffix))
-        self.assertEqual(len(text), 30000 + len(suffix))
+        notice, output = text.split("\n", 1)
+        message = "Command failed: Write-Error 'x'\n\nStderr:\n" + "x" * 30001
+        self.assertEqual(
+            notice,
+            "[Failure message truncated: showing the first 30000 of "
+            f"{len(message)} characters. To see the rest of the command "
+            "output, write it to a file and read the part you need.]",
+        )
+        self.assertEqual(output, message[:30000])
+
+    async def test_silent_failure_truncates_only_the_message(self) -> None:
+        """A silent failure has no command output to redirect."""
+        backend = AsyncMock()
+        backend.exec_shell.return_value = ExecResult(1, b"", b"")
+        tool = PowerShell(backend=backend, max_output_chars=10)
+
+        chunks = [chunk async for chunk in await tool(command="exit 1")]
+
+        self.assertEqual(
+            (chunks[0].content[0].text, chunks[0].state),
+            (
+                "[Failure message truncated: showing the first 10 of 23 "
+                "characters.]\nCommand fa",
+                "error",
+            ),
+        )
 
     async def test_backend_exception_returns_error_chunk(self) -> None:
         """Convert unexpected backend failures into tool errors."""
@@ -313,6 +339,53 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
             backend.exec_shell.await_args.kwargs["timeout"],
             600.0,
         )
+
+    async def test_invalid_timeout_rejected(self) -> None:
+        """Reject nonpositive timeouts without calling the backend."""
+        for timeout in (0, -5):
+            with self.subTest(timeout=timeout):
+                backend = AsyncMock()
+                tool = PowerShell(backend=backend)
+                chunks = [
+                    chunk.model_dump(
+                        exclude={
+                            "id": True,
+                            "content": {"__all__": {"id", "created_at"}},
+                        },
+                    )
+                    async for chunk in tool.call(
+                        command="Get-Location",
+                        timeout=timeout,
+                    )
+                ]
+
+                self.assertEqual(
+                    chunks,
+                    [
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "Error: timeout must be at least "
+                                        f"1ms, got: {timeout}."
+                                    ),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": "error",
+                            "is_last": True,
+                            "metadata": {},
+                        },
+                    ],
+                )
+                backend.exec_shell.assert_not_awaited()
+
+    async def test_timeout_schema_minimum_is_one(self) -> None:
+        """JSON schema minimum for timeout is 1ms (#3307)."""
+        tool = PowerShell(backend=AsyncMock())
+        timeout_schema = tool.input_schema["properties"]["timeout"]
+        self.assertEqual(timeout_schema["minimum"], 1)
 
 
 @unittest.skipUnless(
@@ -376,6 +449,31 @@ class PowerShellWindowsIntegrationTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(chunks[0].state, "running")
         self.assertEqual(chunks[0].content[0].text.strip(), "2")
+
+
+class PowerShellExecutableResolutionTest(IsolatedAsyncioTestCase):
+    """Pick a shell that the probe proved it can actually start."""
+
+    async def test_probe_that_cannot_run_falls_back_to_the_next_shell(
+        self,
+    ) -> None:
+        """A probe killed before answering is not a usable shell."""
+        backend = AsyncMock()
+        backend.exec_shell.side_effect = [
+            ExecResult(-1, b"", b"timed out"),
+            ExecResult(0, b"", b""),
+        ]
+        tool = PowerShell(backend=backend)
+
+        self.assertEqual(
+            await tool._resolve_executable(),
+            "powershell.exe",
+        )
+        self.assertEqual(
+            await tool._resolve_executable(),
+            "powershell.exe",
+        )
+        self.assertEqual(backend.exec_shell.await_count, 2)
 
 
 if __name__ == "__main__":

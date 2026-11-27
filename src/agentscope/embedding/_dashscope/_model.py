@@ -60,8 +60,11 @@ _MODEL_LIMITS: dict[str, _MultimodalLimits] = {
         max_videos=1,
     ),
     "qwen2.5-vl-embedding": _MultimodalLimits(
-        max_elements=20,
-        max_images=5,
+        # The API always fuses all contents into one vector.  The
+        # EmbeddingModelBase contract needs one vector per input item,
+        # so each request may contain only one item.
+        max_elements=1,
+        max_images=1,
         max_videos=1,
     ),
     "tongyi-embedding-vision-plus": _MultimodalLimits(
@@ -136,8 +139,8 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 persisted ``dimensions`` inside ``parameters``.
             parameters (`DashScopeEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                Provider-specific non-dimensional parameters.  Currently
-                empty for DashScope.
+                Provider-specific non-dimensional text parameters, such as
+                ``text_type``. Per-call keyword arguments take precedence.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -228,11 +231,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 self._limits.max_videos,
             )
 
-        results: list[EmbeddingResponse] = await asyncio.gather(
-            *(self._call_with_retry(batch, **kwargs) for batch in batches),
-        )
-
-        return self._merge_responses(results)
+        return await self._call_batches(batches, **kwargs)
 
     def _split_multimodal_batches(
         self,
@@ -353,6 +352,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             "model": self.model,
             "api_key": self.api_key,
             "dimension": self.dimensions,
+            **self.parameters.model_dump(exclude_none=True),
             **kwargs,
         }
 
@@ -388,7 +388,11 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             )
 
         embeddings = [
-            entry["embedding"] for entry in response.output["embeddings"]
+            entry["embedding"]
+            for _, entry in sorted(
+                enumerate(response.output["embeddings"]),
+                key=lambda item: item[1].get("text_index", item[0]),
+            )
         ]
         if self.embedding_cache:
             await self.embedding_cache.store(
@@ -472,7 +476,13 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 f"DashScope multimodal embedding API error: {res}",
             )
 
-        embeddings = [entry["embedding"] for entry in res.output["embeddings"]]
+        embeddings = [
+            entry["embedding"]
+            for _, entry in sorted(
+                enumerate(res.output["embeddings"]),
+                key=lambda item: item[1].get("index", item[0]),
+            )
+        ]
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=cache_identifier,

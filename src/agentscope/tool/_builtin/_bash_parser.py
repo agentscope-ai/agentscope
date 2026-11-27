@@ -140,6 +140,18 @@ FIND_MUTATING_PREDICATES = {
     "-okdir",
 }
 
+# Only split shell text whose words have literal values. Quoted globs are
+# literal; unquoted globs, expansions and line continuations need review.
+_LITERAL_SHELL_TEXT = re.compile(
+    r"""(?:
+        [\w./:+,=@% \t-]             # Unquoted literal or word separator
+        | '[^']*'                    # Single-quoted literal
+        | "(?:[^"$`\\!]|\\[^\n$`!])*"  # Static double-quoted literal
+        | \\[^\n]                     # One escaped character
+    )+""",
+    re.VERBOSE,
+)
+
 
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
@@ -151,8 +163,8 @@ class BashCommandParser:
     def is_read_only_command(self, command: str) -> bool:
         """Check if a command is read-only (safe to auto-allow).
 
-        For compound commands (&&, ||, ;, |), ALL subcommands must be
-        read-only for the entire command to be considered read-only.
+        For compound commands (&&, ||, ;, |, newline, &), ALL subcommands
+        must be read-only for the entire command to be considered read-only.
 
         Commands with output redirections (>, >>) are NOT considered read-only.
 
@@ -172,25 +184,20 @@ class BashCommandParser:
         if ">" in cmd:
             return False
 
-        # Check if it's a compound command
-        if any(op in cmd for op in ["&&", "||", ";", "|"]):
-            # Split into subcommands and check each one
-            try:
-                tree = self.parser.parse(bytes(cmd, "utf8"))
-                root = tree.root_node
-                subcommands = self.split_compound_command(root, cmd)
-
-                # All subcommands must be read-only
-                for subcmd in subcommands:
-                    if not self._is_single_command_read_only(subcmd.strip()):
-                        return False
-                return True
-            except Exception:
-                # If parsing fails, be conservative
+        # Use the same boundaries as rule matching, including newlines and
+        # background operators, so the read-only fast path cannot skip them.
+        try:
+            tree = self.parser.parse(bytes(cmd, "utf8"))
+            if tree.root_node.has_error:
                 return False
-
-        # Single command - check directly
-        return self._is_single_command_read_only(cmd)
+            subcommands = self.split_compound_command(tree.root_node, cmd)
+            return all(
+                self._is_single_command_read_only(subcmd.strip())
+                for subcmd in subcommands
+            )
+        except Exception:
+            # If parsing fails, be conservative.
+            return False
 
     def _is_single_command_read_only(self, cmd: str) -> bool:
         """Check if a single (non-compound) command is read-only.
@@ -223,6 +230,9 @@ class BashCommandParser:
             ):
                 return False
 
+        if cmd.startswith(("rg ", "tree ")):
+            return self._is_read_only_search_command(cmd)
+
         # Check if it starts with a read-only prefix
         for readonly_cmd in READ_ONLY_COMMANDS:
             if cmd == readonly_cmd or cmd.startswith(readonly_cmd + " "):
@@ -244,6 +254,38 @@ class BashCommandParser:
                 return True
 
         return False
+
+    @staticmethod
+    def _is_read_only_search_command(cmd: str) -> bool:
+        """Allow common rg/tree invocations with literal arguments."""
+        if not _LITERAL_SHELL_TEXT.fullmatch(cmd):
+            return False
+        args = iter(shlex.split(cmd))
+        if next(args) == "rg":
+            flags = {
+                "-n",
+                "-i",
+                "-F",
+                "-l",
+                "-S",
+                "--files",
+                "--line-number",
+                "--pretty",
+            }
+            options_with_value = {"-e", "--regexp", "-g", "--glob"}
+        else:
+            flags = {"-a", "-d", "-f"}
+            options_with_value = {"-I", "-P", "-L"}
+
+        for arg in args:
+            if arg == "--":
+                break
+            if arg in options_with_value:
+                if next(args, None) is None:
+                    return False
+            elif arg.startswith("-") and arg not in flags:
+                return False
+        return True
 
     def _is_mutating_find_command(self, cmd: str) -> bool:
         """Check if a find command contains mutating predicates via AST."""
@@ -294,7 +336,7 @@ class BashCommandParser:
             root = tree.root_node
 
             # Extract paths from commands
-            self._extract_paths_from_node(root, command, paths)
+            self._extract_paths_from_node(root, paths)
 
         except Exception:
             # Fallback to simple token-based extraction
@@ -305,7 +347,6 @@ class BashCommandParser:
     def _extract_paths_from_node(
         self,
         node: Node,
-        command: str,
         paths: List[Tuple[str, str]],
     ) -> None:
         """Recursively extract file paths from AST nodes.
@@ -313,8 +354,6 @@ class BashCommandParser:
         Args:
             node (`Node`):
                 The AST node to process
-            command (`str`):
-                The original command string
             paths (`List[Tuple[str, str]]`):
                 List to append (command_name, path) tuples to
         """
@@ -323,7 +362,7 @@ class BashCommandParser:
             # Extract the target file
             for child in node.children:
                 if child.type == "word":
-                    path = command[child.start_byte : child.end_byte]
+                    path = child.text.decode("utf8")
                     paths.append(("redirect", path.strip("'\"")))
         # Check for commands
         if node.type == "command":
@@ -333,9 +372,9 @@ class BashCommandParser:
 
             for child in node.children:
                 if child.type == "command_name":
-                    cmd_name = command[child.start_byte : child.end_byte]
+                    cmd_name = child.text.decode("utf8")
                 elif child.type == "word" and cmd_name:
-                    arg = command[child.start_byte : child.end_byte]
+                    arg = child.text.decode("utf8")
                     args.append(arg.strip("'\""))
 
             # Check if this is a file-manipulating command
@@ -359,7 +398,7 @@ class BashCommandParser:
 
         # Recursively process children
         for child in node.children:
-            self._extract_paths_from_node(child, command, paths)
+            self._extract_paths_from_node(child, paths)
 
     def _extract_paths_fallback(
         self,
@@ -439,7 +478,7 @@ class BashCommandParser:
             root = tree.root_node
 
             # Extract redirections
-            self._extract_redirections_from_node(root, command, redirections)
+            self._extract_redirections_from_node(root, redirections)
 
         except Exception:
             # Fallback to simple extraction
@@ -454,7 +493,6 @@ class BashCommandParser:
     def _extract_redirections_from_node(
         self,
         node: Node,
-        command: str,
         redirections: List[str],
     ) -> None:
         """Recursively extract redirections from AST nodes.
@@ -462,8 +500,6 @@ class BashCommandParser:
         Args:
             node (`Node`):
                 The AST node to process
-            command (`str`):
-                The original command string
             redirections (`List[str]`):
                 List to append redirection targets to
         """
@@ -471,12 +507,12 @@ class BashCommandParser:
             # Extract the target file
             for child in node.children:
                 if child.type == "word":
-                    path = command[child.start_byte : child.end_byte]
+                    path = child.text.decode("utf8")
                     redirections.append(path.strip("'\""))
 
         # Recursively process children
         for child in node.children:
-            self._extract_redirections_from_node(child, command, redirections)
+            self._extract_redirections_from_node(child, redirections)
 
     def extract_command_prefixes(
         self,
@@ -510,9 +546,14 @@ class BashCommandParser:
         if not command or not command.strip():
             return []
 
-        # Parse command to AST
-        tree = self.parser.parse(bytes(command, "utf8"))
+        # Do not suggest broad allow rules from an incomplete parse.
+        try:
+            tree = self.parser.parse(bytes(command, "utf8"))
+        except Exception:
+            return []
         root = tree.root_node
+        if root.has_error:
+            return []
 
         # Split compound commands
         subcommands = self.split_compound_command(root, command)
@@ -532,6 +573,32 @@ class BashCommandParser:
 
         return prefixes
 
+    def split_into_subcommands(self, command: str) -> List[str]:
+        """Parse a command string and split it into subcommands.
+
+        Convenience wrapper around :meth:`split_compound_command` that
+        parses ``command`` first. Returns ``[command]`` when the command
+        is empty or no subcommands can be extracted.
+
+        Args:
+            command (`str`):
+                The bash command string (may be compound)
+
+        Returns:
+            `List[str]`:
+                List of individual subcommands, e.g.,
+                ``["git status", "npm install"]`` for
+                ``"git status && npm install"``
+        """
+        if not command or not command.strip():
+            return [command]
+        try:
+            tree = self.parser.parse(bytes(command, "utf8"))
+            return self.split_compound_command(tree.root_node, command)
+        except Exception:
+            # Keep the original input for the tool's safety check.
+            return [command]
+
     def split_compound_command(self, root: Node, command: str) -> List[str]:
         """Split compound commands using tree-sitter for precise parsing.
 
@@ -547,23 +614,32 @@ class BashCommandParser:
             `List[str]`:
                 List of individual subcommands
         """
+        if root.has_error:
+            return [command]
+        source = command.encode("utf8")
         subcommands = []
 
         def extract_commands(node: Node) -> None:
-            """Recursively extract commands from AST."""
-            if node.type == "command":
-                # Extract command text
-                cmd_text = command[node.start_byte : node.end_byte]
-                subcommands.append(cmd_text)
-            elif node.type in ["list", "pipeline", "command_list"]:
-                # Recursively process compound structures
-                for child in node.children:
-                    if child.type not in ["&&", "||", ";", "|", "|&"]:
-                        extract_commands(child)
-            else:
-                # Continue traversing
-                for child in node.children:
+            """Split lists and pipelines without discarding shell syntax."""
+            if node.type in ["program", "list", "pipeline", "command_list"]:
+                for child in node.named_children:
                     extract_commands(child)
+                return
+            if node.type == "comment":
+                return
+            if node.type == "redirected_statement":
+                body = node.child_by_field_name("body")
+                if body is not None and body.type in ["list", "pipeline"]:
+                    extract_commands(body)
+                    # Trailing redirections on a list or pipeline belong
+                    # to its last command, not to the entire structure.
+                    subcommands[-1] += source[
+                        body.end_byte : node.end_byte
+                    ].decode("utf8")
+                    return
+            subcommands.append(
+                source[node.start_byte : node.end_byte].decode("utf8"),
+            )
 
         extract_commands(root)
         return subcommands if subcommands else [command]
@@ -603,16 +679,14 @@ class BashCommandParser:
         for child in simple_cmd.children:
             if child.type == "variable_assignment":
                 # Environment variable assignment
-                var_name = subcmd[child.start_byte : child.end_byte].split(
-                    "=",
-                )[0]
+                var_name = child.text.decode("utf8").split("=", 1)[0]
                 env_vars.append(var_name)
             elif child.type == "command_name":
                 # Command name
-                parts.append(subcmd[child.start_byte : child.end_byte])
+                parts.append(child.text.decode("utf8"))
             elif child.type == "word" and len(parts) >= 1:
                 # Argument (might be a flag or subcommand)
-                word = subcmd[child.start_byte : child.end_byte]
+                word = child.text.decode("utf8")
                 parts.append(word)
                 # Stop after we have command + first argument
                 if len(parts) >= 2:
@@ -936,6 +1010,8 @@ class BashCommandParser:
 
         try:
             tree = self.parser.parse(bytes(command, "utf8"))
+            if tree.root_node.has_error:
+                return "Command parsing failed, cannot verify safety"
             return self._walk_for_dangerous_nodes(tree.root_node)
         except Exception:
             # If parsing fails, be conservative and require review

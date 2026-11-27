@@ -19,7 +19,12 @@ from ...permission import (
 )
 from ...message import TextBlock, ToolResultState
 from .._response import ToolChunk
-from ._backend import BackendBase
+from ._backend import (
+    BackendBase,
+    DEFAULT_MAX_OUTPUT_CHARS,
+    _format_command_failure,
+    _truncate_output,
+)
 
 
 class Bash(ToolBase):
@@ -122,7 +127,7 @@ easier to review tool calls and give permission.
                 ),
                 "default": 120000,
                 "maximum": 600000,
-                "minimum": 0,
+                "minimum": 1,
             },
         },
         "required": ["command"],
@@ -141,6 +146,7 @@ easier to review tool calls and give permission.
         cwd: str | os.PathLike[str] | None = None,
         middlewares: List[ToolMiddlewareBase] | None = None,
         backend: BackendBase | None = None,
+        max_output_chars: int | None = DEFAULT_MAX_OUTPUT_CHARS,
     ) -> None:
         """Initialize the bash tool.
 
@@ -160,11 +166,21 @@ easier to review tool calls and give permission.
                 directory check.
             cwd (`str | os.PathLike[str] | None`, optional):
                 The working directory used when executing bash commands.
+                Defaults to the backend working directory. Relative paths
+                are resolved against that directory.
             middlewares (`List[ToolMiddlewareBase] | None`, optional):
                 Tool middlewares wrapping the tool execution.
             backend (`BackendBase | None`, optional):
                 The sandbox backend to use for shell execution. When
                 ``None``, a :class:`LocalBackend` is created.
+            max_output_chars (`int | None`, defaults to \
+            `DEFAULT_MAX_OUTPUT_CHARS`):
+                Characters of output returned to the agent. Longer output
+                is cut, with a notice that gives the original length.
+                ``None`` returns the whole output and leaves the limit to
+                the agent's ``ContextConfig.tool_result_limit``, which
+                offloads the rest to the workspace when an offloader is
+                set.
         """
         from ._backend import LocalBackend
 
@@ -175,6 +191,22 @@ easier to review tool calls and give permission.
         self.dangerous_directories = list(dangerous_directories)
         self._cwd = os.fspath(cwd) if cwd is not None else None
         self._backend = backend or LocalBackend()
+        if max_output_chars is not None and max_output_chars <= 0:
+            raise ValueError(
+                "max_output_chars must be a positive integer or None, "
+                f"got {max_output_chars}.",
+            )
+        self.max_output_chars = max_output_chars
+
+    async def _get_effective_cwd(self) -> str:
+        """Resolve the directory used by permission checks and execution."""
+        if self._cwd is not None and self._backend.isabs(self._cwd):
+            return self._cwd
+        backend_cwd = await self._backend.getcwd()
+        if self._cwd is None:
+            return backend_cwd
+        # Preserve symlink/.. traversal for the backend filesystem.
+        return self._backend.join_path(backend_cwd, self._cwd)
 
     async def check_read_only(
         self,
@@ -223,8 +255,9 @@ easier to review tool calls and give permission.
         5. Dangerous removal path check for system dirs (bypass-immune
            safety ASK)
         6. ACCEPT_EDITS auto-allow for ``mkdir``/``touch``/``rm``/
-           ``rmdir``/``mv``/``cp``/``sed`` — only when **every**
-           target path resolves inside a working directory
+           ``rmdir``/``mv``/``cp``/``sed`` — only when **every** subcommand
+           of a compound command is one of those filesystem commands AND
+           every target path resolves inside a working directory
         7. PASSTHROUGH (engine continues with rule matching)
 
         "Bypass-immune" decisions set
@@ -301,8 +334,14 @@ easier to review tool calls and give permission.
             )
 
         # 4. Check for dangerous paths in sensitive config files/dirs
-        # (safety check, bypass-immune)
-        dangerous_paths = self._extract_dangerous_paths_from_bash(command)
+        # (safety check, bypass-immune). Relative targets are resolved
+        # against the effective directory the command will run in, not the
+        # launcher's process cwd.
+        effective_cwd = await self._get_effective_cwd()
+        dangerous_paths = self._extract_dangerous_paths_from_bash(
+            command,
+            base_dir=effective_cwd,
+        )
         if dangerous_paths:
             paths_str = ", ".join(dangerous_paths)
             return PermissionDecision(
@@ -319,7 +358,10 @@ easier to review tool calls and give permission.
         # Checked separately from step 4 because these paths are not in the
         # dangerous_files/directories lists — they are system-level paths
         # that should never be removed regardless of user configuration.
-        removal_path = await self._check_dangerous_removal_path(command)
+        removal_path = await self._check_dangerous_removal_path(
+            command,
+            base_dir=effective_cwd,
+        )
         if removal_path:
             return PermissionDecision(
                 behavior=PermissionBehavior.ASK,
@@ -352,11 +394,20 @@ easier to review tool calls and give permission.
                 "cp",
                 "sed",
             }
-            base_command = (
-                command.strip().split()[0] if command.strip() else ""
+            # Every segment of a compound command must itself be a
+            # filesystem command: checking only the first word of the raw
+            # string would let ``touch ./a && curl ... | sh`` ride on
+            # ``touch`` and auto-allow arbitrary code execution.
+            tree = self._bash_parser.parser.parse(bytes(command, "utf8"))
+            subcommands = self._bash_parser.split_compound_command(
+                tree.root_node,
+                command,
             )
+            base_commands = {
+                sub.strip().split()[0] for sub in subcommands if sub.strip()
+            }
 
-            if base_command in filesystem_commands:
+            if base_commands and base_commands <= filesystem_commands:
                 # Collect every target path: file arguments AND output
                 # redirections. ``extract_file_paths`` includes both.
                 target_paths = [
@@ -372,16 +423,22 @@ easier to review tool calls and give permission.
                 # we fall through to PASSTHROUGH rather than blindly
                 # allowing.
                 if target_paths and all(
-                    self._path_in_allowed_working_path(path, context)
+                    self._path_in_allowed_working_path(
+                        path,
+                        context,
+                        base_dir=effective_cwd,
+                    )
                     for path in target_paths
                 ):
                     return PermissionDecision(
                         behavior=PermissionBehavior.ALLOW,
-                        message=f"Permission granted for '{base_command}' "
+                        message=f"Permission granted for "
+                        f"{' '.join(sorted(base_commands))} "
                         f"command (filesystem command, all targets in "
                         f"working directory)",
                         decision_reason=(
-                            f"Filesystem command '{base_command}' is "
+                            f"Filesystem command(s) "
+                            f"{' '.join(sorted(base_commands))} "
                             f"auto-allowed because all target paths are "
                             f"within a working directory"
                         ),
@@ -393,12 +450,23 @@ easier to review tool calls and give permission.
             message=f"Execute bash command: {command}",
         )
 
+    def get_permission_inputs(
+        self,
+        tool_input: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Return complete subcommands for permission rule evaluation."""
+        command = tool_input.get("command", "")
+        return [
+            {**tool_input, "command": subcommand}
+            for subcommand in self._bash_parser.split_into_subcommands(command)
+        ]
+
     async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
     ) -> bool:
-        r"""Match Bash command using regex-based wildcard matching.
+        r"""Match one Bash operation using regex-based wildcard matching.
 
         Implements wildcard matching with escape sequences:
         - Supports \* for literal asterisk and \\ for literal backslash
@@ -409,12 +477,16 @@ easier to review tool calls and give permission.
         - If rule_content is None, matches all invocations
          (tool-name-level rule)
 
+        Matches the supplied operation without parsing or splitting it.
+        The permission engine uses :meth:`get_permission_inputs` to split
+        compound invocations and aggregate matches by rule behavior.
+
         Args:
             rule_content: The command pattern to match, or None to match all
-            tool_input: Must contain a "command" key with the command string
+            tool_input: Must contain a "command" key with the operation string
 
         Returns:
-            True if pattern matches the command
+            True if the pattern matches the supplied operation
         """
         # None = tool-name-level rule, matches everything
         if rule_content is None:
@@ -539,6 +611,7 @@ easier to review tool calls and give permission.
     def _extract_dangerous_paths_from_bash(
         self,
         command: str,
+        base_dir: str | None = None,
     ) -> list[str]:
         """Extract dangerous paths from a bash command using tree-sitter.
 
@@ -549,6 +622,9 @@ easier to review tool calls and give permission.
         Args:
             command (`str`):
                 The bash command string
+            base_dir (`str | None`, optional):
+                Directory a relative target is resolved against when
+                checking whether it names a sensitive file or directory.
 
         Returns:
             `list[str]`:
@@ -560,12 +636,16 @@ easier to review tool calls and give permission.
         file_paths = self._bash_parser.extract_file_paths(command)
 
         for _cmd_name, path in file_paths:
-            if self._is_dangerous_path(path):
+            if self._is_dangerous_path(path, base_dir=base_dir):
                 dangerous_paths.append(path)
 
         return dangerous_paths
 
-    async def _check_dangerous_removal_path(self, command: str) -> str | None:
+    async def _check_dangerous_removal_path(
+        self,
+        command: str,
+        base_dir: str | None = None,
+    ) -> str | None:
         """Check if a rm/rmdir command targets a critical system path.
 
         Detects commands like `rm -rf /`, `rm -rf /usr`, `rmdir ~` that
@@ -583,6 +663,8 @@ easier to review tool calls and give permission.
         Args:
             command (`str`):
                 The bash command string
+            base_dir (`str | None`, optional):
+                The effective command directory. Resolved when omitted.
 
         Returns:
             `str | None`:
@@ -620,13 +702,17 @@ easier to review tool calls and give permission.
                     i += 1
                     continue
                 path = tok.strip("'\"")
-                if await self._is_dangerous_removal_path(path):
+                if await self._is_dangerous_removal_path(path, base_dir):
                     return path
                 i += 1
 
         return None
 
-    async def _is_dangerous_removal_path(self, path: str) -> bool:
+    async def _is_dangerous_removal_path(
+        self,
+        path: str,
+        base_dir: str | None = None,
+    ) -> bool:
         """Check if a path is a critical system directory that must not be
         removed.
 
@@ -637,6 +723,8 @@ easier to review tool calls and give permission.
         Args:
             path (`str`):
                 The path to check (may be relative, absolute, or contain ~)
+            base_dir (`str | None`, optional):
+                The effective command directory. Resolved when omitted.
 
         Returns:
             `bool`:
@@ -655,8 +743,9 @@ easier to review tool calls and give permission.
         # symlink on macOS but is still a root-child and should be
         # flagged.
         expanded = await self._backend.expanduser(path)
-        backend_cwd = await self._backend.getcwd()
-        abs_path = self._backend.abspath(expanded, cwd=backend_cwd)
+        if base_dir is None:
+            base_dir = await self._get_effective_cwd()
+        abs_path = self._backend.abspath(expanded, cwd=base_dir)
 
         # Home directory
         home = await self._backend.expanduser("~")
@@ -695,6 +784,21 @@ easier to review tool calls and give permission.
             ToolChunk: The tool execution result with stdout/stderr content.
         """
 
+        if timeout < 1:
+            yield ToolChunk(
+                content=[
+                    TextBlock(
+                        text=(
+                            f"Error: timeout must be at least 1ms, "
+                            f"got: {timeout}."
+                        ),
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+            return
+
         # Clamp timeout to max 600000ms and convert to seconds
         timeout_ms = min(timeout, 600000)
         timeout_sec = timeout_ms / 1000.0
@@ -712,7 +816,7 @@ easier to review tool calls and give permission.
                 shell_command = ["/bin/sh", "-c", command]
             result = await self._backend.exec_shell(
                 shell_command,
-                cwd=self._cwd,
+                cwd=await self._get_effective_cwd(),
                 timeout=timeout_sec,
             )
 
@@ -739,31 +843,15 @@ easier to review tool calls and give permission.
                 )
                 return
 
-            # Combine output
-            output = stdout
-            if stderr:
-                if output:
-                    output += "\n"
-                output += stderr
-
-            # Truncate if exceeds 30000 characters
-            if len(output) > 30000:
-                output = output[:30000] + "\n... (output truncated)"
-
             # Check exit code
             if not result.ok():
                 # Command failed
-                error_result = f"Command failed: {command}\n"
-                if stdout:
-                    error_result += f"\nStdout:\n{stdout}"
-                if stderr:
-                    error_result += f"\nStderr:\n{stderr}"
-
-                # Truncate error message if needed
-                if len(error_result) > 30000:
-                    error_result = (
-                        error_result[:30000] + "\n... (output truncated)"
-                    )
+                error_result = _format_command_failure(
+                    command,
+                    stdout,
+                    stderr,
+                    self.max_output_chars,
+                )
 
                 yield ToolChunk(
                     content=[TextBlock(text=error_result)],
@@ -771,6 +859,15 @@ easier to review tool calls and give permission.
                     is_last=True,
                 )
             else:
+                # Combine output
+                output = stdout
+                if stderr:
+                    if output:
+                        output += "\n"
+                    output += stderr
+
+                output = _truncate_output(output, self.max_output_chars)
+
                 # Command succeeded - note: ToolChunk uses "running" state
                 # which will be converted to "finished" in ToolResponse
                 yield ToolChunk(

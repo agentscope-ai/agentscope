@@ -14,9 +14,15 @@ both.
 middleware internals (``mw._client``, ``mw._async_search``, ``mw._top_k``) to
 inspect what the public API just did.
 """
+import asyncio
+import gc
+from collections.abc import AsyncIterator
+from datetime import date
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Any
+
+from pydantic import BaseModel
 
 from utils import MockModel
 
@@ -25,7 +31,14 @@ from agentscope.event import (
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
 )
-from agentscope.message import HintBlock, Msg, TextBlock, UserMsg
+from agentscope.message import (
+    AssistantMsg,
+    HintBlock,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    UserMsg,
+)
 from agentscope.middleware import Mem0Middleware
 from agentscope.middleware._longterm_memory._mem0._utils import (
     _extract_memory_texts,
@@ -33,6 +46,7 @@ from agentscope.middleware._longterm_memory._mem0._utils import (
 )
 from agentscope.model import ChatResponse
 from agentscope.tool import Toolkit
+from agentscope.types import ReplyFinishedReason
 
 
 # ----------------------------------------------------------------------
@@ -377,6 +391,99 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
 
         self.assertEqual(reply.get_text_content(), "hi alice")
 
+    async def test_structured_reply_is_written_to_memory_as_json(self) -> None:
+        """Persist the structured payload instead of its status text."""
+
+        class Availability(BaseModel):
+            """Structured reply containing remaining seat availability."""
+
+            seats_available: int
+
+        fake = _FakeAsyncMem0Client()
+        mw = Mem0Middleware(
+            client=fake,
+            user_id="alice",
+            mode="static_control",
+        )
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="structured_call_1",
+                            name="GenerateStructuredOutput",
+                            input='{"seats_available": 13}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="agent_under_test",
+            system_prompt="base system prompt",
+            model=self.model,
+            toolkit=self.toolkit,
+            middlewares=[mw],
+        )
+
+        reply = await agent.reply(
+            UserMsg("user", "How many seats remain?"),
+            structured_schema=Availability,
+        )
+
+        self.assertEqual(reply.structured_output, {"seats_available": 13})
+        self.assertEqual(
+            fake.add_calls[0]["messages"][1]["content"],
+            '{"seats_available": 13}',
+        )
+
+    async def test_custom_structured_reply_writeback(self) -> None:
+        """Return the original reply even when Mem0 cannot encode it."""
+
+        async def cached_reply(message: Msg) -> AsyncIterator[Msg]:
+            yield message
+
+        question = UserMsg("user", "When is the meeting?")
+        for value, expected in (
+            (date(2026, 4, 3), '{"day": "2026-04-03"}'),
+            (object(), None),
+        ):
+            with self.subTest(value=value):
+                cached = AssistantMsg(
+                    "calendar",
+                    "Meeting scheduled.",
+                    structured_output={"day": value},
+                )
+
+                fake = _FakeAsyncMem0Client()
+                agent = self._agent(Mem0Middleware(client=fake, user_id="u"))
+                with patch.object(
+                    agent,
+                    "_reply_impl",
+                    return_value=cached_reply(cached),
+                ):
+                    reply = await agent.reply(question)
+
+                self.assertIs(reply, cached)
+                self.assertEqual(
+                    fake.add_calls,
+                    [
+                        {
+                            "user_id": "u",
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": "When is the meeting?",
+                                },
+                                {"role": "assistant", "content": expected},
+                            ],
+                        },
+                    ]
+                    if expected is not None
+                    else [],
+                )
+
     async def test_memory_message_lands_after_user_message(self) -> None:
         """Mirroring AgentScope 1.x's ReActAgent placement: the memory
         note is inserted right AFTER the new user input lands in the
@@ -430,6 +537,28 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         for m in msgs:
             self.assertNotEqual(getattr(m, "name", None), "memory")
         self.assertEqual(len(fake.search_calls), 1)
+
+    async def test_interrupted_reply_is_not_written_back(self) -> None:
+        """An interrupted reply ends with the agent's canned interruption
+        message instead of an answer, so nothing is written back."""
+        fake = _FakeAsyncMem0Client()
+        mw = Mem0Middleware(
+            client=fake,
+            user_id="alice",
+            mode="static_control",
+        )
+        agent = self._agent(mw)
+        # The model call is cancelled, as when the user stops the reply.
+        self.model.set_responses([asyncio.CancelledError()])
+
+        reply = await agent.reply(UserMsg("user", "plan my trip to Kyoto"))
+
+        self.assertEqual(
+            reply.finished_reason,
+            ReplyFinishedReason.INTERRUPTED,
+        )
+        self.assertEqual(len(fake.search_calls), 1)
+        self.assertListEqual(fake.add_calls, [])
 
     async def test_search_failure_does_not_break_reply(self) -> None:
         """Search errors should be logged but not block the reply."""
@@ -692,6 +821,43 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         self.assertEqual(fake.search_calls[0]["top_k"], 3)
         self.assertEqual(mw._top_k, 9)
 
+    async def test_search_memory_defaults_to_middleware_top_k(self) -> None:
+        """Omitting ``limit`` must fall back to the middleware's
+        ``top_k``, both in the advertised schema and in the mem0 call.
+
+        The tool used to hardcode ``5``, so a middleware configured
+        with ``top_k=9`` still searched for five memories per keyword.
+        """
+        fake = _FakeAsyncMem0Client(
+            search_return={"results": [{"memory": "found"}]},
+        )
+        mw = Mem0Middleware(
+            client=fake,
+            user_id="alice",
+            mode="agent_control",
+            top_k=9,
+        )
+        agent = await self._agent(mw, system_prompt="base prompt")
+        await agent.reply(UserMsg("user", "hi"))
+
+        search_tool = _find_tool(self.toolkit, "search_memory")
+        await search_tool(keywords=["alice"])
+
+        self.assertEqual(
+            fake.search_calls,
+            [
+                {
+                    "query": "alice",
+                    "filters": {"user_id": "alice"},
+                    "top_k": 9,
+                },
+            ],
+        )
+        self.assertEqual(
+            search_tool.input_schema["properties"]["limit"]["default"],
+            9,
+        )
+
     async def test_tools_auto_allow_permission(self) -> None:
         """Memory tools should be auto-allowed by permission checks."""
         mw = Mem0Middleware(
@@ -889,3 +1055,62 @@ class TestBothMode(IsolatedAsyncioTestCase):
         names = _all_tool_names(toolkit)
         self.assertIn("search_memory", names)
         self.assertIn("add_memory", names)
+
+
+class TestBackgroundWriteAnchoring(IsolatedAsyncioTestCase):
+    """A fire-and-forget write must stay alive until it finishes."""
+
+    async def test_background_write_task_is_anchored(self) -> None:
+        """The loop keeps only a weak reference to a task, so the
+        middleware itself must hold the write or a collection can drop
+        it mid-await and lose the write silently."""
+        loop = asyncio.get_running_loop()
+        errors: list[dict] = []
+        previous = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, ctx: errors.append(ctx))
+        self.addCleanup(loop.set_exception_handler, previous)
+
+        started = asyncio.Event()
+
+        class BlockingClient(_FakeAsyncMem0Client):
+            """A client whose add waits on a future nobody else holds."""
+
+            async def add(
+                self,
+                messages: list[dict],
+                **kwargs: Any,
+            ) -> None:
+                self.add_calls.append({"messages": messages, **kwargs})
+                started.set()
+                await asyncio.Future()
+
+        client = BlockingClient()
+        mw = Mem0Middleware(
+            user_id="alice",
+            client=client,
+            await_write=False,
+        )
+        self.addAsyncCleanup(self._drain, mw)
+
+        await mw._dispatch_write(
+            [{"role": "user", "content": "hi"}],
+            user_id="alice",
+            agent_id=None,
+        )
+        await started.wait()
+
+        for _ in range(3):
+            gc.collect()
+        await asyncio.sleep(0)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(mw._background_writes), 1)
+        self.assertEqual(len(client.add_calls), 1)
+
+    @staticmethod
+    async def _drain(mw: Mem0Middleware) -> None:
+        """Cancel whatever is still waiting so the loop can close."""
+        tasks = list(getattr(mw, "_background_writes", ()))
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

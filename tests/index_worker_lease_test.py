@@ -253,3 +253,44 @@ class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
         self.assertFalse(worker.pipeline_started.is_set())
         # No release either — we never held the lease.
         self.assertEqual(storage.released, [])
+
+
+class _CadenceWorker(IndexWorker):
+    """Exposes the renewal cadence without touching protected state."""
+
+    def __init__(self, lease_ttl: timedelta) -> None:
+        super().__init__(
+            storage=_LeaseStorage(),  # type: ignore[arg-type]
+            blob_store=None,  # type: ignore[arg-type]
+            knowledge_base_manager=None,  # type: ignore[arg-type]
+            parsers=[],
+            node_id="test-node",
+            lease_ttl=lease_ttl,
+        )
+
+    @property
+    def renew_interval(self) -> timedelta:
+        """The heartbeat cadence derived from the lease TTL."""
+        return self._renew_interval
+
+
+class IndexWorkerRenewalCadenceTest(IsolatedAsyncioTestCase):
+    """The heartbeat must renew before the lease's halfway point."""
+
+    def test_short_leases_renew_inside_their_half_life(self) -> None:
+        """A 5s floor renewed a 5s lease only at its expiry."""
+        for seconds in (1, 2, 5, 9, 90):
+            ttl = timedelta(seconds=seconds)
+            interval = _CadenceWorker(ttl).renew_interval
+            self.assertLessEqual(
+                interval,
+                ttl / 2,
+                f"A {seconds}s lease renews every {interval}, so a "
+                "sweeper can reap the document before the first "
+                "renewal.",
+            )
+
+    def test_non_positive_lease_ttl_is_rejected(self) -> None:
+        """A zero interval would spin the heartbeat loop."""
+        with self.assertRaisesRegex(ValueError, "lease_ttl"):
+            _CadenceWorker(timedelta(0))

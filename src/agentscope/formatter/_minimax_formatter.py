@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The MiniMax formatters, i.e. the Anthropic formatters plus video input."""
-import fnmatch
 from typing import Any
 
 from pydantic import Field
@@ -9,7 +8,7 @@ from ._anthropic_formatter import (
     AnthropicChatFormatter,
     AnthropicMultiAgentFormatter,
 )
-from ..message import DataBlock
+from ..message import DataBlock, Msg
 
 
 class MiniMaxChatFormatter(AnthropicChatFormatter):
@@ -28,12 +27,15 @@ class MiniMaxChatFormatter(AnthropicChatFormatter):
         block: DataBlock,
     ) -> dict[str, Any] | None:
         """Format video blocks natively and delegate other media."""
-        media_type = block.source.media_type
-        if media_type.startswith("video/") and any(
-            fnmatch.fnmatch(media_type, _)
-            for _ in self.supported_input_media_types
+        supported = self._get_supported_tool_result_block(block)
+        if supported is not None and supported.source.media_type.startswith(
+            "video/",
         ):
-            return self._format_source(block.source, "video")
+            return self._format_source(
+                supported.source,
+                "video",
+                supported.model_extra,
+            )
         return super()._format_anthropic_data_block(block)
 
 
@@ -48,15 +50,36 @@ class MiniMaxMultiAgentFormatter(AnthropicMultiAgentFormatter):
         ),
     )
 
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the MiniMax chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The MiniMax user-message representation.
+        """
+        return await MiniMaxChatFormatter(
+            input_types=self.input_types,
+        ).format(msgs)
+
     def _format_anthropic_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
         """Format video blocks natively and delegate other media."""
-        media_type = block.source.media_type
-        if media_type.startswith("video/") and any(
-            fnmatch.fnmatch(media_type, _)
-            for _ in self.supported_input_media_types
+        supported = self._get_supported_tool_result_block(block)
+        if supported is not None and supported.source.media_type.startswith(
+            "video/",
         ):
-            return self._format_source(block.source, "video")
+            return self._format_source(
+                supported.source,
+                "video",
+                supported.model_extra,
+            )
         return super()._format_anthropic_data_block(block)

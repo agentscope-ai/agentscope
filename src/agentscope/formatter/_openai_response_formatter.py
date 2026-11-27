@@ -2,7 +2,6 @@
 """Formatters for the OpenAI Responses API."""
 from abc import ABC
 from copy import deepcopy
-from fnmatch import fnmatch
 from typing import Any
 
 from pydantic import Field
@@ -52,6 +51,11 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
           audio input yet; use Chat Completions API instead). See
           https://developers.openai.com/api/docs/guides/audio
 
+        For image blocks, ``DataBlock`` extra fields are merged into the
+        ``input_image`` item itself (for example ``detail``), because the
+        Responses API uses a flat ``image_url`` string instead of the nested
+        Chat Completions ``image_url`` object.
+
         Args:
             block (`DataBlock`):
                 The DataBlock to format.
@@ -67,7 +71,7 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
         # an audio-capable model instead.
         # https://developers.openai.com/api/docs/guides/audio
         media_type = getattr(block.source, "media_type", "") or ""
-        if media_type.split("/", 1)[0] == "audio":
+        if media_type.split("/", 1)[0].lower() == "audio":
             logger.warning(
                 "Audio input is not supported by the OpenAI Responses API. "
                 "Use OpenAIChatModel with an audio-capable model instead. "
@@ -80,10 +84,14 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
             return None
 
         if base_result.get("type") == "image_url":
-            return {
+            result = {
                 "type": "input_image",
                 "image_url": base_result["image_url"]["url"],
             }
+            extra = block.model_extra or {}
+            if extra:
+                result.update(extra)
+            return result
 
         if base_result.get("type") == "file":
             return {"type": "input_file", **base_result["file"]}
@@ -123,21 +131,16 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
                 )
                 continue
 
-            media_type = block.source.media_type
-            supports_native_output = (
-                media_type.split("/", 1)[0] == "image"
-                or media_type == "application/pdf"
-            ) and any(
-                fnmatch(media_type, pattern)
-                for pattern in self.supported_input_media_types
-            )
-
-            if supports_native_output:
-                formatted = self._format_response_data_block(block)
+            supported = self._get_supported_tool_result_block(block)
+            if supported is not None and (
+                supported.source.media_type.startswith("image/")
+                or supported.source.media_type == "application/pdf"
+            ):
+                formatted = self._format_response_data_block(supported)
                 if formatted is None:
                     raise RuntimeError(
                         "Supported OpenAI Responses tool-result media could "
-                        f"not be formatted: {media_type}.",
+                        f"not be formatted: {supported.source.media_type}.",
                     )
                 output_parts.append(formatted)
                 has_native_media = True
@@ -454,12 +457,16 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
                     await self._format_tool_sequence(group),
                 )
             elif typ == "agent_message":
-                formatted_group = await self._format_agent_message(
+                (
+                    formatted_group,
+                    has_history,
+                ) = await self._format_agent_message_with_hints(
                     group,
                     is_first_agent_message,
+                    self._format_agent_message,
                 )
                 formatted_msgs.extend(formatted_group)
-                if formatted_group:
+                if has_history:
                     is_first_agent_message = False
 
         return formatted_msgs
@@ -482,6 +489,22 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
         return await OpenAIResponseFormatter(
             input_types=self.input_types,
         ).format(msgs)
+
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the OpenAI Responses formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The Responses API user-message representation.
+        """
+        return await self._format_tool_sequence(msgs)
 
     async def _format_agent_message(
         self,
