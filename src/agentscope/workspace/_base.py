@@ -1640,12 +1640,24 @@ class WorkspaceBase:
             return
 
         buf = io.BytesIO()
+        used: set[str] = set()
         with tarfile.open(fileobj=buf, mode="w") as tf:
             for path in self.skill_paths:
                 if not os.path.isfile(os.path.join(path, "SKILL.md")):
                     logger.warning("Skip skill %r: SKILL.md not found", path)
                     continue
-                tf.add(path, arcname=os.path.basename(os.path.abspath(path)))
+                # A tar entry is identified by its member name, so two
+                # source directories with the same basename (e.g. one
+                # copy per team) would overwrite each other on extract
+                # and the first skill would be silently lost. Give every
+                # later one the same suffix scheme as add_skill.
+                stem = os.path.basename(os.path.abspath(path))
+                arcname, counter = stem, 1
+                while arcname in used:
+                    arcname = f"{stem}-{counter}"
+                    counter += 1
+                used.add(arcname)
+                tf.add(path, arcname=arcname)
         tar_bytes = buf.getvalue()
 
         tmp_path = f"/tmp/skill-seed-{_generate_id()}.tar"
