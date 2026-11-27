@@ -305,6 +305,8 @@ class InMemoryMessageBus(
     ) -> str:
         """Append ``payload`` to the replay log at ``key``.
 
+        Store a snapshot so later caller mutations cannot alter replay.
+
         Args:
             key (`str`):
                 Log identifier.
@@ -322,7 +324,7 @@ class InMemoryMessageBus(
         """
         entry_id = self._next_id()
         log = self._logs[key]
-        log.append((entry_id, payload))
+        log.append((entry_id, deepcopy(payload)))
         if max_len is not None and len(log) > max_len:
             del log[: len(log) - max_len]
         return entry_id
@@ -356,7 +358,7 @@ class InMemoryMessageBus(
     ) -> list[tuple[str, dict]]:
         """Read up to ``max_count`` entries newer than ``since``.
 
-        Reads are non-destructive.
+        Reads are non-destructive and return independent payload copies.
 
         Args:
             key (`str`):
@@ -375,7 +377,7 @@ class InMemoryMessageBus(
         if not log:
             return []
         if since is None:
-            return log[:max_count]
+            return deepcopy(log[:max_count])
         # Find the first entry with id > since.  Entry ids are
         # "<seq>-0" strings; integer comparison on the seq prefix is
         # sufficient because our ids are monotonic.
@@ -388,7 +390,7 @@ class InMemoryMessageBus(
         else:
             # All entries are <= since.
             return []
-        return log[start : start + max_count]
+        return deepcopy(log[start : start + max_count])
 
     async def log_trim(
         self,
@@ -426,6 +428,8 @@ class InMemoryMessageBus(
     ) -> None:
         """Publish ``payload`` to all current subscribers of ``key``.
 
+        Each subscriber receives its own independent payload copy.
+
         Args:
             key (`str`):
                 Channel identifier.
@@ -433,7 +437,7 @@ class InMemoryMessageBus(
                 JSON-serializable dict delivered to each subscriber.
         """
         for q in self._subscribers.get(key, set()):
-            q.put_nowait(payload)
+            q.put_nowait(deepcopy(payload))
 
     async def subscribe(
         self,
