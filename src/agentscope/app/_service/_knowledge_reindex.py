@@ -48,9 +48,10 @@ async def resume_knowledge_base_reindex(
     """
     if not record.data.reindex_pending:
         return record
-    # Legacy writers could only start an empty batch. Later uploads are
-    # independent of it, even when dispatch was interrupted.
-    if not supports_index_publication(storage):
+    # Without a batch ID there is no dispatch to resume. Legacy writers
+    # could only start empty batches, independent of later uploads.
+    batch = record.data.reindex_id
+    if batch is None or not supports_index_publication(storage):
         record.data.reindex_pending = False
         return await storage.upsert_knowledge_base(record.user_id, record)
     documents = await storage.list_knowledge_documents(
@@ -58,13 +59,13 @@ async def resume_knowledge_base_reindex(
         record.id,
     )
     for document in documents:
-        if document.data.reindex_id != record.data.reindex_id:
+        if document.data.reindex_id != batch:
             document.status = "pending"
             document.data.pending_since = datetime.now(timezone.utc)
             document.processing_node = None
             document.lease_expires_at = None
             document.data.error = None
-            document.data.begin_reindex(record.data.reindex_id)
+            document.data.begin_reindex(batch)
             await storage.upsert_knowledge_document(record.user_id, document)
         if document.status == "pending":
             await enqueue_index_task(

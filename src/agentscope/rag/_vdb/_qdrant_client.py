@@ -315,9 +315,16 @@ class _QdrantClient(AsyncQdrantClient):
         propagate_filter = propagate_filter or scorer is not None
         branches = []
         selected: dict[str, set[models.ExtendedPointId]] = {}
+        # Recent SDKs propagate and merge filters before each stage limit.
+        merge_filters = getattr(local_collection, "_merge_filters", None)
         for stage in sources:
             stage_filter = stage.filter
-            if propagate_filter and options["query_filter"] is not None:
+            if merge_filters is not None:
+                stage_filter = merge_filters(
+                    options["query_filter"],
+                    stage_filter,
+                )
+            elif propagate_filter and options["query_filter"] is not None:
                 filters = [
                     f for f in (options["query_filter"], stage_filter) if f
                 ]

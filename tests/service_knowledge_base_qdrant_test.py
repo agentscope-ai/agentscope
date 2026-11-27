@@ -131,8 +131,16 @@ class QdrantFusionTest(_KnowledgeBaseServiceTestCase):
                         migrate_vector_slot=True,
                     )
 
-            async def compare(expected: list[str]) -> None:
-                native = await store.search(reference, [1.0], top_k=2)
+            async def compare(
+                expected: list[str],
+                reference_filter: qdrant_models.Filter | None = None,
+            ) -> None:
+                with patch.object(
+                    store,
+                    "root_filter",
+                    reference_filter or store.root_filter,
+                ):
+                    native = await store.search(reference, [1.0], top_k=2)
                 native_page = pages[-1]
                 self.assertEqual([hit.document_id for hit in native], expected)
                 for mode in ("explicit", "omit"):
@@ -209,11 +217,10 @@ class QdrantFusionTest(_KnowledgeBaseServiceTestCase):
                 )
                 with self.subTest(stage="root and branch filters"):
                     await compare(["0", "1"])
-                store.root_filter = RestToGrpc.convert_filter(
-                    qdrant_models.Filter(must=[exclude("4")]),
-                )
+                rest_filter = qdrant_models.Filter(must=[exclude("4")])
+                store.root_filter = RestToGrpc.convert_filter(rest_filter)
                 with self.subTest(stage="nested protobuf fusion filter"):
-                    await compare(["0", "1"])
+                    await compare(["0", "1"], reference_filter=rest_filter)
                 store.root_filter = None
                 sources[0] = qdrant_models.Prefetch(query=[1.0], limit=4)
                 await store.insert(reference, [rows[4]])
