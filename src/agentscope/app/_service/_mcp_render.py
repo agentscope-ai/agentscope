@@ -1,12 +1,28 @@
 # -*- coding: utf-8 -*-
 """Render an :class:`MCPCard` template into a connectable client."""
 from string import Template
-from typing import Any
+from typing import Any, Match
 
 import jsonschema
 
 from ..hub import MCPCard
 from ...mcp import MCPClient
+
+
+def _substitute_string(text: str, values: dict) -> str:
+    """Replace declared placeholders without changing other dollar signs."""
+
+    def replace(match: Match) -> str:
+        if match.group("escaped") is not None:
+            # ``safe_substitute`` collapses ``$$`` into ``$``, which
+            # corrupts shell PID expressions. Preserve the escape bytes.
+            return "$$"
+        name = match.group("named") or match.group("braced")
+        if name is not None and name in values:
+            return str(values[name])
+        return match.group(0)
+
+    return Template.pattern.sub(replace, text)
 
 
 class MCPRenderError(ValueError):
@@ -83,10 +99,12 @@ def _substitute(
     if isinstance(node, str):
         template = Template(node)
         # Undeclared placeholders (e.g. a literal ``$HOME`` in stdio
-        # args) are deliberately left untouched by ``safe_substitute``.
+        # args) are deliberately left untouched by substitution.
         identifiers = set(template.get_identifiers())
         missing.update((identifiers & declared) - values.keys())
-        return template.safe_substitute(values)
+        # ``safe_substitute`` also rewrites ``$$`` into ``$``, which
+        # corrupts shell PID expressions in stdio args and env values.
+        return _substitute_string(node, values)
 
     if isinstance(node, dict):
         return {

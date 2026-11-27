@@ -16,6 +16,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Callable
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import Mock, patch
 
 from agentscope.app._manager import (
     BackgroundTaskManager,
@@ -23,11 +24,11 @@ from agentscope.app._manager import (
     ChatRunRegistry,
 )
 from agentscope.app._manager._background_task_manager import ToolStop
-from agentscope.app.message_bus import MessageBus
+from agentscope.app.message_bus import MessageBus, MessageBusKeys
 from agentscope.message import ToolResultState
 
 
-class _FakeBus(MessageBus):
+class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
     """In-memory bus with just enough behaviour for the dispatcher.
 
     Only the cancel-broadcast channel is exercised here; the other
@@ -57,6 +58,20 @@ class _FakeBus(MessageBus):
         key: str,
         max_count: int = 100,
     ) -> list[tuple[str, dict]]:
+        return []
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        return []
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
         return []
 
     async def queue_delete(self, key: str) -> None:
@@ -177,6 +192,52 @@ class _FakeBus(MessageBus):
         self._registries.pop(namespace, None)
 
 
+class _DropOnceBus(_FakeBus):
+    """First ``subscribe`` per channel ends or raises; later ones work.
+
+    Used to prove :class:`CancelDispatcher` resubscribes after a dropped
+    pub/sub and still handles the next payload on each channel.
+    """
+
+    def __init__(self, mode: str) -> None:
+        super().__init__()
+        if mode not in ("end", "raise"):
+            raise ValueError(mode)
+        self._mode = mode
+        self._dropped: set[str] = set()
+        self.subscribe_calls: dict[str, int] = {}
+        self.resubscribed = {
+            MessageBusKeys.session_cancel_channel(): asyncio.Event(),
+            MessageBusKeys.task_cancel_channel(): asyncio.Event(),
+            MessageBusKeys.session_interrupt_channel(): asyncio.Event(),
+        }
+
+    async def subscribe(
+        self,
+        key: str,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        self.subscribe_calls[key] = self.subscribe_calls.get(key, 0) + 1
+        if key not in self._dropped:
+            self._dropped.add(key)
+            if on_ready is not None:
+                on_ready()
+            if self._mode == "raise":
+                raise ConnectionError("connection dropped")
+            return
+        event = self.resubscribed.get(key)
+
+        def _on_ready() -> None:
+            if on_ready is not None:
+                on_ready()
+            if event is not None:
+                event.set()
+
+        async for payload in super().subscribe(key, on_ready=_on_ready):
+            yield payload
+
+
 async def _yield_a_few_times(ticks: int = 8) -> None:
     """Yield the event loop a few times so spawned tasks make progress."""
     for _ in range(ticks):
@@ -263,11 +324,35 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
                     break
                 await asyncio.sleep(0.01)
 
+            # Other sessions keep running until manager shutdown.
+            self.assertFalse(bg_task_b.cancelled())
+
         self.assertTrue(bg_task_a1.cancelled() or bg_task_a1.done())
         self.assertTrue(bg_task_a2.cancelled() or bg_task_a2.done())
-        # sess-B BG task is left running until shutdown cancels it.
-        self.assertFalse(bg_task_b.cancelled())
-        bg_task_b.cancel()
+        self.assertTrue(bg_task_b.cancelled())
+
+    async def test_cancel_signal_closes_local_realtime_run(self) -> None:
+        """A session cancel reaches the local WebRTC runner."""
+        bus = _FakeBus()
+        registry = ChatRunRegistry()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+        realtime_runner = Mock()
+
+        async with bg_manager, registry, CancelDispatcher(
+            message_bus=bus,
+            registry=registry,
+            bg_manager=bg_manager,
+            realtime_connections={
+                ("alice", "sess-A"): realtime_runner,
+            },
+        ):
+            await bus.session_publish_cancel("sess-A")
+            for _ in range(50):
+                if realtime_runner.request_close.called:
+                    break
+                await asyncio.sleep(0.01)
+
+        realtime_runner.request_close.assert_called_once_with()
 
     async def test_cancel_signal_for_remote_session_is_noop(self) -> None:
         """Broadcast for a session held on another process is silently
@@ -339,6 +424,128 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
 
         self.assertTrue(chat_task.cancelled() or chat_task.done())
         self.assertTrue(bg_task.cancelled() or bg_task.done())
+
+
+class TestCancelDispatcherReconnect(IsolatedAsyncioTestCase):
+    """A dropped pub/sub must not permanently stop cancel delivery."""
+
+    async def test_resubscribes_when_subscription_ends(self) -> None:
+        """When ``subscribe`` returns, the loop subscribes again and the
+        next session, task, and interrupt payloads are still handled."""
+        await self._assert_resubscribes("end")
+
+    async def test_resubscribes_when_subscription_raises(self) -> None:
+        """When ``subscribe`` raises, the loop subscribes again and the
+        next session, task, and interrupt payloads are still handled."""
+        await self._assert_resubscribes("raise")
+
+    async def _assert_resubscribes(self, mode: str) -> None:
+        """Drop the first subscription on every channel, then publish."""
+        bus = _DropOnceBus(mode)
+        registry = ChatRunRegistry()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+        sleeps: list[float] = []
+        # Capture the real sleep first. Patching
+        # ``cancel_dispatcher.asyncio.sleep`` replaces ``asyncio.sleep``
+        # on the shared module, so the stub must not call it.
+        real_sleep = asyncio.sleep
+
+        async def _instant_backoff(delay: float) -> None:
+            sleeps.append(delay)
+            # Skip the reconnect wait; keep short test sleeps intact.
+            await real_sleep(0 if delay >= 1.0 else delay)
+
+        async with bg_manager, registry:
+            chat_cancel = registry.spawn(
+                _NeverEndingCoro.run(),
+                session_id="sess-cancel",
+            )
+            chat_interrupt = registry.spawn(
+                _NeverEndingCoro.run(),
+                session_id="sess-interrupt",
+            )
+            bg_task = asyncio.create_task(_NeverEndingCoro.run())
+            task_id = await bg_manager.register_task(
+                bg_task,
+                session_id="sess-bg",
+                agent_id="agent",
+                user_id="u",
+            )
+            dispatcher = CancelDispatcher(
+                message_bus=bus,
+                registry=registry,
+                bg_manager=bg_manager,
+            )
+            with patch(
+                "agentscope.app._manager._cancel_dispatcher.asyncio.sleep",
+                _instant_backoff,
+            ):
+                async with dispatcher:
+                    for task in (
+                        dispatcher._session_task,
+                        dispatcher._task_cancel_task,
+                        dispatcher._interrupt_task,
+                    ):
+                        self.assertIsNotNone(task)
+                        assert task is not None
+                        self.assertFalse(
+                            task.done(),
+                            "loop exited after the first subscription",
+                        )
+                    for key, event in bus.resubscribed.items():
+                        try:
+                            await asyncio.wait_for(
+                                event.wait(),
+                                timeout=2.0,
+                            )
+                        except TimeoutError:
+                            self.fail(
+                                f"no resubscribe on {key!r} "
+                                f"after subscribe {mode}",
+                            )
+
+                    await bus.publish(
+                        MessageBusKeys.session_cancel_channel(),
+                        {"session_id": "sess-cancel"},
+                    )
+                    await bus.publish(
+                        MessageBusKeys.task_cancel_channel(),
+                        {"task_id": task_id},
+                    )
+                    await bus.publish(
+                        MessageBusKeys.session_interrupt_channel(),
+                        {"session_id": "sess-interrupt"},
+                    )
+                    for _ in range(50):
+                        if (
+                            chat_cancel.cancelled()
+                            and chat_interrupt.cancelled()
+                            and bg_task.cancelled()
+                        ):
+                            break
+                        await asyncio.sleep(0.01)
+
+            self.assertTrue(
+                chat_cancel.cancelled() or chat_cancel.done(),
+            )
+            self.assertTrue(
+                chat_interrupt.cancelled() or chat_interrupt.done(),
+            )
+            self.assertTrue(bg_task.cancelled() or bg_task.done())
+            for key in bus.resubscribed:
+                self.assertGreaterEqual(
+                    bus.subscribe_calls.get(key, 0),
+                    2,
+                    f"{key!r} was not resubscribed",
+                )
+            # One initial backoff sleep per loop, matching the channel
+            # and schedule listeners (1s, then double, cap 30s).
+            # The wait loop's own short sleeps are recorded too because
+            # the patch replaces the shared ``asyncio.sleep``.
+            self.assertEqual(
+                [delay for delay in sleeps if delay == 1.0],
+                [1.0, 1.0, 1.0],
+            )
 
 
 class TestBackgroundTaskManagerCancelSessionTasks(IsolatedAsyncioTestCase):

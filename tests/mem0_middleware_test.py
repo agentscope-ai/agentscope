@@ -14,6 +14,8 @@ both.
 middleware internals (``mw._client``, ``mw._async_search``, ``mw._top_k``) to
 inspect what the public API just did.
 """
+import asyncio
+import gc
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from typing import Any
@@ -692,6 +694,43 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         self.assertEqual(fake.search_calls[0]["top_k"], 3)
         self.assertEqual(mw._top_k, 9)
 
+    async def test_search_memory_defaults_to_middleware_top_k(self) -> None:
+        """Omitting ``limit`` must fall back to the middleware's
+        ``top_k``, both in the advertised schema and in the mem0 call.
+
+        The tool used to hardcode ``5``, so a middleware configured
+        with ``top_k=9`` still searched for five memories per keyword.
+        """
+        fake = _FakeAsyncMem0Client(
+            search_return={"results": [{"memory": "found"}]},
+        )
+        mw = Mem0Middleware(
+            client=fake,
+            user_id="alice",
+            mode="agent_control",
+            top_k=9,
+        )
+        agent = await self._agent(mw, system_prompt="base prompt")
+        await agent.reply(UserMsg("user", "hi"))
+
+        search_tool = _find_tool(self.toolkit, "search_memory")
+        await search_tool(keywords=["alice"])
+
+        self.assertEqual(
+            fake.search_calls,
+            [
+                {
+                    "query": "alice",
+                    "filters": {"user_id": "alice"},
+                    "top_k": 9,
+                },
+            ],
+        )
+        self.assertEqual(
+            search_tool.input_schema["properties"]["limit"]["default"],
+            9,
+        )
+
     async def test_tools_auto_allow_permission(self) -> None:
         """Memory tools should be auto-allowed by permission checks."""
         mw = Mem0Middleware(
@@ -889,3 +928,62 @@ class TestBothMode(IsolatedAsyncioTestCase):
         names = _all_tool_names(toolkit)
         self.assertIn("search_memory", names)
         self.assertIn("add_memory", names)
+
+
+class TestBackgroundWriteAnchoring(IsolatedAsyncioTestCase):
+    """A fire-and-forget write must stay alive until it finishes."""
+
+    async def test_background_write_task_is_anchored(self) -> None:
+        """The loop keeps only a weak reference to a task, so the
+        middleware itself must hold the write or a collection can drop
+        it mid-await and lose the write silently."""
+        loop = asyncio.get_running_loop()
+        errors: list[dict] = []
+        previous = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, ctx: errors.append(ctx))
+        self.addCleanup(loop.set_exception_handler, previous)
+
+        started = asyncio.Event()
+
+        class BlockingClient(_FakeAsyncMem0Client):
+            """A client whose add waits on a future nobody else holds."""
+
+            async def add(
+                self,
+                messages: list[dict],
+                **kwargs: Any,
+            ) -> None:
+                self.add_calls.append({"messages": messages, **kwargs})
+                started.set()
+                await asyncio.Future()
+
+        client = BlockingClient()
+        mw = Mem0Middleware(
+            user_id="alice",
+            client=client,
+            await_write=False,
+        )
+        self.addAsyncCleanup(self._drain, mw)
+
+        await mw._dispatch_write(
+            [{"role": "user", "content": "hi"}],
+            user_id="alice",
+            agent_id=None,
+        )
+        await started.wait()
+
+        for _ in range(3):
+            gc.collect()
+        await asyncio.sleep(0)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(mw._background_writes), 1)
+        self.assertEqual(len(client.add_calls), 1)
+
+    @staticmethod
+    async def _drain(mw: Mem0Middleware) -> None:
+        """Cancel whatever is still waiting so the loop can close."""
+        tasks = list(getattr(mw, "_background_writes", ()))
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

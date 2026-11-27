@@ -118,7 +118,10 @@ async def create_schedule(
             permission_mode=body.permission_mode,
             chat_model_config=body.chat_model_config,
             source=ScheduleSource.USER,
-            started_at=datetime.now(),
+            # Keep the fallback aware so it denotes an absolute instant
+            # even when the task's timezone differs from the server's.
+            started_at=body.started_at or datetime.now().astimezone(),
+            ended_at=body.ended_at,
         ),
     )
 

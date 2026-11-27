@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The model card class."""
 import copy
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal, Self, Type
 
 import yaml
@@ -13,6 +13,13 @@ class ModelCard(BaseModel):
 
     type: Literal["chat_model"] = "chat_model"
     """The model card type."""
+
+    model_class: str = Field(
+        default="",
+        description="The model implementation class type (e.g. openai_chat).",
+    )
+    """Discriminator identifying which ChatModelBase subclass owns this card.
+    Set automatically by :meth:`ChatModelBase.list_models`."""
 
     name: str = Field(description="The name of the model")
     """The model name."""
@@ -32,6 +39,12 @@ class ModelCard(BaseModel):
         title="Deprecation date",
     )
     """The model deprecated at."""
+
+    release_date: date | None = Field(
+        default=None,
+        description="The model release date, if known.",
+    )
+    """The date this model version became available from its provider."""
 
     input_types: list[str] = Field(
         description="The supported model input types.",
@@ -118,8 +131,10 @@ class ModelCard(BaseModel):
         if "max_tokens" in properties and "output_size" in config:
             properties["max_tokens"]["maximum"] = config["output_size"]
 
-        # Apply parameter_overrides with simple dict merge
-        overrides = config.get("parameter_overrides", {})
+        # A bare YAML key means no overrides.
+        overrides = config.get("parameter_overrides")
+        if overrides is None:
+            overrides = {}
         for param_name, override in overrides.items():
             if override is None:
                 # null means remove
@@ -139,12 +154,19 @@ class ModelCard(BaseModel):
                         **override,
                     }
 
-        # Build final parameter schema
+        # Keep required fields consistent with the filtered properties.
+        required = [
+            name
+            for name in base_schema.get("required", [])
+            if name in properties
+        ]
         final_schema = {
             "type": "object",
             "properties": properties,
-            "required": base_schema.get("required", []),
+            "required": required,
         }
+        if "$defs" in base_schema:
+            final_schema["$defs"] = copy.deepcopy(base_schema["$defs"])
 
         # Create ModelCard instance
         return cls(
@@ -152,10 +174,13 @@ class ModelCard(BaseModel):
             label=config["label"],
             status=config.get("status", "active"),
             deprecated_at=config.get("deprecated_at"),
+            release_date=config.get("release_date"),
             input_types=config.get("input_types", ["text/plain"]),
             output_types=config.get("output_types", ["text/plain"]),
             context_size=config["context_size"],
             output_size=config["output_size"],
             parameter_schema=final_schema,
-            parameters_overrides=config.get("parameter_overrides", {}),
+            parameters_overrides={
+                k: v for k, v in overrides.items() if v is not None
+            },
         )

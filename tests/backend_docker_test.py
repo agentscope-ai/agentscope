@@ -24,7 +24,8 @@ import sys
 import tempfile
 import unittest
 import uuid
-from unittest.async_case import IsolatedAsyncioTestCase
+
+from sandbox_test_support import CheckoutWheelTestCase
 
 from agentscope.tool import ExecResult
 from agentscope.workspace import DockerWorkspace, DockerBackend
@@ -60,8 +61,10 @@ _SKIP_REASON = "Docker backend is only tested on Linux with a live daemon"
 
 
 @unittest.skipUnless(_DOCKER_OK, _SKIP_REASON)
-class TestDockerBackend(IsolatedAsyncioTestCase):
+class TestDockerBackend(CheckoutWheelTestCase):
     """Test cases for ``DockerBackend`` against a live container."""
+
+    workspace_type = DockerWorkspace
 
     async def asyncSetUp(self) -> None:
         """Start a workspace and reuse its wired backend.

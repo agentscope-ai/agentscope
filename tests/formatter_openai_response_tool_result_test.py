@@ -8,6 +8,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
 from agentscope.formatter import OpenAIResponseFormatter
+from agentscope.formatter._formatter_base import _media_type_extension
 from agentscope.message import (
     AssistantMsg,
     Base64Source,
@@ -36,6 +37,11 @@ class TestOpenAIResponseToolResultFormatter(IsolatedAsyncioTestCase):
     async def test_native_multimodal_tool_result(self) -> None:
         """Multimodal tool results use the native ordered output array."""
         fmt = OpenAIResponseFormatter()
+        image = URLSource(url=self.image_url, media_type="image/png")
+        pdf = Base64Source(
+            data="JVBERi0xLjQgZmFrZQ==",
+            media_type="application/pdf",
+        )
         msgs = [
             AssistantMsg(
                 name="assistant",
@@ -57,25 +63,14 @@ class TestOpenAIResponseToolResultFormatter(IsolatedAsyncioTestCase):
                                 ),
                             ),
                             TextBlock(text="The remote copy follows."),
-                            DataBlock(
-                                source=URLSource(
-                                    url=self.image_url,
-                                    media_type="image/png",
-                                ),
-                            ),
+                            DataBlock(source=image),
                             DataBlock(
                                 source=URLSource(
                                     url="https://example.com/audio.mp3",
                                     media_type="audio/mpeg",
                                 ),
                             ),
-                            DataBlock(
-                                name="report.pdf",
-                                source=Base64Source(
-                                    data="JVBERi0xLjQgZmFrZQ==",
-                                    media_type="application/pdf",
-                                ),
-                            ),
+                            DataBlock(name="report.pdf", source=pdf),
                             TextBlock(text="End of result."),
                         ],
                         state=ToolResultState.SUCCESS,
@@ -145,16 +140,46 @@ class TestOpenAIResponseToolResultFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+        image.media_type = "Image/PNG"
+        pdf.media_type = "Application/PDF"
+        self.assertListEqual(await fmt.format(msgs), res)
+        self.assertEqual(image.media_type, "Image/PNG")
+        self.assertEqual(pdf.media_type, "Application/PDF")
+
+    def test_fallback_file_extensions(self) -> None:
+        """Resolve audio extensions and fall back for other media types."""
+        expected = {
+            "audio/aac": ".aac",
+            "audio/flac": ".flac",
+            "audio/l16;rate=24000": ".l16",
+            "audio/mp4": ".m4a",
+            "audio/mpeg": ".mp3",
+            "audio/opus": ".opus",
+            "audio/pcm": ".pcm",
+            " AUDIO/WAV ": ".wav",
+            "image/tiff": ".tif",
+            "application/x-unknown": ".bin",
+        }
+        with patch(
+            "mimetypes.guess_extension",
+            side_effect={"image/tiff": ".tif"}.get,
+        ):
+            actual = {mime: _media_type_extension(mime) for mime in expected}
+        self.assertEqual(actual, expected)
+
     async def test_unsupported_base64_audio_fallback(self) -> None:
         """Unsupported Base64 audio is persisted and returned as text."""
         fmt = OpenAIResponseFormatter()
         named_temp_file = tempfile.NamedTemporaryFile
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            with patch(
-                "agentscope.formatter._formatter_base.tempfile."
-                "NamedTemporaryFile",
-                side_effect=partial(named_temp_file, dir=temp_dir),
+            with (
+                patch(
+                    "agentscope.formatter._formatter_base.tempfile."
+                    "NamedTemporaryFile",
+                    side_effect=partial(named_temp_file, dir=temp_dir),
+                ),
+                patch("mimetypes.guess_extension", return_value=None),
             ):
                 res = await fmt.format(
                     [
@@ -173,8 +198,8 @@ class TestOpenAIResponseToolResultFormatter(IsolatedAsyncioTestCase):
                                         TextBlock(text="audio-before"),
                                         DataBlock(
                                             source=Base64Source(
-                                                data="SUQzBAAA",
-                                                media_type="audio/mpeg",
+                                                data="UklGRiQAAABXQVZF",
+                                                media_type="audio/wav",
                                             ),
                                         ),
                                         TextBlock(text="audio-after"),
@@ -194,8 +219,9 @@ class TestOpenAIResponseToolResultFormatter(IsolatedAsyncioTestCase):
             )
             self.assertIsNotNone(path_match)
             audio_path = Path(path_match.group("path"))
+            self.assertEqual(audio_path.suffix, ".wav")
             with audio_path.open("rb") as audio_file:
-                self.assertEqual(audio_file.read(), b"ID3\x04\x00\x00")
+                self.assertEqual(audio_file.read(), b"RIFF$\x00\x00\x00WAVE")
             self.assertEqual(
                 output,
                 "\n".join(

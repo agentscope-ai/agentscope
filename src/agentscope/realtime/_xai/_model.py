@@ -8,11 +8,7 @@ from typing import Any, AsyncIterator, Literal
 from pydantic import Field
 
 from .. import _events as me
-from .._base import (
-    ModelDisconnectedError,
-    RealtimeModelBase,
-    TruncationSupport,
-)
+from .._base import ModelDisconnectedError, RealtimeModelBase
 from .._model_card import RealtimeModelCard
 from ..._logging import logger
 from ...credential import XAICredential
@@ -57,8 +53,12 @@ class XAIRealtimeModel(RealtimeModelBase):
         )
 
     type = "xai_realtime"
-    truncation = TruncationSupport.NONE
     supports_text_input = True
+
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """xAI always reports settled input transcription events."""
+        return True
 
     def __init__(
         self,
@@ -104,6 +104,10 @@ class XAIRealtimeModel(RealtimeModelBase):
         await self.close()
         while not self._queue.empty():
             self._queue.get_nowait()
+        # A response of the closed session cannot be cancelled or
+        # completed in the new one.
+        self._response_id = ""
+        self._tool_args.clear()
 
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(
@@ -205,14 +209,6 @@ class XAIRealtimeModel(RealtimeModelBase):
         if self._response_id:
             await self._send({"type": "response.cancel"})
 
-    async def truncate(
-        self,
-        item_id: str,
-        played_ms: int,
-        played_text: str,
-    ) -> None:
-        """No-op: the protocol documents no truncate frame."""
-
     # ------------------------------------------------------------------
     # Wire
     # ------------------------------------------------------------------
@@ -305,13 +301,23 @@ class XAIRealtimeModel(RealtimeModelBase):
             case "response.done":
                 response = data.get("response", {})
                 usage = response.get("usage") or {}
-                event = me.ResponseDoneEvent(
+                done = me.ResponseDoneEvent(
                     item_id=response.get("id") or self._response_id,
-                    input_tokens=usage.get("input_tokens", 0),
-                    output_tokens=usage.get("output_tokens", 0),
+                    input_tokens=usage.get("input_tokens") or 0,
+                    output_tokens=usage.get("output_tokens") or 0,
                 )
-                self._response_id = ""
-                return event
+                if done.item_id == self._response_id:
+                    self._response_id = ""
+                if response.get("status") == "failed":
+                    err = (response.get("status_details") or {}).get(
+                        "error",
+                    ) or {}
+                    return me.ModelErrorEvent(
+                        response=done,
+                        code=err.get("code") or "response_failed",
+                        message=err.get("message") or "",
+                    )
+                return done
 
             case "response.output_audio.delta":
                 delta = data.get("delta")
@@ -337,6 +343,9 @@ class XAIRealtimeModel(RealtimeModelBase):
                     item_id=item_id,
                     text=data.get("transcript", ""),
                 )
+
+            case "conversation.item.input_audio_transcription.failed":
+                return me.InputTranscriptionFailedEvent(item_id=item_id)
 
             case "input_audio_buffer.speech_started":
                 return me.SpeechStartedEvent(

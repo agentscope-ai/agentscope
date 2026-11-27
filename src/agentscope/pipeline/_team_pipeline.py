@@ -6,6 +6,7 @@ from typing import Any, AsyncGenerator
 
 from pydantic import BaseModel, ConfigDict
 
+from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..agent import Agent
 from ..event import (
@@ -233,6 +234,10 @@ class TeamPipeline:
             # first awaiting call is the parked one, the rest are queued
             results: list[ToolResultBlock] = []
             member = self._parked_member(inputs.reply_id)
+            # Reject invalid events before entering assignment execution;
+            # they must not interrupt the team's pending work.
+            # pylint: disable-next=protected-access
+            await member.agent._check_incoming_event(inputs)
             async for evt in self._run_assignments(
                 self._assigning_calls(member),
                 results,
@@ -338,9 +343,19 @@ class TeamPipeline:
 
         async def run_all() -> None:
             """Run every group and mark the end of the stream."""
+            tasks = [
+                asyncio.create_task(run_group(*group))
+                for group in groups.items()
+            ]
             try:
-                await asyncio.gather(*[run_group(*_) for _ in groups.items()])
+                await asyncio.gather(*tasks)
             finally:
+                # gather propagates a member failure without stopping siblings.
+                # Join them before ending the round, preserving the exception.
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
                 await queue.put(sentinel)
 
         gather_task = asyncio.create_task(run_all())
@@ -356,6 +371,24 @@ class TeamPipeline:
             while not queue.empty():
                 if (evt := queue.get_nowait()) is not sentinel:
                     yield evt
+            raise
+        except Exception:
+            # Only failed assignment execution aborts the parked team.
+            # Call the internal interrupt path once so cleanup failures
+            # cannot recursively retry or replace the member's exception.
+            try:
+                if self.leader.state.has_awaiting_tool_calls(self.leader.name):
+                    async for evt in self._reply(
+                        UserInterruptEvent(
+                            reply_id=self.leader.state.reply_id,
+                        ),
+                    ):
+                        yield evt
+            except Exception:
+                logger.warning(
+                    "Failed to interrupt the team after a member failure.",
+                    exc_info=True,
+                )
             raise
         finally:
             gather_task.cancel()

@@ -2,16 +2,18 @@
 """Unit tests for the OpenAI realtime adapter: cards, session config and
 frame parsing. Nothing here opens a connection."""
 # pylint: disable=protected-access
+import asyncio
 import base64
+import json
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 from utils import AnyString
 
 from agentscope.credential import OpenAICredential
 from agentscope.realtime import (
     ModelDisconnectedError,
     OpenAIRealtimeModel,
-    TruncationSupport,
 )
 from agentscope.realtime import _events as me
 from agentscope.message import ToolResultBlock
@@ -86,6 +88,7 @@ class OpenAICardsTest(unittest.TestCase):
                 "gpt-realtime-2": "OpenAIRealtimeModel",
                 "gpt-realtime-2.1": "OpenAIRealtimeModel",
                 "gpt-realtime-2.1-mini": "OpenAIRealtimeModel",
+                "gpt-live-1": "OpenAILiveModel",
             },
         )
 
@@ -96,21 +99,33 @@ class OpenAICardsTest(unittest.TestCase):
 
     def test_adapter_facts(self) -> None:
         """Protocol facts are constant across the OpenAI models."""
-        model = OpenAIRealtimeModel("gpt-realtime-2.1", CRED)
+
+        class ExtendedParameters(OpenAIRealtimeModel.Parameters):
+            """Parameters extended by an application."""
+
+            custom_field: str = "preserved"
+
+        model = OpenAIRealtimeModel(
+            "gpt-realtime-2.1",
+            CRED,
+            parameters=ExtendedParameters(),
+        )
         self.assertListEqual(
             [
                 model.type,
-                model.truncation,
                 model.supports_text_input,
                 model.input_sample_rate,
                 model.output_sample_rate,
+                type(model.parameters),
+                model.parameters.custom_field,
             ],
             [
                 "openai_realtime",
-                TruncationSupport.EXPLICIT,
                 True,
                 24000,
                 24000,
+                ExtendedParameters,
+                "preserved",
             ],
         )
 
@@ -379,6 +394,10 @@ class OpenAIParseTest(unittest.TestCase):
                 "transcript": "what is the weather",
             },
             {
+                "type": "conversation.item.input_audio_transcription.failed",
+                "item_id": "user_2",
+            },
+            {
                 "type": "error",
                 "error": {
                     "type": "invalid_request_error",
@@ -396,6 +415,7 @@ class OpenAIParseTest(unittest.TestCase):
                     item_id="user_1",
                     text="what is the weather",
                 ),
+                me.InputTranscriptionFailedEvent(item_id="user_2"),
                 me.ModelErrorEvent(code="invalid_value", message="boom"),
             ],
         )
@@ -427,6 +447,7 @@ class OpenAIParseTest(unittest.TestCase):
                     "created_at": AnyString(),
                     "finished_at": None,
                 },
+                "non_blocking": False,
             },
         )
 
@@ -499,25 +520,35 @@ class OpenAIWireTest(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_barge_in_truncates_then_cancels(self) -> None:
-        """A barge-in rewrites the item to the audio heard and cancels
-        the response; with none in flight the cancel is skipped."""
-        await self.model.truncate("item_1", 1200, "hel")
+    async def test_cancel_only_sends_with_a_response_in_flight(self) -> None:
+        """Cancel is skipped until a response is in flight."""
         await self.model.cancel_response()
         self.model._response_id = "resp_1"
         await self.model.cancel_response()
-        self.assertListEqual(
-            self.sent,
-            [
-                {
-                    "type": "conversation.item.truncate",
-                    "item_id": "item_1",
-                    "content_index": 0,
-                    "audio_end_ms": 1200,
-                },
-                {"type": "response.cancel"},
-            ],
-        )
+        self.assertListEqual(self.sent, [{"type": "response.cancel"}])
+
+
+class _OpenSocket:
+    """Record outgoing frames and stay open until closed."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+        self.closed = False
+
+    def __aiter__(self) -> "_OpenSocket":
+        return self
+
+    async def __anext__(self) -> str:
+        await asyncio.Future()
+        raise StopAsyncIteration
+
+    async def send(self, payload: str) -> None:
+        """Capture an outgoing WebSocket frame."""
+        self.sent.append(payload)
+
+    async def close(self) -> None:
+        """Record that the socket was closed."""
+        self.closed = True
 
 
 class OpenAIDisconnectTest(IsolatedAsyncioTestCase):
@@ -552,3 +583,26 @@ class OpenAIDisconnectTest(IsolatedAsyncioTestCase):
         model = OpenAIRealtimeModel("gpt-realtime-2.1", CRED)
         with self.assertRaises(ModelDisconnectedError):
             await model.commit_turn()
+
+    async def test_reconnect_forgets_the_previous_response(self) -> None:
+        """A reopened session cannot cancel the closed session's reply."""
+        model = OpenAIRealtimeModel("gpt-realtime-2.1", CRED)
+        model._parse(
+            {"type": "response.created", "response": {"id": "r1"}},
+        )
+        socket = _OpenSocket()
+
+        with patch(
+            "websockets.connect",
+            new=AsyncMock(return_value=socket),
+        ):
+            await model.connect(instructions="test")
+        await model.request_response()
+        await asyncio.sleep(0)
+
+        self.assertListEqual(
+            [json.loads(payload)["type"] for payload in socket.sent],
+            ["session.update", "response.create"],
+        )
+        self.assertEqual((model._response_id, model._item_id), ("", ""))
+        await model.close()

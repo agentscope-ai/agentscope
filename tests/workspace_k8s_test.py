@@ -194,9 +194,8 @@ class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
             is_stateful=True,
             mcp_config=StdioMCPConfig(
                 command="uvx",
-                # Constrained because the client is pinned to mcp<2:
-                # unpinned, uvx now resolves an mcp 2.x server, whose
-                # handshake this client cannot complete.
+                # mcp-server-time currently requires MCP 1.x and runs
+                # in an isolated uvx environment.
                 args=["--with", "mcp<2.0.0", "mcp-server-time"],
             ),
         )
@@ -270,6 +269,17 @@ class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
         nested = f"{POD_WORKDIR}/data/nested/deeper/note.txt"
         await backend.write_file(nested, b"nested")
         self.assertEqual(await backend.read_file(nested), b"nested")
+
+        # Option-like basenames must remain literal tar file operands.
+        for name in ("-notes.txt", "--version", "-C", "--", "-"):
+            with self.subTest(filename=name):
+                path = f"{POD_WORKDIR}/data/{name}"
+                payload = name.encode() + b"\x00\xff\r\n"
+                await backend.write_file(path, payload)
+                try:
+                    self.assertEqual(await backend.read_file(path), payload)
+                finally:
+                    await backend.delete_path(path)
 
         # 4f. read_file on missing path
         with self.assertRaises(FileNotFoundError):

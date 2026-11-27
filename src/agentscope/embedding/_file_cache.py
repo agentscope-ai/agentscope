@@ -33,13 +33,26 @@ class FileEmbeddingCache(EmbeddingCacheBase):
                 The directory to store the embedding files.
             max_file_number (`int | None`, defaults to `None`):
                 The maximum number of files to keep in the cache directory. If
-                exceeded, the oldest files will be removed.
+                exceeded, the oldest files will be removed. `None` leaves the
+                file count unlimited; `0` retains no embedding files after a
+                write. Negative values are not allowed.
             max_cache_size (`int | None`, defaults to `None`):
                 The maximum size of the cache directory in MB. If exceeded,
                 the oldest files will be removed until the size is within the
                 limit. A vector set that exceeds the limit on its own is not
-                cached, so that storing it cannot empty the cache.
+                cached, so that storing it cannot empty the cache. `None`
+                leaves the size unlimited; `0` skips caching new entries.
+                Negative values are not allowed.
+
+        Raises:
+            ValueError:
+                If `max_file_number` or `max_cache_size` is negative.
         """
+        if max_file_number is not None and max_file_number < 0:
+            raise ValueError("max_file_number must be non-negative or None.")
+        if max_cache_size is not None and max_cache_size < 0:
+            raise ValueError("max_cache_size must be non-negative or None.")
+
         self._cache_dir = os.path.abspath(cache_dir)
         self.max_file_number = max_file_number
         self.max_cache_size = max_cache_size
@@ -143,7 +156,15 @@ class FileEmbeddingCache(EmbeddingCacheBase):
     @staticmethod
     def _get_filename(identifier: JSONSerializableObject) -> str:
         """Generate a filename based on the identifier."""
-        json_str = json.dumps(identifier, ensure_ascii=False)
+        # ``sort_keys`` is required, not cosmetic: every in-tree provider
+        # passes a dict identifier, and without it the SHA-256 depends on key
+        # insertion order, so two semantically identical calls hash to
+        # different files.
+        json_str = json.dumps(
+            identifier,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
         return hashlib.sha256(json_str.encode("utf-8")).hexdigest() + ".npy"
 
     async def _maintain_cache_dir(
@@ -158,10 +179,11 @@ class FileEmbeddingCache(EmbeddingCacheBase):
             new_file (`str | None`, defaults to `None`):
                 The path of the file that :meth:`store` has just written.
                 When that file alone is larger than ``max_cache_size`` it is
-                dropped uncached and the rest of the cache is left untouched:
-                evicting oldest-first towards such a limit would delete
-                every other file and still not fit.
+                dropped uncached without size-based eviction of older
+                entries: evicting oldest-first would still not make it fit.
+                The independent file-count limit is still enforced.
         """
+        rejected_oversized = False
         if new_file and self.max_cache_size is not None:
             new_size_mb = os.path.getsize(new_file) / (1024.0 * 1024.0)
             if new_size_mb > self.max_cache_size:
@@ -173,7 +195,7 @@ class FileEmbeddingCache(EmbeddingCacheBase):
                     new_size_mb,
                     self.max_cache_size,
                 )
-                return
+                rejected_oversized = True
 
         files = [
             (_.name, _.stat().st_mtime)
@@ -182,8 +204,12 @@ class FileEmbeddingCache(EmbeddingCacheBase):
         ]
         files.sort(key=lambda x: x[1])
 
-        if self.max_file_number and len(files) > self.max_file_number:
-            for file_name, _ in files[: 0 - self.max_file_number]:
+        if (
+            self.max_file_number is not None
+            and len(files) > self.max_file_number
+        ):
+            excess = len(files) - self.max_file_number
+            for file_name, _ in files[:excess]:
                 os.remove(os.path.join(self.cache_dir, file_name))
                 logger.info(
                     "Remove cached embedding file %s for limited number "
@@ -191,7 +217,10 @@ class FileEmbeddingCache(EmbeddingCacheBase):
                     file_name,
                     self.max_file_number,
                 )
-            files = files[0 - self.max_file_number :]
+            files = files[excess:]
+
+        if rejected_oversized:
+            return
 
         if (
             self.max_cache_size is not None

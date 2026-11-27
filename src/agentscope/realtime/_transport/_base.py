@@ -31,6 +31,9 @@ class ControlFrameType(StrEnum):
     USER_CONFIRM = "user_confirm"
     """The outcome of a tool permission prompt."""
 
+    EXTERNAL_EXECUTION_RESULT = "external_execution_result"
+    """The result returned by an external tool executor."""
+
     INTERRUPT = "interrupt"
     """The user pressed stop, as opposed to speaking over the reply."""
 
@@ -98,18 +101,11 @@ class TransportBase(ABC):
 
     @abstractmethod
     async def clear_audio(self) -> PlayoutPosition:
-        """Cut playback short and report how much was actually heard.
-
-        Fades out briefly to avoid an audible click, then discards queued
-        and in-flight audio.
-
-        Clearing and reporting are one call on purpose: the returned
-        position is what the caller must feed to
-        :meth:`VoiceBackendBase.truncate`, so the two cannot drift apart
-        and the truncation cannot be forgotten.
+        """Clear audio playback and return its position before the cut.
 
         Returns:
-            `PlayoutPosition`: What the user heard before the cut.
+            `PlayoutPosition`: The playback position before audio was
+            cleared.
         """
 
     @abstractmethod

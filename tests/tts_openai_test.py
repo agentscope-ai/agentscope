@@ -13,6 +13,8 @@ from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
+from openai import NOT_GIVEN
+
 from agentscope.credential import OpenAICredential
 from agentscope.tts import OpenAITTSModel, TTSResponse
 
@@ -93,6 +95,88 @@ class TestOpenAITTSModel(IsolatedAsyncioTestCase):
         self.assertIsNone(result.content)
         mock_client.audio.speech.create.assert_not_called()
 
+    async def test_preset_and_custom_voice_payloads(self) -> None:
+        """Both output modes preserve named and custom voice API shapes."""
+        for stream in (False, True):
+            for voice in ("alloy", {"id": "voice_123"}):
+                with self.subTest(stream=stream, voice=voice):
+                    model = OpenAITTSModel(
+                        credential=OpenAICredential(api_key="test"),
+                        model="gpt-4o-mini-tts",
+                        stream=stream,
+                        parameters=OpenAITTSModel.Parameters(voice=voice),
+                    )
+                    client = _make_mock_client(b"AAAA", [b"AAAA"])
+                    model.client = client
+                    result = await model.synthesize("Hello")
+                    if stream:
+                        async for _ in result:
+                            pass
+                    create = (
+                        client.audio.speech.with_streaming_response.create
+                        if stream
+                        else client.audio.speech.create
+                    )
+                    self.assertEqual(
+                        create.call_args.kwargs,
+                        {
+                            "model": "gpt-4o-mini-tts",
+                            "voice": voice,
+                            "input": "Hello",
+                            "response_format": "mp3",
+                        },
+                    )
+
+    def test_custom_voice_model_cards(self) -> None:
+        """Only the supported synthesis model advertises custom voices."""
+        self.assertEqual(
+            {c.name: c.voice_cloning for c in OpenAITTSModel.list_models()},
+            {
+                "tts-1": False,
+                "tts-1-hd": False,
+                "gpt-4o-mini-tts": True,
+            },
+        )
+
+    def test_model_specific_preset_voices(self) -> None:
+        """Legacy models expose fewer presets than GPT-4o mini TTS."""
+        legacy_voices = [
+            "alloy",
+            "ash",
+            "coral",
+            "echo",
+            "fable",
+            "onyx",
+            "nova",
+            "sage",
+            "shimmer",
+        ]
+        self.assertEqual(
+            {
+                card.name: card.parameter_schema["properties"]["voice"]["enum"]
+                for card in OpenAITTSModel.list_models()
+            },
+            {
+                "tts-1": legacy_voices,
+                "tts-1-hd": legacy_voices,
+                "gpt-4o-mini-tts": [
+                    "alloy",
+                    "ash",
+                    "ballad",
+                    "coral",
+                    "echo",
+                    "fable",
+                    "onyx",
+                    "nova",
+                    "sage",
+                    "shimmer",
+                    "verse",
+                    "marin",
+                    "cedar",
+                ],
+            },
+        )
+
     async def test_empty_string_short_circuits(self) -> None:
         """``synthesize("")`` returns an empty response without touching
         the API."""
@@ -115,6 +199,161 @@ class TestOpenAITTSModel(IsolatedAsyncioTestCase):
         result = await model.synthesize("Hello world")
 
         self.assertEqual(result.content.source.media_type, _MEDIA_TYPE_WAV)
+
+    async def test_rejects_sse_before_requesting_speech(self) -> None:
+        """SSE events cannot be returned as raw audio in either mode."""
+        for stream in (False, True):
+            for options in (
+                {"stream_format": "sse"},
+                {
+                    "stream_format": "audio",
+                    "extra_body": {"stream_format": "sse"},
+                },
+                {
+                    "stream_format": "sse",
+                    "extra_body": {"stream_format": NOT_GIVEN},
+                },
+            ):
+                with self.subTest(stream=stream, options=options):
+                    client = _make_mock_client(b"", [])
+                    model = OpenAITTSModel(
+                        credential=OpenAICredential(api_key="test"),
+                        model="gpt-4o-mini-tts",
+                        stream=stream,
+                    )
+                    model.client = client
+
+                    with self.assertRaisesRegex(ValueError, "stream_format"):
+                        await model.synthesize("Hello", **options)
+
+                    speech = client.audio.speech
+                    speech.create.assert_not_called()
+                    speech.with_streaming_response.create.assert_not_called()
+
+    async def test_stream_uses_validated_extra_body(self) -> None:
+        """Editing call options later must not change the pending request."""
+        model = self._make_model(stream=True)
+        client = _make_mock_client(b"", [b"audio"])
+        model.client = client
+        body = {"stream_format": "audio"}
+        result = await model.synthesize(
+            "Hello",
+            stream_format="sse",
+            extra_body=body,
+        )
+        body["stream_format"] = "sse"
+        async for _ in result:
+            pass
+        create = client.audio.speech.with_streaming_response.create
+        self.assertEqual(
+            create.call_args.kwargs["extra_body"],
+            {"stream_format": "audio"},
+        )
+
+    async def test_per_call_format_controls_media_type(self) -> None:
+        """Both output modes label audio using the effective API format."""
+        for stream in (False, True):
+            model = self._make_model(stream=stream)
+            client = _make_mock_client(b"AAAABBBB", [b"AAAA", b"BBBB"])
+            model.client = client
+            create = (
+                client.audio.speech.with_streaming_response.create
+                if stream
+                else client.audio.speech.create
+            )
+            for response_format, media_type in (
+                ("wav", "audio/wav"),
+                ("pcm", "audio/pcm"),
+                ("opus", "audio/opus"),
+            ):
+                with self.subTest(stream=stream, format=response_format):
+                    result = await model.synthesize(
+                        "Hello",
+                        response_format=response_format,
+                    )
+                    responses = (
+                        [chunk async for chunk in result]
+                        if stream
+                        else [result]
+                    )
+                    self.assertEqual(
+                        create.call_args.kwargs["response_format"],
+                        response_format,
+                    )
+                    self.assertEqual(
+                        [r.content.source.media_type for r in responses],
+                        [media_type] * len(responses),
+                    )
+                    self.assertEqual(
+                        b"".join(
+                            base64.b64decode(r.content.source.data)
+                            for r in responses
+                        ),
+                        b"AAAABBBB",
+                    )
+                    self.assertEqual(model.parameters.response_format, "mp3")
+
+            # A one-off format override must not change the next call.
+            result = await model.synthesize("Next call")
+            responses = (
+                [chunk async for chunk in result] if stream else [result]
+            )
+            self.assertEqual(create.call_args.kwargs["response_format"], "mp3")
+            self.assertEqual(
+                [r.content.source.media_type for r in responses],
+                [_MEDIA_TYPE_MP3] * len(responses),
+            )
+
+    async def test_per_call_instructions_override_default(self) -> None:
+        """Per-call instructions win without mutating the default."""
+        for stream in (False, True):
+            for default in ("Speak cheerfully", ""):
+                model = self._make_model(
+                    stream=stream,
+                    parameters=OpenAITTSModel.Parameters(
+                        instructions=default,
+                    ),
+                )
+                client = _make_mock_client(b"AAAA", [b"AAAA"])
+                model.client = client
+                create = (
+                    client.audio.speech.with_streaming_response.create
+                    if stream
+                    else client.audio.speech.create
+                )
+                for override in ("Speak quietly", ""):
+                    with self.subTest(
+                        stream=stream,
+                        default=default,
+                        override=override,
+                    ):
+                        result = await model.synthesize(
+                            "Hello",
+                            instructions=override,
+                        )
+                        if stream:
+                            async for _ in result:
+                                pass
+                        self.assertEqual(
+                            create.call_args.kwargs["instructions"],
+                            override,
+                        )
+                        self.assertEqual(
+                            model.parameters.instructions,
+                            default,
+                        )
+
+                result = await model.synthesize("Next call")
+                if stream:
+                    async for _ in result:
+                        pass
+                if default:
+                    self.assertEqual(
+                        create.call_args.kwargs["instructions"],
+                        default,
+                    )
+                else:
+                    self.assertNotIn("instructions", create.call_args.kwargs)
 
     async def test_incremental_chunks(self) -> None:
         """Each streamed byte chunk yields one TTSResponse."""

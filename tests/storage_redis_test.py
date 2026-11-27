@@ -2,14 +2,18 @@
 # pylint: disable=protected-access
 """Unit tests for RedisStorage using fakeredis."""
 
+from datetime import datetime as DateTime
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
 
-from utils import AnyString
+from utils import AnyString, AnyValue
 
 from agentscope.app.storage import (
     RedisStorage,
+    VoiceProfileData,
+    VoiceProfileRecord,
     AgentRecord,
     SessionConfig,
     SessionRecord,
@@ -276,17 +280,41 @@ class TestSession(IsolatedAsyncioTestCase):
             make_session_config(self.workspace_id),
         )
         records = await self.storage.list_sessions(self.user_id, self.agent_id)
+        session_id = records[0].id
+        message_key = self.storage._message_key(self.user_id, session_id)
+        message_index_key = self.storage._message_index_key(
+            self.user_id,
+            session_id,
+        )
+        await self.storage.upsert_message(
+            self.user_id,
+            session_id,
+            UserMsg(name="alice", content="hello"),
+        )
         result = await self.storage.delete_session(
             self.user_id,
             self.agent_id,
-            records[0].id,
+            session_id,
         )
-        self.assertTrue(result)
         remaining = await self.storage.list_sessions(
             self.user_id,
             self.agent_id,
         )
-        self.assertEqual(remaining, [])
+        self.assertDictEqual(
+            {
+                "deleted": result,
+                "remaining": remaining,
+                "message_key_count": await self.storage._client.exists(
+                    message_key,
+                    message_index_key,
+                ),
+            },
+            {
+                "deleted": True,
+                "remaining": [],
+                "message_key_count": 0,
+            },
+        )
 
     async def test_delete_cascades_lookup_key(self) -> None:
         """Deleting a session must remove the lookup key so a subsequent upsert
@@ -333,6 +361,50 @@ class TestSession(IsolatedAsyncioTestCase):
         records = await self.storage.list_sessions(self.user_id, "agent-B")
         self.assertEqual(records, [])
 
+    async def test_tied_sessions_list_in_a_total_order(self) -> None:
+        """Sessions sharing a ``created_at`` still come back in one order.
+
+        The index is a Set, so falling back to its iteration order for
+        ties left the listing (and the ``sessions[0]`` callers that read
+        the first row as "the newest") depending on Redis' hash order,
+        which shifts as the set is rewritten. SQL breaks these ties on
+        the id; this must agree with it.
+        """
+        for session_id in ("s2", "s3", "s1"):
+            await self.storage.upsert_session(
+                self.user_id,
+                self.agent_id,
+                make_session_config(self.workspace_id),
+                session_id=session_id,
+            )
+        await self._tie_created_at(("s2", "s3", "s1"))
+
+        records = await self.storage.list_sessions(
+            self.user_id,
+            self.agent_id,
+        )
+        self.assertEqual([r.id for r in records], ["s3", "s2", "s1"])
+
+    async def _tie_created_at(self, session_ids: tuple[str, ...]) -> None:
+        """Rewrite the stored sessions so they share one ``created_at``.
+
+        ``upsert_session`` builds the record itself, so the timestamp can
+        only be set on the stored JSON — the same shape MySQL produces
+        when its whole-second ``DateTime`` collapses a burst.
+        """
+        fixed = DateTime(2026, 1, 1, 12, 0, 0)
+        for session_id in session_ids:
+            key = self.storage._key(
+                self.storage.key_config.session,
+                user_id=self.user_id,
+                session_id=session_id,
+            )
+            record = SessionRecord.model_validate_json(
+                await self.storage._client.get(key),
+            )
+            record.created_at = fixed
+            await self.storage._client.set(key, record.model_dump_json())
+
 
 class TestMessage(IsolatedAsyncioTestCase):
     """Tests for message persistence: upsert_message, get_message and
@@ -358,17 +430,61 @@ class TestMessage(IsolatedAsyncioTestCase):
             [msg.model_dump()],
         )
 
-    async def test_upsert_refreshes_message_list_ttl(self) -> None:
-        """Message list keys expire with the session storage TTL."""
+    async def test_upsert_refreshes_message_keys_ttl(self) -> None:
+        """Message list and index expire with the session storage TTL."""
         self.storage.key_ttl = 60
         msg = UserMsg(name="alice", content="hello")
 
         await self.storage.upsert_message(self.user_id, self.session_id, msg)
 
-        ttl = await self.storage._client.ttl(
+        list_ttl = await self.storage._client.ttl(
             self.storage._message_key(self.user_id, self.session_id),
         )
-        self.assertGreater(ttl, 0)
+        index_ttl = await self.storage._client.ttl(
+            self.storage._message_index_key(self.user_id, self.session_id),
+        )
+        self.assertGreater(list_ttl, 0)
+        self.assertGreater(index_ttl, 0)
+
+    async def test_upsert_lazily_indexes_legacy_messages(self) -> None:
+        """A legacy list gains an ID index without scanning for a new ID."""
+        legacy = UserMsg(name="alice", content="legacy")
+        new = AssistantMsg(name="bot", content="new")
+        key = self.storage._message_key(self.user_id, self.session_id)
+        index_key = self.storage._message_index_key(
+            self.user_id,
+            self.session_id,
+        )
+        await self.storage._client.rpush(key, legacy.model_dump_json())
+
+        with patch.object(
+            self.storage,
+            "_find_message_index",
+        ) as find_index:
+            await self.storage.upsert_message(
+                self.user_id,
+                self.session_id,
+                new,
+            )
+            find_index.assert_not_awaited()
+
+        messages, has_more = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+        )
+        indexed_ids = await self.storage._client.smembers(index_key)
+        self.assertDictEqual(
+            {
+                "messages": [message.model_dump() for message in messages],
+                "has_more": has_more,
+                "indexed_ids": indexed_ids,
+            },
+            {
+                "messages": [legacy.model_dump(), new.model_dump()],
+                "has_more": False,
+                "indexed_ids": {legacy.id, new.id},
+            },
+        )
 
     async def test_upsert_replaces_last_message_with_same_id(self) -> None:
         """Upserting a message whose id matches the last entry replaces it
@@ -420,13 +536,20 @@ class TestMessage(IsolatedAsyncioTestCase):
         )
         self.assertGreater(ttl, 0)
 
-    async def test_upsert_appends_when_id_differs_from_last(self) -> None:
-        """Upserting a message with a different id than the last always
-        appends, even if an earlier message shares the same id."""
+    async def test_upsert_replaces_earlier_message_with_same_id(self) -> None:
+        """Upserting by id replaces a non-tail message without duplication."""
         msg1 = UserMsg(name="alice", content="first")
         msg2 = UserMsg(name="alice", content="second")
         await self.storage.upsert_message(self.user_id, self.session_id, msg1)
         await self.storage.upsert_message(self.user_id, self.session_id, msg2)
+        updated = msg1.model_copy(
+            update={"content": [TextBlock(text="updated first")]},
+        )
+        await self.storage.upsert_message(
+            self.user_id,
+            self.session_id,
+            updated,
+        )
         messages, has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
@@ -434,7 +557,7 @@ class TestMessage(IsolatedAsyncioTestCase):
         self.assertFalse(has_more)
         self.assertListEqual(
             [m.model_dump() for m in messages],
-            [msg1.model_dump(), msg2.model_dump()],
+            [updated.model_dump(), msg2.model_dump()],
         )
 
     async def test_get_message_returns_correct_message(self) -> None:
@@ -460,6 +583,69 @@ class TestMessage(IsolatedAsyncioTestCase):
             "no-such-id",
         )
         self.assertIsNone(result)
+
+    async def test_delete_message(self) -> None:
+        """Deleting by id removes the matching message."""
+        first = UserMsg(name="alice", content="first")
+        second = AssistantMsg(name="bot", content="second")
+        updated_first = UserMsg(
+            id=first.id,
+            name="alice",
+            content="updated first",
+        )
+        await self.storage.upsert_message(
+            self.user_id,
+            self.session_id,
+            first,
+        )
+        await self.storage.upsert_message(
+            self.user_id,
+            self.session_id,
+            second,
+        )
+        await self.storage.upsert_message(
+            self.user_id,
+            self.session_id,
+            updated_first,
+        )
+
+        deleted = await self.storage.delete_message(
+            self.user_id,
+            self.session_id,
+            first.id,
+        )
+        deleted_again = await self.storage.delete_message(
+            self.user_id,
+            self.session_id,
+            first.id,
+        )
+        messages, has_more = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+        )
+        indexed_ids = await self.storage._client.smembers(
+            self.storage._message_index_key(
+                self.user_id,
+                self.session_id,
+            ),
+        )
+
+        self.assertDictEqual(
+            {
+                "deleted": deleted,
+                "deleted_again": deleted_again,
+                "messages": [message.model_dump() for message in messages],
+                "has_more": has_more,
+                "indexed_ids": indexed_ids,
+            },
+            {
+                "deleted": True,
+                "deleted_again": False,
+                "messages": [second.model_dump()],
+                "has_more": False,
+                "indexed_ids": {second.id},
+            },
+        )
 
     async def test_list_messages_empty_session(self) -> None:
         """list_messages returns an empty list for a session with no
@@ -1797,6 +1983,29 @@ class TestSOP(IsolatedAsyncioTestCase):
             {waiting.id, other.id},
         )
 
+    async def test_tied_runs_list_in_a_total_order(self) -> None:
+        """Runs sharing a ``created_at`` come back in one order too.
+
+        Same tie as the session listing above: the run index is a Set,
+        and SQL breaks the tie on the id.
+        """
+        fixed = DateTime(2026, 1, 1, 12, 0, 0)
+        for run_id in ("r2", "r3", "r1"):
+            await self.storage.upsert_sop_run(
+                self.user_id,
+                SOPRunRecord(
+                    id=run_id,
+                    created_at=fixed,
+                    user_id=self.user_id,
+                    sop_id="sop-1",
+                    definition=SOPData(name="a", steps=[_A_STEP]),
+                    state=SOPRunState(steps=[SOPStepRunState()]),
+                ),
+            )
+
+        records = await self.storage.list_sop_runs(self.user_id)
+        self.assertEqual([r.id for r in records], ["r3", "r2", "r1"])
+
     async def test_update_run_writes_state_and_sessions(self) -> None:
         """The hot path rewrites what moves and keeps the snapshot."""
         run = SOPRunRecord(
@@ -1941,3 +2150,121 @@ class TestSOP(IsolatedAsyncioTestCase):
                 "call_id": "c1",
             },
         )
+
+
+class TestVoiceProfileTimestamps(IsolatedAsyncioTestCase):
+    """Voice profile writes refresh timestamps in Redis as in SQL."""
+
+    async def test_upsert_refreshes_updated_at(self) -> None:
+        """Insert and update refresh the stored record's modification time."""
+        storage = make_storage()
+        self.addAsyncCleanup(storage._client.aclose)
+        record = VoiceProfileRecord(
+            user_id="owner",
+            data=VoiceProfileData(name="Voice"),
+        )
+        created_at = record.created_at
+        for moment in (DateTime(2026, 1, 1), DateTime(2026, 1, 2)):
+            with self.subTest(moment=moment):
+                with patch(
+                    "agentscope.app.storage._redis_storage.datetime",
+                ) as clock:
+                    clock.now.return_value = moment
+                    await storage.upsert_voice_profile("owner", record)
+                self.assertEqual(record.updated_at, moment)
+                self.assertEqual(record.created_at, created_at)
+                stored = await storage.get_voice_profile("owner", record.id)
+                self.assertEqual(stored.model_dump(), record.model_dump())
+
+
+class TestRecordKeyTTL(IsolatedAsyncioTestCase):
+    """Record writes store the value and its TTL in one SET command."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.addAsyncCleanup(self.storage._client.aclose)
+
+    async def _value_and_ttl(self, key: str) -> tuple[str | None, int]:
+        """Read back a key's value and remaining TTL."""
+        client = self.storage._client
+        return await client.get(key), await client.ttl(key)
+
+    async def test_first_write_expires(self) -> None:
+        """A new key is written with the configured TTL."""
+        self.storage.key_ttl = 60
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        result = await self._value_and_ttl("probe")
+        self.assertEqual(result, ("new", AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)
+
+    async def test_overwrite_keeps_key_expiring(self) -> None:
+        """Overwriting an expiring or persistent key leaves it expiring."""
+        self.storage.key_ttl = 60
+        await self.storage._client.set("expiring", "old", ex=5)
+        await self.storage._client.set("persistent", "old")
+
+        for key in ("expiring", "persistent"):
+            with self.subTest(key=key):
+                await self.storage._set_with_ttl(key, "new")
+                result = await self._value_and_ttl(key)
+                self.assertEqual(result, ("new", AnyValue()))
+                self.assertGreater(result[1], 5)
+                self.assertLessEqual(result[1], 60)
+
+    async def test_no_ttl_configured_keeps_key_persistent(self) -> None:
+        """With key_ttl None, records are written without an expiry."""
+        self.storage.key_ttl = None
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        self.assertEqual(await self._value_and_ttl("probe"), ("new", -1))
+
+    async def test_no_ttl_configured_clears_existing_expiry(self) -> None:
+        """With key_ttl None, overwriting a key removes its expiry."""
+        self.storage.key_ttl = None
+        await self.storage._client.set("probe", "old", ex=60)
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        self.assertEqual(await self._value_and_ttl("probe"), ("new", -1))
+
+    async def test_failure_after_set_cannot_drop_ttl(self) -> None:
+        """A failing EXPIRE cannot leave the rewritten key persistent."""
+        self.storage.key_ttl = 60
+        await self.storage._client.set("probe", "old", ex=60)
+
+        with patch.object(
+            self.storage._client,
+            "expire",
+            side_effect=ConnectionError("injected"),
+        ):
+            await self.storage._set_with_ttl("probe", "new")
+
+        result = await self._value_and_ttl("probe")
+        self.assertEqual(result, ("new", AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)
+
+    async def test_voice_profile_write_expires(self) -> None:
+        """Voice profile records get the configured TTL like other records."""
+        self.storage.key_ttl = 60
+        record = VoiceProfileRecord(
+            user_id="owner",
+            data=VoiceProfileData(name="Voice"),
+        )
+
+        await self.storage.upsert_voice_profile("owner", record)
+
+        key = self.storage._key(
+            self.storage.key_config.voice_profile,
+            user_id="owner",
+            profile_id=record.id,
+        )
+        result = await self._value_and_ttl(key)
+        self.assertEqual(result, (record.model_dump_json(), AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)

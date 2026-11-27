@@ -81,6 +81,10 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
         import ollama
 
         self.client: ollama.AsyncClient = ollama.AsyncClient(host=self.host)
+        self._cache_endpoint: str = str(
+            # Ollama resolves OLLAMA_HOST and its default URL here.
+            self.client._client.base_url,  # pylint: disable=protected-access
+        )
 
     async def _call_api(
         self,
@@ -97,6 +101,10 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
 
         Returns:
             `EmbeddingResponse`: Embedding vectors and usage info.
+
+        Raises:
+            `RuntimeError`: The API returned a different number of vectors
+                than the number of inputs in this batch.
         """
         api_kwargs: dict[str, Any] = {
             "input": inputs,
@@ -105,11 +113,19 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
             **kwargs,
         }
 
+        # Two Ollama endpoints can serve different weights under the same
+        # model name, so the resolved endpoint is part of the cache key but
+        # not of the request payload.
+        cache_identifier: dict[str, Any] = {
+            "endpoint": self._cache_endpoint,
+            "api_kwargs": api_kwargs,
+        }
+        cached = None
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
             )
-            if cached:
+            if cached is not None and len(cached) == len(inputs):
                 return EmbeddingResponse(
                     embeddings=cached,
                     usage=EmbeddingUsage(tokens=0, time=0),
@@ -120,13 +136,24 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
         response = await self.client.embed(**api_kwargs)
         time = (datetime.now() - start_time).total_seconds()
 
+        embeddings = response.embeddings
+        if len(embeddings) != len(inputs):
+            raise RuntimeError(
+                f"Ollama returned {len(embeddings)} embedding vectors "
+                f"for {len(inputs)} inputs.",
+            )
+
         if self.embedding_cache:
             await self.embedding_cache.store(
-                identifier=api_kwargs,
-                embeddings=response.embeddings,
+                identifier=cache_identifier,
+                embeddings=embeddings,
+                overwrite=cached is not None,
             )
 
         return EmbeddingResponse(
-            embeddings=response.embeddings,
-            usage=EmbeddingUsage(time=time),
+            embeddings=embeddings,
+            usage=EmbeddingUsage(
+                tokens=getattr(response, "prompt_eval_count", None),
+                time=time,
+            ),
         )

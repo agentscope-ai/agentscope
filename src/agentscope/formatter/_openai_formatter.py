@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """The OpenAI formatter for agentscope."""
 import base64
+import re
 from abc import ABC
-from fnmatch import fnmatch
 from typing import Any
 
 import requests
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import FormatterBase, file_url_to_path
 from .._logging import logger
 from ..message import (
     Msg,
@@ -23,6 +23,40 @@ from ..message import (
 )
 
 
+# The Chat Completions API rejects a message ``name`` containing whitespace
+# or any of ``<|\/>`` with a 400 error: "string does not match pattern.
+# Expected a string that matches the pattern '^[^\s<|\\/>]+$'".
+_INVALID_MESSAGE_NAME_CHARS = re.compile(r"[\s<|\\/>]+")
+
+
+_OPENAI_AUDIO_FORMATS = {
+    "audio/wav": "wav",
+    "audio/mp3": "mp3",
+    "audio/mpeg": "mp3",
+}
+
+
+def _format_message_name(name: str | None) -> dict[str, str]:
+    """Build the ``name`` field of an OpenAI chat message.
+
+    Agent and user names are free text (e.g. ``"Research Assistant"``),
+    while the API only accepts names without whitespace and ``<|\\/>``.
+    Each run of such characters is replaced with ``_``, and the field is
+    omitted for an empty name, which the API rejects as well.
+
+    Args:
+        name (`str | None`):
+            The name of the message sender.
+
+    Returns:
+        `dict[str, str]`:
+            ``{"name": <valid name>}``, or an empty dict.
+    """
+    if not name:
+        return {}
+    return {"name": _INVALID_MESSAGE_NAME_CHARS.sub("_", name)}
+
+
 class _OpenAIFormatterBase(FormatterBase, ABC):
     """Base class for OpenAI formatters, providing shared data block
     formatting logic."""
@@ -34,8 +68,11 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         """Format a DataBlock into the required format for OpenAI API.
 
         For image blocks, URLs are returned as-is (or converted to base64 for
-        local ``file://`` paths). For audio blocks, data is always converted
-        to base64 as required by the OpenAI input_audio format.
+        local ``file://`` paths). Image extras such as ``detail`` are merged
+        into the nested ``image_url`` payload as required by OpenAI Chat
+        Completions. For audio blocks, data is always converted to base64 as
+        required by the OpenAI ``input_audio`` format, and extras are merged
+        into the nested ``input_audio`` payload.
 
         Args:
             block (`DataBlock`):
@@ -46,10 +83,10 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                 A dictionary in OpenAI API format, or ``None`` if the block
                 should be skipped.
         """
-        if not any(
-            fnmatch(block.source.media_type, pattern)
-            for pattern in self.supported_input_media_types
-        ):
+        # Normalize the MIME type (lowercase, matched case-insensitively)
+        # before the checks below and the data-URI built from it.
+        supported = self._get_supported_tool_result_block(block)
+        if supported is None:
             logger.warning(
                 "Unsupported media type %s for OpenAI API. "
                 "Supported types: %s. This block will be skipped.",
@@ -57,14 +94,15 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                 ", ".join(self.supported_input_media_types),
             )
             return None
+        block = supported
 
         main_type = block.source.media_type.split("/")[0]
 
         if main_type == "image":
-            return self._format_image_source(block.source)
+            return self._format_image_source(block.source, block.model_extra)
 
         if main_type == "audio":
-            return self._format_audio_source(block.source)
+            return self._format_audio_source(block.source, block.model_extra)
 
         if block.source.media_type == "application/pdf":
             return self._format_file_source(block.source, block.name)
@@ -79,22 +117,29 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
     def _format_image_source(
         self,
         source: URLSource | Base64Source,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Convert an image source to OpenAI image_url format.
 
         Local ``file://`` URLs are read from disk and converted to base64
-        data URIs. Remote URLs are passed through unchanged. Subclasses may
-        override this to apply provider-specific handling (e.g. forcing
-        remote URLs to be downloaded and base64-encoded for APIs that don't
-        accept raw HTTPS URLs).
+        data URIs. Remote URLs are passed through unchanged. Extra media
+        parameters (for example ``detail``) are merged into the nested
+        ``image_url`` object, matching OpenAI Chat Completions' image input
+        schema. Subclasses may override this to apply provider-specific
+        handling (e.g. forcing remote URLs to be downloaded and base64-encoded
+        for APIs that don't accept raw HTTPS URLs).
 
         Args:
             source (`URLSource | Base64Source`):
                 The image source to convert.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific image parameters to merge into the nested
+                ``image_url`` object, such as OpenAI's ``detail``.
 
         Returns:
             `dict[str, Any]`:
                 A dictionary with ``"type": "image_url"`` in OpenAI format.
+                Extra fields are nested under the ``image_url`` object.
         """
         if isinstance(source, Base64Source):
             url = f"data:{source.media_type};base64,{source.data}"
@@ -103,7 +148,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url_str = str(source.url)
             if url_str.startswith("file://"):
                 # Local file — read and encode as base64 data URI
-                local_path = url_str.removeprefix("file://")
+                local_path = file_url_to_path(url_str)
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 url = f"data:{source.media_type};base64,{encoded}"
@@ -114,55 +159,64 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         else:
             raise ValueError(f"Unsupported image source type: {type(source)}")
 
+        image_url_payload = {"url": url}
+        if extra:
+            image_url_payload.update(extra)
         return {
             "type": "image_url",
-            "image_url": {"url": url},
+            "image_url": image_url_payload,
         }
 
     @staticmethod
     def _format_audio_source(
         source: URLSource | Base64Source,
-    ) -> dict[str, Any]:
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """Convert an audio source to OpenAI input_audio format.
 
         Local ``file://`` URLs are read from disk. Remote URLs are downloaded.
-        Only ``wav`` and ``mp3`` formats are supported by the OpenAI API.
+        Only WAV and MP3 can be encoded. Other audio subtypes are skipped.
+        Extra fields are merged into the nested ``input_audio`` object.
 
         Args:
             source (`URLSource | Base64Source`):
                 The audio source to convert.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific audio parameters to merge into the nested
+                ``input_audio`` object.
 
         Returns:
-            `dict[str, Any]`:
-                A dictionary with ``"type": "input_audio"`` in OpenAI format.
+            `dict[str, Any] | None`:
+                A dictionary with ``"type": "input_audio"`` in OpenAI format,
+                or ``None`` if the media type cannot be encoded.
         """
-        media_type_to_format = {
-            "audio/wav": "wav",
-            "audio/mp3": "mp3",
-            "audio/mpeg": "mp3",
-        }
         media_type = source.media_type
-        if media_type not in media_type_to_format:
-            raise TypeError(
-                f"Unsupported audio media type: {media_type}, "
-                "only WAV and MP3 audio are supported.",
+        audio_format = _OPENAI_AUDIO_FORMATS.get(media_type)
+        if audio_format is None:
+            logger.warning(
+                "Unsupported audio media type %s for OpenAI API, only WAV "
+                "and MP3 audio are supported. This block will be skipped.",
+                media_type,
             )
-        audio_format = media_type_to_format[media_type]
+            return None
 
         if isinstance(source, Base64Source):
+            input_audio_payload = {
+                "data": source.data,
+                "format": audio_format,
+            }
+            if extra:
+                input_audio_payload.update(extra)
             return {
                 "type": "input_audio",
-                "input_audio": {
-                    "data": source.data,
-                    "format": audio_format,
-                },
+                "input_audio": input_audio_payload,
             }
 
         if isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
                 # Local file
-                local_path = url_str.removeprefix("file://")
+                local_path = file_url_to_path(url_str)
                 with open(local_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
@@ -171,12 +225,15 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
 
+            input_audio_payload = {
+                "data": data,
+                "format": audio_format,
+            }
+            if extra:
+                input_audio_payload.update(extra)
             return {
                 "type": "input_audio",
-                "input_audio": {
-                    "data": data,
-                    "format": audio_format,
-                },
+                "input_audio": input_audio_payload,
             }
 
         raise TypeError(f"Unsupported audio source type: {type(source)}.")
@@ -208,7 +265,10 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                with open(url_str.removeprefix("file://"), "rb") as f:
+                with open(
+                    file_url_to_path(url_str),
+                    "rb",
+                ) as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
                 response = requests.get(url_str, timeout=30)
@@ -236,12 +296,13 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
         default_factory=lambda: [
             "text/plain",
             "image/*",
-            "audio/*",
+            *_OPENAI_AUDIO_FORMATS,
             "application/pdf",
         ],
         description=(
             "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "audio/*", "application/pdf"]``.'
+            '``["text/plain", "image/*", "audio/wav", "audio/mp3", '
+            '"audio/mpeg", "application/pdf"]``.'
         ),
     )
 
@@ -291,7 +352,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     if content_blocks or tool_calls:
                         msg_openai = {
                             "role": msg.role,
-                            "name": msg.name,
+                            **_format_message_name(msg.name),
                             "content": content_blocks or None,
                         }
                         if tool_calls:
@@ -343,7 +404,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     if content_blocks or tool_calls:
                         msg_openai_flush = {
                             "role": msg.role,
-                            "name": msg.name,
+                            **_format_message_name(msg.name),
                             "content": content_blocks or None,
                         }
                         if tool_calls:
@@ -403,7 +464,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
 
             msg_openai = {
                 "role": msg.role,
-                "name": msg.name,
+                **_format_message_name(msg.name),
                 "content": content_blocks or None,
             }
 
@@ -442,12 +503,13 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
         default_factory=lambda: [
             "text/plain",
             "image/*",
-            "audio/*",
+            *_OPENAI_AUDIO_FORMATS,
             "application/pdf",
         ],
         description=(
             "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "audio/*", "application/pdf"]``.'
+            '``["text/plain", "image/*", "audio/wav", "audio/mp3", '
+            '"audio/mpeg", "application/pdf"]``.'
         ),
     )
 
@@ -472,12 +534,17 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    formatted_group = await self._format_agent_message(
+                    (
+                        formatted_group,
+                        has_history,
+                    ) = await self._format_agent_message_with_hints(
                         group,
                         is_first_agent_message,
+                        self._format_agent_message,
+                        prompt_requires_text=True,
                     )
                     formatted_msgs.extend(formatted_group)
-                    if formatted_group:
+                    if has_history:
                         is_first_agent_message = False
 
         return formatted_msgs
@@ -491,6 +558,22 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
         return await OpenAIChatFormatter(
             input_types=self.input_types,
         ).format(msgs)
+
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the OpenAI chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The OpenAI user-message representation.
+        """
+        return await self._format_tool_sequence(msgs)
 
     async def _format_agent_message(
         self,

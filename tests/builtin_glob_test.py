@@ -2,10 +2,12 @@
 """Glob tool test case."""
 import os
 import tempfile
+from pathlib import Path
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
 
 from utils import AnyString
-from agentscope.tool import Glob
+from agentscope.tool import ExecResult, Glob, LocalBackend
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -13,6 +15,7 @@ from agentscope.permission import (
 )
 
 
+# pylint: disable=too-many-public-methods
 class GlobToolTest(IsolatedAsyncioTestCase):
     """The glob tool test case."""
 
@@ -73,6 +76,45 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         # Read/Glob/Grep are read-only, return PASSTHROUGH
         self.assertEqual(decision.behavior, PermissionBehavior.PASSTHROUGH)
 
+    async def test_invalid_helper_output(self) -> None:
+        """Malformed helper output must not masquerade as no matches."""
+        backend = LocalBackend()
+        backend.is_dir = AsyncMock(return_value=True)
+        backend.exec_shell = AsyncMock()
+        tool = Glob(backend=backend)
+        for output in (
+            b"not-json",
+            b"null",
+            b"{}",
+            b'"path.py"',
+            b"[1]",
+            b"[null]",
+        ):
+            with self.subTest(output=output):
+                backend.exec_shell.return_value = ExecResult(0, output, b"")
+                chunk = await tool(pattern="*.py", path=self.temp_dir)
+                self.assertEqual(
+                    chunk.model_dump(
+                        exclude={
+                            "id": True,
+                            "content": {"__all__": {"id", "created_at"}},
+                        },
+                    ),
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Glob helper returned invalid output: "
+                                "expected a JSON array of file paths.",
+                                "finished_at": None,
+                            },
+                        ],
+                        "state": "error",
+                        "is_last": True,
+                        "metadata": {},
+                    },
+                )
+
     async def test_simple_pattern(self) -> None:
         """Test simple glob pattern."""
         chunk = await self.glob_tool(
@@ -88,6 +130,24 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test2.py", content)
         self.assertNotIn("test.txt", content)
 
+    async def test_dash_prefixed_patterns(self) -> None:
+        """The helper must receive option-like patterns as literal values."""
+        for name, pattern in (
+            ("-report.txt", "-report*.txt"),
+            ("--help", "--help"),
+            ("-report=one.txt", "-report=*.txt"),
+        ):
+            with self.subTest(pattern=pattern):
+                target = os.path.join(self.temp_dir, name)
+                with open(target, "w", encoding="utf-8"):
+                    pass
+                chunk = await self.glob_tool(
+                    pattern=pattern,
+                    path=self.temp_dir,
+                )
+                self.assertEqual(chunk.state, "running")
+                self.assertEqual(chunk.content[0].text, target)
+
     async def test_recursive_pattern(self) -> None:
         """Test recursive glob pattern."""
         chunk = await self.glob_tool(
@@ -101,6 +161,144 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test1.py", content)
         self.assertIn("test2.py", content)
         self.assertIn("test3.py", content)
+
+    async def test_current_directory_segments(self) -> None:
+        """Standalone dot segments do not change the matched files."""
+        for pattern, expected in (
+            ("./*.py", ["test1.py", "test2.py"]),
+            ("./**/*.py", ["subdir/test3.py", "test1.py", "test2.py"]),
+            ("subdir/./*.py", ["subdir/test3.py"]),
+            (r".\subdir\.\*.py", ["subdir/test3.py"]),
+        ):
+            with self.subTest(pattern=pattern):
+                chunk = await self.glob_tool(
+                    pattern=pattern,
+                    path=self.temp_dir,
+                )
+                self.assertListEqual(
+                    sorted(chunk.content[0].text.splitlines()),
+                    [
+                        os.path.join(self.temp_dir, *name.split("/"))
+                        for name in expected
+                    ],
+                )
+
+    async def test_parent_directory_segments(self) -> None:
+        """``..`` segments resolve to the parent directory instead of
+        silently matching nothing."""
+        for pattern, expected in (
+            ("subdir/../*.py", ["test1.py", "test2.py"]),
+            ("./subdir/../subdir/*.py", ["subdir/test3.py"]),
+            (r".\subdir\..\*.py", ["test1.py", "test2.py"]),
+        ):
+            with self.subTest(pattern=pattern):
+                chunk = await self.glob_tool(
+                    pattern=pattern,
+                    path=self.temp_dir,
+                )
+                self.assertListEqual(
+                    sorted(
+                        os.path.realpath(name)
+                        for name in chunk.content[0].text.splitlines()
+                    ),
+                    [
+                        os.path.realpath(
+                            os.path.join(self.temp_dir, *name.split("/")),
+                        )
+                        for name in expected
+                    ],
+                )
+
+    async def test_parent_directory_segment_from_nested_path(self) -> None:
+        """A relative ``path`` with ``..`` keeps working, and a ``..``
+        pattern segment can climb out of it."""
+        chunk = await self.glob_tool(
+            pattern="../*.py",
+            path=os.path.join(self.temp_dir, "subdir"),
+        )
+        self.assertListEqual(
+            sorted(
+                os.path.realpath(name)
+                for name in chunk.content[0].text.splitlines()
+            ),
+            [
+                os.path.realpath(os.path.join(self.temp_dir, name))
+                for name in ("test1.py", "test2.py")
+            ],
+        )
+
+    async def test_parent_directory_segment_from_symlink(self) -> None:
+        """Follow native path semantics for symlinks and parent segments."""
+        nested = os.path.join(self.temp_dir, "subdir", "nested")
+        os.makedirs(nested)
+        link = os.path.join(self.temp_dir, "alias")
+        try:
+            os.symlink(nested, link, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"Directory symlinks are unavailable: {error}")
+
+        expected = (
+            [
+                os.path.join(self.temp_dir, name)
+                for name in ("test1.py", "test2.py")
+            ]
+            if os.name == "nt"
+            else [os.path.join(self.temp_dir, "subdir", "test3.py")]
+        )
+        for path in (link, os.path.join(link, "..", "nested")):
+            with self.subTest(path=path):
+                chunk = await self.glob_tool(pattern="../*.py", path=path)
+                # Windows collapses alias/.. before following the symlink.
+                if os.name == "nt" and path != link:
+                    self.assertEqual(
+                        (chunk.state, chunk.content[0].text),
+                        ("error", f"Directory not found: {path}"),
+                    )
+                    continue
+                self.assertEqual(chunk.state, "running")
+                self.assertListEqual(
+                    sorted(
+                        os.path.realpath(name)
+                        for name in chunk.content[0].text.splitlines()
+                    ),
+                    [os.path.realpath(name) for name in expected],
+                )
+
+    async def test_parent_directory_segment_at_root(self) -> None:
+        """Continue matching after a parent segment at the filesystem root."""
+        directory = Path(self.temp_dir).resolve()
+        root = directory.anchor
+        pattern = os.path.join(
+            "..",
+            os.path.relpath(directory, root),
+            "*.py",
+        )
+        chunk = await self.glob_tool(pattern=pattern, path=root)
+        self.assertListEqual(
+            sorted(
+                os.path.realpath(name)
+                for name in chunk.content[0].text.splitlines()
+            ),
+            [
+                os.path.realpath(os.path.join(self.temp_dir, name))
+                for name in ("test1.py", "test2.py")
+            ],
+        )
+
+    async def test_dot_prefixed_names_are_preserved(self) -> None:
+        """Normalizing '.' must not strip dots from hidden names."""
+        directory = os.path.join(self.temp_dir, ".config")
+        os.makedirs(directory)
+        path = os.path.join(directory, ".env")
+        with open(path, "w", encoding="utf-8"):
+            pass
+
+        result = await self.glob_tool(
+            pattern="./.config/./.env",
+            path=self.temp_dir,
+        )
+
+        self.assertEqual(result.content[0].text, path)
 
     async def test_default_head_limit_truncates_large_result(self) -> None:
         """Test the default head limit returns the newest 250 files."""

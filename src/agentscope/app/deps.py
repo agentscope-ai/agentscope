@@ -18,6 +18,7 @@ from ._service import (
     ChatService,
     SOPService,
     KnowledgeBaseService,
+    RealtimeService,
     ResourceAccessService,
     SessionService,
     WorkspaceService,
@@ -92,6 +93,11 @@ async def get_chat_service(request: Request) -> ChatService:
     return request.app.state.chat_service
 
 
+async def get_realtime_service(request: Request) -> RealtimeService:
+    """Return the application-wide realtime agent assembly service."""
+    return request.app.state.realtime_service
+
+
 async def get_resource_access_service(
     request: Request,
 ) -> ResourceAccessService:
@@ -132,6 +138,21 @@ async def get_workspace_service(request: Request) -> WorkspaceService:
         `WorkspaceService`: The instance stored in ``app.state``.
     """
     return request.app.state.workspace_service
+
+
+async def get_allowed_stdio_commands(
+    request: Request,
+) -> frozenset[str] | None:
+    """Return the stdio MCP command allowlist, if one is configured.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `frozenset[str] | None`: The commands an API caller may register
+        for a stdio MCP, or ``None`` when no restriction is configured.
+    """
+    return request.app.state.allowed_stdio_commands
 
 
 async def get_chat_run_registry(request: Request) -> ChatRunRegistry:

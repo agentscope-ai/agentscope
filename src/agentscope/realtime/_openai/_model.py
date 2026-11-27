@@ -8,11 +8,7 @@ from typing import Any, AsyncIterator, Literal
 from pydantic import Field
 
 from .. import _events as me
-from .._base import (
-    ModelDisconnectedError,
-    RealtimeModelBase,
-    TruncationSupport,
-)
+from .._base import ModelDisconnectedError, RealtimeModelBase
 from .._model_card import RealtimeModelCard
 from ..._logging import logger
 from ...credential import OpenAICredential
@@ -65,8 +61,12 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         )
 
     type = "openai_realtime"
-    truncation = TruncationSupport.EXPLICIT
     supports_text_input = True
+
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """Whether the configured input transcription model is enabled."""
+        return bool(self.parameters.input_audio_transcription)
 
     def __init__(
         self,
@@ -112,6 +112,10 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         await self.close()
         while not self._queue.empty():
             self._queue.get_nowait()
+        # A response of the closed session cannot be cancelled or
+        # completed in the new one.
+        self._response_id = ""
+        self._item_id = ""
 
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(
@@ -218,24 +222,6 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         """Cancel the reply in flight, if any."""
         if self._response_id:
             await self._send({"type": "response.cancel"})
-
-    async def truncate(
-        self,
-        item_id: str,
-        played_ms: int,
-        played_text: str,
-    ) -> None:
-        """Cut the assistant item back to the audio the user heard. The
-        server drops the transcript tail itself, so *played_text* is
-        unused."""
-        await self._send(
-            {
-                "type": "conversation.item.truncate",
-                "item_id": item_id,
-                "content_index": 0,
-                "audio_end_ms": played_ms,
-            },
-        )
 
     # ------------------------------------------------------------------
     # Wire
@@ -415,6 +401,11 @@ class OpenAIRealtimeModel(RealtimeModelBase):
                 return me.InputTranscriptionEvent(
                     item_id=data.get("item_id", ""),
                     text=data.get("transcript", ""),
+                )
+
+            case "conversation.item.input_audio_transcription.failed":
+                return me.InputTranscriptionFailedEvent(
+                    item_id=data.get("item_id", ""),
                 )
 
             case "input_audio_buffer.speech_started":

@@ -4,7 +4,10 @@ from pydantic import BaseModel, Field
 
 from ....permission import PermissionMode
 from ...storage import (
+    ASRModelConfig,
+    PipelineVoiceConfig,
     ChatModelConfig,
+    RealtimeModelConfig,
     SessionKnowledgeConfig,
     TTSModelConfig,
     SessionRecord,
@@ -57,6 +60,7 @@ class CreateSessionRequest(BaseModel):
     """Request body for creating a new session."""
 
     agent_id: str = Field(description="Agent this session belongs to.")
+    pipeline_voice_config: PipelineVoiceConfig | None = None
     workspace_id: str | None = Field(
         default=None,
         description=(
@@ -86,6 +90,16 @@ class CreateSessionRequest(BaseModel):
         default=None,
         description="TTS model configuration. Can be set later via PATCH.",
     )
+    asr_model_config: ASRModelConfig | None = Field(
+        default=None,
+        description="ASR model configuration. Can be set later via PATCH.",
+    )
+    realtime_model_config: RealtimeModelConfig | None = Field(
+        default=None,
+        description=(
+            "Realtime voice model configuration. Can be set later via PATCH."
+        ),
+    )
     knowledge_config: SessionKnowledgeConfig | None = Field(
         default=None,
         description=(
@@ -108,6 +122,11 @@ class UpdateSessionRequest(BaseModel):
     Omit any field to keep its current value.
     """
 
+    pipeline_voice_config: PipelineVoiceConfig | None = Field(
+        default=None,
+        description="Independent pipeline speech settings. "
+        "Omitted models keep their values. Pass null to clear.",
+    )
     name: str | None = Field(
         default=None,
         description="New display name.",
@@ -126,6 +145,16 @@ class UpdateSessionRequest(BaseModel):
     tts_model_config: TTSModelConfig | None = Field(
         default=None,
         description="New TTS model configuration. "
+        "Pass null to clear; omit to leave unchanged.",
+    )
+    asr_model_config: ASRModelConfig | None = Field(
+        default=None,
+        description="New ASR model configuration. "
+        "Pass null to clear; omit to leave unchanged.",
+    )
+    realtime_model_config: RealtimeModelConfig | None = Field(
+        default=None,
+        description="New realtime voice model configuration. "
         "Pass null to clear; omit to leave unchanged.",
     )
     knowledge_config: SessionKnowledgeConfig | None = Field(
@@ -217,6 +246,12 @@ class ListMessagesResponse(BaseModel):
     """Response body for listing messages in a session."""
 
     messages: list = Field(description="Messages in chronological order.")
+    event_cursor: str | None = Field(
+        default=None,
+        description=(
+            "Latest replay event already included in these messages."
+        ),
+    )
     is_running: bool = Field(
         description="Whether the session is currently running.",
     )

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the :class:`RAGMiddleware` class."""
-from contextlib import AsyncExitStack
+import asyncio
+from contextlib import AsyncExitStack, aclosing
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -12,6 +13,7 @@ from agentscope.event import EventType, HintBlockEvent
 from agentscope.message import (
     Base64Source,
     DataBlock,
+    HintBlock,
     Msg,
     TextBlock,
     UserMsg,
@@ -127,9 +129,17 @@ class _StubKnowledgeBase:
     name = "stub-kb"
     description = "Stub knowledge base."
 
-    def __init__(self, results: list[VectorSearchResult]) -> None:
+    def __init__(
+        self,
+        results: list[VectorSearchResult],
+        error: BaseException | None = None,
+        name: str | None = None,
+    ) -> None:
         self.results = results
+        self.error = error
         self.search_calls: list[dict[str, Any]] = []
+        if name is not None:
+            self.name = name
 
     async def search(
         self,
@@ -145,6 +155,8 @@ class _StubKnowledgeBase:
                 "score_threshold": score_threshold,
             },
         )
+        if self.error is not None:
+            raise self.error
         return self.results[:top_k]
 
 
@@ -238,7 +250,9 @@ async def _drain(generator: AsyncGenerator) -> list:
     return [item async for item in generator]
 
 
-class RAGMiddlewareTest(IsolatedAsyncioTestCase):
+class RAGMiddlewareTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """The test cases for the :class:`RAGMiddleware` class."""
 
     async def asyncSetUp(self) -> None:
@@ -461,6 +475,83 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(events[1], "reasoning-evt")
+
+    async def test_static_hint_cleanup_after_hint_event(self) -> None:
+        """Closing or throwing at the hint event respects persistence
+        and preserves blocks supplied by other middlewares."""
+
+        async def check_exit(exit_mode: str, persist_hint: bool) -> None:
+            middleware = self._middleware(
+                mode="static",
+                top_k=1,
+                persist_hint=persist_hint,
+            )
+            agent = _make_agent()
+            reasoning_started = []
+
+            async def reasoning_next(**_kwargs: Any) -> AsyncGenerator:
+                reasoning_started.append(True)
+                yield "reasoning-evt"
+
+            async def reply_next(**_kwargs: Any) -> AsyncGenerator:
+                async with aclosing(
+                    middleware.on_reasoning(
+                        agent=agent,
+                        input_kwargs={"tool_choice": None},
+                        next_handler=reasoning_next,
+                    ),
+                ) as stream:
+                    event = await anext(stream)
+                    self.assertIsInstance(event, HintBlockEvent)
+                    carrier = agent.state.context[-1]
+                    injected_hint = carrier.content[0]
+                    self.assertEqual(injected_hint.id, event.block_id)
+                    other_hint = HintBlock(hint="Another middleware")
+                    carrier.content.append(other_hint)
+
+                    if exit_mode == "close":
+                        await stream.aclose()
+                    else:
+                        error = (
+                            RuntimeError("consumer failed")
+                            if exit_mode == "error"
+                            else asyncio.CancelledError()
+                        )
+                        with self.assertRaises(type(error)) as caught:
+                            await stream.athrow(error)
+                        self.assertIs(caught.exception, error)
+
+                    self.assertEqual(
+                        carrier.content,
+                        [injected_hint, other_hint]
+                        if persist_hint
+                        else [other_hint],
+                    )
+                    yield "reply-evt"
+
+            events = await _drain(
+                middleware.on_reply(
+                    agent=agent,
+                    input_kwargs={
+                        "inputs": UserMsg(
+                            name="user",
+                            content="Where is Paris?",
+                        ),
+                    },
+                    next_handler=reply_next,
+                ),
+            )
+            self.assertEqual(events, ["reply-evt"])
+            self.assertEqual(reasoning_started, [])
+
+        for exit_mode, persist_hint in [
+            ("close", False),
+            ("close", True),
+            ("error", False),
+            ("cancel", False),
+        ]:
+            with self.subTest(exit_mode=exit_mode, persist_hint=persist_hint):
+                await check_exit(exit_mode, persist_hint)
 
     async def test_static_skips_event_inputs(self) -> None:
         """Non-message inputs (resumption events / ``None``) skip the
@@ -1124,3 +1215,190 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
             [result.document_id for result in results],
             ["doc-broad"],
         )
+
+
+class SearchAcrossFailureIsolation(IsolatedAsyncioTestCase):
+    """A failing knowledge base must not drop the others' context."""
+
+    async def test_failing_kb_does_not_drop_the_others(self) -> None:
+        """The working knowledge base still returns its hits."""
+        failing = _StubKnowledgeBase(
+            [],
+            error=ValueError("Unsupported media type 'application/pdf'"),
+            name="catalog",
+        )
+        with self.assertLogs("as", level="WARNING") as captured:
+            results = await _search_across(
+                [
+                    _StubKnowledgeBase(
+                        [
+                            _make_result(
+                                "Returns within 30 days.",
+                                "doc-1",
+                                0.8,
+                            ),
+                        ],
+                        name="policies",
+                    ),
+                    failing,
+                ],
+                ["How long do I have to return this order?"],
+                top_k=2,
+                score_threshold=None,
+            )
+
+        self.assertListEqual(
+            [result.document_id for result in results],
+            ["doc-1"],
+        )
+        # The skipped knowledge base is named, so an operator can tell
+        # which one to look at without correlating stack traces.
+        self.assertIn("catalog", captured.records[0].getMessage())
+
+    async def test_all_knowledge_bases_failing_raises(self) -> None:
+        """With nothing left to merge, the error still surfaces."""
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            await _search_across(
+                [
+                    _StubKnowledgeBase(
+                        [],
+                        error=ValueError("provider unavailable"),
+                        name="policies",
+                    ),
+                    _StubKnowledgeBase(
+                        [],
+                        error=ValueError("provider unavailable"),
+                        name="catalog",
+                    ),
+                ],
+                ["Where is Paris?"],
+                top_k=2,
+                score_threshold=None,
+            )
+
+    async def test_cancelled_reply_is_not_swallowed(self) -> None:
+        """Cancellation is not a per-KB scoring problem."""
+        with self.assertRaises(asyncio.CancelledError):
+            await _search_across(
+                [
+                    _StubKnowledgeBase(
+                        [_make_result("Paris is in France.", "doc-1", 0.8)],
+                        name="policies",
+                    ),
+                    _StubKnowledgeBase(
+                        [],
+                        error=asyncio.CancelledError(),
+                        name="catalog",
+                    ),
+                ],
+                ["Where is Paris?"],
+                top_k=2,
+                score_threshold=None,
+            )
+
+    async def test_cancelled_sibling_stops_a_fallback_search(self) -> None:
+        """A recovered provider still receives the sibling's cancellation."""
+        await self._check_fallback_cancellation(cancel_caller=False)
+
+    async def test_caller_cancellation_preserves_slow_cleanup(self) -> None:
+        """Caller cancellation reaches each search exactly once."""
+        await self._check_fallback_cancellation(cancel_caller=True)
+
+    async def _check_fallback_cancellation(self, cancel_caller: bool) -> None:
+        fallback_started = asyncio.Event()
+        release = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        cleanup_finished = asyncio.Event()
+
+        async def fail_primary() -> None:
+            raise OSError("primary unavailable")
+
+        async def search_with_fallback(**_: Any) -> list[VectorSearchResult]:
+            with self.assertRaises(ExceptionGroup):
+                async with asyncio.TaskGroup() as group:
+                    group.create_task(fail_primary())
+            fallback_started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cleanup_started.set()
+                await release.wait()
+                cleanup_finished.set()
+                raise
+            return []
+
+        stop = asyncio.Event()
+
+        async def other_search(**_: Any) -> list[VectorSearchResult]:
+            await stop.wait()
+            raise asyncio.CancelledError("stop")
+
+        search_task = asyncio.create_task(
+            _search_across(
+                [
+                    SimpleNamespace(search=search_with_fallback),
+                    SimpleNamespace(search=other_search),
+                ],
+                ["query"],
+                top_k=2,
+                score_threshold=None,
+            ),
+        )
+        try:
+            await asyncio.wait_for(fallback_started.wait(), timeout=2)
+            if cancel_caller:
+                search_task.cancel("stop")
+            else:
+                stop.set()
+            done, _ = await asyncio.wait([search_task], timeout=2)
+            self.assertEqual(done, {search_task})
+            with self.assertRaisesRegex(asyncio.CancelledError, "stop"):
+                search_task.result()
+            await asyncio.wait_for(cleanup_started.wait(), timeout=2)
+            self.assertFalse(cleanup_finished.is_set())
+        finally:
+            release.set()
+            stop.set()
+            await asyncio.gather(search_task, return_exceptions=True)
+        await asyncio.wait_for(cleanup_finished.wait(), timeout=2)
+
+    async def test_failure_is_not_reported_as_no_hits(self) -> None:
+        """If the knowledge bases that worked found nothing, the error
+        still surfaces instead of an empty result."""
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            await _search_across(
+                [
+                    _StubKnowledgeBase([], name="policies"),
+                    _StubKnowledgeBase(
+                        [],
+                        error=RuntimeError("embedding provider unavailable"),
+                        name="catalog",
+                    ),
+                ],
+                ["Where is Paris?"],
+                top_k=2,
+                score_threshold=None,
+            )
+
+
+class RAGHintTemplateValidationTest(IsolatedAsyncioTestCase):
+    """``hint_template`` must be renderable, not merely contain a marker."""
+
+    def test_unknown_placeholder_is_rejected(self) -> None:
+        """A second, unknown placeholder must fail validation up front."""
+        with self.assertRaises(ValueError):
+            RAGMiddleware.Parameters(
+                hint_template="A {context} B {doc_id}",
+            )
+
+    def test_valid_template_is_still_accepted(self) -> None:
+        """The documented single-placeholder form keeps validating."""
+        params = RAGMiddleware.Parameters(
+            hint_template="Sources:\n{context}",
+        )
+        self.assertIn("{context}", params.hint_template)
+
+    def test_missing_placeholder_is_still_rejected(self) -> None:
+        """The pre-existing count check must keep working."""
+        with self.assertRaises(ValueError):
+            RAGMiddleware.Parameters(hint_template="no placeholder here")

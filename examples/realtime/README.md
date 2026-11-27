@@ -24,7 +24,7 @@ audio itself never reaches the view; the transport plays it.
 - AgentScope with the realtime and TUI extras:
 
   ```bash
-  pip install "agentscope[realtime,tui]"
+  pip install "agentscope[realtime,realtime-local,tui]"
   ```
 
   `sounddevice` needs PortAudio: it is bundled on macOS and Windows; on
@@ -40,6 +40,22 @@ python examples/realtime/local_mic.py
 
 Speak, hear the reply, and speak over it to interrupt. `Ctrl-Q` quits.
 
+### GPT-Live prototype
+
+The GPT-Live integration uses a server-side WebSocket and client delegation.
+The local example builds a chat agent from the selected backend model; the Web
+UI automatically reuses the session's current Chat model and tools:
+
+```bash
+export OPENAI_API_KEY=sk-...
+export OPENAI_LIVE_BACKEND_MODEL=your-responses-model
+python examples/realtime/openai_live_local.py
+```
+
+This integration supports continuous full-duplex audio, independent user and
+assistant captions, and application-managed task execution through the normal
+AgentScope chat agent.
+
 The default model is `qwen-audio-3.0-realtime-plus`. Any card listed for the
 credential works; the class is looked up from the card, the same way the
 service layer does it:
@@ -49,6 +65,28 @@ REALTIME_MODEL=qwen3.5-omni-flash-realtime python examples/realtime/local_mic.py
 ```
 
 An unknown name prints the available ones.
+
+`qwen3.8-omni-flash-realtime` requires the endpoint bound to the same
+DashScope workspace as the API key. Set `DASHSCOPE_BASE_URL` to the HTTPS
+Chat Completions base URL (not the WebSocket URL):
+
+```bash
+export DASHSCOPE_BASE_URL=https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+REALTIME_MODEL=qwen3.8-omni-flash-realtime python examples/realtime/local_mic.py
+```
+
+The credential uses that URL for Chat Completions. For realtime sessions,
+the adapter keeps the same workspace host and derives this WebSocket URL:
+
+```text
+wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen3.8-omni-flash-realtime
+```
+
+For the Singapore region, use the corresponding workspace URL:
+
+```bash
+export DASHSCOPE_BASE_URL=https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+```
 
 ### Tools
 
@@ -81,8 +119,9 @@ an unanswered one after five minutes.
   transcript so far appended to the system prompt so the model keeps the
   thread.
 - **Model limits are per turn, not per token.** `qwen3-omni-flash-realtime`
-  remembers eight turns, `qwen-audio-3.0-realtime-*` fifty; older turns are
-  dropped silently on the provider side. The cards under
+  remembers eight turns, `qwen3.8-omni-flash-realtime` one hundred turns or
+  six hundred seconds of audio, and `qwen-audio-3.0-realtime-*` fifty turns;
+  older turns are dropped silently on the provider side. The cards under
   `agentscope/realtime/_dashscope/` list each model's limits.
 - **Typed input** only works on models that accept text
   (`qwen-audio-3.0-realtime-*`); the Omni models are audio-in only, and the

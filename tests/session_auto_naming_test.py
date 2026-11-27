@@ -57,19 +57,33 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
         redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
 
         class _Storage(RedisStorage):
+            def __init__(self) -> None:
+                """Initialize the storage with no active test client."""
+                super().__init__()
+                self._client = None
+
             async def __aenter__(self) -> Any:
+                """Attach the shared fake Redis client."""
                 self._client = redis
                 return self
 
             async def aclose(self) -> None:
+                """Detach the client without closing the shared fake Redis."""
                 self._client = None
 
         class _Bus(RedisMessageBus):
+            def __init__(self) -> None:
+                """Initialize the bus with no active test client."""
+                super().__init__()
+                self._client = None
+
             async def __aenter__(self) -> Any:
+                """Attach the shared fake Redis client."""
                 self._client = redis
                 return self
 
             async def aclose(self) -> None:
+                """Detach the client without closing the shared fake Redis."""
                 self._client = None
 
         app = create_app(
@@ -123,6 +137,9 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "asr_model_config": None,
+                "pipeline_voice_config": None,
+                "realtime_model_config": None,
                 "knowledge_config": None,
             },
         )
@@ -143,6 +160,9 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "asr_model_config": None,
+                "pipeline_voice_config": None,
+                "realtime_model_config": None,
                 "knowledge_config": None,
             },
         )
@@ -169,6 +189,9 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "asr_model_config": None,
+                "pipeline_voice_config": None,
+                "realtime_model_config": None,
                 "knowledge_config": None,
             },
         )
@@ -195,6 +218,9 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "asr_model_config": None,
+                "pipeline_voice_config": None,
+                "realtime_model_config": None,
                 "knowledge_config": None,
             },
         )
@@ -220,6 +246,9 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "asr_model_config": None,
+                "pipeline_voice_config": None,
+                "realtime_model_config": None,
                 "knowledge_config": None,
             },
         )
@@ -338,10 +367,14 @@ class AutoNameSessionTest(IsolatedAsyncioTestCase):
                         "type": "test",
                         "credential_id": "credential-1",
                         "model": "test-model",
+                        "model_class": "",
                         "parameters": {},
                     },
                     "fallback_chat_model_config": None,
                     "tts_model_config": None,
+                    "asr_model_config": None,
+                    "pipeline_voice_config": None,
+                    "realtime_model_config": None,
                     "knowledge_config": None,
                 },
             ],
@@ -393,3 +426,19 @@ class AutoNameSessionTest(IsolatedAsyncioTestCase):
 
         self.assertListEqual(self.storage.written_configs, [])
         self.assertListEqual(await self._published(), [])
+
+    async def test_whitespace_only_turn_is_left_for_later(self) -> None:
+        """A turn carrying no real text must not name the session."""
+        await self._name(_Model("a title"), "   \n  ")
+
+        self.assertListEqual(self.storage.written_configs, [])
+        self.assertListEqual(await self._published(), [])
+
+    async def test_fallback_excerpt_is_a_single_line(self) -> None:
+        """The fallback excerpt never leaks newlines into the name."""
+        await self._name(_Model(), "\n  draft the\n v2 notes  \n")
+
+        self.assertListEqual(
+            [(c.name, c.naming.auto) for c in self.storage.written_configs],
+            [("draft the v2 notes", False)],
+        )

@@ -8,6 +8,81 @@ from agentscope.tool._builtin._bash_parser import BashCommandParser
 from agentscope.tool import Bash
 
 
+class BashPermissionSplitTest(unittest.TestCase):
+    """Verify lossless permission boundaries without executing a shell."""
+
+    def test_subshell_redirection_keeps_scope(self) -> None:
+        """Keep a redirected subshell intact as a single operation."""
+        command = "(cat public.txt && cat public.txt) > private.txt"
+        parser = BashCommandParser()
+        self.assertEqual(parser.split_into_subcommands(command), [command])
+        self.assertEqual(
+            parser.split_into_subcommands(
+                "git status && "
+                "(cat public.txt && cat public.txt) > private.txt",
+            ),
+            ["git status", command],
+        )
+
+    def test_split_preserves_shell_operations(self) -> None:
+        """Keep Unicode, redirects, assignments, and quoted operators."""
+        cases = [
+            ("", [""]),
+            ("   ", ["   "]),
+            (
+                "git add '中文.txt' && git commit -m update",
+                ["git add '中文.txt'", "git commit -m update"],
+            ),
+            (
+                "git add 'ééééé' && curl git -o output.txt",
+                ["git add 'ééééé'", "curl git -o output.txt"],
+            ),
+            (
+                "cat public.txt && cat public.txt > private.txt",
+                ["cat public.txt", "cat public.txt > private.txt"],
+            ),
+            (
+                "git status && > output.txt",
+                ["git status", "> output.txt"],
+            ),
+            (
+                "cat a | cat b > output.txt",
+                ["cat a", "cat b > output.txt"],
+            ),
+            (
+                "git status && X=hello",
+                ["git status", "X=hello"],
+            ),
+            (
+                "git commit -m 'a && b | c' && git status",
+                ["git commit -m 'a && b | c'", "git status"],
+            ),
+            ("git status # comment", ["git status"]),
+            ("git status &&", ["git status &&"]),
+            (
+                "cat <<EOF\nhello\nEOF\ngit status",
+                ["cat <<EOF\nhello\nEOF", "git status"],
+            ),
+        ]
+        parser = BashCommandParser()
+        self.assertEqual(
+            [parser.split_into_subcommands(command) for command, _ in cases],
+            [expected for _, expected in cases],
+        )
+
+    def test_all_command_separators(self) -> None:
+        """Recognize every list and pipeline separator."""
+        parser = BashCommandParser()
+        for separator in (" && ", " || ", "; ", " | ", " |& ", "\n", " & "):
+            command = separator.join(["git status", "curl example.com"])
+            with self.subTest(separator=separator):
+                self.assertEqual(
+                    parser.split_into_subcommands(command),
+                    ["git status", "curl example.com"],
+                )
+                self.assertEqual(parser.is_read_only_command(command), False)
+
+
 @unittest.skipIf(
     sys.platform == "win32",
     "Bash tool is not supported on Windows",
@@ -19,47 +94,13 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
         """Set up test fixtures."""
         self.parser = BashCommandParser()
 
-    async def test_file_paths_after_a_non_ascii_argument(self) -> None:
-        """Node text is read with byte offsets, not character offsets.
-
-        A character like ``\u2713`` is three UTF-8 bytes but a single
-        character, so slicing the ``str`` with tree-sitter's byte offsets
-        shifted every later token and the path was never recognised.
-        """
-        for command in (
-            "cp \u2713 .bashrc",
-            "cp \u00e9 .bashrc",
-            "cp \U0001f600 .bashrc",
-        ):
-            with self.subTest(command=command):
-                self.assertIn(
-                    ("cp", ".bashrc"),
-                    self.parser.extract_file_paths(command),
-                )
-
-    async def test_file_paths_in_a_compound_after_non_ascii(self) -> None:
-        """A subcommand after a non-ASCII token is still parsed correctly."""
-        self.assertIn(
-            ("cp", ".bashrc"),
-            self.parser.extract_file_paths("echo \u2713; cp \u2713 .bashrc"),
-        )
-
-    async def test_ascii_commands_are_unchanged(self) -> None:
-        """Pure-ASCII parsing is untouched by the offset handling."""
-        self.assertIn(
-            ("cp", "notes.txt"),
-            self.parser.extract_file_paths("cp notes.txt backup.txt"),
-        )
-        self.assertEqual(
-            self.parser.extract_command_prefixes("git commit -m 'fix'"),
-            ["git commit"],
-        )
-
     async def test_single_command_with_prefix(self) -> None:
         """Test single commands that can extract prefixes."""
         test_cases = [
             ("git commit -m 'fix'", ["git commit"]),
             ("npm run build", ["npm run"]),
+            ("NODE_ENV=测试 npm run build", ["npm run"]),
+            ("git 中文 status", ["git 中文"]),
             ("docker compose up", ["docker compose"]),
             ("cargo build --release", ["cargo build"]),
             ("python -m pytest", ["python -m"]),
@@ -428,6 +469,74 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     f"(contains non-read-only subcommand)",
                 )
 
+    async def test_separator_hidden_commands_not_read_only(self) -> None:
+        """Test newline and ``&`` separators cannot hide mutations."""
+        hidden_commands = [
+            "cat file.txt\nrm -rf /tmp/victim",
+            "cat file.txt\nmkdir new_dir",
+            "cat file.txt & rm -rf /tmp/victim",
+            "cat file.txt & touch file.txt",
+            "ls\nshutdown now",
+            "ls\r\nshutdown now",
+            "cat \u20ac\u20ac\u20ac\nrm -f ls",
+            "cat \u20ac\u20ac\u20ac & rm -f ls",
+        ]
+        for cmd in hidden_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be non-read-only "
+                    f"(contains non-read-only subcommand)",
+                )
+
+    async def test_separator_compound_all_read_only(self) -> None:
+        """Test newline- and ``&``-separated all-read-only compounds."""
+        read_only_commands = [
+            "git status\ngit diff",
+            "cat file1.txt\ncat file2.txt",
+            "git status & git log",
+            "cat file.txt &",
+            "cat caf\u00e9.txt\npwd",
+            "cat caf\u00e9.txt & pwd",
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be read-only "
+                    f"(all subcommands are read-only)",
+                )
+
+    async def test_split_compound_command_unicode(self) -> None:
+        """Test compound splitting preserves Unicode command text."""
+        for separator in ["\n", " & "]:
+            for commands in [
+                ["cat \u20ac\u20ac\u20ac", "rm -f ls"],
+                ["cat caf\u00e9.txt", "pwd"],
+            ]:
+                command = separator.join(commands)
+                with self.subTest(command=command):
+                    root = self.parser.parser.parse(
+                        command.encode("utf8"),
+                    ).root_node
+                    self.assertEqual(
+                        self.parser.split_compound_command(root, command),
+                        commands,
+                    )
+
+    async def test_separator_lookalikes_stay_read_only(self) -> None:
+        """Test quoted ``&`` and heredoc newlines are not separators."""
+        read_only_commands = [
+            'grep "a&b" file.txt',
+            "cat <<EOF\nhello world\nEOF",
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be read-only",
+                )
+
     async def test_commands_with_output_redirection(self) -> None:
         """Test commands with output redirections are not read-only."""
         redirect_commands = [
@@ -548,6 +657,12 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
     async def test_cp_command(self) -> None:
         """Test file path extraction from cp commands."""
         test_cases = [
+            ("cp é .bashrc", [("cp", "é"), ("cp", ".bashrc")]),
+            ("cp ✓ .bashrc", [("cp", "✓"), ("cp", ".bashrc")]),
+            (
+                "cp \U0001f600 .bashrc",
+                [("cp", "\U0001f600"), ("cp", ".bashrc")],
+            ),
             (
                 "cp file.txt backup.txt",
                 [("cp", "file.txt"), ("cp", "backup.txt")],
@@ -640,6 +755,7 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
                 [("redirect", "output.txt")],
             ),
             ("cat file.txt > backup.txt", [("redirect", "backup.txt")]),
+            ("cat 中文.txt > 备份.txt", [("redirect", "备份.txt")]),
             ("ls -la >> list.txt", [("redirect", "list.txt")]),
         ]
         for cmd, expected in test_cases:
@@ -650,6 +766,7 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
     async def test_compound_commands(self) -> None:
         """Test file path extraction from compound commands."""
         test_cases = [
+            ("echo ✓; cp ✓ copy.txt", [("cp", "✓"), ("cp", "copy.txt")]),
             (
                 "rm file1.txt && rm file2.txt",
                 [("rm", "file1.txt"), ("rm", "file2.txt")],
@@ -743,6 +860,7 @@ class BashParserRedirectionsTest(IsolatedAsyncioTestCase):
         test_cases = [
             ("echo 'hello' > output.txt", ["output.txt"]),
             ("cat file.txt > backup.txt", ["backup.txt"]),
+            ("cat 中文.txt > 备份.txt", ["备份.txt"]),
             ("ls -la > list.txt", ["list.txt"]),
             ("git log > history.txt", ["history.txt"]),
         ]
@@ -1076,6 +1194,45 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     self.parser.check_sed_constraints(
                         attached,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
+    async def test_separated_backup_suffix(self) -> None:
+        """A separated dotted -i suffix is a backup suffix, not a script."""
+        cases = [
+            (
+                "sed -i .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .orig 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed --in-place .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .bak 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed -i bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                # A dot inside a script keeps the token unconsumed.
+                "sed -i '/example.com/d' notes.txt",
+                "sed expression '/example.com/d' not in allowlist",
+            ),
+        ]
+        for cmd, expected in cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        cmd,
                         self.dangerous_files,
                     ),
                     expected,
@@ -1541,3 +1698,74 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         self.parser = None
+
+
+class BashParserReadOnlyOptionTest(unittest.TestCase):
+    """Read-only classification of ``rg`` / ``tree`` options (#3249).
+
+    These exercise only the pure command classifier (no shell is executed),
+    so they also run on Windows, where the Bash tool itself is unavailable.
+    """
+
+    def setUp(self) -> None:
+        self.parser = BashCommandParser()
+
+    def test_rg_pre_is_not_read_only(self) -> None:
+        """``rg --pre <program>`` runs a program on every searched file."""
+        expected = {
+            "rg --pre ./hook.sh foo .": False,
+            "rg --pre=./hook.sh foo .": False,
+            "rg --pre ./hook.sh -n foo .": False,
+            "rg foo .": True,
+            "rg -n foo .": True,
+            "rg --pretty foo .": True,
+            "rg -- --pre": True,
+            "rg -e --pre README.md": True,
+            "rg --regexp '--pre=value' README.md": True,
+            "rg -ne --pre README.md": False,
+            "rg --line-number -e --pre README.md": True,
+            "rg -g'*.md' -- --pre": False,
+            "rg --unrecognized pattern": False,
+            "rg -e": False,
+            "rg -e -- --pre=cat foo": False,
+            "rg --colors match:fg:red --pre=cat foo": False,
+            'rg "$PATTERN" README.md': False,
+            "rg $PATTERN README.md": False,
+            "rg '$PATTERN' README.md": True,
+            "rg *.py": False,
+            "rg -g '*.py' pattern": True,
+            r'rg "\d+" README.md': True,
+        }
+        for cmd, read_only in expected.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.is_read_only_command(cmd),
+                    read_only,
+                )
+
+    def test_tree_o_is_not_read_only(self) -> None:
+        """``tree -o <file>`` writes the listing to a file."""
+        expected = {
+            "tree -o out.txt": False,
+            "tree -oout.txt": False,
+            "tree -a -o out.txt": False,
+            "tree -ao out.txt": False,
+            "tree -I '-old*' -L 1 src": True,
+            "tree -P '-only*' src": True,
+            "tree -aP '-only*' src": False,
+            "tree -L2 -I '-old*' src": False,
+            "tree --unrecognized src": False,
+            "tree -I": False,
+            "tree -- -only": True,
+            "tree -I -- -o out.txt": False,
+            "tree -P '-only*' -o out.txt": False,
+            "tree $DIRECTORY": False,
+            "tree -L 2": True,
+            "tree": True,
+        }
+        for cmd, read_only in expected.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.is_read_only_command(cmd),
+                    read_only,
+                )

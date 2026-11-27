@@ -90,14 +90,17 @@ class OpenSandboxBackend(BackendBase):
             `ExecResult`:
                 The captured exit code, stdout, and stderr. A non-zero
                 command exit is returned as a normal result; transport
-                errors yield an ``exit_code`` of ``-1``.
+                errors, and an exit code the provider leaves unset, yield
+                an ``exit_code`` of ``-1``.
         """
         command_line = " ".join(shlex.quote(arg) for arg in command)
         opts = self._make_run_opts(cwd=cwd or self._workdir, timeout=timeout)
         try:
             res = await self._sandbox.commands.run(command_line, opts=opts)
+            # The SDK leaves ``exit_code`` unset when the run's outcome is
+            # unknown (e.g. killed); report it as -1 rather than success.
             return ExecResult(
-                exit_code=int(getattr(res, "exit_code", 0) or 0),
+                exit_code=-1 if res.exit_code is None else res.exit_code,
                 stdout=self._execution_stream_bytes(res, "stdout"),
                 stderr=self._execution_stream_bytes(res, "stderr"),
             )
@@ -156,11 +159,21 @@ class OpenSandboxBackend(BackendBase):
         if parent:
             await self.exec_shell(["mkdir", "-p", parent])
 
-        entry = self._make_write_entry(path, data)
+        # OpenSandbox interprets the decimal digits of mode as octal.
+        entry = self._make_write_entry(path, data, mode=644)
         await self._sandbox.files.write_files([entry])
 
+    async def overwrite_file(self, path: str, data: bytes) -> None:
+        """Preserve the existing file's mode when uploading a draft."""
+        files = self._sandbox.files
+        info = (await files.get_file_info([path])).get(path)
+        if info is None:
+            raise FileNotFoundError(path)
+        entry = self._make_write_entry(path, data, mode=info.mode)
+        await files.write_files([entry])
+
     @staticmethod
-    def _make_write_entry(path: str, data: bytes) -> Any:
+    def _make_write_entry(path: str, data: bytes, mode: int) -> Any:
         """Build a binary-safe OpenSandbox write entry.
 
         The implementation prefers the real
@@ -173,6 +186,8 @@ class OpenSandboxBackend(BackendBase):
                 Destination path inside the sandbox.
             data (`bytes`):
                 Raw bytes to write.
+            mode (`int`):
+                File permissions in the SDK's representation.
 
         Returns:
             `Any`:
@@ -180,10 +195,9 @@ class OpenSandboxBackend(BackendBase):
         """
         try:
             from opensandbox.models.filesystem import WriteEntry
-
-            return WriteEntry(path=path, data=data, mode=0o644)
-        except Exception:  # noqa: BLE001
-            return _WriteEntry(path=path, data=data, mode=0o644)
+        except ImportError:
+            return _WriteEntry(path=path, data=data, mode=mode)
+        return WriteEntry(path=path, data=data, mode=mode)
 
     @staticmethod
     def _make_run_opts(cwd: str, timeout: float | None) -> Any:

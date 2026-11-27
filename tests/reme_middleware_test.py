@@ -2,10 +2,11 @@
 # pylint: disable=protected-access,unused-argument
 """Unit tests for ReMeMiddleware.
 
-The embedded ReMe app is mocked — we only exercise the AgentScope hook
+Most tests mock the embedded ReMe app and exercise the AgentScope hook
 wiring (retrieve-before / write-after, system-prompt injection,
 list_tools exposure) and the small adapters that translate between
-AgentScope and ReMe. No real ReMe application is built.
+AgentScope and ReMe. An optional smoke test starts the real ReMe app
+without network access when reme-ai is installed.
 
 ``protected-access`` is disabled because tests legitimately reach into
 middleware internals (``mw._app``, ``mw._search``, ``mw._session_id_of``)
@@ -14,6 +15,9 @@ to inspect what the public API just did.
 import sys
 import types
 import asyncio
+import importlib.util
+import socket
+from tempfile import TemporaryDirectory
 from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
 from typing import Any
@@ -21,6 +25,7 @@ from typing import Any
 from utils import MockModel
 
 from agentscope.agent import Agent
+from agentscope.credential import OpenAICredential
 from agentscope.event import (
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
@@ -34,6 +39,9 @@ from agentscope.message import (
 )
 from agentscope.embedding import EmbeddingModelBase
 from agentscope.middleware import ReMeMiddleware
+from agentscope.middleware._longterm_memory._reme._config import (
+    _build_reme_app_config,
+)
 from agentscope.middleware._longterm_memory._reme._utils import (
     _extract_memory_texts,
     _extract_query_text,
@@ -341,7 +349,7 @@ def _msg_text(m: Any) -> str:
     records dicts whose ``content`` is a list of typed blocks.
     """
     if hasattr(m, "get_text_content"):
-        return m.get_text_content() or ""
+        return m.get_text_content()
     content = m.get("content") if isinstance(m, dict) else None
     if isinstance(content, str):
         return content
@@ -512,10 +520,24 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
         self.assertNotIn("resource_watch_loop", captured["jobs"])
         self.assertNotIn("digest_watch_loop", captured["jobs"])
         self.assertNotIn("daily_paper", captured["jobs"])
-        self.assertEqual(
-            captured["jobs"]["dream_cron"]["steps"],
-            captured["jobs"]["auto_dream"]["steps"],
-        )
+        for name in ("dream_cron", "auto_dream"):
+            self.assertEqual(
+                captured["jobs"][name]["steps"],
+                [
+                    {
+                        "backend": "dream_extract_step",
+                        "file_catalog": "dream",
+                        "topic_session_id": "interests",
+                        "scan_days": 2,
+                        "max_units": 5,
+                    },
+                    {"backend": "dream_integrate_step"},
+                    {
+                        "backend": "dream_finish_step",
+                        "file_catalog": "dream",
+                    },
+                ],
+            )
         self.assertEqual(
             captured["jobs"]["index_update_loop"]["watch_dirs"],
             ["daily_dir", "digest_dir"],
@@ -525,6 +547,10 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
             ["daily_dir", "digest_dir"],
         )
         components = captured["components"]
+        self.assertEqual(
+            components["as_llm"]["default"]["parameters"],
+            {"max_tokens": 65_536, "thinking_enable": None},
+        )
         self.assertEqual(set(components["file_catalog"]), {"dream"})
         self.assertNotIn("as_embedding", components)
         self.assertNotIn("embedding_store", components)
@@ -532,6 +558,55 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
             components["file_store"]["default"]["embedding_store"],
             "",
         )
+
+    async def test_default_llm_omits_thinking_request_parameters(self) -> None:
+        """The environment-backed OpenAI path leaves thinking unspecified."""
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "LLM_API_KEY": "test",
+                "LLM_BASE_URL": "https://example.test/compatible-mode/v1",
+            },
+            clear=True,
+        ):
+            config = _build_reme_app_config(workspace_dir="memory")
+
+        llm_config = config["components"]["as_llm"]["default"]
+        self.assertEqual(llm_config["backend"], "openai")
+        credential = OpenAICredential(**llm_config["credential"])
+        model_cls = credential.get_chat_model_class()
+        parameters = model_cls.Parameters(**llm_config["parameters"])
+        stream = mock.MagicMock()
+        stream.__aenter__.return_value = stream
+        stream.__aiter__.return_value = []
+        mock_create = mock.AsyncMock(return_value=stream)
+
+        with mock.patch("openai.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.chat.completions.create = mock_create
+            model = model_cls(
+                credential=credential,
+                model=llm_config["model"],
+                parameters=parameters,
+                stream=llm_config["stream"],
+                context_size=llm_config["context_size"],
+                max_retries=llm_config["max_retries"],
+            )
+            response = await model([])
+            assert not isinstance(response, ChatResponse)
+            async for _ in response:
+                pass
+
+        self.assertEqual(
+            mock_create.call_args.kwargs,
+            {
+                "model": "qwen3.7-plus",
+                "messages": [],
+                "stream": True,
+                "max_completion_tokens": 65_536,
+                "stream_options": {"include_usage": True},
+            },
+        )
+        mock_create.assert_awaited_once()
 
     def test_embedding_model_enables_internal_vector_store(self) -> None:
         """An embedding model extends the minimal config with vector search."""
@@ -560,6 +635,65 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
             1024,
         )
         self.assertIn("embedding_store", components)
+
+
+class TestAppLifecycle(IsolatedAsyncioTestCase):
+    """Tests for the lazily built embedded app's one-time start."""
+
+    async def test_real_app_starts_without_network(self) -> None:
+        """Resolve real backends and close the app without model calls."""
+        if importlib.util.find_spec("reme") is None:
+            self.skipTest("reme-ai is not installed")
+        from reme import ReMe
+
+        with (
+            TemporaryDirectory() as workspace,
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "LLM_API_KEY": "test",
+                    "LLM_BASE_URL": "https://example.invalid/v1",
+                },
+                clear=True,
+            ),
+            mock.patch.object(
+                socket.socket,
+                "connect",
+                side_effect=AssertionError("Unexpected network access"),
+            ) as connect,
+        ):
+            app = ReMe(
+                log_to_file=False,
+                **_build_reme_app_config(workspace_dir=workspace),
+            )
+            try:
+                await asyncio.wait_for(app.start(), timeout=10)
+                self.assertTrue(app.is_started)
+            finally:
+                await asyncio.wait_for(app.close(), timeout=10)
+            self.assertFalse(app.is_started)
+            connect.assert_not_called()
+
+    async def test_concurrent_callers_start_the_app_once(self) -> None:
+        """Hooks that run before the app is started must start it once."""
+
+        class _SlowStartApp(_FakeReMeApp):
+            """A fake app whose start yields, so callers interleave."""
+
+            async def start(self) -> None:
+                await asyncio.sleep(0)
+                await super().start()
+
+        mw = ReMeMiddleware()
+        app = _SlowStartApp()
+        with mock.patch.object(mw, "_build_app", return_value=app):
+            await asyncio.gather(
+                *(mw._ensure_started() for _ in range(5)),
+            )
+
+        self.assertEqual(app.start_count, 1)
+        self.assertTrue(mw._started)
+        self.assertIs(mw._app, app)
 
 
 # ----------------------------------------------------------------------

@@ -7,7 +7,12 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Self, TYPE_CHECKING
 
-from ._base import MessageBus
+from ..._logging import logger
+from ._base import (
+    MessageBus,
+    RegisterSubscriptionBarrier,
+    _stream_cursor_precedes,
+)
 
 if TYPE_CHECKING:
     from redis.asyncio import ConnectionPool, Redis
@@ -26,11 +31,62 @@ end
 return entries
 """
 
+# Return only the two IDs across the wire, never the previous audio payload.
+_LOG_APPEND_WITH_PREVIOUS_LUA = """
+local tail = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
+local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[1],
+                      '*', 'payload', ARGV[2])
+return {id, tail[1] and tail[1][1] or ''}
+"""
+
+
+# Validate every target before deleting, preserving concurrent appends.
+_QUEUE_REMOVE_IF_LUA = """
+local matches = cjson.decode(ARGV[1])
+local entries = redis.call('XRANGE', KEYS[1], '-', '+')
+local payloads = {}
+for index, entry in ipairs(entries) do
+  for field = 1, #entry[2], 2 do
+    if entry[2][field] == 'payload' then
+      payloads[index] = cjson.decode(entry[2][field + 1])
+    end
+  end
+end
+local selected = {}
+local used = {}
+for _, expected in ipairs(matches) do
+  local target = false
+  for index, entry in ipairs(entries) do
+    local payload = payloads[index]
+    local matches_entry = payload ~= nil
+    for field, value in pairs(expected) do
+      if not payload or payload[field] ~= value then
+        matches_entry = false
+        break
+      end
+    end
+    if matches_entry then
+      if target or used[entry[1]] then return 0 end
+      target = entry[1]
+    end
+  end
+  if not target then return 0 end
+  table.insert(selected, target)
+  used[target] = true
+end
+for _, entry_id in ipairs(selected) do
+  redis.call('XDEL', KEYS[1], entry_id)
+end
+return 1
+"""
+
 
 # Compare-and-set on one hash field, so a caller can write back a value
 # it decided on earlier without holding a lock across the think time.
 _REGISTRY_SET_IF_LUA = """
-if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[3] then return 0 end
+local expected = ARGV[3]
+if ARGV[5] == '1' then expected = false end
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= expected then return 0 end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 if tonumber(ARGV[4]) > 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
 return 1
@@ -42,6 +98,25 @@ _REGISTRY_POP_LUA = """
 local value = redis.call('HGET', KEYS[1], ARGV[1])
 if value then redis.call('HDEL', KEYS[1], ARGV[1]) end
 return value
+"""
+
+_REGISTRY_DEL_IF_LUA = """
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+return redis.call('HDEL', KEYS[1], ARGV[1])
+"""
+
+_LOCK_RELEASE_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
+_LOCK_RENEW_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return 0
 """
 
 
@@ -77,6 +152,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         db: int = 0,
         password: str | None = None,
         connection_pool: ConnectionPool | None = None,
+        lock_cleanup_timeout_secs: float = 2.0,
         **kwargs: Any,
     ) -> None:
         """Store connection parameters; the actual pool is created in
@@ -98,12 +174,18 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 lifecycle. When omitted a pool is created from
                 *host*/*port*/*db*/*password* on :meth:`__aenter__`
                 and closed on :meth:`aclose`.
+            lock_cleanup_timeout_secs (`float`, defaults to ``2.0``):
+                Maximum cancellation cleanup wait before falling back to TTL.
             **kwargs (`Any`):
                 Extra keyword arguments forwarded to
                 ``redis.asyncio.ConnectionPool`` when the pool is
                 created internally (e.g. ``max_connections=20``,
                 ``socket_timeout=5``).
         """
+        if lock_cleanup_timeout_secs <= 0:
+            raise ValueError("lock_cleanup_timeout_secs must be positive.")
+        self._lock_cleanup_timeout_secs = lock_cleanup_timeout_secs
+        self._lock_cleanup_tasks: set[asyncio.Task] = set()
         self._host = host
         self._port = port
         self._db = db
@@ -157,6 +239,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
 
         Externally supplied pools are left open — the caller owns them.
         """
+        for task in tuple(self._lock_cleanup_tasks):
+            task.cancel()
         if self._owned_pool is not None:
             await self._owned_pool.aclose()
             self._owned_pool = None
@@ -239,8 +323,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 field of a Redis Stream entry.
             ttl_secs (`int | None`, optional):
                 If set, refresh the key's expiry on every push
-                (sliding TTL). ``None`` means no TTL — the queue
-                persists until drained or deleted explicitly.
+                (sliding TTL). ``None`` leaves an existing expiry
+                unchanged; a new key has no expiry.
 
         Returns:
             `str`:
@@ -289,6 +373,74 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             results.append((entry_id, json.loads(raw)))
 
         return results
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        """Return queue entries without deleting them.
+
+        Args:
+            key (`str`):
+                Redis Stream key.
+            max_count (`int`, defaults to ``100``):
+                Maximum number of oldest-first entries to return.
+
+        Returns:
+            `list[tuple[str, dict]]`:
+                Decoded ``(stream_entry_id, payload)`` pairs.
+        """
+        entries = await self._client.xrange(key, count=max_count)
+        results: list[tuple[str, dict]] = []
+        for entry_id, fields in entries:
+            raw = fields.get("payload")
+            if raw is not None:
+                results.append((entry_id, json.loads(raw)))
+        return results
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        """Replace a Redis Stream queue in one transactional pipeline.
+
+        Args:
+            key (`str`):
+                Redis Stream key.
+            payloads (`list[dict]`):
+                Complete replacement contents in oldest-first order.
+
+        Returns:
+            `list[str]`:
+                Fresh Redis Stream ids assigned to the new entries.
+        """
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.delete(key)
+            for payload in payloads:
+                pipe.xadd(
+                    key,
+                    {"payload": json.dumps(payload, ensure_ascii=False)},
+                )
+            results = await pipe.execute()
+        return [str(entry_id) for entry_id in results[1:]]
+
+    async def queue_remove_if(
+        self,
+        key: str,
+        matches: list[dict[str, str]],
+    ) -> bool:
+        """Check current payload fields and delete targets in one script."""
+        if not matches:
+            return True
+        removed = await self._client.eval(
+            _QUEUE_REMOVE_IF_LUA,
+            1,
+            key,
+            json.dumps(matches, ensure_ascii=False),
+        )
+        return bool(removed)
 
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key``.
@@ -347,6 +499,31 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             await self._client.expire(key, ttl_secs)
         return entry_id
 
+    async def log_append_with_previous(
+        self,
+        key: str,
+        payload: dict,
+        *,
+        max_len: int,
+    ) -> tuple[str, str | None]:
+        """Append and identify the previous entry in the same Redis call."""
+        if type(self).log_append is not RedisMessageBus.log_append:
+            return await super().log_append_with_previous(
+                key,
+                payload,
+                max_len=max_len,
+            )
+        entry_id, previous = await self._client.eval(
+            _LOG_APPEND_WITH_PREVIOUS_LUA,
+            1,
+            key,
+            max_len,
+            json.dumps(payload, ensure_ascii=False),
+        )
+        return entry_id, previous
+
+    log_cursor_precedes = staticmethod(_stream_cursor_precedes)
+
     async def log_read(
         self,
         key: str,
@@ -400,8 +577,12 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         if before_id is None:
             await self._client.delete(key)
             return
-        # XTRIM MINID drops entries with id < before_id.
-        await self._client.xtrim(key, minid=before_id)
+        # Approximate trimming can leave entries older than the cursor.
+        await self._client.xtrim(
+            key,
+            minid=before_id,
+            approximate=False,
+        )
 
     # ------------------------------------------------------------------
     # Mode F — registry map (hash-keyed namespace)
@@ -437,7 +618,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Compare-and-set one Hash field via Lua. See base."""
@@ -447,10 +628,28 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             namespace,
             field,
             value,
-            expected,
+            expected if expected is not None else "",
             ttl_secs or 0,
+            int(expected is None),
         )
         return bool(written)
+
+    async def registry_del_if(
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Compare and delete one Hash field in a single Lua operation."""
+        deleted = await self._client.eval(
+            _REGISTRY_DEL_IF_LUA,
+            1,
+            namespace,
+            field,
+            expected,
+        )
+        return bool(deleted)
 
     async def registry_pop(self, namespace: str, field: str) -> str | None:
         """``HGET`` + ``HDEL`` as one Lua step. See base."""
@@ -487,6 +686,10 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         """
         return bool(await self._client.hexists(namespace, field))
 
+    async def registry_has_entries(self, namespace: str) -> bool:
+        """Check for entries without fetching hash fields or values."""
+        return bool(await self._client.hlen(namespace))
+
     async def registry_getall(
         self,
         namespace: str,
@@ -522,6 +725,16 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         """
         return await self._client.hget(namespace, field)
 
+    async def registry_get_many(
+        self,
+        namespace: str,
+        fields: list[str],
+    ) -> list[str | None]:
+        """Read only the requested registry fields in their supplied order."""
+        if not fields:
+            return []
+        return await self._client.hmget(namespace, fields)
+
     async def registry_drop(self, namespace: str) -> None:
         """Delete the entire Hash at ``namespace``.
 
@@ -541,6 +754,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
     # drops idle connections) surfaces as a benign per-poll timeout that
     # we ignore, instead of a fatal error that tears down the generator.
     _SUBSCRIBE_POLL_TIMEOUT_SECS = 1.0
+    _BARRIER_ATTEMPT_TIMEOUT_SECS = 5.0
 
     async def publish(
         self,
@@ -566,6 +780,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         key: str,
         *,
         on_ready: Callable[[], None] | None = None,
+        on_barrier: RegisterSubscriptionBarrier | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Yield broadcast payloads on ``key`` until the consumer
         closes the generator.
@@ -579,6 +794,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 a "subscription is live" event so they can publish
                 immediately after starting a subscriber without losing
                 the first message to a SUBSCRIBE/PUBLISH race.
+            on_barrier (optional):
+                Register an ordered flush operation for this subscription.
 
         Yields:
             `dict`:
@@ -587,14 +804,35 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         from redis import exceptions as redis_exceptions
 
         pubsub = self._client.pubsub()
+        flushed = asyncio.Event()
+        marker = ""
+
+        async def flush() -> None:
+            nonlocal marker
+            for _ in range(3):
+                marker = uuid.uuid4().hex
+                flushed.clear()
+                try:
+                    async with asyncio.timeout(
+                        self._BARRIER_ATTEMPT_TIMEOUT_SECS,
+                    ):
+                        await pubsub.ping(marker)
+                        await flushed.wait()
+                    return
+                except asyncio.TimeoutError:
+                    continue
+            raise TimeoutError("Redis subscription barrier timed out.")
+
         try:
             await pubsub.subscribe(key)
+            if on_barrier is not None:
+                on_barrier(flush)
             if on_ready is not None:
                 on_ready()
             while True:
                 try:
-                    message = await pubsub.get_message(
-                        ignore_subscribe_messages=True,
+                    response = await pubsub.parse_response(
+                        block=False,
                         timeout=self._SUBSCRIBE_POLL_TIMEOUT_SECS,
                     )
                 except redis_exceptions.TimeoutError:
@@ -603,8 +841,23 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     # connections). No message arrived in this window;
                     # keep listening rather than crashing the loop.
                     continue
+                if response is None:
+                    continue
+                # RESP3 returns the PING payload as a scalar. Normalize it
+                # before redis-py can discard a decoded string as an ack.
+                if isinstance(response, (str, bytes)):
+                    response = ["pong", response]
+                message = await pubsub.handle_message(
+                    response,
+                    ignore_subscribe_messages=True,
+                )
                 if message is None:
-                    # No payload within the poll window — keep waiting.
+                    continue
+                if message.get("type") == "pong" and message.get("data") in (
+                    marker,
+                    marker.encode(),
+                ):
+                    flushed.set()
                     continue
                 if message.get("type") != "message":
                     # Skip ``subscribe`` ack and similar control frames.
@@ -614,8 +867,9 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     continue
                 yield json.loads(data)
         finally:
-            await pubsub.unsubscribe(key)
-            await pubsub.aclose()
+            # Closing drops the subscription and returns the connection to
+            # the pool; shield it so a cancelled consumer cannot leak it.
+            await asyncio.shield(pubsub.aclose())
 
     # ------------------------------------------------------------------
     # Mode E — distributed lock
@@ -623,6 +877,56 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
 
     # Poll interval while waiting for a contested lock.
     _LOCK_RETRY_DELAY_SECS = 0.1
+
+    async def _resolve_cancelled_acquisition(
+        self,
+        key: str,
+        token: str,
+        attempt: asyncio.Task,
+    ) -> None:
+        """Resolve an ambiguous SET within an absolute cleanup deadline."""
+        client = self._client
+
+        async def resolve_and_release() -> None:
+            try:
+                await attempt
+            except Exception:
+                # A failed response may still represent a committed SET.
+                pass
+            await client.eval(_LOCK_RELEASE_LUA, 1, key, token)
+
+        def observed(task: asyncio.Task) -> None:
+            self._lock_cleanup_tasks.discard(task)
+            if not task.cancelled():
+                task.exception()
+
+        cleanup = asyncio.create_task(resolve_and_release())
+        for task in (attempt, cleanup):
+            self._lock_cleanup_tasks.add(task)
+            task.add_done_callback(observed)
+        deadline = (
+            asyncio.get_running_loop().time() + self._lock_cleanup_timeout_secs
+        )
+        while not cleanup.done():
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                # Cancelling the Redis request disconnects its in-use socket.
+                # Do not wait indefinitely for cleanup of a broken transport.
+                cleanup.cancel()
+                attempt.cancel()
+                logger.warning(
+                    "Lock acquisition cleanup timed out for %s; "
+                    "relying on TTL.",
+                    key,
+                )
+                return
+            try:
+                await asyncio.wait({cleanup}, timeout=remaining)
+            except asyncio.CancelledError:
+                # Further cancellation never resets the absolute deadline.
+                continue
+        if not cleanup.cancelled() and cleanup.exception() is not None:
+            logger.warning("Lock cleanup failed for %s; relying on TTL.", key)
 
     @asynccontextmanager
     async def acquire_lock(
@@ -641,16 +945,11 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         - A heartbeat task renews the TTL every ``ttl_secs / 2``
           seconds while the body runs, so a long-running holder
           does not lose the lease.
-        - On exit, the heartbeat is cancelled and the lock is
-          released by GET-then-DEL guarded on the random token —
-          we never delete a key whose value isn't ours, so a
-          process whose lease has already expired (and been re-
-          acquired by someone else) cannot accidentally release
-          the new holder's lock. The non-atomic GET+DEL race
-          window opens only after the heartbeat is cancelled, in
-          a sub-millisecond span; the ``ttl_secs`` lease still has
-          plenty of time left so the race effectively never
-          materialises.
+        - Renewal and release compare the ownership token atomically.
+        - Acquisition cancellation resolves an outstanding SET and releases
+          its token within the configured cleanup deadline. If Redis remains
+          unavailable, cancelled client tasks are observed and TTL is the
+          final fallback. Cleanup never waits indefinitely.
 
         Args:
             key (`str`):
@@ -664,7 +963,14 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         token = uuid.uuid4().hex
         # Acquire (poll until success).
         while True:
-            ok = await self._client.set(key, token, nx=True, ex=ttl_secs)
+            attempt = asyncio.create_task(
+                self._client.set(key, token, nx=True, ex=ttl_secs),
+            )
+            try:
+                ok = await asyncio.shield(attempt)
+            except asyncio.CancelledError:
+                await self._resolve_cancelled_acquisition(key, token, attempt)
+                raise
             if ok:
                 break
             await asyncio.sleep(self._LOCK_RETRY_DELAY_SECS)
@@ -673,7 +979,13 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         async def _heartbeat() -> None:
             while True:
                 await asyncio.sleep(max(1.0, ttl_secs / 2))
-                await self._client.expire(key, ttl_secs)
+                await self._client.eval(
+                    _LOCK_RENEW_LUA,
+                    1,
+                    key,
+                    token,
+                    ttl_secs,
+                )
 
         hb_task = asyncio.create_task(
             _heartbeat(),
@@ -686,16 +998,14 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             hb_task.cancel()
             try:
                 await hb_task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
                 pass
             # Release: only delete if the value still matches our
             # token. Failures are swallowed (the lease may have
             # expired naturally, in which case there is nothing to
             # do).
             try:
-                current = await self._client.get(key)
-                if current == token:
-                    await self._client.delete(key)
+                await self._client.eval(_LOCK_RELEASE_LUA, 1, key, token)
             except Exception:  # pylint: disable=broad-except
                 pass
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Storage models for persisted resources."""
 
-from ._agent import AgentRecord, AgentData, InviteConfig
+from ._agent import AgentChatConfig, AgentData, AgentRecord, InviteConfig
 from ._channel import (
     ChannelBinding,
     ChannelRecord,
@@ -28,6 +28,10 @@ from ._session import (
     SessionNaming,
     SessionKnowledgeConfig,
     ChatModelConfig,
+    ASRModelConfig,
+    PipelineVoiceConfig,
+    ChatModelSnapshot,
+    RealtimeModelConfig,
     TTSModelConfig,
     EmbeddingModelConfig,
     SessionOrigin,
@@ -38,6 +42,7 @@ from ._session import (
     TeamOrigin,
     SOPOrigin,
 )
+from ._session_list import SessionListItem
 from ._skill import SkillRecord
 from ._sop import (
     AgentVerifier,
@@ -52,6 +57,12 @@ from ._sop import (
 )
 from ._team import TeamRecord, TeamData, TeamMember
 from ._user import UserRecord
+from ._voice_profile import (
+    ENGINE_TO_CREDENTIAL_TYPE,
+    get_missing_voice_profile_binding_fields,
+    VoiceProfileData,
+    VoiceProfileRecord,
+)
 
 __all__ = [
     "AgentData",
@@ -76,6 +87,7 @@ __all__ = [
     "SessionNaming",
     "SessionKnowledgeConfig",
     "SessionRecord",
+    "SessionListItem",
     "SessionOrigin",
     "SessionSource",
     "UserOrigin",
@@ -94,11 +106,20 @@ __all__ = [
     "SOPVerifier",
     "SOPWorkspaceGrain",
     "ChatModelConfig",
+    "ASRModelConfig",
+    "PipelineVoiceConfig",
+    "ChatModelSnapshot",
+    "RealtimeModelConfig",
     "TTSModelConfig",
     "EmbeddingModelConfig",
     "TeamData",
     "TeamRecord",
     "TeamMember",
     "UserRecord",
+    "AgentChatConfig",
     "InviteConfig",
+    "ENGINE_TO_CREDENTIAL_TYPE",
+    "get_missing_voice_profile_binding_fields",
+    "VoiceProfileData",
+    "VoiceProfileRecord",
 ]

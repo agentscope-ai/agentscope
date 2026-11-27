@@ -120,6 +120,10 @@ class ChatModelConfig(BaseModel):
     model: str
     """The model name."""
 
+    model_class: str = ""
+    """The model implementation class type (e.g. ``openai_chat``,
+    ``openai_response``). Empty string means use default resolution."""
+
     parameters: dict
     """The model parameters."""
 
@@ -136,8 +140,63 @@ class TTSModelConfig(BaseModel):
     model: str
     """The TTS model name."""
 
+    voice_profile_id: str | None = None
+    """The owner-scoped voice profile used for a custom voice.
+
+    Profiles bind the voice to its owner, credential and synthesis model.
+    Direct voice IDs remain supported with owned credentials. Shared
+    credentials may only use default or known preset voices without a profile.
+    """
+
     parameters: dict
     """TTS parameters (voice, language, etc.)."""
+
+
+class ASRModelConfig(BaseModel):
+    """The ASR model configuration class."""
+
+    type: str
+    """The provider type."""
+
+    credential_id: str
+    """The credential id."""
+
+    model: str
+    """The ASR model name."""
+
+    parameters: dict
+    """Provider-specific speech recognition parameters."""
+
+
+class PipelineVoiceConfig(BaseModel):
+    """Voice models; an unset chat model follows ordinary chat settings."""
+
+    asr_model_config: ASRModelConfig | None = None
+    chat_model_config: ChatModelConfig | None = None
+    tts_model_config: TTSModelConfig | None = None
+
+
+class ChatModelSnapshot(BaseModel):
+    """Effective primary and fallback models bound to one reply."""
+
+    primary: ChatModelConfig
+    fallback: ChatModelConfig | None = None
+
+
+class RealtimeModelConfig(BaseModel):
+    """The realtime voice model configuration class."""
+
+    type: str
+    """The realtime adapter type."""
+
+    credential_id: str
+    """The credential id."""
+
+    model: str
+    """The realtime model name."""
+
+    parameters: dict
+    """Realtime model parameters (voice, turn detection, etc.)."""
 
 
 class EmbeddingModelConfig(BaseModel):
@@ -260,10 +319,13 @@ class SessionConfig(BaseModel):
     Not confined to the workspace root, matching
     ``GET /workspace/directories``: on a sandboxed backend the
     reachable filesystem *is* the sandbox, and on a local one the
-    caller is already trusted with the host. Nothing is validated on
-    write — the value only names a place to look, so a path that has
-    gone missing surfaces when something tries to read it rather than
-    blocking the change.
+    caller is already trusted with the host. The stored value is not
+    validated on write; missing paths surface when accessed.
+
+    The file editor also treats cwd as an additional editable root.
+    It resolves paths on access, excluding filesystem roots and the
+    backend user's home from this additional grant. Choosing a specific
+    directory still expands edit access; this is not host isolation.
 
     A relative value stays relative on purpose: the workspace root is
     backend-dependent (a host directory for :class:`LocalWorkspace`, a
@@ -286,6 +348,15 @@ class SessionConfig(BaseModel):
 
     tts_model_config: TTSModelConfig | None = None
     """The TTS model config. None means TTS is not enabled."""
+
+    asr_model_config: ASRModelConfig | None = None
+    """The ASR model config. None means speech input is not enabled."""
+
+    pipeline_voice_config: PipelineVoiceConfig | None = None
+    """Speech configuration used only by pipeline voice inputs."""
+
+    realtime_model_config: RealtimeModelConfig | None = None
+    """The realtime voice model config. None disables voice mode."""
 
     knowledge_config: SessionKnowledgeConfig | None = None
     """Knowledge bases attached to this session and the corresponding

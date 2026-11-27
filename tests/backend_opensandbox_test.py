@@ -18,8 +18,16 @@ which avoids duplicating the sandbox bring-up logic here.
 """
 
 import os
+import stat
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
+
+from sandbox_test_support import CheckoutWheelTestCase
 
 from agentscope.tool import ExecResult
 from agentscope.workspace import OpenSandboxWorkspace
@@ -35,13 +43,15 @@ _SKIP_REASON = "OPENSANDBOX_DOMAIN environment variable is not set"
 
 
 @unittest.skipUnless(_DOMAIN, _SKIP_REASON)
-class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
+class TestOpenSandboxBackend(CheckoutWheelTestCase):
     """Test cases for ``OpenSandboxBackend`` against a live sandbox.
 
     Each test creates a real OpenSandbox sandbox via
     ``OpenSandboxWorkspace`` and tears it down (``close`` → sandbox
     pause) afterwards.
     """
+
+    workspace_type = OpenSandboxWorkspace
 
     async def asyncSetUp(self) -> None:
         """Start a workspace and reuse its wired backend."""
@@ -103,6 +113,23 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
         await self.backend.write_file(path, b"x")
         self.assertEqual(await self.backend.read_file(path), b"x")
 
+    async def test_editor_overwrite_preserves_permissions(self) -> None:
+        """Confirm execd keeps the original mode during an SDK upload."""
+        path = self.backend.join_path(SANDBOX_WORKDIR, "edit.txt")
+        await self.backend.write_file(path, b"before")
+        for mode in ("755", "600"):
+            with self.subTest(mode=mode):
+                chmod = await self.backend.exec_shell(["chmod", mode, path])
+                self.assertEqual(chmod.exit_code, 0)
+                await self.backend.overwrite_file(path, mode.encode())
+                info = await self.backend.exec_shell(
+                    ["stat", "-c", "%a", path],
+                )
+                self.assertEqual(
+                    (info.stdout.strip(), await self.backend.read_file(path)),
+                    (mode.encode(), mode.encode()),
+                )
+
     async def test_read_missing_file_raises(self) -> None:
         """Reading a non-existent file raises ``FileNotFoundError``."""
         with self.assertRaises(FileNotFoundError):
@@ -153,3 +180,79 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
 
         # Deleting a non-existent path must not raise.
         await self.backend.delete_path(f"{SANDBOX_WORKDIR}/missing")
+
+
+class TestOpenSandboxBackendExitCode(IsolatedAsyncioTestCase):
+    """Exit-code mapping, without a live sandbox."""
+
+    async def test_unset_exit_code_is_not_success(self) -> None:
+        """An execution the SDK leaves without an exit code reports -1."""
+        execution = SimpleNamespace(exit_code=None, stdout=b"", stderr=b"")
+        sandbox = SimpleNamespace(
+            commands=SimpleNamespace(run=AsyncMock(return_value=execution)),
+        )
+        backend = OpenSandboxBackend(sandbox, workdir="/workspace")
+
+        result = await backend.exec_shell(["python", "-c", "pass"])
+
+        self.assertEqual(
+            result,
+            ExecResult(exit_code=-1, stdout=b"", stderr=b""),
+        )
+
+
+class TestOpenSandboxOverwrite(IsolatedAsyncioTestCase):
+    """Exercise SDK upload modes without a live sandbox."""
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX permissions")
+    async def test_write_and_overwrite_file_modes(self) -> None:
+        """Decode SDK mode digits as octal when applying an upload."""
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "notes"
+            path = str(target)
+            files = AsyncMock()
+            backend = OpenSandboxBackend(SimpleNamespace(files=files), "/")
+
+            async def upload(entries: list[Any]) -> None:
+                (entry,) = entries
+                self.assertEqual(entry.path, path)
+                target.write_bytes(entry.data)
+                target.chmod(int(str(entry.mode), 8))
+
+            files.write_files.side_effect = upload
+            with patch.object(backend, "exec_shell", new_callable=AsyncMock):
+                await backend.write_file(path, b"new")
+            (entry,) = files.write_files.await_args.args[0]
+            self.assertEqual(
+                (entry.mode, stat.S_IMODE(target.stat().st_mode)),
+                (644, 0o644),
+            )
+            for sdk_mode, disk_mode in ((755, 0o755), (600, 0o600)):
+                with self.subTest(mode=sdk_mode):
+                    target.chmod(disk_mode)
+                    files.get_file_info.return_value = {
+                        path: SimpleNamespace(mode=sdk_mode),
+                    }
+                    await backend.overwrite_file(path, b"updated")
+                    files.get_file_info.assert_awaited_with([path])
+                    (entry,) = files.write_files.await_args.args[0]
+                    self.assertEqual(
+                        (
+                            entry.mode,
+                            target.read_bytes(),
+                            stat.S_IMODE(target.stat().st_mode),
+                        ),
+                        (sdk_mode, b"updated", disk_mode),
+                    )
+
+    async def test_no_upload_without_mode(self) -> None:
+        """Missing or unreadable metadata must stop the upload."""
+        files = AsyncMock()
+        backend = OpenSandboxBackend(SimpleNamespace(files=files), "/")
+        files.get_file_info.return_value = {}
+        with self.assertRaises(FileNotFoundError):
+            await backend.overwrite_file("/notes", b"draft")
+        files.get_file_info.side_effect = PermissionError()
+        with self.assertRaises(PermissionError):
+            await backend.overwrite_file("/notes", b"draft")
+        files.write_files.assert_not_awaited()

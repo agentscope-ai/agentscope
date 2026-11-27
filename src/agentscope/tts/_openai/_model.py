@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """OpenAI TTS model implementation using the Audio Speech API."""
 import base64
+from collections.abc import Mapping
 from datetime import datetime
 from typing import (
     Any,
@@ -52,10 +53,10 @@ class OpenAITTSModel(TTSModelBase):
     class Parameters(BaseModel):
         """Frontend-exposed parameters for OpenAI TTS models."""
 
-        voice: str = Field(
+        voice: str | dict[str, str] = Field(
             default="alloy",
             title="Voice",
-            description="The voice to use for synthesis.",
+            description="A preset voice name or a custom voice id object.",
         )
 
         response_format: Literal[
@@ -150,20 +151,39 @@ class OpenAITTSModel(TTSModelBase):
         if not text:
             return TTSResponse(content=None)
 
-        media_type = _MEDIA_TYPES.get(
-            self.parameters.response_format,
-            _MEDIA_TYPES[_DEFAULT_RESPONSE_FORMAT],
-        )
-
         request_kwargs: dict[str, Any] = {
             "model": self.model,
             "voice": self.parameters.voice,
             "input": text,
             "response_format": self.parameters.response_format,
-            **kwargs,
         }
         if self.parameters.instructions:
             request_kwargs["instructions"] = self.parameters.instructions
+        request_kwargs.update(kwargs)
+
+        stream_format = request_kwargs.get("stream_format")
+        extra_body = request_kwargs.get("extra_body")
+        if isinstance(extra_body, Mapping):
+            from openai import NotGiven
+
+            # Snapshot the SDK overrides before returning a lazy stream.
+            extra_body = {
+                key: value
+                for key, value in extra_body.items()
+                if not isinstance(value, NotGiven)
+            }
+            request_kwargs["extra_body"] = extra_body
+            stream_format = extra_body.get("stream_format", stream_format)
+        if stream_format == "sse":
+            raise ValueError(
+                "OpenAITTSModel does not decode stream_format='sse'. "
+                "Use stream_format='audio' instead.",
+            )
+
+        media_type = _MEDIA_TYPES.get(
+            request_kwargs["response_format"],
+            _MEDIA_TYPES[_DEFAULT_RESPONSE_FORMAT],
+        )
 
         if self.stream:
             return self._stream(self.client, media_type, **request_kwargs)

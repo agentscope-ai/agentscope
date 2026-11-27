@@ -19,8 +19,11 @@ need no dialect-specific timezone handling.
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Self
 
+import sqlalchemy as sa
+
 from .._base import StorageBase
 from .._model._session import _origin_kwargs
+from .._model._session_list import SessionListItem
 from .._model import (
     AgentRecord,
     ChannelRecord,
@@ -37,9 +40,11 @@ from .._model import (
     SOPRecord,
     SOPRunRecord,
     TeamRecord,
+    VoiceProfileRecord,
 )
 from .._utils import _dump_with_secrets
 from ._mappers import _from_record, _to_record
+from ._session_list import read_session_list_batch, read_sqlite_session_page
 from ._tables import (
     _Base,
     AgentRow,
@@ -55,6 +60,7 @@ from ._tables import (
     SOPRow,
     SOPRunRow,
     TeamRow,
+    VoiceProfileRow,
 )
 from ....credential import CredentialBase
 from ....message import Msg
@@ -236,7 +242,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
         alembic_dir = Path(__file__).resolve().parent / "_alembic"
         cfg = Config(str(alembic_dir / "alembic.ini"))
         cfg.set_main_option("script_location", str(alembic_dir))
-        cfg.set_main_option("sqlalchemy.url", self._url)
+        # ConfigParser requires literal percent signs to be escaped.
+        cfg.set_main_option("sqlalchemy.url", self._url.replace("%", "%%"))
 
         await asyncio.to_thread(command.upgrade, cfg, "head")
 
@@ -1167,7 +1174,10 @@ class AsyncSQLAlchemyStorage(StorageBase):
             stmt = stmt.where(SOPRunRow.sop_id == sop_id)
         if phase is not None:
             stmt = stmt.where(SOPRunRow.phase == phase.value)
-        stmt = stmt.order_by(SOPRunRow.created_at.desc())
+        stmt = stmt.order_by(
+            SOPRunRow.created_at.desc(),
+            SOPRunRow.id.desc(),
+        )
 
         async with self._session() as sess:
             rows = (await sess.execute(stmt)).scalars().all()
@@ -1318,13 +1328,94 @@ class AsyncSQLAlchemyStorage(StorageBase):
                             SessionRow.user_id == user_id,
                             SessionRow.agent_id == agent_id,
                         )
-                        .order_by(SessionRow.created_at.desc()),
+                        .order_by(
+                            SessionRow.created_at.desc(),
+                            SessionRow.id.desc(),
+                        ),
                     )
                 )
                 .scalars()
                 .all()
             )
         return [_to_record(r, SessionRecord) for r in rows]
+
+    async def list_sessions_page(
+        self,
+        user_id: str,
+        agent_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[SessionListItem], int]:
+        """Read a page of trimmed records in creation order.
+
+        Keep ``list_sessions`` unchanged for full-record consumers. JSON
+        projections also support old rows without a data backfill.
+        """
+        if offset < 0 or (limit is not None and limit < 1):
+            raise ValueError("offset must be >= 0 and limit must be >= 1")
+        async with self._session() as sess:
+            dialect = sess.bind.dialect.name
+            if dialect not in ("sqlite", "postgresql", "mysql"):
+                return await super().list_sessions_page(
+                    user_id,
+                    agent_id,
+                    limit=limit,
+                    offset=offset,
+                )
+            filters = (
+                SessionRow.user_id == user_id,
+                SessionRow.agent_id == agent_id,
+            )
+            paginated = limit is not None or offset > 0
+            if paginated and dialect == "sqlite":
+                return await read_sqlite_session_page(
+                    sess,
+                    *filters,
+                    limit=limit,
+                    offset=offset,
+                )
+            # PostgreSQL batch reads need a savepoint even for a full list.
+            if dialect == "postgresql" or paginated:
+                await sess.connection(
+                    execution_options={"isolation_level": "REPEATABLE READ"},
+                )
+            total = None
+            if paginated:
+                total = await sess.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(SessionRow)
+                    .where(*filters),
+                )
+                if offset >= total:
+                    return [], total
+            ids = list(
+                await sess.scalars(
+                    sa.select(SessionRow.id)
+                    .where(*filters)
+                    .order_by(
+                        SessionRow.created_at.desc(),
+                        SessionRow.id.desc(),
+                    )
+                    .limit(limit)
+                    .offset(offset),
+                ),
+            )
+            items = []
+            # MySQL can sort the original JSON even when SELECT removes
+            # heavy fields. Sort only IDs, then read without ORDER BY.
+            # Bound IN parameters for legacy unpaginated requests too.
+            for start in range(0, len(ids), 200):
+                batch = ids[start : start + 200]
+                by_id = await read_session_list_batch(
+                    sess,
+                    dialect,
+                    *filters,
+                    SessionRow.id.in_(batch),
+                )
+                # A concurrent delete can occur between the reads.
+                items.extend(by_id[key] for key in batch if key in by_id)
+        return items, len(items) if total is None else total
 
     async def get_session(
         self,
@@ -1379,7 +1470,10 @@ class AsyncSQLAlchemyStorage(StorageBase):
                             SessionRow.user_id == user_id,
                             SessionRow.source_schedule_id == schedule_id,
                         )
-                        .order_by(SessionRow.created_at.desc()),
+                        .order_by(
+                            SessionRow.created_at.desc(),
+                            SessionRow.id.desc(),
+                        ),
                     )
                 )
                 .scalars()
@@ -1419,7 +1513,10 @@ class AsyncSQLAlchemyStorage(StorageBase):
                                 == channel_id,
                             ),
                         )
-                        .order_by(SessionRow.created_at.desc()),
+                        .order_by(
+                            SessionRow.created_at.desc(),
+                            SessionRow.id.desc(),
+                        ),
                     )
                 )
                 .scalars()
@@ -1678,14 +1775,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         session_id: str,
         msg: Msg,
     ) -> None:
-        """Insert-or-update by ``(session_id, msg_id)``.
-
-        Semantics mirror :meth:`RedisStorage.upsert_message` closely
-        enough for every caller in the codebase — the Redis version
-        only replaces when the *tail* message matches; ours replaces
-        on any matching id.  The looser rule is safe because callers
-        never reuse a message id across turns.
-        """
+        """Insert-or-update by ``(session_id, msg_id)``."""
         _ = user_id  # scoping enforced by caller
         now = _utcnow()
         payload = msg.model_dump(mode="json")
@@ -1709,6 +1799,26 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 ),
             )
             await sess.commit()
+
+    async def delete_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> bool:
+        """Delete one message by ``(session_id, message_id)``."""
+        _ = user_id
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(MessageRow).where(
+                    MessageRow.session_id == session_id,
+                    MessageRow.msg_id == message_id,
+                ),
+            )
+            await sess.commit()
+        return bool(result.rowcount)
 
     async def get_message(
         self,
@@ -2208,3 +2318,113 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 .all()
             )
         return [_to_record(r, KnowledgeDocumentRecord) for r in rows]
+
+    # ---- Voice Profile ----
+
+    async def upsert_voice_profile(
+        self,
+        user_id: str,
+        record: VoiceProfileRecord,
+    ) -> str:
+        """Insert a voice profile or update it under an ownership predicate.
+
+        Primary-key collisions never transfer ownership. Concurrent writes
+        from the same owner may update the payload; a different owner gets
+        ``PermissionError``. Updates preserve the stored creation time.
+        """
+        record.user_id = user_id
+        record.created_at = _to_naive_utc(record.created_at)
+        record.updated_at = _utcnow()
+        row = _from_record(VoiceProfileRow, record)
+        async with self._session() as sess:
+            try:
+                await sess.execute(
+                    sa.insert(VoiceProfileRow).values(
+                        id=record.id,
+                        user_id=user_id,
+                        created_at=record.created_at,
+                        updated_at=record.updated_at,
+                        payload=row.payload,
+                    ),
+                )
+            except sa.exc.IntegrityError as exc:
+                await sess.rollback()
+                # Ownership is enforced by the write itself, not a precheck.
+                owned = (
+                    VoiceProfileRow.id == record.id,
+                    VoiceProfileRow.user_id == user_id,
+                )
+                result = await sess.execute(
+                    sa.update(VoiceProfileRow)
+                    .where(*owned)
+                    .values(payload=row.payload, updated_at=record.updated_at),
+                )
+                if result.rowcount == 0:
+                    owner = await sess.scalar(
+                        sa.select(VoiceProfileRow.user_id).where(
+                            VoiceProfileRow.id == record.id,
+                        ),
+                    )
+                    if owner is not None and owner != user_id:
+                        raise PermissionError(
+                            "Cannot overwrite another user's voice profile.",
+                        ) from exc
+                    raise
+                record.created_at = (
+                    await sess.execute(
+                        sa.select(VoiceProfileRow.created_at).where(*owned),
+                    )
+                ).scalar_one()
+            await sess.commit()
+        return record.id
+
+    async def get_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> VoiceProfileRecord | None:
+        """Fetch one voice profile; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(VoiceProfileRow, profile_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, VoiceProfileRecord)
+
+    async def list_voice_profiles(
+        self,
+        user_id: str,
+    ) -> list[VoiceProfileRecord]:
+        """Return all voice profiles for *user_id*."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(VoiceProfileRow).where(
+                            VoiceProfileRow.user_id == user_id,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, VoiceProfileRecord) for r in rows]
+
+    async def delete_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> bool:
+        """Delete a voice profile; owner-scoped."""
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(VoiceProfileRow).where(
+                    VoiceProfileRow.id == profile_id,
+                    VoiceProfileRow.user_id == user_id,
+                ),
+            )
+            await sess.commit()
+        return result.rowcount > 0

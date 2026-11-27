@@ -475,6 +475,11 @@ class SOPService:
             `bool`:
                 Whether there was one to delete.
         """
+        # Cancel only after the caller's ownership has been checked. An
+        # unowned run ID can otherwise interrupt someone else's advance.
+        if await self._storage.get_sop_run(user_id, sop_run_id) is None:
+            return False
+
         going = list(self._advancing.get(sop_run_id, ()))
         for task in going:
             task.cancel()

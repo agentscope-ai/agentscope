@@ -184,7 +184,7 @@ ALL_PROVIDERS: list[Provider] = [
         name="volcengine",
         env_var="VOLCENGINE_API_KEY",
         file_prefix="volcengine",
-        supported_tests=["call", "multiagent"],
+        supported_tests=["call", "multiagent", "multimodal"],
         description="Volcengine Ark / Doubao models",
     ),
     Provider(

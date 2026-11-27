@@ -24,6 +24,7 @@ import tempfile
 from contextlib import AsyncExitStack
 from datetime import datetime
 from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
@@ -42,6 +43,7 @@ from agentscope.app.storage import (
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.permission import PermissionMode
+from agentscope.message import ToolResultState
 
 
 def _make_storage(
@@ -396,6 +398,99 @@ class TestSchedulerReconcile(_SchedulerOwnershipTestBase):
 
         self.assertListEqual(self.job_ids(), [good.id])
 
+    async def _race_stale_and_fresh_reconcile(
+        self,
+        change: str,
+    ) -> ScheduleRecord:
+        """Pause the first read, apply *change*, then start a second run.
+
+        The first reconcile captures the old records and waits; the second
+        one sees the new storage state. The returned record is the one
+        storage now holds.
+        """
+        record = _make_record()
+        await self.storage.upsert_schedule(record.user_id, record)
+        # ``_add_job`` needs a started scheduler to compute next_run_time.
+        self.manager._scheduler.start(paused=True)
+        self.addCleanup(
+            self.manager._scheduler.shutdown,
+            wait=False,
+        )
+        self.manager._add_job(record)
+
+        original_list = self.storage.list_all_schedules
+        first_read_captured = asyncio.Event()
+        release_first_read = asyncio.Event()
+        second_read_returned = asyncio.Event()
+        calls = 0
+
+        async def controlled_list() -> list[ScheduleRecord]:
+            nonlocal calls
+            calls += 1
+            snapshot = await original_list()
+            if calls == 1:
+                first_read_captured.set()
+                await release_first_read.wait()
+            else:
+                second_read_returned.set()
+            return snapshot
+
+        with patch.object(
+            self.storage,
+            "list_all_schedules",
+            controlled_list,
+        ):
+            stale = asyncio.create_task(self.manager.reconcile())
+            await first_read_captured.wait()
+
+            if change == "disable":
+                record.data.enabled = False
+            else:
+                record.data.cron_expression = "30 3 * * *"
+            record.updated_at = datetime(2025, 6, 1)
+            await self.storage.upsert_schedule(record.user_id, record)
+
+            fresh = asyncio.create_task(self.manager.reconcile())
+            try:
+                # A serialised reconcile blocks the second read behind the
+                # first one, so this wait times out. Without that ordering
+                # the second read returns and applies immediately.
+                await asyncio.wait_for(
+                    second_read_returned.wait(),
+                    timeout=0.2,
+                )
+            except asyncio.TimeoutError:
+                pass
+            else:
+                # Let the fresh reconcile apply the new snapshot before the
+                # stale one resumes.
+                await asyncio.wait({fresh}, timeout=0.2)
+            finally:
+                release_first_read.set()
+                await asyncio.gather(stale, fresh)
+
+        return record
+
+    async def test_a_stale_reconcile_cannot_restore_a_disabled_job(
+        self,
+    ) -> None:
+        """A slow read that captured an enabled record must not re-add it."""
+        await self._race_stale_and_fresh_reconcile("disable")
+
+        self.assertListEqual(self.job_ids(), [])
+
+    async def test_a_stale_reconcile_cannot_rewrite_an_edited_job(
+        self,
+    ) -> None:
+        """A slow read must not restore the previous cron configuration."""
+        record = await self._race_stale_and_fresh_reconcile("edit")
+
+        self.assertListEqual(self.job_ids(), [record.id])
+        self.assertEqual(
+            self.manager._versions[record.id],
+            record.updated_at,
+        )
+
 
 class TestSchedulerOwnership(_SchedulerOwnershipTestBase):
     """Only the enabled node holds timers; every node can notify."""
@@ -436,6 +531,59 @@ class TestSchedulerOwnership(_SchedulerOwnershipTestBase):
                 if self.job_ids(owner):
                     break
             self.assertListEqual(self.job_ids(owner), [record.id])
+
+
+class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
+    """Agent-facing deletes notify the node that owns the timers."""
+
+    async def asyncSetUp(self) -> None:
+        """Create a writer that does not own the timers."""
+        await super().asyncSetUp()
+        self.writer = SchedulerManager(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=FakeWorkspaceManager(),
+            enabled=False,
+        )
+        self.delete_tool = next(
+            tool
+            for tool in await self.writer.list_tools(
+                user_id="u",
+                agent_id="a",
+                chat_model_config=_make_record().data.chat_model_config,
+            )
+            if tool.name == "ScheduleDelete"
+        )
+
+    async def test_non_owner_delete_removes_owner_job(self) -> None:
+        """Subscription removes the owner's job before the periodic pass."""
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+        async with self.writer, self.manager:
+            self.assertListEqual(self.job_ids(self.writer), [])
+            self.assertListEqual(self.job_ids(), [record.id])
+
+            result = await self.delete_tool(schedule_id=record.id)
+
+            self.assertEqual(result.state, ToolResultState.SUCCESS)
+            self.assertIsNone(await self.storage.get_schedule("u", record.id))
+            for _ in range(50):
+                if not self.job_ids():
+                    break
+                await asyncio.sleep(0.02)
+            self.assertListEqual(self.job_ids(), [])
+
+    async def test_missing_delete_does_not_notify(self) -> None:
+        """A missing record returns an error without a lifecycle event."""
+        with patch.object(
+            self.bus,
+            "publish",
+            wraps=self.bus.publish,
+        ) as publish:
+            result = await self.delete_tool(schedule_id="missing")
+
+        self.assertEqual(result.state, ToolResultState.ERROR)
+        publish.assert_not_awaited()
 
 
 class TestSchedulerFlag(TestCase):

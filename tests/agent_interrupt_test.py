@@ -12,7 +12,7 @@
   loop.
 """
 import asyncio
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Callable
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
@@ -29,12 +29,14 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.model import ChatResponse
+from agentscope.middleware import MiddlewareBase
 from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
     PermissionDecision,
 )
 from agentscope.tool import (
+    FunctionTool,
     ToolBase,
     ToolChunk,
     Toolkit,
@@ -218,7 +220,7 @@ def _interrupted_tool_result_dict(
     - ``True`` — ``list[TextBlock]``, emitted by the toolkit's
       ``CancelledError`` path (in-flight tool cancelled mid-run).
     - ``False`` — raw ``str``, emitted by
-      :meth:`Agent._close_unfinished_tool_calls` for HITL tool calls
+      :meth:`Agent.interrupt_reply` for HITL tool calls
       that never actually started (ASKING / SUBMITTED).
     """
     output: Any
@@ -316,6 +318,90 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ),
         )
         return agent, model
+
+    async def test_cancel_before_toolkit_entry(self) -> None:
+        """A concurrent call cancelled in acting middleware is not re-run."""
+        waiting = asyncio.Event()
+        tool_entries: list[str] = []
+
+        class WaitingMiddleware(MiddlewareBase):
+            """Block the call before it reaches the toolkit."""
+
+            async def on_acting(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                """Wait on the first entry only."""
+                if not waiting.is_set():
+                    waiting.set()
+                    await asyncio.Event().wait()
+                async for chunk in next_handler(**input_kwargs):
+                    yield chunk
+
+        async def record() -> ToolChunk:
+            """Record the invocation."""
+            tool_entries.append("record")
+            return ToolChunk(content=[TextBlock(text="done")])
+
+        tool = FunctionTool(
+            record,
+            is_concurrency_safe=True,
+            is_read_only=True,
+        )
+        model = MockModel(model="mock-model", stream=True)
+        model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(id="c1", name="record", input="{}"),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a test agent.",
+            model=model,
+            toolkit=Toolkit(tools=[tool]),
+            middlewares=[WaitingMiddleware()],
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+
+        events: list[Any] = []
+
+        async def drive() -> None:
+            """Collect the reply events."""
+            async for event in agent.reply_stream(
+                UserMsg(name="user", content="Hi"),
+            ):
+                events.append(event)
+
+        task = asyncio.create_task(drive())
+        await asyncio.wait_for(waiting.wait(), timeout=5)
+        task.cancel()
+        await asyncio.wait_for(task, timeout=5)
+
+        self.assertDictEqual(
+            {
+                "tool_entries": tool_entries,
+                "model_calls": model.cnt,
+                "finished_reason": [
+                    _.finished_reason
+                    for _ in events
+                    if isinstance(_, ReplyEndEvent)
+                ],
+            },
+            {
+                "tool_entries": [],
+                "model_calls": 1,
+                "finished_reason": ["interrupted"],
+            },
+        )
 
     async def test_cancelled_error_propagates_after_tool_cleanup(self) -> None:
         """With ``interruption_raise_cancelled_error`` the cancellation
@@ -518,7 +604,7 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
     ) -> None:
         """Concurrent batch mixes a user-confirmation tool (parks in
         ASKING state without ever running, so its result comes from the
-        agent ``_close_unfinished_tool_calls`` path with a ``str``
+        agent ``interrupt_reply`` path with a ``str``
         output) and a slow running tool (whose result comes from the
         toolkit cancel path with a ``list[TextBlock]`` output).
 
@@ -799,7 +885,7 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
     """A :class:`UserInterruptEvent` is delivered to a parked reply.
 
     HITL tool calls that never actually ran are patched by
-    :meth:`Agent._close_unfinished_tool_calls`, whose ``tool_result``
+    :meth:`Agent.interrupt_reply`, whose ``tool_result``
     output is always the raw interrupt ``str`` (never ``list[TextBlock]``)."""
 
     def _make_agent(self, tools: list[ToolBase]) -> tuple[Agent, MockModel]:
@@ -857,6 +943,36 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
 
         self.assertListEqual(events, [])
         self.assertListEqual(agent.state.context, [])
+
+    async def test_stale_interrupt_leaves_parked_reply_unchanged(self) -> None:
+        """An interrupt for A must not resolve B's pending confirmation."""
+        agent, model = self._make_agent([_UserConfirmConcurrentTool()])
+        await self._park_with(
+            agent,
+            model,
+            [
+                ToolCallBlock(
+                    id="tc-current",
+                    name="user_confirm_concurrent",
+                    input="{}",
+                ),
+            ],
+        )
+        before = agent.state.model_dump(mode="json")
+        for _ in range(2):
+            events = [
+                event
+                async for event in agent.reply_stream(
+                    UserInterruptEvent(reply_id="older-reply"),
+                )
+            ]
+            self.assertEqual(
+                {
+                    "events": events,
+                    "state": agent.state.model_dump(mode="json"),
+                },
+                {"events": [], "state": before},
+            )
 
     async def test_interrupt_event_after_user_confirm(self) -> None:
         """Parked in ASKING state: ``UserInterruptEvent`` patches the
