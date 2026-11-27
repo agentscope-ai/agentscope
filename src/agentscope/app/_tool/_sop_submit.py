@@ -229,13 +229,32 @@ something the step was never asked to do.
         """
 
         def _apply(step: Any) -> None:
-            step.verifications.append(
-                VerificationResult(
-                    passed=passed,
-                    message=message,
-                    verifier=self._verifier,
-                ),
+            # A verdict is charged to the work it judged, not to the call
+            # that filed it. The step middleware sends a turn back when
+            # another tool call follows a submit, so a reviewer that looks
+            # something up after filing files again; charging that twice
+            # would spend two attempts on one submission. A fresh
+            # submission has a fresh id, and is charged on its own.
+            verdict = VerificationResult(
+                passed=passed,
+                message=message,
+                verifier=self._verifier,
             )
+            judged = getattr(step, "judged_submission", None)
+            current = (
+                getattr(step.submission[0], "id", None)
+                if step.submission
+                else None
+            )
+            if (
+                step.verifications
+                and judged is not None
+                and current in (None, judged)
+            ):
+                step.verifications[-1] = verdict
+            else:
+                step.verifications.append(verdict)
+                step.judged_submission = current
             if passed:
                 step.phase = SOPPhase.COMPLETED
             else:
