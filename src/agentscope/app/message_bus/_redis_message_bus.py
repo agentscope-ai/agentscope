@@ -3,7 +3,7 @@
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Self, TYPE_CHECKING
 
@@ -168,8 +168,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             password (`str | None`, optional):
                 Redis password if required by the server.
             connection_pool (`ConnectionPool | None`, optional):
-                An externally managed connection pool. When provided
-                the pool is used as-is and **not** closed by
+                An externally managed pool returning bytes or text.
+                When provided the pool is used as-is and **not** closed by
                 :meth:`aclose` — the caller retains ownership of its
                 lifecycle. When omitted a pool is created from
                 *host*/*port*/*db*/*password* on :meth:`__aenter__`
@@ -280,6 +280,25 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
     # Helpers
     # ------------------------------------------------------------------
 
+    def _text(self, value: str | bytes) -> str:
+        """Decode a raw Redis reply using the client's encoding."""
+        if isinstance(value, bytes):
+            return self._client.get_encoder().decode(value, force=True)
+        return value
+
+    def _stream_entries(
+        self,
+        entries: Iterable[tuple[str | bytes, dict]],
+    ) -> list[tuple[str, dict]]:
+        """Read bus payloads from Redis Stream field maps."""
+        results = []
+        for entry_id, fields in entries:
+            raw = fields.get("payload", fields.get(b"payload"))
+            if raw is not None:
+                payload = json.loads(self._text(raw))
+                results.append((self._text(entry_id), payload))
+        return results
+
     @staticmethod
     def _exclusive_start(since: str | None) -> str:
         """Compute the exclusive start id for ``XRANGE`` given a cursor.
@@ -336,7 +355,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         )
         if ttl_secs is not None:
             await self._client.expire(key, ttl_secs)
-        return entry_id
+        return self._text(entry_id)
 
     async def queue_drain(
         self,
@@ -363,16 +382,11 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         """
         entries = await self._client.eval(_QUEUE_DRAIN_LUA, 1, key, max_count)
 
-        results: list[tuple[str, dict]] = []
-        for entry_id, fields in entries:
-            # Lua flattens an entry's field map into ``[name, value]``;
-            # ``queue_push`` only ever writes the ``payload`` field.
-            raw = dict(zip(fields[::2], fields[1::2])).get("payload")
-            if raw is None:
-                continue
-            results.append((entry_id, json.loads(raw)))
-
-        return results
+        # Lua returns each field map as alternating names and values.
+        return self._stream_entries(
+            (entry_id, dict(zip(fields[::2], fields[1::2])))
+            for entry_id, fields in entries
+        )
 
     async def queue_read(
         self,
@@ -392,12 +406,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 Decoded ``(stream_entry_id, payload)`` pairs.
         """
         entries = await self._client.xrange(key, count=max_count)
-        results: list[tuple[str, dict]] = []
-        for entry_id, fields in entries:
-            raw = fields.get("payload")
-            if raw is not None:
-                results.append((entry_id, json.loads(raw)))
-        return results
+        return self._stream_entries(entries)
 
     async def queue_replace(
         self,
@@ -424,7 +433,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     {"payload": json.dumps(payload, ensure_ascii=False)},
                 )
             results = await pipe.execute()
-        return [str(entry_id) for entry_id in results[1:]]
+        return [self._text(entry_id) for entry_id in results[1:]]
 
     async def queue_remove_if(
         self,
@@ -497,7 +506,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         )
         if ttl_secs is not None:
             await self._client.expire(key, ttl_secs)
-        return entry_id
+        return self._text(entry_id)
 
     async def log_append_with_previous(
         self,
@@ -520,7 +529,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             max_len,
             json.dumps(payload, ensure_ascii=False),
         )
-        return entry_id, previous
+        return self._text(entry_id), self._text(previous)
 
     log_cursor_precedes = staticmethod(_stream_cursor_precedes)
 
@@ -552,13 +561,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             min=start,
             count=max_count,
         )
-        results: list[tuple[str, dict]] = []
-        for entry_id, fields in entries:
-            raw = fields.get("payload")
-            if raw is None:
-                continue
-            results.append((entry_id, json.loads(raw)))
-        return results
+        return self._stream_entries(entries)
 
     async def log_trim(
         self,
@@ -653,12 +656,13 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
 
     async def registry_pop(self, namespace: str, field: str) -> str | None:
         """``HGET`` + ``HDEL`` as one Lua step. See base."""
-        return await self._client.eval(
+        value = await self._client.eval(
             _REGISTRY_POP_LUA,
             1,
             namespace,
             field,
         )
+        return self._text(value) if value is not None else None
 
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the Redis Hash at ``namespace``.
@@ -704,7 +708,11 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             `dict[str, str]`:
                 All entries. Empty dict when the key is absent.
         """
-        return await self._client.hgetall(namespace) or {}
+        values = await self._client.hgetall(namespace)
+        return {
+            self._text(field): self._text(value)
+            for field, value in values.items()
+        }
 
     async def registry_get(
         self,
@@ -723,7 +731,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             `str | None`:
                 The stored value, or ``None`` if absent.
         """
-        return await self._client.hget(namespace, field)
+        value = await self._client.hget(namespace, field)
+        return self._text(value) if value is not None else None
 
     async def registry_get_many(
         self,
@@ -733,7 +742,11 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         """Read only the requested registry fields in their supplied order."""
         if not fields:
             return []
-        return await self._client.hmget(namespace, fields)
+        values = await self._client.hmget(namespace, fields)
+        return [
+            self._text(value) if value is not None else None
+            for value in values
+        ]
 
     async def registry_drop(self, namespace: str) -> None:
         """Delete the entire Hash at ``namespace``.
@@ -865,7 +878,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 data = message.get("data")
                 if data is None:
                     continue
-                yield json.loads(data)
+                yield json.loads(self._text(data))
         finally:
             # Closing drops the subscription and returns the connection to
             # the pool; shield it so a cancelled consumer cannot leak it.
