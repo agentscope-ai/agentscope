@@ -360,6 +360,36 @@ class MediaBufferTest(IsolatedAsyncioTestCase):
             [*first.content, *second.content, *text.content],
         )
 
+    async def test_media_buffer_keeps_colon_ids_in_their_own_conversation(
+        self,
+    ) -> None:
+        """Two triples that collide once unescaped stay separate."""
+        bus = InMemoryMessageBus()
+        gw = ChannelGateway(
+            storage=None,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+        await gw._aggregate_media(
+            ChannelEvent(
+                channel_id="c",
+                channel_user_id="u",
+                chat_id="a:b",
+                content=[self._img("only-for-a-b.png")],
+            ),
+        )
+        text_event = ChannelEvent(
+            channel_id="c",
+            channel_user_id="b:u",
+            chat_id="a",
+            content=[TextBlock(text="look")],
+        )
+        content = await gw._aggregate_media(text_event)
+        assert content is not None
+        # Nothing was buffered for this conversation, so the turn is the
+        # text alone rather than another conversation's image plus text.
+        self.assertEqual(content, [*text_event.content])
+
 
 class _RecordingStorage:
     """Storage stub capturing what a session was upserted with."""
