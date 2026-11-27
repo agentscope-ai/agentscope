@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from typing import (
     Any,
     AsyncGenerator,
@@ -48,6 +49,19 @@ if TYPE_CHECKING:
     # mypy 1.7+ refuses to use ``Mem0AsyncClient`` in annotation
     # positions ("Variable is not valid as a type").
     Mem0AsyncClient: TypeAlias = AsyncMemory | AsyncMemoryClient
+
+
+def _writeback_text(msg: Msg) -> str | None:
+    """Encode a structured answer or use the ordinary reply text."""
+    if msg.structured_output is None:
+        return msg.get_text_content()
+
+    try:
+        payload = msg.model_dump(mode="json", include={"structured_output"})
+        return json.dumps(payload["structured_output"], ensure_ascii=False)
+    except (TypeError, ValueError) as exc:
+        logger.warning("Skipping mem0 write for unencodable reply: %s", exc)
+        return None
 
 
 def _looks_async(method: Any) -> bool:
@@ -374,7 +388,7 @@ class Mem0Middleware(MiddlewareBase):
                 and final_msg.finished_reason
                 != ReplyFinishedReason.INTERRUPTED
             ):
-                assistant_text = final_msg.get_text_content()
+                assistant_text = _writeback_text(final_msg)
                 if assistant_text:
                     await self._dispatch_write(
                         [
