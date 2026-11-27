@@ -20,6 +20,7 @@ Three trigger paths, deliberately asymmetric:
   dispatcher serialises them.
 """
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
@@ -45,8 +46,11 @@ from .._service import (
     SubagentHitlProjector,
 )
 from ..message_bus import MessageBus, MessageBusKeys
-from ..storage import StorageBase
+from ..storage import SessionRecord, StorageBase
 from .._bus_ops import (
+    ChatSubmissionConflictError,
+    cancel_chat_submission,
+    create_chat_submission,
     ChatQueueBusyError,
     ChatQueueFullError,
     ChatSteeringUnavailableError,
@@ -73,7 +77,7 @@ async def _ensure_session(
     user_id: str,
     agent_id: str,
     session_id: str,
-) -> None:
+) -> SessionRecord:
     """Ensure the caller owns the target session before queue access.
 
     Args:
@@ -96,6 +100,89 @@ async def _ensure_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session '{session_id}' not found.",
         )
+    return session
+
+
+@chat_router.post("/submissions")
+async def create_submission(
+    agent_id: str,
+    session_id: str,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    message_bus: MessageBus = Depends(get_message_bus),
+) -> dict:
+    """Reserve an expiring identity before sending a voice input."""
+    await _ensure_session(storage, user_id, agent_id, session_id)
+    try:
+        return await create_chat_submission(
+            message_bus,
+            user_id,
+            session_id,
+            agent_id,
+        )
+    except ChatQueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except ChatQueueBusyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@chat_router.post("/submissions/{submission_id}/cancel")
+async def cancel_submission(
+    submission_id: UUID,
+    agent_id: str,
+    session_id: str,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    message_bus: MessageBus = Depends(get_message_bus),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> dict:
+    """Fence an unstarted submission or identify work still to interrupt.
+
+    A started response can include the recovered reply_id for a targeted
+    interrupt. An unknown response means the parked reply has no durable
+    submission binding and its cancellation could not be confirmed.
+    """
+    session = await storage.get_session(user_id, agent_id, session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "session_not_found",
+                "message": f"Session '{session_id}' not found.",
+            },
+        )
+    try:
+        result = await cancel_chat_submission(
+            message_bus,
+            user_id,
+            session_id,
+            agent_id,
+            str(submission_id),
+        )
+        if result is not None:
+            return result
+        # A process-local receipt may have disappeared while the tool call
+        # remains parked. Check storage after releasing the queue lock.
+        saved = await chat_service.input_result(
+            user_id,
+            session_id,
+            agent_id,
+            None,
+            submission_id=str(submission_id),
+        )
+        if saved["state"] == "reply":
+            return {
+                "state": "started",
+                "reply_id": saved["reply_id"],
+                "queue_item_id": None,
+            }
+        if saved["state"] == "unknown":
+            return {"state": "unknown", "queue_item_id": None}
+        return {"state": "cancelled", "queue_item_id": None}
+    except ChatQueueBusyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @chat_router.get(
@@ -358,7 +445,7 @@ async def delete_chat_queue_item(
     storage: StorageBase = Depends(get_storage),
     message_bus: MessageBus = Depends(get_message_bus),
 ) -> ChatQueueResponse:
-    """Delete a pending item; started items produce HTTP 409.
+    """Cancel pending input idempotently; claimed items produce HTTP 409.
 
     Args:
         item_id (`str`):
@@ -504,13 +591,19 @@ async def chat(
     # path for both idle and busy sessions removes the check-then-spawn
     # race and gives rapid submissions a stable order.
     if isinstance(request.input, (Msg, list)):
-        await _ensure_session(
+        session = await _ensure_session(
             storage,
             user_id,
             request.agent_id,
             request.session_id,
         )
         try:
+            chat_config = None
+            tts_config = None
+            if request.mode == "pipeline_voice":
+                chat_config, tts_config = await chat_service.pipeline_snapshot(
+                    session,
+                )
             item = await enqueue_chat_input(
                 message_bus,
                 user_id=user_id,
@@ -519,7 +612,21 @@ async def chat(
                 inputs=request.input,
                 client_external_tools=request.client_external_tools,
                 client_builtin_tools=request.client_builtin_tools,
+                submission_id=(
+                    str(request.submission_id)
+                    if request.submission_id is not None
+                    else None
+                ),
+                client_request_id=(
+                    str(request.client_request_id)
+                    if request.client_request_id is not None
+                    else None
+                ),
+                pipeline_chat_config=chat_config,
+                pipeline_tts_config=tts_config,
             )
+        except (ChatSubmissionConflictError, LookupError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ChatQueueFullError as exc:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

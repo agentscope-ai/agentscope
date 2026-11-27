@@ -16,6 +16,7 @@ import asyncio
 import base64
 from concurrent.futures import TimeoutError as FutureTimeoutError
 import json
+import re
 import threading
 import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
@@ -48,7 +49,11 @@ from ._card_templates import (
 
 if TYPE_CHECKING:
     import httpx
-    from lark_oapi.api.im.v1 import EventMessage, P2ImMessageReceiveV1
+    from lark_oapi.api.im.v1 import (
+        EventMessage,
+        MentionEvent,
+        P2ImMessageReceiveV1,
+    )
     from lark_oapi.event.callback.model.p2_card_action_trigger import (
         P2CardActionTrigger,
         P2CardActionTriggerResponse,
@@ -438,9 +443,8 @@ class FeishuChannel(ChannelBase):
             text = (
                 json.loads(message.content or "{}").get("text") or ""
             ).strip()
-            if chat_type == "group" and self._config.only_at_reply:
-                for mention in message.mentions or []:
-                    text = text.replace(mention.key or "", "").strip()
+            if chat_type == "group" and message.mentions:
+                text = self._resolve_mentions(text, message.mentions)
             content = [TextBlock(text=text)] if text else []
         elif message_id or chat_id:
             await self._send(
@@ -464,6 +468,26 @@ class FeishuChannel(ChannelBase):
             content=content,
             metadata=meta,
         )
+
+    def _resolve_mentions(
+        self,
+        text: str,
+        mentions: list["MentionEvent"],
+    ) -> str:
+        """Remove bot mentions and render group members by name or open ID."""
+        replacements = {}
+        for mention in mentions:
+            open_id = mention.id.open_id if mention.id else None
+            if open_id and open_id == self._bot_open_id:
+                replacements[mention.key] = ""
+            elif name := mention.name or open_id:
+                replacements[mention.key] = f"@{name}"
+
+        return re.sub(
+            r"@_user_[0-9]+",
+            lambda match: replacements.get(match[0], match[0]),
+            text,
+        ).strip()
 
     async def chat_name(self, chat_id: str) -> str:
         """The chat's title (cached per chat); ``""`` when unavailable —
@@ -602,7 +626,14 @@ class FeishuChannel(ChannelBase):
                     if code.strip():
                         blocks.append(TextBlock(text=code))
                 elif tag in ("img", "media"):
-                    key = element.get("image_key") or element.get("file_key")
+                    if tag == "img":
+                        key = element.get("image_key") or element.get(
+                            "file_key",
+                        )
+                    else:
+                        key = element.get("file_key") or element.get(
+                            "image_key",
+                        )
                     if not key:
                         continue
                     _flush()
@@ -1382,7 +1413,11 @@ class FeishuChannel(ChannelBase):
             `DataBlock | None`: The downloaded block, or ``None`` on error.
         """
         content = json.loads(getattr(message, "content", None) or "{}")
-        key = content.get("image_key") or content.get("file_key") or ""
+        # For videos, file_key identifies the clip and image_key its cover.
+        if msg_type == "image":
+            key = content.get("image_key") or content.get("file_key")
+        else:
+            key = content.get("file_key") or content.get("image_key")
         if not key:
             return None
         default_mime = {

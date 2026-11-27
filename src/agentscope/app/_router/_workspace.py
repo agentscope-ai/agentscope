@@ -26,7 +26,13 @@ from ..deps import (
 )
 from ..hub import SkillHubBase
 from .._service import WorkspaceService, WorkspaceStatus
-from .._service._workspace import SkillUploadError, UploadManifest
+from .._service._workspace import (
+    FileEditAccess,
+    SkillUploadError,
+    TextFileSaveRequest,
+    TextFileSnapshot,
+    UploadManifest,
+)
 from ..storage import MCPRecord, StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
@@ -507,6 +513,24 @@ async def get_workspace_status(
     )
 
 
+def _workspace_token_scope(
+    agent_id: str,
+    session_id: str,
+    path: str,
+) -> str:
+    """Return the capability scope for one workspace file download.
+
+    Binds ``agent_id``, ``session_id``, and ``path`` under a dedicated
+    ``workspace/`` namespace so a token minted for one session cannot be
+    replayed against another session or against other capability endpoints
+    sharing ``download_secret``.
+    """
+    encoded_agent = quote(agent_id, safe="")
+    encoded_session = quote(session_id, safe="")
+    encoded_path = quote(path, safe="")
+    return f"workspace/{encoded_agent}/{encoded_session}/{encoded_path}"
+
+
 @workspace_router.post("/files/download-token")
 async def create_download_token(
     agent_id: str = Query(...),
@@ -539,7 +563,7 @@ async def create_download_token(
     # has not been read yet to supply.
     token, expires_at = workspace_service.sign_download_token(
         user_id,
-        path,
+        _workspace_token_scope(agent_id, session_id, path),
     )
     return DownloadTokenResponse(token=token, expires_at=expires_at)
 
@@ -576,7 +600,10 @@ async def read_workspace_file(
     """
     if token is not None:
         try:
-            user_id = workspace_service.verify_download_token(token, path)
+            user_id = workspace_service.verify_download_token(
+                token,
+                _workspace_token_scope(agent_id, session_id, path),
+            )
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -635,4 +662,67 @@ async def read_workspace_file(
         backend.read_stream(target),
         media_type=media_type,
         headers=headers,
+    )
+
+
+@workspace_router.get("/files/edit-access")
+async def get_file_edit_access(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    path: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> FileEditAccess:
+    """Report path-scope eligibility; reading and saving recheck it."""
+    return await workspace_service.file_edit_access(
+        user_id,
+        agent_id,
+        session_id,
+        path,
+    )
+
+
+@workspace_router.get("/files/text")
+async def read_workspace_text(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    path: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> TextFileSnapshot:
+    """Return an allowed editor snapshot with a content revision.
+
+    Files outside the workspace and persisted session cwd remain available
+    through the read-only endpoint, but cannot be opened for editing.
+    """
+    return await workspace_service.read_text_file(
+        user_id,
+        agent_id,
+        session_id,
+        path,
+    )
+
+
+@workspace_router.put("/files/text")
+async def save_workspace_text(
+    body: TextFileSaveRequest,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    path: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> TextFileSnapshot:
+    """Save an existing file within the workspace or persisted session cwd.
+
+    Selecting cwd grants editing within that directory.
+    X-User-ID is a temporary identity mechanism, not authentication.
+    This API still requires a trusted deployment. Revision checking is
+    optimistic and cannot exclude Agent or external-process writes.
+    """
+    return await workspace_service.save_text_file(
+        user_id,
+        agent_id,
+        session_id,
+        path,
+        body,
     )

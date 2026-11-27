@@ -28,6 +28,8 @@ import {
 import * as mime from 'mime-types';
 import { memo, useEffect, useRef, useState } from 'react';
 
+import { ArtifactList } from './artifacts/ArtifactList';
+import type { FileArtifact } from './artifacts/artifacts';
 import { renderToolCall } from './tool-renderers';
 import { countDiffStats, DiffStats, getResultDiff } from './tool-renderers/_shared';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
@@ -323,9 +325,9 @@ function AudioInlineControl({ block }: { block: DataBlock }) {
 		const el = audioRef.current;
 		if (!el) return;
 		if (el.paused) {
-			replayController?.play(el);
 			try {
-				await el.play();
+				if (replayController) await replayController.play(el);
+				else await el.play();
 			} catch (err) {
 				console.error('Audio playback failed', err);
 			}
@@ -335,15 +337,21 @@ function AudioInlineControl({ block }: { block: DataBlock }) {
 		}
 	};
 
+	const replayHint = replayController?.blocked
+		? t('messageBubble.replayAfterPipelineVoice')
+		: undefined;
 	return (
 		<>
 			<button
 				type="button"
 				onClick={toggle}
+				disabled={replayController?.blocked}
+				title={replayHint}
 				aria-label={
-					isPlaying ? t('messageBubble.pauseAudio') : t('messageBubble.playAudio')
+					replayHint ??
+					(isPlaying ? t('messageBubble.pauseAudio') : t('messageBubble.playAudio'))
 				}
-				className="ml-1 inline-flex cursor-pointer items-center transition-opacity hover:opacity-70"
+				className="ml-1 inline-flex cursor-pointer items-center transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-50"
 			>
 				{isPlaying ? (
 					<AudioWave isPlaying className="size-3" />
@@ -460,6 +468,7 @@ function summarizeToolGroup(calls: ToolCallWithResult[], t: TFunction) {
 
 interface MessageBubbleProps {
 	message: Msg;
+	onOpenArtifact?: (artifact: FileArtifact) => void;
 	onUserConfirm: (
 		toolCallBlock: ToolCallBlock,
 		confirm: boolean,
@@ -485,7 +494,7 @@ interface MessageBubbleProps {
  * When `content` is empty and the message is still running, the bubble
  * body is omitted entirely so only the bottom status row renders.
  */
-function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
+function ASMessageBubbleComponent({ message, onOpenArtifact }: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
 
@@ -573,6 +582,9 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 							<ASBlock block={block} key={block.id} />
 						))}
 					</AttachmentGroup>
+				)}
+				{!isUser && !isRunning && onOpenArtifact && (
+					<ArtifactList content={message.content} onOpen={onOpenArtifact} />
 				)}
 				<MessageFooter className="flex-wrap gap-1 font-mono">
 					{!isUser && (
