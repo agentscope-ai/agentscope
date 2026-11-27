@@ -2,7 +2,7 @@
 # pylint: disable=protected-access
 """Unit tests for RedisStorage using fakeredis."""
 
-from datetime import datetime as DateTime
+from datetime import datetime as DateTime, timedelta
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
@@ -32,6 +32,10 @@ from agentscope.app.storage import (
     SOPStepDataV1,
 )
 from agentscope.app.storage import MCPRecord, SkillRecord
+from agentscope.app.storage import (
+    KnowledgeDocumentData,
+    KnowledgeDocumentRecord,
+)
 from agentscope.credential import OllamaCredential
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.app.storage import AgentData
@@ -2268,3 +2272,161 @@ class TestRecordKeyTTL(IsolatedAsyncioTestCase):
         self.assertEqual(result, (record.model_dump_json(), AnyValue()))
         self.assertGreater(result[1], 0)
         self.assertLessEqual(result[1], 60)
+
+
+def make_document_record(
+    user_id: str,
+    knowledge_base_id: str,
+    document_id: str,
+) -> KnowledgeDocumentRecord:
+    """Build a minimal knowledge document record for index tests."""
+    return KnowledgeDocumentRecord(
+        id=document_id,
+        user_id=user_id,
+        knowledge_base_id=knowledge_base_id,
+        data=KnowledgeDocumentData(
+            filename="report.md",
+            size=42,
+            blob_uri="file:///kb/report.md",
+        ),
+    )
+
+
+class TestKnowledgeDocumentGlobalIndex(IsolatedAsyncioTestCase):
+    """The global sweeper index must round-trip arbitrary ids.
+
+    Both sweeps recover the three ids by splitting the index token on
+    ``:``, so a user id that itself contains a colon has to survive that
+    encoding. Otherwise the sweeper rebuilds a document key that does not
+    exist and silently skips the record — the document stays stuck in
+    ``pending``/``processing`` forever.
+    """
+
+    def test_token_keeps_legacy_shape_for_ordinary_ids(self) -> None:
+        """Ids without separators produce byte-identical legacy tokens."""
+        storage = make_storage()
+
+        self.assertEqual(
+            storage._document_global_token("alice", "kb1", "doc1"),
+            "alice:kb1:doc1",
+        )
+
+    async def test_expired_lease_sweep_finds_colon_bearing_user(
+        self,
+    ) -> None:
+        """A stuck document of ``tenant:alice`` is still recoverable."""
+        storage = make_storage()
+        record = make_document_record("tenant:alice", "kb1", "doc1")
+        record.status = "indexing"
+        record.processing_node = "node-a"
+        record.lease_expires_at = DateTime.now() - timedelta(minutes=5)
+        await storage.upsert_knowledge_document("tenant:alice", record)
+
+        found = await storage.list_knowledge_documents_with_expired_lease()
+
+        self.assertEqual([r.id for r in found], ["doc1"])
+
+    async def test_pending_sweep_finds_colon_bearing_user(self) -> None:
+        """A document stuck in ``pending`` is visible to the pending sweep."""
+        storage = make_storage()
+        record = make_document_record("tenant:alice", "kb1", "doc2")
+        record.created_at = DateTime.now() - timedelta(hours=2)
+        await storage.upsert_knowledge_document("tenant:alice", record)
+
+        found = await storage.list_knowledge_documents_pending_since(
+            DateTime.now() - timedelta(hours=1),
+        )
+
+        self.assertEqual([r.id for r in found], ["doc2"])
+
+    async def test_delete_removes_the_index_token_it_wrote(self) -> None:
+        """Deleting a colon-bearing user's document leaves no index entry."""
+        storage = make_storage()
+        record = make_document_record("tenant:alice", "kb1", "doc3")
+        await storage.upsert_knowledge_document("tenant:alice", record)
+
+        await storage.delete_knowledge_document(
+            "tenant:alice",
+            "kb1",
+            "doc3",
+        )
+
+        tokens = await storage._client.smembers(
+            storage.key_config.knowledge_document_global_index,
+        )
+        self.assertEqual(tokens, set())
+
+    async def test_legacy_token_with_percent_id_still_resolves(self) -> None:
+        """A token written before segments were escaped stays readable."""
+        storage = make_storage()
+        record = make_document_record("a%25b", "kb1", "doc4")
+        record.created_at = DateTime.now() - timedelta(hours=2)
+        await storage.upsert_knowledge_document("a%25b", record)
+
+        # Rewrite the index entry in the legacy raw shape, as a node
+        # running the previous version would have left it.
+        index = storage.key_config.knowledge_document_global_index
+        await storage._client.srem(
+            index,
+            storage._document_global_token("a%25b", "kb1", "doc4"),
+        )
+        await storage._client.sadd(index, "a%25b:kb1:doc4")
+
+        found = await storage.list_knowledge_documents_pending_since(
+            DateTime.now() - timedelta(hours=1),
+        )
+
+        self.assertEqual([r.id for r in found], ["doc4"])
+
+
+class TestScheduleGlobalIndex(IsolatedAsyncioTestCase):
+    """The global schedule index must round-trip arbitrary user ids.
+
+    ``list_all_schedules`` splits the index token on ``:`` to rebuild the
+    record key, so a user id that contains a colon has to survive that
+    encoding. Otherwise ``SchedulerManager.reconcile()`` — the only path
+    that re-registers cron tasks — never sees the record and the user's
+    schedule silently stops firing.
+    """
+
+    async def test_schedule_sweep_finds_colon_bearing_user(self) -> None:
+        """A schedule owned by ``tenant:alice`` is still reconciled."""
+        storage = make_storage()
+        record = make_schedule_record("tenant:alice", "agent-1")
+        await storage.upsert_schedule("tenant:alice", record)
+
+        found = await storage.list_all_schedules()
+
+        self.assertEqual([r.id for r in found], [record.id])
+
+    async def test_legacy_schedule_token_still_resolves(self) -> None:
+        """A token written before segments were escaped stays readable."""
+        storage = make_storage()
+        record = make_schedule_record("a%3Ab", "agent-1")
+        await storage.upsert_schedule("a%3Ab", record)
+
+        # Rewrite the entry in the legacy raw shape, as a node running
+        # the previous version would have left it.
+        index = storage.key_config.schedule_global_index
+        await storage._client.srem(
+            index,
+            storage._schedule_global_token("a%3Ab", record.id),
+        )
+        await storage._client.sadd(index, f"a%3Ab:{record.id}")
+
+        found = await storage.list_all_schedules()
+
+        self.assertEqual([r.id for r in found], [record.id])
+
+    async def test_delete_drops_both_token_forms(self) -> None:
+        """Deleting a schedule leaves no stale global index member."""
+        storage = make_storage()
+        record = make_schedule_record("tenant:alice", "agent-1")
+        await storage.upsert_schedule("tenant:alice", record)
+        index = storage.key_config.schedule_global_index
+        # An entry written before the escape existed.
+        await storage._client.sadd(index, f"tenant:alice:{record.id}")
+
+        await storage.delete_schedule("tenant:alice", record.id)
+
+        self.assertEqual(await storage._client.smembers(index), set())
