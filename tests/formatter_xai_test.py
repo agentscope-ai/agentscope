@@ -760,6 +760,27 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             ).format([msg]),
         )
 
+    async def test_chat_formatter_uppercase_base64_image_media_type(
+        self,
+    ) -> None:
+        """A mixed-case MIME type is matched case-insensitively."""
+        image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
+        msg = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=Base64Source(
+                        data=image_b64,
+                        media_type="IMAGE/PNG",
+                    ),
+                ),
+            ],
+        )
+        self.assertListEqual(
+            [user(image(f"data:image/png;base64,{image_b64}"))],
+            await XAIChatFormatter().format([msg]),
+        )
+
     # -------------------------------------------------------------------
     # XAIMultiAgentFormatter tests
     # -------------------------------------------------------------------

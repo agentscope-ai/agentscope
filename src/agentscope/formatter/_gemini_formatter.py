@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Google Gemini API formatter in agentscope."""
 import base64
-import fnmatch
 from abc import ABC
 from typing import Any
 
@@ -45,21 +44,20 @@ class _GeminiFormatterBase(FormatterBase, ABC):
                 with extra fields placed beside ``inline_data``, or None if
                 the media type is not supported.
         """
-        source = block.source
-        media_type = source.media_type
-
-        # Check if media type is supported
-        if not any(
-            fnmatch.fnmatch(media_type, pattern)
-            for pattern in self.supported_input_media_types
-        ):
+        # Normalize the MIME type (lowercase, matched case-insensitively)
+        # before passing it to the inline_data payload.
+        supported = self._get_supported_tool_result_block(block)
+        if supported is None:
             logger.warning(
                 "Media type %s is not supported, skipped.",
-                media_type,
+                block.source.media_type,
             )
             return None
 
-        return self._format_media_source(source, block.model_extra)
+        return self._format_media_source(
+            supported.source,
+            supported.model_extra,
+        )
 
     @staticmethod
     def _format_media_source(

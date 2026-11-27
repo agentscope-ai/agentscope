@@ -216,6 +216,38 @@ class MiniMaxTest(IsolatedAsyncioTestCase):
             multi_agent_res[0]["content"],
         )
 
+    async def test_format_uppercase_video_media_type(self) -> None:
+        """Both MiniMax formatters match uppercase video MIME types."""
+        msgs = [
+            Msg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="AAAA",
+                            media_type="VIDEO/MP4",
+                        ),
+                    ),
+                ],
+                role="user",
+            ),
+        ]
+        expected_block = {
+            "type": "video",
+            "source": {
+                "type": "base64",
+                "media_type": "video/mp4",
+                "data": "AAAA",
+            },
+        }
+        for formatter in (
+            MiniMaxChatFormatter(),
+            MiniMaxMultiAgentFormatter(),
+        ):
+            with self.subTest(formatter=type(formatter).__name__):
+                res = await formatter.format(msgs)
+                self.assertIn(expected_block, res[0]["content"])
+
     def test_model_cards(self) -> None:
         """The MiniMax model cards carry the documented limits."""
         cards = sorted(MiniMaxChatModel.list_models(), key=lambda _: _.name)
