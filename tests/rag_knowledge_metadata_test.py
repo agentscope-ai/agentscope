@@ -1,15 +1,25 @@
 # -*- coding: utf-8 -*-
 """Regression tests for metadata isolation during document insertion."""
 import asyncio
+import hashlib
+import uuid
 from contextlib import AsyncExitStack
 from importlib.util import find_spec
-from unittest import skipUnless
+from unittest import TestCase, skipUnless
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 
 from agentscope.embedding import EmbeddingModelBase, EmbeddingResponse
 from agentscope.message import TextBlock
-from agentscope.rag import Chunk, KnowledgeBase, QdrantStore
+from agentscope.rag import (
+    Chunk,
+    ElasticsearchStore,
+    KnowledgeBase,
+    MilvusLiteStore,
+    MongoDBStore,
+    QdrantStore,
+    VectorRecord,
+)
 
 
 @skipUnless(find_spec("qdrant_client"), "qdrant-client is not installed")
@@ -164,3 +174,78 @@ class KnowledgeMetadataTest(IsolatedAsyncioTestCase):
             [chunk.model_dump() for chunk in self.chunks],
             before,
         )
+
+    async def test_scopes_reusing_a_document_id_keep_their_chunks(
+        self,
+    ) -> None:
+        """Another scope's insert cannot replace chunks with the same ID."""
+
+        async def embed(inputs: list) -> EmbeddingResponse:
+            return EmbeddingResponse(
+                embeddings=[[1.0, 0.0, 0.0] for _ in inputs],
+            )
+
+        self.embedding.side_effect = embed
+        alpha, beta = self._knowledge("A"), self._knowledge("B")
+        beta_chunks = [
+            self.chunks[0].model_copy(update={"chunk_index": i})
+            for i in range(3)
+        ]
+        await beta.insert_document(beta_chunks, "report")
+        await alpha.insert_document(self.chunks, "report")
+        # Re-inserting within one scope still replaces chunks in place.
+        await beta.insert_document(beta_chunks, "report")
+
+        for knowledge, count in ((alpha, 1), (beta, 3)):
+            documents = await knowledge.list_documents()
+            self.assertEqual(
+                [(d.document_id, d.chunk_count) for d in documents],
+                [("report", count)],
+            )
+
+
+class RecordScopeIdentityTest(TestCase):
+    """Scoped records get distinct IDs; unscoped IDs are unchanged."""
+
+    @staticmethod
+    def _record(scope: dict | None) -> VectorRecord:
+        return VectorRecord(
+            vector=[1.0, 0.0, 0.0],
+            document_id="doc",
+            chunk=Chunk(
+                content=TextBlock(text="text"),
+                source="doc.txt",
+                chunk_index=0,
+                total_chunks=1,
+            ),
+            scope=scope,
+        )
+
+    def test_record_ids(self) -> None:
+        """Check every built-in store's record identity."""
+        # pylint: disable=protected-access
+        legacy_hash = hashlib.sha256(b"doc\x000").hexdigest()
+        stores = {
+            QdrantStore: (
+                "_point_id",
+                str(uuid.uuid5(uuid.NAMESPACE_URL, "doc\x000")),
+            ),
+            MilvusLiteStore: ("_record_id", legacy_hash),
+            ElasticsearchStore: ("_record_id", legacy_hash),
+            MongoDBStore: ("_record_id", "doc_0"),
+        }
+        for store, (method, legacy) in stores.items():
+            with self.subTest(store=store.__name__):
+                record_id = getattr(store, method)
+                for unscoped in (None, {}):
+                    self.assertEqual(record_id(self._record(unscoped)), legacy)
+                alpha = record_id(self._record({"tenant": "a", "project": 2}))
+                self.assertNotEqual(alpha, legacy)
+                self.assertEqual(
+                    alpha,
+                    record_id(self._record({"project": 2, "tenant": "a"})),
+                )
+                self.assertNotEqual(
+                    alpha,
+                    record_id(self._record({"tenant": "b", "project": 2})),
+                )
