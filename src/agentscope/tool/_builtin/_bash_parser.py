@@ -336,7 +336,7 @@ class BashCommandParser:
             root = tree.root_node
 
             # Extract paths from commands
-            self._extract_paths_from_node(root, command, paths)
+            self._extract_paths_from_node(root, paths)
 
         except Exception:
             # Fallback to simple token-based extraction
@@ -347,7 +347,6 @@ class BashCommandParser:
     def _extract_paths_from_node(
         self,
         node: Node,
-        command: str,
         paths: List[Tuple[str, str]],
     ) -> None:
         """Recursively extract file paths from AST nodes.
@@ -355,8 +354,6 @@ class BashCommandParser:
         Args:
             node (`Node`):
                 The AST node to process
-            command (`str`):
-                The original command string
             paths (`List[Tuple[str, str]]`):
                 List to append (command_name, path) tuples to
         """
@@ -365,7 +362,7 @@ class BashCommandParser:
             # Extract the target file
             for child in node.children:
                 if child.type == "word":
-                    path = command[child.start_byte : child.end_byte]
+                    path = child.text.decode("utf8")
                     paths.append(("redirect", path.strip("'\"")))
         # Check for commands
         if node.type == "command":
@@ -375,9 +372,9 @@ class BashCommandParser:
 
             for child in node.children:
                 if child.type == "command_name":
-                    cmd_name = command[child.start_byte : child.end_byte]
+                    cmd_name = child.text.decode("utf8")
                 elif child.type == "word" and cmd_name:
-                    arg = command[child.start_byte : child.end_byte]
+                    arg = child.text.decode("utf8")
                     args.append(arg.strip("'\""))
 
             # Check if this is a file-manipulating command
@@ -401,7 +398,7 @@ class BashCommandParser:
 
         # Recursively process children
         for child in node.children:
-            self._extract_paths_from_node(child, command, paths)
+            self._extract_paths_from_node(child, paths)
 
     def _extract_paths_fallback(
         self,
@@ -481,7 +478,7 @@ class BashCommandParser:
             root = tree.root_node
 
             # Extract redirections
-            self._extract_redirections_from_node(root, command, redirections)
+            self._extract_redirections_from_node(root, redirections)
 
         except Exception:
             # Fallback to simple extraction
@@ -496,7 +493,6 @@ class BashCommandParser:
     def _extract_redirections_from_node(
         self,
         node: Node,
-        command: str,
         redirections: List[str],
     ) -> None:
         """Recursively extract redirections from AST nodes.
@@ -504,8 +500,6 @@ class BashCommandParser:
         Args:
             node (`Node`):
                 The AST node to process
-            command (`str`):
-                The original command string
             redirections (`List[str]`):
                 List to append redirection targets to
         """
@@ -513,12 +507,12 @@ class BashCommandParser:
             # Extract the target file
             for child in node.children:
                 if child.type == "word":
-                    path = command[child.start_byte : child.end_byte]
+                    path = child.text.decode("utf8")
                     redirections.append(path.strip("'\""))
 
         # Recursively process children
         for child in node.children:
-            self._extract_redirections_from_node(child, command, redirections)
+            self._extract_redirections_from_node(child, redirections)
 
     def extract_command_prefixes(
         self,
@@ -685,16 +679,14 @@ class BashCommandParser:
         for child in simple_cmd.children:
             if child.type == "variable_assignment":
                 # Environment variable assignment
-                var_name = subcmd[child.start_byte : child.end_byte].split(
-                    "=",
-                )[0]
+                var_name = child.text.decode("utf8").split("=", 1)[0]
                 env_vars.append(var_name)
             elif child.type == "command_name":
                 # Command name
-                parts.append(subcmd[child.start_byte : child.end_byte])
+                parts.append(child.text.decode("utf8"))
             elif child.type == "word" and len(parts) >= 1:
                 # Argument (might be a flag or subcommand)
-                word = subcmd[child.start_byte : child.end_byte]
+                word = child.text.decode("utf8")
                 parts.append(word)
                 # Stop after we have command + first argument
                 if len(parts) >= 2:

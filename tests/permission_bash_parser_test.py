@@ -99,6 +99,8 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
         test_cases = [
             ("git commit -m 'fix'", ["git commit"]),
             ("npm run build", ["npm run"]),
+            ("NODE_ENV=测试 npm run build", ["npm run"]),
+            ("git 中文 status", ["git 中文"]),
             ("docker compose up", ["docker compose"]),
             ("cargo build --release", ["cargo build"]),
             ("python -m pytest", ["python -m"]),
@@ -655,6 +657,12 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
     async def test_cp_command(self) -> None:
         """Test file path extraction from cp commands."""
         test_cases = [
+            ("cp é .bashrc", [("cp", "é"), ("cp", ".bashrc")]),
+            ("cp ✓ .bashrc", [("cp", "✓"), ("cp", ".bashrc")]),
+            (
+                "cp \U0001f600 .bashrc",
+                [("cp", "\U0001f600"), ("cp", ".bashrc")],
+            ),
             (
                 "cp file.txt backup.txt",
                 [("cp", "file.txt"), ("cp", "backup.txt")],
@@ -747,6 +755,7 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
                 [("redirect", "output.txt")],
             ),
             ("cat file.txt > backup.txt", [("redirect", "backup.txt")]),
+            ("cat 中文.txt > 备份.txt", [("redirect", "备份.txt")]),
             ("ls -la >> list.txt", [("redirect", "list.txt")]),
         ]
         for cmd, expected in test_cases:
@@ -757,6 +766,7 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
     async def test_compound_commands(self) -> None:
         """Test file path extraction from compound commands."""
         test_cases = [
+            ("echo ✓; cp ✓ copy.txt", [("cp", "✓"), ("cp", "copy.txt")]),
             (
                 "rm file1.txt && rm file2.txt",
                 [("rm", "file1.txt"), ("rm", "file2.txt")],
@@ -850,6 +860,7 @@ class BashParserRedirectionsTest(IsolatedAsyncioTestCase):
         test_cases = [
             ("echo 'hello' > output.txt", ["output.txt"]),
             ("cat file.txt > backup.txt", ["backup.txt"]),
+            ("cat 中文.txt > 备份.txt", ["备份.txt"]),
             ("ls -la > list.txt", ["list.txt"]),
             ("git log > history.txt", ["history.txt"]),
         ]
