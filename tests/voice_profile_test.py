@@ -34,6 +34,7 @@ from agentscope.app._router._schema._voice_profile import (
 from agentscope.app._service._tts_model import (
     _validate_voice_binding,
     _config_error_detail,
+    build_reply_tts_model,
     get_tts_model,
     validate_tts_model_config,
 )
@@ -50,6 +51,7 @@ from agentscope.app.storage._model._voice_profile import (
 from agentscope.tts import (
     DashScopeCosyVoiceTTSModel,
     GeminiTTSModel,
+    MiniMaxTTSModel,
     TTSModelCard,
     VoiceCloningError,
     VoiceCloningClientBase,
@@ -182,6 +184,7 @@ class TestVoiceCloningClientDispatch(IsolatedAsyncioTestCase):
         for engine, provider in (
             ("openai_tts", "openai_credential"),
             ("cosyvoice", "dashscope_credential"),
+            ("minimax_tts", "minimax_credential"),
         ):
             for owner, actual_type, expected_status in (
                 ("user-b", provider, 403),
@@ -504,6 +507,49 @@ class TestVoiceProfileTenantIsolation(IsolatedAsyncioTestCase):
             "profile-b",
         )
 
+    async def test_saved_voice_rechecks_profile_and_credential(self) -> None:
+        """Saved voices require current profile and credential access."""
+        config = _custom_config()
+        for denied in ("profile", "revoked", "shared"):
+            with self.subTest(denied=denied):
+                storage = AsyncMock()
+                access = AsyncMock()
+                storage.get_voice_profile.return_value = (
+                    None
+                    if denied == "profile"
+                    else _profile(credential_id="new")
+                )
+                credential = access.resolve_credential
+                if denied == "revoked":
+                    credential.side_effect = HTTPException(403)
+                elif denied == "shared":
+                    credential.return_value = CredentialRecord(
+                        id="credential-a",
+                        user_id="other",
+                        data={"type": "openai_credential", "api_key": "test"},
+                    )
+                self.assertEqual(
+                    await build_reply_tts_model(
+                        "user-a",
+                        config,
+                        access,
+                        storage,
+                        use_snapshot=True,
+                    ),
+                    (config, None),
+                )
+                storage.get_voice_profile.assert_awaited_once_with(
+                    "user-a",
+                    "profile-a",
+                )
+                if denied == "profile":
+                    credential.assert_not_awaited()
+                else:
+                    credential.assert_awaited_once_with(
+                        "user-a",
+                        "credential-a",
+                    )
+
     async def test_shared_credential_is_rejected_for_custom_voice(
         self,
     ) -> None:
@@ -634,6 +680,96 @@ class TestVoiceProfileTenantIsolation(IsolatedAsyncioTestCase):
             "user-a",
             "profile-a",
         )
+
+
+class TestMiniMaxSharedPresets(IsolatedAsyncioTestCase):
+    """Validate real MiniMax cards at configuration time and runtime."""
+
+    async def test_presets_work_for_owners_and_shared_users(self) -> None:
+        """System presets stay usable without a custom voice profile."""
+        access, storage = AsyncMock(), AsyncMock()
+        access.resolve_credential.return_value = CredentialRecord(
+            id="credential-a",
+            user_id="owner",
+            data={
+                "type": "minimax_credential",
+                "api_key": "test",
+            },
+        )
+        voices = [
+            "English_expressive_narrator",
+            "male-qn-qingse",
+            "English_Graceful_Lady",
+        ]
+        for card in MiniMaxTTSModel.list_models():
+            for user in ("owner", "viewer"):
+                for voice in voices:
+                    with self.subTest(model=card.name, user=user, voice=voice):
+                        config = TTSModelConfig(
+                            type="minimax_credential",
+                            model=card.name,
+                            credential_id="credential-a",
+                            parameters={"voice": voice},
+                        )
+                        await validate_tts_model_config(
+                            user,
+                            config,
+                            access,
+                            storage,
+                        )
+                        model = await get_tts_model(
+                            user,
+                            config,
+                            access,
+                            storage,
+                        )
+                        self.assertIsInstance(model, MiniMaxTTSModel)
+                        self.assertEqual(
+                            (model.model, model.parameters.voice),
+                            (card.name, voice),
+                        )
+            schema = card.parameter_schema["properties"]["voice"]
+            self.assertEqual(
+                (schema["default"], schema["enum"]),
+                (voices[0], voices),
+            )
+
+    async def test_shared_unknown_voice_remains_forbidden(self) -> None:
+        """Adding presets never grants access to arbitrary account voices."""
+        access, storage = AsyncMock(), AsyncMock()
+        access.resolve_credential.return_value = CredentialRecord(
+            id="credential-a",
+            user_id="owner",
+            data={
+                "type": "minimax_credential",
+                "api_key": "test",
+            },
+        )
+        for card in MiniMaxTTSModel.list_models():
+            with self.subTest(model=card.name):
+                config = TTSModelConfig(
+                    type="minimax_credential",
+                    model=card.name,
+                    credential_id="credential-a",
+                    parameters={"voice": "private-account-voice"},
+                )
+                with self.assertRaises(HTTPException) as raised:
+                    await validate_tts_model_config(
+                        "viewer",
+                        config,
+                        access,
+                        storage,
+                    )
+                self.assertEqual(raised.exception.status_code, 403)
+                with patch("agentscope.app._service._tts_model.logger"):
+                    self.assertIsNone(
+                        await get_tts_model(
+                            "viewer",
+                            config,
+                            access,
+                            storage,
+                        ),
+                    )
 
 
 class TestGeminiTTSRuntime(IsolatedAsyncioTestCase):
@@ -1558,6 +1694,7 @@ class TestEngineToCredentialMapping(TestCase):
             "dashscope_tts": "dashscope_credential",
             "openai_tts": "openai_credential",
             "gemini_tts": "gemini_credential",
+            "minimax_tts": "minimax_credential",
         }
         self.assertEqual(ENGINE_TO_CREDENTIAL_TYPE, expected)
 

@@ -2,11 +2,13 @@
 """The Google Gemini chat model implementation."""
 import base64
 import json
+import os
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
+from ..._logging import logger
 from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._content_block import _enum_name
@@ -109,8 +111,17 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
 
     - ``$schema``: removed entirely.
     - ``additionalProperties``: removed entirely.
+    - ``patternProperties``: removed entirely, because Gemini's ``Schema``
+      has no equivalent for pattern-keyed objects.
+    - ``exclusiveMinimum``, ``exclusiveMaximum``, ``multipleOf``,
+      ``uniqueItems``, ``examples`` and ``deprecated``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
+    - ``oneOf``: converted to ``anyOf`` for discriminated unions.
+      An existing ``anyOf`` raises ``ValueError`` rather than dropping
+      conjunctive constraints.
+    - ``prefixItems``: converted to a single ``items`` schema that admits
+      both positional elements and any permitted trailing elements.
     - ``type`` arrays containing ``"null"``: simplified to the single
       non-null type or converted to ``anyOf`` for multiple non-null
       types, matching nullable JSON Schema emitted by Pydantic and
@@ -167,11 +178,62 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     # Remove additionalProperties — not supported by Gemini
     schema.pop("additionalProperties", None)
 
+    # Gemini tool schemas do not support pattern-based property names.
+    schema.pop("patternProperties", None)
+
+    # Remove validation keywords that Gemini's Schema model does not declare;
+    # the SDK rejects the whole request on any of them. Pydantic emits them
+    # for e.g. `Field(gt=0)`, `set[str]` and `Field(deprecated=True)`. The
+    # agent still validates tool arguments against the original schema.
+    for keyword in (
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "uniqueItems",
+        "examples",
+        "deprecated",
+    ):
+        schema.pop(keyword, None)
+
     # Convert `const` into an equivalent single-value `enum` — Gemini's
     # Schema model does not support the `const` keyword.
     if "const" in schema:
         const_value = schema.pop("const")
         schema.setdefault("enum", [const_value])
+
+    # Gemini lacks `oneOf`; discriminated unions can use `anyOf` because
+    # their branches are mutually exclusive.
+    schema.pop("discriminator", None)
+    if "oneOf" in schema:
+        if "anyOf" in schema:
+            raise ValueError(
+                "Cannot safely sanitize Gemini schema with both oneOf "
+                "and anyOf.",
+            )
+        schema["anyOf"] = schema.pop("oneOf")
+
+    # Gemini uses one item schema for every position in the array.
+    prefix_items = schema.pop("prefixItems", None)
+    if isinstance(prefix_items, list) and prefix_items:
+        prefix_length = len(prefix_items)
+        tail = schema.get("items", True)
+        max_items = schema.get("maxItems", float("inf"))
+        if tail is False:
+            max_items = min(max_items, prefix_length)
+            schema["maxItems"] = max_items
+
+        has_tail = max_items > prefix_length
+        if has_tail and (tail is True or tail == {}):
+            # A positional restriction cannot constrain an unrestricted tail.
+            schema["items"] = {}
+        else:
+            candidates = prefix_items + [tail] if has_tail else prefix_items
+            elements = [
+                _sanitize_schema_for_gemini(item) for item in candidates
+            ]
+            schema["items"] = (
+                elements[0] if len(elements) == 1 else {"anyOf": elements}
+            )
 
     # Simplify anyOf that only differs by a null type, e.g. Optional[X]
     if "anyOf" in schema and isinstance(schema["anyOf"], list):
@@ -228,8 +290,9 @@ class GeminiChatModel(ChatModelBase):
             default=None,
             title="Thinking",
             description="Whether to enable thinking output."
-            " When None, no ``thinking_config`` is sent and the"
-            " model's default behavior applies.",
+            " When no thinking settings are supplied, the model's"
+            " default behavior applies. For Gemini 4 models,"
+            " this controls summaries only, not reasoning itself.",
         )
 
         thinking_budget: int | None = Field(
@@ -237,6 +300,16 @@ class GeminiChatModel(ChatModelBase):
             title="Thinking Budget",
             description="The thinking budget in tokens.",
             gt=0,
+        )
+
+        thinking_level: (
+            Literal["low", "medium", "high", "xhigh"] | None
+        ) = Field(
+            default=None,
+            title="Thinking Level",
+            description="The reasoning effort for supported Gemini 4 models."
+            " Hydrogen defaults to high and also supports xhigh;"
+            " Argon and Carbon default to medium and cap at high.",
         )
 
         temperature: float | None = Field(
@@ -298,6 +371,8 @@ class GeminiChatModel(ChatModelBase):
                 Extra keyword arguments forwarded to ``google.genai.Client``
                 (e.g. ``vertexai``, ``project``, ``location``,
                 ``credentials``, ``http_options``).
+                Developer API requests default to ``v1beta`` unless an API
+                version is set in the request, client, or environment.
             raise_on_content_filter (`bool`, defaults to `False`):
                 Raise ``ContentBlockedError`` for supported filter signals.
                 Disabled by default. See ``ChatModelBase.__init__`` for
@@ -314,9 +389,20 @@ class GeminiChatModel(ChatModelBase):
             raise_on_content_filter=raise_on_content_filter,
         )
         self.formatter = formatter or GeminiChatFormatter()
-        self.client_kwargs = client_kwargs or {}
+        self.client_kwargs = dict(client_kwargs or {})
 
         from google import genai
+
+        if self._is_gemini_4(model):
+            http_options = genai.types.HttpOptions.model_validate(
+                self.client_kwargs.get("http_options") or {},
+            )
+            # Preserve zero: the SDK uses it to disable client timeouts.
+            if http_options.timeout is None:
+                http_options = http_options.model_copy(
+                    update={"timeout": 900_000},
+                )
+            self.client_kwargs["http_options"] = http_options
 
         self.client: genai.Client = genai.Client(
             api_key=self.credential.api_key.get_secret_value(),
@@ -333,6 +419,63 @@ class GeminiChatModel(ChatModelBase):
         # set to make sure 429s are retried, at the cost of also retrying
         # rare 4xx like auth/bad-request a few times.
         return (errors.APIError,)
+
+    @staticmethod
+    def _is_gemini_4(model_name: str) -> bool:
+        """Match supported Gemini 4 IDs, including qualified API names."""
+        return model_name.rsplit("/", 1)[-1] in (
+            "gemini-4-argon",
+            "gemini-4-carbon",
+            "gemini-4-hydrogen",
+        )
+
+    @staticmethod
+    def _prepare_gemini_4_config(
+        config: dict[str, Any],
+        model_name: str,
+    ) -> None:
+        """Validate the final config and omit ignored sampling settings."""
+        from google.genai.types import ThinkingConfig
+
+        thinking = config.get("thinking_config")
+        if thinking is not None:
+            # The SDK normalizes nested aliases and rejects duplicate names.
+            thinking = ThinkingConfig.model_validate(thinking).model_dump(
+                exclude_none=True,
+            )
+            if thinking.get("thinking_budget") is not None:
+                raise ValueError(
+                    "Gemini 4 models require thinking_level "
+                    "instead of thinking_budget.",
+                )
+            level = thinking.get("thinking_level")
+            if level is not None:
+                level = level.upper()
+                levels = ("low", "medium", "high")
+                if model_name.rsplit("/", 1)[-1] == "gemini-4-hydrogen":
+                    levels += ("xhigh",)
+                if level not in tuple(item.upper() for item in levels):
+                    raise ValueError(
+                        f"{model_name} thinking_level must be one of "
+                        f"{', '.join(levels)}.",
+                    )
+                thinking["thinking_level"] = level
+            config["thinking_config"] = thinking
+
+        max_tokens = config.get("max_output_tokens")
+        if max_tokens is not None and max_tokens > 65_536:
+            raise ValueError(
+                "Gemini 4 max_output_tokens must not "
+                "exceed 65536; long decode is not supported by this "
+                "adapter yet.",
+            )
+        for key in ("temperature", "top_p", "top_k"):
+            if config.pop(key, None) is not None:
+                logger.warning(
+                    "Gemini 4 models ignore %s; "
+                    "the parameter will not be sent.",
+                    key,
+                )
 
     async def _call_api(
         self,
@@ -362,7 +505,7 @@ class GeminiChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        formatted_messages = await self.formatter.format(messages)
+        from google.genai.types import HttpOptions
 
         config: dict[str, Any] = {}
 
@@ -375,7 +518,23 @@ class GeminiChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             config["top_p"] = self.parameters.top_p
 
-        if self.parameters.thinking_enable is not None:
+        is_gemini_4 = self._is_gemini_4(model_name)
+        if is_gemini_4:
+            thinking = {}
+            if self.parameters.thinking_enable is not None:
+                thinking["include_thoughts"] = self.parameters.thinking_enable
+            if self.parameters.thinking_level is not None:
+                thinking["thinking_level"] = self.parameters.thinking_level
+            if self.parameters.thinking_budget is not None:
+                thinking["thinking_budget"] = self.parameters.thinking_budget
+            if thinking:
+                config["thinking_config"] = thinking
+        elif self.parameters.thinking_level is not None:
+            raise ValueError(
+                "The thinking_level parameter is currently supported only "
+                "for Gemini 4 Argon, Carbon, and Hydrogen in this adapter.",
+            )
+        elif self.parameters.thinking_enable is not None:
             if self.parameters.thinking_enable:
                 config["thinking_config"] = {
                     "include_thoughts": True,
@@ -387,8 +546,46 @@ class GeminiChatModel(ChatModelBase):
                     "thinking_budget": 0,
                 }
 
+        # Normalize aliases before merging so per-call values take precedence.
+        if is_gemini_4:
+            for alias, name in {
+                "thinkingConfig": "thinking_config",
+                "maxOutputTokens": "max_output_tokens",
+                "topP": "top_p",
+                "topK": "top_k",
+            }.items():
+                if alias in config_kwargs:
+                    if name in config_kwargs:
+                        raise ValueError(
+                            f"Cannot supply both {alias} and {name}.",
+                        )
+                    config_kwargs[name] = config_kwargs.pop(alias)
+
         # Per-call config takes precedence over model-level defaults.
         config.update(config_kwargs)
+        if is_gemini_4:
+            self._prepare_gemini_4_config(config, model_name)
+
+        # Preserve the pre-3.0 Developer API route without changing Vertex.
+        if not self.client.vertexai and not os.getenv(
+            "GOOGLE_GENAI_API_VERSION",
+        ):
+            client_options = HttpOptions.model_validate(
+                self.client_kwargs.get("http_options") or {},
+            )
+            if not client_options.api_version:
+                options_key = (
+                    "httpOptions"
+                    if "httpOptions" in config
+                    else "http_options"
+                )
+                options = HttpOptions.model_validate(
+                    config.get(options_key) or {},
+                )
+                if not options.api_version:
+                    config[options_key] = options.model_copy(
+                        update={"api_version": "v1beta"},
+                    )
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -397,6 +594,9 @@ class GeminiChatModel(ChatModelBase):
 
         if fmt_tool_choice is not None:
             config["tool_config"] = fmt_tool_choice
+
+        # Validate config before formatting can read or download media.
+        formatted_messages = await self.formatter.format(messages)
 
         kwargs: dict[str, Any] = {
             "model": model_name,
@@ -598,7 +798,7 @@ class GeminiChatModel(ChatModelBase):
             return None
         prompt_tokens = usage_metadata.prompt_token_count
         total_tokens = usage_metadata.total_token_count
-        if prompt_tokens is not None and total_tokens is not None:
+        if prompt_tokens is not None:
             tool_use_tokens = (
                 getattr(
                     usage_metadata,
@@ -617,9 +817,12 @@ class GeminiChatModel(ChatModelBase):
                 output_tokens = candidates_tokens + (
                     getattr(usage_metadata, "thoughts_token_count", 0) or 0
                 )
-            else:
+            elif total_tokens is not None:
                 # Fallback for SDK versions without the candidate count.
                 output_tokens = total_tokens - input_tokens
+            else:
+                # Neither count can describe the generated tokens.
+                return None
             return ChatUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,

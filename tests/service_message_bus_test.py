@@ -20,6 +20,7 @@ from utils import AnyString
 from agentscope.app.message_bus import (
     InMemoryMessageBus,
     MessageBus,
+    MessageBusKeys,
     RedisMessageBus,
 )
 
@@ -59,6 +60,104 @@ def _make_bus(
             self._client = None
 
     return _FakeBus()
+
+
+class TestConditionalQueueRemoval(IsolatedAsyncioTestCase):
+    """Both backends remove only the entries matching every predicate."""
+
+    async def asyncSetUp(self) -> None:
+        self.fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self._stack = AsyncExitStack()
+        self.buses = {
+            "memory": await self._stack.enter_async_context(
+                InMemoryMessageBus(),
+            ),
+            "redis": await self._stack.enter_async_context(_make_bus(self.fr)),
+        }
+
+    async def asyncTearDown(self) -> None:
+        await self._stack.aclose()
+        await self.fr.aclose()
+
+    async def test_remove_preserves_other_entries_and_expiry(self) -> None:
+        """Appends survive removal with their IDs, contents and expiry."""
+        for backend, bus in self.buses.items():
+            with self.subTest(backend=backend):
+                for item_id in ("first", "guide 一", "guide two", "last"):
+                    await bus.queue_push(
+                        "queue",
+                        {"id": item_id, "state": "steering", "reply": "r"},
+                        ttl_secs=60,
+                    )
+                matches = [
+                    {"id": item_id, "state": "steering", "reply": "r"}
+                    for item_id in ("guide 一", "guide two")
+                ]
+                await bus.queue_push(
+                    "queue",
+                    {"id": "new", "input": {"text": "keep me"}},
+                )
+                before = await bus.queue_read("queue")
+                expiry = (
+                    bus._queue_expires_at["queue"]
+                    if isinstance(bus, InMemoryMessageBus)
+                    else await self.fr.pttl("queue")
+                )
+                self.assertTrue(await bus.queue_remove_if("queue", matches))
+                expected = [before[0], before[3], before[4]]
+                self.assertEqual(await bus.queue_read("queue"), expected)
+                if isinstance(bus, InMemoryMessageBus):
+                    self.assertEqual(bus._queue_expires_at["queue"], expiry)
+                else:
+                    self.assertGreater(await self.fr.pttl("queue"), 0)
+                    self.assertLessEqual(await self.fr.pttl("queue"), expiry)
+                self.assertFalse(await bus.queue_remove_if("queue", matches))
+                self.assertTrue(await bus.queue_remove_if("queue", []))
+                self.assertEqual(await bus.queue_read("queue"), expected)
+
+    async def test_mismatched_batch_leaves_entire_queue_unchanged(
+        self,
+    ) -> None:
+        """Validate all targets before deleting even the first match."""
+        for backend, bus in self.buses.items():
+            first = {
+                "id": "one",
+                "state": "steering",
+                "reply": "r",
+                "ref": "a",
+            }
+            second = {
+                "id": "two",
+                "state": "steering",
+                "reply": "r",
+                "ref": "b",
+            }
+            await bus.queue_push("queue", first)
+            await bus.queue_push("queue", second)
+            before = await bus.queue_read("queue")
+            for field, value in (
+                ("id", "absent"),
+                ("state", "queued"),
+                ("reply", "another"),
+                ("ref", "edited"),
+            ):
+                with self.subTest(backend=backend, field=field):
+                    self.assertFalse(
+                        await bus.queue_remove_if(
+                            "queue",
+                            [first, {**second, field: value}],
+                        ),
+                    )
+                    self.assertEqual(await bus.queue_read("queue"), before)
+            for matches in ([first, first], [{"state": "steering"}]):
+                with self.subTest(backend=backend, matches=matches):
+                    self.assertFalse(
+                        await bus.queue_remove_if("queue", matches),
+                    )
+                    self.assertEqual(await bus.queue_read("queue"), before)
+            self.assertFalse(await bus.queue_remove_if("missing", [first]))
+            self.assertTrue(await bus.queue_remove_if("missing", []))
+            self.assertEqual(await bus.queue_read("missing"), [])
 
 
 class TestQueuePrimitive(IsolatedAsyncioTestCase):
@@ -403,6 +502,41 @@ class TestPubSubPrimitive(IsolatedAsyncioTestCase):
         await asyncio.wait_for(task, timeout=2.0)
         self.assertEqual([p["i"] for p in received], [1, 2])
 
+    async def test_subscription_barrier_orders_pending_messages(self) -> None:
+        """Flushing covers the reader backlog without yielding the PONG."""
+        barrier = asyncio.get_running_loop().create_future()
+        received = []
+        gate = asyncio.Event()
+
+        async def consume() -> None:
+            async for event in self.bus.subscribe(
+                "ch",
+                on_barrier=barrier.set_result,
+            ):
+                await gate.wait()
+                received.append(event)
+                if event == {"frame": "next"}:
+                    break
+
+        task = asyncio.create_task(consume())
+        try:
+            flush = await asyncio.wait_for(barrier, 2)
+            await self.bus.publish("ch", {"frame": "body"})
+            await self.bus.publish("ch", {"frame": "end"})
+            flushing = asyncio.create_task(flush())
+            gate.set()
+            await asyncio.wait_for(flushing, 2)
+            self.assertEqual(received, [{"frame": "body"}, {"frame": "end"}])
+            await self.bus.publish("ch", {"frame": "next"})
+            await asyncio.wait_for(task, 2)
+            self.assertEqual(
+                received,
+                [{"frame": f} for f in ("body", "end", "next")],
+            )
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def test_subscribe_cleanup_survives_cancellation(self) -> None:
         """A consumer cancelled again while closing the pubsub must not
         abort the close, otherwise the connection leaks from the pool."""
@@ -708,6 +842,10 @@ class TestSessionDomainHelpers(IsolatedAsyncioTestCase):
         task = asyncio.create_task(_consumer())
         await asyncio.wait_for(ready.wait(), timeout=2.0)
 
+        await self.bus.publish(
+            MessageBusKeys.session_events(sid),
+            {MessageBusKeys.SESSION_BARRIER_FIELD: "other"},
+        )
         await self.bus.session_publish_event(sid, {"hello": "world"})
         await asyncio.wait_for(task, timeout=2.0)
 
@@ -1039,6 +1177,109 @@ class TestBackgroundTaskRegistryHelpers(IsolatedAsyncioTestCase):
         self.assertEqual(received, ["task-X"])
 
 
+class TestExternalConnectionPool(IsolatedAsyncioTestCase):
+    """External byte and text pools expose the same bus API."""
+
+    async def asyncSetUp(self) -> None:
+        self.buses = {}
+        for decode in (True, False):
+            client = await self.enterAsyncContext(
+                fakeredis.aioredis.FakeRedis(decode_responses=decode),
+            )
+            self.buses[decode] = await self.enterAsyncContext(
+                RedisMessageBus(connection_pool=client.connection_pool),
+            )
+
+    async def test_queue_round_trip(self) -> None:
+        """Peek and drain return the original payload and a usable ID."""
+        payload = {"text": "café"}
+        for decode, bus in self.buses.items():
+            with self.subTest(decode=decode):
+                entry_id = await bus.queue_push("q", payload)
+                self.assertRegex(entry_id, r"^\d+-\d+$")
+                expected = [(entry_id, payload)]
+                self.assertEqual(await bus.queue_read("q"), expected)
+                self.assertEqual(await bus.queue_drain("q"), expected)
+                self.assertEqual(await bus.queue_drain("q"), [])
+                ids = await bus.queue_replace("q", [payload])
+                self.assertEqual(
+                    await bus.queue_read("q"),
+                    [(ids[0], payload)],
+                )
+
+    async def test_log_cursors(self) -> None:
+        """Both append methods return text IDs that resume a replay."""
+        for decode, bus in self.buses.items():
+            with self.subTest(decode=decode):
+                first, previous = await bus.log_append_with_previous(
+                    "log",
+                    {"n": 1},
+                    max_len=10,
+                )
+                self.assertEqual(previous, "")
+                second = await bus.log_append("log", {"n": 2})
+                third, previous = await bus.log_append_with_previous(
+                    "log",
+                    {"n": 3},
+                    max_len=10,
+                )
+                self.assertEqual(previous, second)
+                self.assertRegex(third, r"^\d+-\d+$")
+                self.assertEqual(
+                    await bus.log_read("log", since=first),
+                    [(second, {"n": 2}), (third, {"n": 3})],
+                )
+
+    async def test_registry_text_and_missing_values(self) -> None:
+        """Hash reads preserve Unicode, empty strings and absent fields."""
+        for decode, bus in self.buses.items():
+            with self.subTest(decode=decode):
+                await bus.registry_set("reg", "clé", "été")
+                await bus.registry_set("reg", "empty", "")
+                value = await bus.registry_get("reg", "clé")
+                self.assertEqual(value, "été")
+                self.assertIsNone(await bus.registry_get("reg", "absent"))
+                self.assertEqual(
+                    await bus.registry_get_many("reg", ["empty", "x", "clé"]),
+                    ["", None, "été"],
+                )
+                self.assertEqual(
+                    await bus.registry_getall("reg"),
+                    {"clé": "été", "empty": ""},
+                )
+                value = await bus.registry_pop("reg", "clé")
+                self.assertEqual(value, "été")
+                self.assertIsNone(await bus.registry_pop("reg", "clé"))
+
+    async def test_reads_use_external_pool_encoding(self) -> None:
+        """Decode JSON bytes written in the external pool's encoding."""
+        client = await self.enterAsyncContext(
+            fakeredis.aioredis.FakeRedis(
+                decode_responses=False,
+                encoding="latin-1",
+            ),
+        )
+        bus = await self.enterAsyncContext(
+            RedisMessageBus(connection_pool=client.connection_pool),
+        )
+        raw_id = await client.xadd("q", {"payload": '{"text":"café"}'})
+        self.assertEqual(
+            await bus.queue_read("q"),
+            [(raw_id.decode("ascii"), {"text": "café"})],
+        )
+        ready = asyncio.Event()
+        events = bus.subscribe("channel", on_ready=ready.set)
+        try:
+            async with asyncio.timeout(2):
+                async with asyncio.TaskGroup() as group:
+                    event = group.create_task(anext(events))
+                    await ready.wait()
+                    await bus.publish("channel", {"text": "café"})
+                self.assertEqual(event.result(), {"text": "café"})
+        finally:
+            await events.aclose()
+
+
 class TestBaseClassIsAbstract(IsolatedAsyncioTestCase):
     """``MessageBus`` itself cannot be instantiated."""
 
@@ -1052,7 +1293,12 @@ class TestBaseClassIsAbstract(IsolatedAsyncioTestCase):
     async def test_historical_bus_remains_instantiable(self) -> None:
         """Optional editable-queue methods do not add abstract requirements."""
         self.assertFalse(
-            {"queue_read", "queue_replace", "acquire_lock_bounded"}
+            {
+                "queue_read",
+                "queue_replace",
+                "queue_remove_if",
+                "acquire_lock_bounded",
+            }
             & MessageBus.__abstractmethods__,
         )
         bus = InMemoryMessageBus()
@@ -1060,3 +1306,5 @@ class TestBaseClassIsAbstract(IsolatedAsyncioTestCase):
             await MessageBus.queue_read(bus, "unsupported")
         with self.assertRaises(NotImplementedError):
             await MessageBus.queue_replace(bus, "unsupported", [])
+        with self.assertRaises(NotImplementedError):
+            await MessageBus.queue_remove_if(bus, "unsupported", [])

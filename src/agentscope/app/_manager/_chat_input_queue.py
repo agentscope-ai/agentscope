@@ -16,22 +16,39 @@ from ...event import (
     UserInterruptEvent,
 )
 from ...message import Msg
+from .._client_external_tool import (
+    ClientBuiltinToolName,
+    ClientExternalToolDefinition,
+    parse_client_tool_capabilities,
+)
 from ..message_bus import MessageBusKeys
+from ..storage import ChatModelSnapshot, TTSModelConfig
 from ._chat_run_registry import CHAT_RUN_SHUTDOWN
 from .._bus_ops import (
     ChatQueueBusyError,
     chat_input_mutation,
     enqueue_run_trigger,
     publish_session_event,
+    publish_removed_chat_input,
 )
 from .._chat_input_store import (
+    get_submission,
+    is_input_cancelled,
+    INPUT_EXECUTION,
     cleanup_session,
     discard_input,
+    finish_unbound_inputs,
     hydrate_input,
     queue_entry,
 )
+from .._chat_receipts import (
+    ReceiptProbes,
+    reap_receipts,
+    waiting_for_receipt_expiry,
+)
 
 if TYPE_CHECKING:
+    from ._chat_run_registry import ChatRunRegistry
     from ..message_bus import MessageBus
     from ..storage import StorageBase
     from .._service import ChatService
@@ -56,13 +73,16 @@ class ChatInputQueue:
         bus: "MessageBus",
         storage: "StorageBase",
         chat_service: "ChatService",
+        run_registry: "ChatRunRegistry | None" = None,
     ) -> None:
         self._bus = bus
         self._storage = storage
         self._chat_service = chat_service
+        self._run_registry = run_registry
         self._recovery_task: asyncio.Task | None = None
         self._recovery_owner = uuid.uuid4().hex
         self._retry_tasks: set[asyncio.Task] = set()
+        self._receipt_probes: dict[str, ReceiptProbes] = {}
         self._closed = False
 
     async def close(self, *, release_leadership: bool = True) -> None:
@@ -78,6 +98,9 @@ class ChatInputQueue:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        for probes in self._receipt_probes.values():
+            await probes.discard_missing(set())
+        self._receipt_probes.clear()
         self._retry_tasks.clear()
         self._recovery_task = None
         if release_leadership:
@@ -105,11 +128,9 @@ class ChatInputQueue:
         """Recreate message triggers for durably indexed non-empty FIFOs.
 
         A cluster-wide renewable leader lease lets only one API process
-        perform the O(N) sweeps. Queue probes do not take the foreground
-        mutation lock; an empty marker is removed only after a locked
-        recheck.
+        perform the O(N) sweep. Receipt collection takes a bounded mutation
+        lock; busy sessions can still receive wakeups without collection.
         """
-        pushed_count = 0
         try:
             recovery_lock = MessageBusKeys.chat_input_recovery_lock()
             async with self._bus.acquire_lock_bounded(
@@ -148,23 +169,49 @@ class ChatInputQueue:
                     str(now + _MESSAGE_FALLBACK_TICK_SECS * 2),
                     ttl_secs=_MESSAGE_RECOVERY_LOCK_TTL_SECS * 2,
                 )
-                pushed_count = await self._recover_pending_chat_inputs_locked()
+                await self._recover_pending_chat_inputs_locked()
         except TimeoutError:
             return
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "WakeupDispatcher: pending chat queue recovery failed.",
             )
-        if pushed_count:
-            # Recovery only creates durable triggers. One batched signal
-            # wakes the single ``_loop`` consumer; non-leaders and empty
-            # sweeps do not generate redundant pub/sub fan-out.
-            try:
-                await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
-            except Exception:  # pylint: disable=broad-except
-                logger.exception(
-                    "WakeupDispatcher: failed to signal after recovery.",
-                )
+
+    async def _receipt_input_result(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        message_id: str | None,
+        submission_id: str | None = None,
+    ) -> dict:
+        """Resolve a claimed receipt only when the collector needs it."""
+        if message_id is None:
+            session = await self._storage.get_session(
+                user_id,
+                agent_id,
+                session_id,
+            )
+            active = await self._bus.is_locked(
+                MessageBusKeys.session_lock(session_id),
+            )
+            parked = session is not None and await self._is_session_parked(
+                session,
+                user_id,
+                agent_id,
+            )
+            return {"state": "unknown" if active or parked else "finished"}
+        return await self._chat_service.input_result(
+            user_id,
+            session_id,
+            agent_id,
+            message_id,
+            **(
+                {"submission_id": submission_id}
+                if submission_id is not None
+                else {}
+            ),
+        )
 
     async def _release_recovery_leadership(self) -> None:
         """Release this process's recovery lease during graceful shutdown."""
@@ -200,9 +247,7 @@ class ChatInputQueue:
 
         Returns:
             `int`:
-                Number of durable ``queued_message`` triggers pushed. The
-                caller publishes one shared signal when this value is
-                non-zero.
+                Number of durable ``queued_message`` triggers pushed.
         """
         pushed_count = 0
         pending_sessions = await self._bus.registry_getall(
@@ -211,14 +256,13 @@ class ChatInputQueue:
         inflight_sessions = await self._bus.registry_getall(
             MessageBusKeys.chat_input_inflight_registry(),
         )
-        recovery_timeout = MessageBusKeys.CHAT_INPUT_RECOVERY_LOCK_TIMEOUT_SECS
-        for session_id in pending_sessions.keys() | inflight_sessions.keys():
+        sessions = inflight_sessions | pending_sessions
+        for sid in self._receipt_probes.keys() - sessions.keys():
+            await self._receipt_probes.pop(sid).discard_missing(set())
+        sessions_to_collect: list[tuple[str, str, str]] = []
+        for session_id, raw_routing in sessions.items():
             try:
-                raw_routing = pending_sessions.get(session_id)
-                if raw_routing is not None:
-                    routing = json.loads(raw_routing)
-                else:
-                    routing = json.loads(inflight_sessions[session_id])
+                routing = json.loads(raw_routing)
                 user_id = routing["user_id"]
                 agent_id = routing["agent_id"]
                 if not isinstance(user_id, str) or not isinstance(
@@ -228,39 +272,23 @@ class ChatInputQueue:
                     raise TypeError(
                         "Pending-chat routing ids must be strings.",
                     )
-                pending = await self._bus.queue_read(
-                    MessageBusKeys.chat_inputs(session_id),
-                    max_count=1,
-                )
-                claimed = session_id in inflight_sessions
-                if not pending and not claimed:
-                    # Enqueue can register before pushing. Recheck under the
-                    # same mutation lock before collecting a stale marker.
-                    try:
-                        async with chat_input_mutation(
-                            self._bus,
-                            session_id,
-                            timeout_secs=recovery_timeout,
-                        ):
-                            pending = await self._bus.queue_read(
-                                MessageBusKeys.chat_inputs(session_id),
-                                max_count=1,
-                            )
-                            claimed = await self._bus.registry_exists(
-                                MessageBusKeys.chat_input_inflight_registry(),
-                                session_id,
-                            )
-                            if not pending and not claimed:
-                                await cleanup_session(self._bus, session_id)
-                    except ChatQueueBusyError:
-                        # Never hold the cluster recovery lease while waiting
-                        # behind a foreground enqueue/edit operation.
-                        continue
-                if not pending and not claimed:
+                if (
+                    session_id not in inflight_sessions
+                    and waiting_for_receipt_expiry(routing)
+                ):
                     continue
-                # Reuse the canonical trigger serializer but batch the
-                # signal. The sole ``_loop`` drainer consumes it after the
-                # recovery method publishes once for the whole sweep.
+                sessions_to_collect.append((user_id, session_id, agent_id))
+                if session_id not in inflight_sessions and not (
+                    await self._bus.queue_read(
+                        MessageBusKeys.chat_inputs(session_id),
+                        max_count=1,
+                    )
+                    or await self._bus.registry_exists(
+                        MessageBusKeys.chat_input_claim(session_id),
+                        "claim",
+                    )
+                ):
+                    continue
                 await enqueue_run_trigger(
                     self._bus,
                     user_id=user_id,
@@ -276,7 +304,72 @@ class ChatInputQueue:
                     "for session %s.",
                     session_id,
                 )
+        # Wake the dispatcher before any receipt lookup can block.
+        if pushed_count:
+            try:
+                await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "WakeupDispatcher: failed to signal after recovery.",
+                )
+
+        for user_id, session_id, agent_id in sessions_to_collect:
+            await self._collect_chat_receipts(user_id, session_id, agent_id)
         return pushed_count
+
+    async def _collect_chat_receipts(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> None:
+        """Recheck live work under the mutation lock before collecting."""
+        lock_timeout = MessageBusKeys.CHAT_INPUT_RECOVERY_LOCK_TIMEOUT_SECS
+        try:
+            async with (
+                asyncio.timeout(
+                    MessageBusKeys.CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS,
+                ),
+                chat_input_mutation(
+                    self._bus,
+                    session_id,
+                    timeout_secs=lock_timeout,
+                ),
+            ):
+                pending = await self._bus.queue_read(
+                    MessageBusKeys.chat_inputs(session_id),
+                )
+                active = {item["id"] for _, item in pending}
+                raw = await self._bus.registry_get(
+                    MessageBusKeys.chat_input_claim(session_id),
+                    "claim",
+                )
+                if raw is not None:
+                    active.add(json.loads(raw)["payload"]["id"])
+                await reap_receipts(
+                    self._bus,
+                    user_id,
+                    session_id,
+                    agent_id,
+                    self._receipt_input_result,
+                    active,
+                    self._receipt_probes.setdefault(
+                        session_id,
+                        ReceiptProbes(),
+                    ),
+                )
+        except ChatQueueBusyError:
+            pass
+        except TimeoutError:
+            logger.warning(
+                "Chat receipt collection timed out for %s.",
+                session_id,
+            )
+        except Exception:
+            logger.exception(
+                "Could not collect chat receipts for %s.",
+                session_id,
+            )
 
     async def _is_session_parked(
         self,
@@ -302,6 +395,9 @@ class ChatInputQueue:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None,
+        client_external_tools: list[ClientExternalToolDefinition]
+        | None = None,
+        client_builtin_tools: list[ClientBuiltinToolName] | None = None,
     ) -> None:
         """Serialize a resume with chat-input claim and parked-state checks.
 
@@ -315,6 +411,10 @@ class ChatInputQueue:
             input_msg:
                 Typed HITL/external-result/interrupt event, or ``None`` for
                 a compatible control continuation.
+            client_external_tools:
+                Client tool definitions preserved across resume retries.
+            client_builtin_tools:
+                Native tool names supported by the resuming client.
         """
         dispatch_lock = self._bus.acquire_lock_bounded(
             MessageBusKeys.chat_input_dispatch_lock(session_id),
@@ -332,6 +432,8 @@ class ChatInputQueue:
                 agent_id=agent_id,
                 kind=MessageBusKeys.WAKEUP_KIND_RESUME,
                 inputs=input_msg,
+                client_external_tools=client_external_tools,
+                client_builtin_tools=client_builtin_tools,
             )
             return
         try:
@@ -340,6 +442,8 @@ class ChatInputQueue:
                 session_id=session_id,
                 agent_id=agent_id,
                 input_msg=input_msg,
+                client_external_tools=client_external_tools,
+                client_builtin_tools=client_builtin_tools,
             )
         finally:
             await dispatch_lock.__aexit__(None, None, None)
@@ -492,11 +596,41 @@ class ChatInputQueue:
                 continue
 
             queue_item_id = payload.get("id")
+            (
+                client_external_tools,
+                client_builtin_tools,
+            ) = parse_client_tool_capabilities(
+                payload.get("client_external_tools"),
+                payload.get("client_builtin_tools"),
+            )
             if not isinstance(queue_item_id, str) or not queue_item_id:
                 queue_item_id = messages[0].id
             message_ids = [msg.id for msg in messages]
             try:
+                if claim_state == _MESSAGE_CLAIMED:
+                    if self._run_registry is not None:
+                        self._run_registry.set_queue_input(
+                            session_id,
+                            queue_item_id,
+                        )
+                    if submission_id := payload.get("submission_id"):
+                        submission = await get_submission(
+                            self._bus,
+                            session_id,
+                            submission_id,
+                            queued_user_id,
+                            queued_agent_id,
+                        )
+                        if submission and submission.get("cancel_requested"):
+                            payload["cancelled_before_reply"] = True
+                            raise asyncio.CancelledError()
                 if claim_state == _MESSAGE_CANCELLED:
+                    await finish_unbound_inputs(
+                        self._storage,
+                        queued_user_id,
+                        queued_session_id,
+                        message_ids,
+                    )
                     await self._publish_chat_input_cancelled(
                         queued_session_id,
                         queue_item_id,
@@ -505,6 +639,12 @@ class ChatInputQueue:
                     await self._finish_chat_input_claim(session_id)
                     return True
                 if claim_state in (_MESSAGE_INPUT_PERSISTED, _MESSAGE_FAILED):
+                    await finish_unbound_inputs(
+                        self._storage,
+                        queued_user_id,
+                        queued_session_id,
+                        message_ids,
+                    )
                     failed_event = CustomEvent(
                         name="chat_input_failed",
                         value={
@@ -529,10 +669,21 @@ class ChatInputQueue:
                     return True
 
                 for message in messages:
+                    # Execution receipts are server-owned, never client hints.
                     await self._storage.upsert_message(
                         queued_user_id,
                         queued_session_id,
-                        message,
+                        message.model_copy(
+                            update={
+                                "metadata": {
+                                    **message.metadata,
+                                    INPUT_EXECUTION: {
+                                        "reply_id": None,
+                                        "finished": False,
+                                    },
+                                },
+                            },
+                        ),
                     )
                 await self._set_chat_input_claim_state(
                     session_id,
@@ -555,6 +706,8 @@ class ChatInputQueue:
                         },
                     },
                 )
+                if request_id := payload.get("client_request_id"):
+                    started_event.value["client_request_id"] = request_id
                 await publish_session_event(
                     self._bus,
                     queued_session_id,
@@ -567,6 +720,41 @@ class ChatInputQueue:
                     input_msg=queued_input,
                     queue_item_id=queue_item_id,
                     input_persisted=True,
+                    client_external_tools=client_external_tools or None,
+                    client_builtin_tools=client_builtin_tools or None,
+                    **(
+                        {"submission_id": payload["submission_id"]}
+                        if payload.get("submission_id")
+                        else {}
+                    ),
+                    **(
+                        {
+                            "pipeline_chat_config": (
+                                ChatModelSnapshot.model_validate(
+                                    payload["pipeline_chat_config"],
+                                )
+                            ),
+                        }
+                        if payload.get("pipeline_chat_config") is not None
+                        else {}
+                    ),
+                    **(
+                        {
+                            "pipeline_tts_config": (
+                                TTSModelConfig.model_validate(
+                                    payload["pipeline_tts_config"],
+                                )
+                            ),
+                        }
+                        if payload.get("pipeline_tts_config") is not None
+                        else {}
+                    ),
+                )
+                await finish_unbound_inputs(
+                    self._storage,
+                    queued_user_id,
+                    queued_session_id,
+                    message_ids,
                 )
                 claim_state = _MESSAGE_COMPLETED
                 await self._acknowledge_completed(session_id, payload)
@@ -577,6 +765,15 @@ class ChatInputQueue:
                     and exc.args == (CHAT_RUN_SHUTDOWN,)
                 ):
                     raise
+                if (
+                    self._run_registry is not None
+                    and self._run_registry.get(
+                        session_id,
+                        queue_item_id=queue_item_id,
+                    )
+                    is asyncio.current_task()
+                ):
+                    payload["cancelled_before_reply"] = True
                 cleanup_task = asyncio.create_task(
                     self._cancel_chat_input_claim(
                         session_id,
@@ -624,6 +821,9 @@ class ChatInputQueue:
                     )
                 self.schedule_message_nudge(user_id, session_id, agent_id)
                 return False
+            finally:
+                if self._run_registry is not None:
+                    self._run_registry.set_queue_input(session_id, None)
 
     async def _claim_chat_input(
         self,
@@ -677,6 +877,27 @@ class ChatInputQueue:
                 max_count=1,
             )
             if claim is None:
+                # Cancellation is committed before dequeue. Recover a crash
+                # between those writes without ever executing the input.
+                while pending and await is_input_cancelled(
+                    self._bus,
+                    session_id,
+                    pending[0][1].get("id", ""),
+                    pending[0][1].get("user_id", ""),
+                    pending[0][1].get("agent_id", ""),
+                ):
+                    removed = await hydrate_input(self._bus, pending[0][1])
+                    if removed is not None:
+                        await publish_removed_chat_input(self._bus, removed)
+                    await self._bus.queue_drain(
+                        MessageBusKeys.chat_inputs(session_id),
+                        max_count=1,
+                    )
+                    await discard_input(self._bus, pending[0][1])
+                    pending = await self._bus.queue_read(
+                        MessageBusKeys.chat_inputs(session_id),
+                        max_count=1,
+                    )
                 if not pending:
                     await self._bus.registry_del(
                         MessageBusKeys.chat_input_inflight_registry(),
@@ -685,6 +906,11 @@ class ChatInputQueue:
                     await cleanup_session(self._bus, session_id)
                     return None
                 payload = pending[0][1]
+                if payload.get("state", "queued") == _MESSAGE_FAILED:
+                    # A failed steering item is waiting for the user to
+                    # edit, delete, or steer it again. Never promote it to
+                    # an ordinary turn behind their back.
+                    return None
                 claim = {"state": _MESSAGE_CLAIMED, "payload": payload}
             payload = claim["payload"]
             if payload.get("retry_at", 0) > time.time():
@@ -712,6 +938,21 @@ class ChatInputQueue:
                 "claim",
                 json.dumps(claim),
             )
+            if submission_id := payload.get("submission_id"):
+                submission = await get_submission(
+                    self._bus,
+                    session_id,
+                    submission_id,
+                    payload["user_id"],
+                    payload["agent_id"],
+                )
+                if submission is not None:
+                    submission["state"] = "claimed"
+                    await self._bus.registry_set(
+                        MessageBusKeys.chat_submissions(session_id),
+                        submission_id,
+                        json.dumps(submission),
+                    )
             if pending and pending[0][1].get("id") == payload.get("id"):
                 await self._bus.queue_drain(
                     MessageBusKeys.chat_inputs(session_id),
@@ -804,13 +1045,8 @@ class ChatInputQueue:
                 MessageBusKeys.chat_input_claim(session_id),
                 "claim",
             )
-            await self._bus.registry_drop(
-                MessageBusKeys.chat_input_claim(session_id),
-            )
-            await self._bus.registry_del(
-                MessageBusKeys.chat_input_inflight_registry(),
-                session_id,
-            )
+            # Commit terminal proof before dropping its only durable claim.
+            payload = {}
             if raw is not None:
                 try:
                     payload = json.loads(raw)["payload"]
@@ -821,8 +1057,36 @@ class ChatInputQueue:
                         "Skipping malformed terminal claim data for %s.",
                         session_id,
                     )
-                else:
-                    await discard_input(self._bus, payload)
+                    payload = {}
+                if submission_id := payload.get("submission_id"):
+                    submission = await get_submission(
+                        self._bus,
+                        session_id,
+                        submission_id,
+                        payload["user_id"],
+                        payload["agent_id"],
+                    )
+                    if submission is not None and (
+                        payload.get("cancelled_before_reply")
+                        or (
+                            "reply_id" in submission
+                            and submission["reply_id"] is None
+                        )
+                    ):
+                        submission["state"] = "finished"
+                        await self._bus.registry_set(
+                            MessageBusKeys.chat_submissions(session_id),
+                            submission_id,
+                            json.dumps(submission),
+                        )
+            await self._bus.registry_drop(
+                MessageBusKeys.chat_input_claim(session_id),
+            )
+            await self._bus.registry_del(
+                MessageBusKeys.chat_input_inflight_registry(),
+                session_id,
+            )
+            await discard_input(self._bus, payload)
             await cleanup_session(self._bus, session_id)
 
     async def _cancel_chat_input_claim(
@@ -855,6 +1119,12 @@ class ChatInputQueue:
         await self._publish_chat_input_cancelled(
             event_session_id,
             queue_item_id,
+            message_ids,
+        )
+        await finish_unbound_inputs(
+            self._storage,
+            payload["user_id"],
+            event_session_id,
             message_ids,
         )
         await self._finish_chat_input_claim(session_id)

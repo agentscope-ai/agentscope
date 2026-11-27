@@ -2,8 +2,8 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import collections
-import json
 import inspect
+import json
 import re
 import warnings
 
@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import (
     Any,
     AsyncGenerator,
+    Iterator,
     Sequence,
     List,
     TYPE_CHECKING,
@@ -22,7 +23,7 @@ from typing import (
 )
 
 import jsonschema
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ._config import (
     ContextConfig,
@@ -31,8 +32,7 @@ from ._config import (
     InjectionConfig,
     _validate_context_config_ratios,
 )
-from ..state import AgentState
-from ..state._state import ReplyContext
+from ..state import AgentState, ReplyContext
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
 from .._logging import logger
 from .._utils._common import (
@@ -101,6 +101,8 @@ from ..message import (
     HintBlock,
 )
 from ..tool import (
+    AskUser,
+    AskUserParams,
     Toolkit,
     ToolBase,
     ToolChunk,
@@ -119,6 +121,7 @@ from ..workspace import Offloader, WorkspaceBase
 
 # The name of the tool that the agent uses to compress its own context
 _COMPRESSION_TOOL_NAME = "CompressContext"
+_EXTERNAL_REQUEST_ID = "_agentscope_external_request_id"
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
@@ -985,67 +988,63 @@ class Agent:
                     self._receive_reply_end = True
                 yield item
 
-    async def _close_unfinished_tool_calls(
-        self,
-    ) -> AsyncGenerator[
-        ToolResultStartEvent | ToolResultTextDeltaEvent | ToolResultEndEvent,
-        None,
-    ]:
-        """Close the unfinished tool calls on interruption, so the next
-        input will be handled normally."""
-        last_msg = self.state.get_reply_message(self.name)
-        if last_msg is None:
-            return
-
-        # Searching for tool calls that requires user confirmation or external
-        # execution without tool results
-        awaiting_tool_calls: dict = {}
-        for index, block in enumerate(last_msg.content):
-            if isinstance(block, ToolCallBlock):
-                awaiting_tool_calls[block.id] = index
-            elif isinstance(block, ToolResultBlock):
-                awaiting_tool_calls.pop(block.id, None)
-
+    @staticmethod
+    def interrupt_reply(
+        state: AgentState,
+        name: str,
+    ) -> Iterator[AgentEvent]:
+        """Close the current reply's unfinished tools and emit its end."""
         interruption_message = (
             "<system-reminder>The tool call has been interrupted by "
             "the user.</system-reminder>"
         )
+        reply = state.get_reply_message(name)
+        pending: dict[str, ToolCallBlock] = {}
+        if reply is not None:
+            for block in reply.content:
+                if isinstance(block, ToolCallBlock):
+                    pending[block.id] = block
+                elif isinstance(block, ToolResultBlock):
+                    pending.pop(block.id, None)
 
-        for index in awaiting_tool_calls.values():
-            call_block = last_msg.content[index]
-            assert isinstance(call_block, ToolCallBlock)
-
-            # ALLOWED calls are running and SUBMITTED external calls are
-            # awaiting their result; both already emitted START.
-            if call_block.state not in (
+        for call in pending.values():
+            # Running and externally submitted calls already emitted START.
+            if call.state not in (
                 ToolCallState.ALLOWED,
                 ToolCallState.SUBMITTED,
             ):
                 yield ToolResultStartEvent(
-                    reply_id=self.state.reply_id,
-                    tool_call_id=last_msg.content[index].id,
-                    tool_call_name=last_msg.content[index].name,
+                    reply_id=state.reply_id,
+                    tool_call_id=call.id,
+                    tool_call_name=call.name,
                 )
-
-            call_block.state = ToolCallState.FINISHED
+            call.state = ToolCallState.FINISHED
             yield ToolResultTextDeltaEvent(
-                reply_id=self.state.reply_id,
-                tool_call_id=last_msg.content[index].id,
+                reply_id=state.reply_id,
+                tool_call_id=call.id,
                 delta=interruption_message,
             )
             yield ToolResultEndEvent(
-                reply_id=self.state.reply_id,
-                tool_call_id=last_msg.content[index].id,
+                reply_id=state.reply_id,
+                tool_call_id=call.id,
                 state=ToolResultState.INTERRUPTED,
             )
-            last_msg.content.append(
-                ToolResultBlock(
-                    id=last_msg.content[index].id,
-                    name=last_msg.content[index].name,
-                    output=interruption_message,
-                    state=ToolResultState.INTERRUPTED,
-                ),
+            state.append_context(
+                name,
+                [
+                    ToolResultBlock(
+                        id=call.id,
+                        name=call.name,
+                        output=interruption_message,
+                        state=ToolResultState.INTERRUPTED,
+                    ),
+                ],
             )
+        yield ReplyEndEvent(
+            session_id=state.session_id,
+            reply_id=state.reply_id,
+            finished_reason=ReplyFinishedReason.INTERRUPTED,
+        )
 
     async def _reply_impl(  # pylint: disable=too-many-branches
         self,
@@ -1059,7 +1058,7 @@ class Agent:
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
 
-        end_event: ReplyEndEvent | None = None
+        interrupted = False
         try:
             # Dispatch the unified inputs by type into the legacy local
             # variables
@@ -1091,18 +1090,11 @@ class Agent:
                     "schema is used instead.",
                 )
 
-            # Parked-interrupt short-circuit: only signal an INTERRUPTED
-            # end when there is actual HITL work to close; otherwise the
-            # session is effectively idle and the call is a silent no-op.
-            # ``finally`` reuses the CancelledError cleanup path when
-            # ``end_event`` is set — no reasoning-acting loop either way.
             if isinstance(inputs, UserInterruptEvent):
-                if self.state.has_awaiting_tool_calls(self.name):
-                    end_event = ReplyEndEvent(
-                        session_id=self.state.session_id,
-                        reply_id=self.state.reply_id,
-                        finished_reason=ReplyFinishedReason.INTERRUPTED,
-                    )
+                interrupted = (
+                    inputs.reply_id == self.state.reply_id
+                    and self.state.has_awaiting_tool_calls(self.name)
+                )
                 return
 
             # ===================================================================
@@ -1297,37 +1289,23 @@ class Agent:
         except asyncio.CancelledError:
             # Handle the CancelledError within the _reply_impl for the
             # agent middlewares
-            end_event = ReplyEndEvent(
-                session_id=self.state.session_id,
-                reply_id=self.state.reply_id,
-                finished_reason=ReplyFinishedReason.INTERRUPTED,
-            )
+            interrupted = True
 
             if self.react_config.interruption_raise_cancelled_error:
                 raise
 
         finally:
-            if end_event is not None:
-                interrupted_end = (
-                    end_event.finished_reason
-                    == ReplyFinishedReason.INTERRUPTED
+            if interrupted:
+                for event in self.interrupt_reply(self.state, self.name):
+                    yield event
+                # The fallback message terminates the stream.
+                yield AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    content=self.react_config.interruption_message,
+                    usage=self._get_reply_usage(),
+                    finished_reason=ReplyFinishedReason.INTERRUPTED,
                 )
-                if interrupted_end:
-                    # Handle the context when interruption
-                    async for _ in self._close_unfinished_tool_calls():
-                        yield _
-
-                yield end_event
-
-                if interrupted_end:
-                    # The fallback msg goes last: Msg terminates the stream
-                    yield AssistantMsg(
-                        id=self.state.reply_id,
-                        name=self.name,
-                        content=self.react_config.interruption_message,
-                        usage=self._get_reply_usage(),
-                        finished_reason=ReplyFinishedReason.INTERRUPTED,
-                    )
 
     def _get_repeated_tool_error(self) -> tuple[str, int] | None:
         """Detect the same tool call, i.e. the same tool name and arguments,
@@ -2034,6 +2012,17 @@ class Agent:
                 if tool is not None:
                     await tool.check_external_result(tool_result)
 
+                # Correlate requested receipts after validating tool metadata.
+                if event.metadata.get(_EXTERNAL_REQUEST_ID) == event.id:
+                    tool_result = tool_result.model_copy(
+                        update={
+                            "metadata": {
+                                **tool_result.metadata,
+                                _EXTERNAL_REQUEST_ID: event.id,
+                            },
+                        },
+                    )
+
                 async for evt in self._convert_tool_chunk_to_event(
                     tool_result.id,
                     tool_result.output,
@@ -2522,10 +2511,23 @@ class Agent:
             # TODO: Maybe some logic to mix the validation error in runtime
             try:
                 jsonschema.validate(parsed_input, tool.input_schema)
+                if isinstance(tool, AskUser):
+                    # JSON Schema omits the model's uniqueness validators.
+                    AskUserParams.model_validate(parsed_input)
             except jsonschema.ValidationError as e:
                 raise AgentOrientedException(
                     f"Input validation failed for tool '{tool_call.name}': "
                     f"{e.message} (at {e.json_path})",
+                ) from e
+            except ValidationError as e:
+                raise AgentOrientedException(
+                    f"Input validation failed for tool '{tool_call.name}': "
+                    f"{e}",
+                ) from e
+            except Exception as e:
+                raise AgentOrientedException(
+                    f"Input schema evaluation failed for tool "
+                    f"'{tool_call.name}': {e}",
                 ) from e
 
         # The exceptions that
@@ -2630,6 +2632,12 @@ class Agent:
             )
             # Send requiring external execution event if it's an external tool
             if tool.is_external_tool:
+                # External clients should receive the same repaired and
+                # schema-validated JSON that permission checks consumed.
+                tool_call.input = json.dumps(
+                    parsed_input,
+                    ensure_ascii=False,
+                )
                 # Update the state to "submitted" BEFORE yielding
                 # because the outer loop will break immediately after
                 # receiving this event, preventing any code after yield
@@ -3990,10 +3998,11 @@ class Agent:
                 delta=tool_call.input,
             )
 
-        # Handle the tool calls that exist in the previous chunk but not in the
-        # current chunk
-        finished_ids = set(block_ids["tools"]) - set(
-            _.id for _ in tool_call_blocks
+        # Audio-only deltas can arrive between tool argument deltas.
+        finished_ids = (
+            set()
+            if data_blocks and len(data_blocks) == len(chunk.content)
+            else set(block_ids["tools"]) - set(_.id for _ in tool_call_blocks)
         )
         for finished_id in finished_ids:
             yield ToolCallEndEvent(
@@ -4017,6 +4026,11 @@ class Agent:
                     reply_id=self.state.reply_id,
                     block_id=data_block.id,
                     media_type=data_block.source.media_type,
+                    **(
+                        {"name": data_block.name}
+                        if data_block.name is not None
+                        else {}
+                    ),
                 )
             yield DataBlockDeltaEvent(
                 reply_id=self.state.reply_id,
@@ -4055,6 +4069,7 @@ class Agent:
                         # Keep the block id so replay groups one payload.
                         block_id=block.id,
                         media_type=block.source.media_type,
+                        name=block.name,
                         data=block.source.data,
                     )
                 elif isinstance(block.source, URLSource):
@@ -4063,5 +4078,6 @@ class Agent:
                         tool_call_id=tool_call_id,
                         block_id=block.id,
                         media_type=block.source.media_type,
+                        name=block.name,
                         url=str(block.source.url),
                     )

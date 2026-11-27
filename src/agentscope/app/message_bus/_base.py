@@ -43,13 +43,37 @@ responsibility.
 import asyncio
 import json
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Self
 
 from typing_extensions import deprecated
 
 from ._keys import MessageBusKeys
+
+
+# Register a coroutine that waits for previously received broadcasts to be
+# yielded to this subscriber. Each subscription has one sequential caller.
+RegisterSubscriptionBarrier = Callable[[Callable[[], Awaitable[None]]], None]
+
+
+def session_event_payload(notification: dict) -> dict:
+    """Strip replay cursors before delivering a live event to a client."""
+    return {
+        k: v
+        for k, v in notification.items()
+        if k not in ("_entry_id", "_previous_entry_id")
+    }
+
+
+def _stream_cursor_precedes(left: str, right: str) -> bool | None:
+    """Compare native Redis-style stream IDs, if both use that format."""
+    try:
+        return tuple(map(int, left.split("-"))) < tuple(
+            map(int, right.split("-")),
+        )
+    except ValueError:
+        return None
 
 
 class MessageBus(ABC):  # pylint: disable=too-many-public-methods
@@ -202,6 +226,33 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """
         raise NotImplementedError("This bus does not support editable queues.")
 
+    async def queue_remove_if(
+        self,
+        key: str,
+        matches: list[dict[str, str]],
+    ) -> bool:
+        """Atomically remove entries matching the supplied field values.
+
+        Each predicate must match exactly one distinct entry. Check all
+        predicates before deleting anything. Preserve other entries, their
+        transport IDs, order, and the queue's expiry. An empty list is a no-op.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            matches (`list[dict[str, str]]`):
+                Required top-level string field values for each target.
+
+        Returns:
+            `bool`:
+                True when all targets matched and were removed; False when
+                this execution made no change because a predicate failed.
+                Transport failures can leave the outcome unknown.
+        """
+        raise NotImplementedError(
+            "This bus cannot conditionally remove inputs.",
+        )
+
     @abstractmethod
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key`` and all of its entries.
@@ -256,6 +307,28 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Transport-level entry id, useful as a cursor for
                 subsequent :meth:`log_read` calls.
         """
+
+    async def log_append_with_previous(
+        self,
+        key: str,
+        payload: dict,
+        *,
+        max_len: int,
+    ) -> tuple[str, str | None]:
+        """Append and return (entry ID, immediate predecessor if known).
+
+        A predecessor must be established atomically with the append.
+        An empty string confirms the log was empty. None means unknown.
+        """
+        return await self.log_append(key, payload, max_len=max_len), None
+
+    @staticmethod
+    def log_cursor_precedes(left: str, right: str) -> bool | None:
+        """Order cursors when both log records may already be trimmed.
+
+        Return None for distinct cursors when only log_read exposes order.
+        """
+        return False if left == right else None
 
     @abstractmethod
     async def log_read(
@@ -333,6 +406,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         key: str,
         *,
         on_ready: Callable[[], None] | None = None,
+        on_barrier: RegisterSubscriptionBarrier | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Yield broadcast payloads for ``key`` until the consumer
         closes the generator.
@@ -353,6 +427,11 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``SessionTriggerListenerManager.start``) until the
                 subscription is live, so a publish-immediately-after
                 race is impossible.
+            on_barrier (optional):
+                Register a flush coroutine once the subscription is ready.
+                It must wait until this iterator has yielded all preceding
+                notifications. The caller may cancel a pending flush when
+                closing the subscription.
 
         Yields:
             `dict`:
@@ -612,6 +691,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``True`` if the field is present.
         """
 
+    async def registry_has_entries(self, namespace: str) -> bool:
+        """Return whether the registry contains at least one field."""
+        return bool(await self.registry_getall(namespace))
+
     @abstractmethod
     async def registry_getall(
         self,
@@ -762,7 +845,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
 
     @deprecated(
         "Use subscribe(MessageBusKeys.session_events(sid), ...) directly, "
-        "stripping _entry_id from each payload.",
+        "skipping SESSION_BARRIER_FIELD markers and stripping _entry_id.",
     )
     async def session_subscribe_events(
         self,
@@ -773,7 +856,8 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """Live-subscribe to session events, stripping _entry_id."""
         key = self._SESSION_EVENTS_KEY.format(sid=session_id)
         async for payload in self.subscribe(key, on_ready=on_ready):
-            yield {k: v for k, v in payload.items() if k != "_entry_id"}
+            if MessageBusKeys.SESSION_BARRIER_FIELD not in payload:
+                yield session_event_payload(payload)
 
     # Cross-process cancel ---------------------------------------------
 
@@ -822,16 +906,23 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             session_id,
         )
         if routing is not None:
+            user_id = json.loads(routing)["user_id"]
             await self.registry_del(
-                MessageBusKeys.chat_input_user_sessions(
-                    json.loads(routing)["user_id"],
-                ),
+                MessageBusKeys.chat_input_user_sessions(user_id),
+                session_id,
+            )
+            await self.registry_del(
+                MessageBusKeys.chat_idle_receipt_counts(user_id),
                 session_id,
             )
         await self.registry_drop(
             MessageBusKeys.chat_input_payloads(session_id),
         )
         await self.registry_drop(MessageBusKeys.chat_input_claim(session_id))
+        await self.registry_drop(MessageBusKeys.chat_submissions(session_id))
+        await self.registry_drop(
+            MessageBusKeys.chat_input_cancellations(session_id),
+        )
         await self.registry_del(
             MessageBusKeys.chat_input_pending_registry(),
             session_id,

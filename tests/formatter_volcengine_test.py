@@ -659,6 +659,56 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             await fmt.format(msgs),
         )
 
+    async def test_chat_formatter_media_extra_params(self) -> None:
+        """Extra DataBlock fields are kept in the image and video objects."""
+        fmt = VolcengineChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=URLSource(
+                            url="https://example.com/first.png",
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                    ),
+                    DataBlock(
+                        source=URLSource(
+                            url="https://example.com/video.mp4",
+                            media_type="video/mp4",
+                        ),
+                        fps=2,
+                    ),
+                ],
+            ),
+        ]
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.com/first.png",
+                                "detail": "high",
+                            },
+                        },
+                        {
+                            "type": "video_url",
+                            "video_url": {
+                                "url": "https://example.com/video.mp4",
+                                "fps": 2,
+                            },
+                        },
+                    ],
+                },
+            ],
+            await fmt.format(msgs),
+        )
+
     async def test_multiagent_formatter_preserves_images(self) -> None:
         """Multi-agent history should retain supported image blocks."""
         fmt = VolcengineMultiAgentFormatter()
@@ -1124,3 +1174,51 @@ class TestVolcengineAudio(IsolatedAsyncioTestCase):
 
             with self.assertRaisesRegex(TypeError, "audio/ogg"):
                 await formatter_class(input_types=["audio/*"]).format([msg])
+
+    async def test_uppercase_media_types(self) -> None:
+        """Mixed-case MIME types are matched case-insensitively."""
+        fmt = VolcengineChatFormatter()
+        image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=image_b64,
+                            media_type="IMAGE/PNG",
+                        ),
+                    ),
+                    DataBlock(
+                        source=Base64Source(
+                            data="YXVkaW8=",
+                            media_type="AUDIO/WAV",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_b64}",
+                            },
+                        },
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "format": "wav",
+                                "data": "YXVkaW8=",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )

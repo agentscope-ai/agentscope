@@ -9,6 +9,7 @@ import type {
 	ToolCallBlock,
 	ToolResultBlock,
 } from '@agentscope-ai/agentscope/message';
+import { format, isToday } from 'date-fns';
 import {
 	ArrowDown,
 	ArrowUp,
@@ -18,6 +19,7 @@ import {
 	CirclePlay,
 	CornerDownRight,
 	Copy,
+	Download,
 	FileText,
 	FileVideo2,
 	Loader2,
@@ -26,6 +28,8 @@ import {
 import * as mime from 'mime-types';
 import { memo, useEffect, useRef, useState } from 'react';
 
+import { ArtifactList } from './artifacts/ArtifactList';
+import type { FileArtifact } from './artifacts/artifacts';
 import { renderToolCall } from './tool-renderers';
 import { countDiffStats, DiffStats, getResultDiff } from './tool-renderers/_shared';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
@@ -88,14 +92,25 @@ const getHintItems = (block: HintBlock): (TextBlock | DataBlock)[] =>
 
 interface SteeringMessageBubbleProps {
 	blocks: ContentBlock[];
+	createdAt: string;
 	status: 'steering' | 'steered';
 }
 
+function MessageTime({ createdAt }: { createdAt: string }) {
+	const date = new Date(createdAt);
+	if (Number.isNaN(date.getTime())) return null;
+	return (
+		<time dateTime={createdAt} className="invisible whitespace-nowrap tabular-nums">
+			{format(date, isToday(date) ? 'HH:mm' : 'yyyy-MM-dd HH:mm')}
+		</time>
+	);
+}
+
 /** User-facing projection of a prompt steering the active reply. */
-export function SteeringMessageBubble({ blocks, status }: SteeringMessageBubbleProps) {
+export function SteeringMessageBubble({ blocks, createdAt, status }: SteeringMessageBubbleProps) {
 	const { t } = useTranslation();
 	return (
-		<div className="flex w-full flex-col items-end gap-1">
+		<div className="flex w-full flex-col items-end gap-1" data-slot="steering-message">
 			<Bubble align="end" variant="muted">
 				<BubbleContent className="flex flex-col gap-2">
 					{blocks.map((block) => (
@@ -118,6 +133,7 @@ export function SteeringMessageBubble({ blocks, status }: SteeringMessageBubbleP
 						? t('chatQueue.stateSteering')
 						: t('chatQueue.stateSteered')}
 				</span>
+				<MessageTime createdAt={createdAt} />
 			</div>
 		</div>
 	);
@@ -309,9 +325,9 @@ function AudioInlineControl({ block }: { block: DataBlock }) {
 		const el = audioRef.current;
 		if (!el) return;
 		if (el.paused) {
-			replayController?.play(el);
 			try {
-				await el.play();
+				if (replayController) await replayController.play(el);
+				else await el.play();
 			} catch (err) {
 				console.error('Audio playback failed', err);
 			}
@@ -321,15 +337,21 @@ function AudioInlineControl({ block }: { block: DataBlock }) {
 		}
 	};
 
+	const replayHint = replayController?.blocked
+		? t('messageBubble.replayAfterPipelineVoice')
+		: undefined;
 	return (
 		<>
 			<button
 				type="button"
 				onClick={toggle}
+				disabled={replayController?.blocked}
+				title={replayHint}
 				aria-label={
-					isPlaying ? t('messageBubble.pauseAudio') : t('messageBubble.playAudio')
+					replayHint ??
+					(isPlaying ? t('messageBubble.pauseAudio') : t('messageBubble.playAudio'))
 				}
-				className="ml-1 inline-flex cursor-pointer items-center transition-opacity hover:opacity-70"
+				className="ml-1 inline-flex cursor-pointer items-center transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-50"
 			>
 				{isPlaying ? (
 					<AudioWave isPlaying className="size-3" />
@@ -446,6 +468,7 @@ function summarizeToolGroup(calls: ToolCallWithResult[], t: TFunction) {
 
 interface MessageBubbleProps {
 	message: Msg;
+	onOpenArtifact?: (artifact: FileArtifact) => void;
 	onUserConfirm: (
 		toolCallBlock: ToolCallBlock,
 		confirm: boolean,
@@ -471,7 +494,7 @@ interface MessageBubbleProps {
  * When `content` is empty and the message is still running, the bubble
  * body is omitted entirely so only the bottom status row renders.
  */
-function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
+function ASMessageBubbleComponent({ message, onOpenArtifact }: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
 
@@ -497,6 +520,9 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 	);
 
 	const blocks = groupToolCalls(message.content);
+	const attachments = message.content.filter(
+		(b): b is DataBlock => b.type === 'data' && !b.source.media_type.startsWith('audio/'),
+	);
 
 	// What the copy button hands over — the prose of the message, without
 	// the tool calls and attachments around it.
@@ -512,20 +538,25 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 
 	return (
 		<Message align={isUser ? 'end' : 'start'} data-role={message.role}>
-			<MessageContent>
+			<MessageContent className="gap-1">
 				{blocks
 					.filter((block) => block.type !== 'data')
 					.map((block, index) =>
 						isSteeringHint(block) ? (
 							<SteeringMessageBubble
 								blocks={getHintItems(block)}
+								createdAt={block.created_at}
 								status="steered"
 								key={block.id}
 							/>
 						) : (
 							<Bubble key={index} variant={isUser ? 'muted' : 'ghost'}>
 								<BubbleContent>
-									<ASBlock block={block} />
+									<ASBlock
+										block={block}
+										showCodeActions={message.role === 'assistant'}
+										messageFinished={!isRunning}
+									/>
 								</BubbleContent>
 							</Bubble>
 						),
@@ -545,21 +576,18 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 						</AlertDescription>
 					</Alert>
 				)}
-				<AttachmentGroup className="max-w-full">
-					{blocks
-						.filter((block) => block.type === 'data')
-						.map((block, index) => (
-							<ASBlock block={block} key={index} />
+				{attachments.length > 0 && (
+					<AttachmentGroup className="max-w-full py-0">
+						{attachments.map((block) => (
+							<ASBlock block={block} key={block.id} />
 						))}
-				</AttachmentGroup>
-				{message.role === 'user' ? (
-					plainText && (
-						<MessageFooter>
-							<CopyButton text={plainText} />
-						</MessageFooter>
-					)
-				) : (
-					<MessageFooter className="gap-1 font-mono">
+					</AttachmentGroup>
+				)}
+				{!isUser && !isRunning && onOpenArtifact && (
+					<ArtifactList content={message.content} onOpen={onOpenArtifact} />
+				)}
+				<MessageFooter className="flex-wrap gap-1 font-mono">
+					{!isUser && (
 						<Badge
 							variant="secondary"
 							aria-label={isRunning ? t('messageBubble.running') : undefined}
@@ -586,9 +614,10 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 								<AudioInlineControl key={block.id} block={block} />
 							))}
 						</Badge>
-						{plainText && <CopyButton text={plainText} />}
-					</MessageFooter>
-				)}
+					)}
+					{plainText && <CopyButton text={plainText} />}
+					<MessageTime createdAt={message.created_at} />
+				</MessageFooter>
 			</MessageContent>
 		</Message>
 	);
@@ -658,15 +687,30 @@ function ThinkingBlockView({ block }: { block: ThinkingBlock }) {
 
 interface ASBlockProps {
 	block: ExtendedContentBlock;
+	showCodeActions?: boolean;
+	messageFinished?: boolean;
 }
 
-export function ASBlock({ block, ...props }: ASBlockProps) {
+const codeActions = { code: true, table: false, mermaid: false };
+const codeIcons = { CheckIcon: Check, CopyIcon: Copy, DownloadIcon: Download };
+
+export function ASBlock({ block, showCodeActions = false, messageFinished = false }: ASBlockProps) {
 	const { t } = useTranslation();
 
 	switch (block.type) {
 		case 'text':
 			return (
-				<Markdown animated isAnimating={!block.finished_at} {...props}>
+				<Markdown
+					animated
+					isAnimating={!messageFinished && !block.finished_at}
+					controls={showCodeActions && codeActions}
+					wrapControl={showCodeActions}
+					icons={codeIcons}
+					translations={{
+						copyCode: t('messageBubble.copy'),
+						downloadFile: t('messageBubble.downloadFile'),
+					}}
+				>
 					{block.text}
 				</Markdown>
 			);

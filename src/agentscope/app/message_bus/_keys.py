@@ -128,6 +128,9 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
 
     _SESSION_EVENTS = "agentscope:session:events:{sid}"
 
+    SESSION_BARRIER_FIELD: Final = "_session_subscription_barrier"
+    """Reserved field for live subscription markers on the session channel."""
+
     SESSION_REPLAY_MAX_LEN = 1000
     """Replay log length cap; older events are trimmed on append."""
 
@@ -140,7 +143,10 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
 
     @classmethod
     def session_events(cls, session_id: str) -> str:
-        """Replay log + live pub/sub channel key for a session."""
+        """Replay log + live channel key for a session.
+
+        Raw subscribers should skip frames carrying SESSION_BARRIER_FIELD.
+        """
         return cls._SESSION_EVENTS.format(sid=session_id)
 
     @classmethod
@@ -166,6 +172,11 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     def session_lock(cls, session_id: str) -> str:
         """Per-session distributed-lock key."""
         return cls._SESSION_LOCK.format(sid=session_id)
+
+    @classmethod
+    def session_config_lock(cls, session_id: str) -> str:
+        """Serialize partial updates to the same session configuration."""
+        return f"agentscope:session:config:lock:{session_id}"
 
     # ------------------------------------------------------------------
     # SOP run lock
@@ -298,14 +309,36 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         return f"agentscope:chat:payloads:{session_id}"
 
     @classmethod
+    def chat_input_cancellations(cls, session_id: str) -> str:
+        """Return cancellation receipts retained through safe collection."""
+        return f"agentscope:chat:cancellations:{session_id}"
+
+    @classmethod
+    def chat_submissions(cls, session_id: str) -> str:
+        """Return submission leases and retained execution receipts."""
+        return f"agentscope:chat:submissions:{session_id}"
+
+    CHAT_SUBMISSION_LEASE_SECS: Final = 600
+    CHAT_RECEIPT_RETENTION_SECS: Final = 3600
+    CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS: Final = 1.0
+    CHAT_RECEIPT_QUERY_TIMEOUT_SECS: Final = 0.2
+    CHAT_RECEIPT_SESSION_MAX_LEN: Final = 1024
+    CHAT_RECEIPT_USER_MAX_LEN: Final = 8192
+
+    @classmethod
     def chat_input_claim(cls, session_id: str) -> str:
         """Return the session-local durable claim registry."""
         return f"agentscope:chat:claim:{session_id}"
 
     @classmethod
     def chat_input_user_sessions(cls, user_id: str) -> str:
-        """Return one user's lightweight pending-session index."""
+        """Return sessions requiring a live queue or receipt quota check."""
         return f"agentscope:chat:user_sessions:{user_id}"
+
+    @classmethod
+    def chat_idle_receipt_counts(cls, user_id: str) -> str:
+        """Return retained receipt slot counts for one user's idle queues."""
+        return f"agentscope:chat:idle_receipt_counts:{user_id}"
 
     @classmethod
     def chat_inputs(cls, session_id: str) -> str:
@@ -351,7 +384,7 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
 
     @classmethod
     def chat_input_pending_registry(cls) -> str:
-        """Return the registry key for sessions with pending input.
+        """Return the index for pending inputs and retained receipts.
 
         Returns:
             `str`:
@@ -558,6 +591,9 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
     _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
 
+    CHANNEL_APPROVAL_CLAIM_TTL_SECS = 86400
+    """Maximum lifetime of a one-shot approval decision claim."""
+
     @classmethod
     def channel_lifecycle(cls) -> str:
         """Pub/sub channel that nudges every node to reconcile its
@@ -587,3 +623,21 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     def channel_seen_chats(cls, channel_id: str) -> str:
         """Registry namespace of chat_ids the bot has been messaged in."""
         return cls._CHANNEL_SEEN_CHATS.format(cid=channel_id)
+
+    @classmethod
+    def channel_session_requesters(cls, session_id: str) -> str:
+        """Registry mapping reply IDs to their platform requester."""
+        return f"agentscope:channel:requesters:{session_id}"
+
+    @classmethod
+    def channel_session_approvals(cls, session_id: str) -> str:
+        """Map approval tokens to complete records within one session."""
+        return f"agentscope:channel:approvals:{session_id}"
+
+    @classmethod
+    def channel_approval_claim(
+        cls,
+        approval_id: str,
+    ) -> str:
+        """Atomic decision claim for one opaque approval id."""
+        return f"agentscope:channel:approval-claim:{approval_id}"

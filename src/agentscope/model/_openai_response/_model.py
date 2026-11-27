@@ -187,7 +187,8 @@ class OpenAIResponseModel(ChatModelBase):
         )
 
         reasoning_effort: (
-            Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+            Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+            | None
         ) = Field(
             default=None,
             title="Reasoning Effort",
@@ -195,7 +196,7 @@ class OpenAIResponseModel(ChatModelBase):
                 "Controls the depth of reasoning for reasoning models "
                 "(e.g. o3, o4-mini, gpt-5.5). Supported values are "
                 "model-dependent and may include: none, minimal, low, "
-                "medium, high, xhigh."
+                "medium, high, xhigh, max."
             ),
             json_schema_extra={
                 "x-reset-hidden-on-change": {"thinking_enable": None},
@@ -641,6 +642,10 @@ class OpenAIResponseModel(ChatModelBase):
         Returns:
             `ChatResponse`:
                 A single ``ChatResponse`` with ``is_last=True``.
+
+        Raises:
+            `RuntimeError`:
+                If the response generation failed.
         """
         blocked_error = _openai_response_block_error(
             response,
@@ -649,6 +654,19 @@ class OpenAIResponseModel(ChatModelBase):
         )
         if blocked_error is not None:
             raise blocked_error
+
+        # HTTP 200 responses can contain failed generations without the SDK
+        # raising an exception. Surface them before parsing partial output.
+        if response.status == "failed":
+            error = response.error
+            details = (
+                f"{error.code}: {error.message}"
+                if error
+                else "no error details"
+            )
+            raise RuntimeError(
+                f"OpenAI response '{response.id}' failed: {details}",
+            )
 
         content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
 
@@ -776,7 +794,11 @@ class OpenAIResponseModel(ChatModelBase):
         if mode not in _TOOL_CHOICE_LITERAL_MODES:
             return fmt_tools, {"type": "function", "name": mode}
 
-        if tool_choice.tools:
+        # ``allowed_tools`` only accepts "auto" and "required"
+        # as its ``mode``; wrapping "none" in it produces a
+        # payload the API rejects, so a disabled tool set goes out
+        # as plain "none".
+        if tool_choice.tools and mode != "none":
             return fmt_tools, {
                 "type": "allowed_tools",
                 "mode": mode,

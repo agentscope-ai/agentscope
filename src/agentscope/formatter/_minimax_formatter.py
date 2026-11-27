@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The MiniMax formatters, i.e. the Anthropic formatters plus video input."""
-import fnmatch
 from typing import Any
 
 from pydantic import Field
@@ -28,12 +27,15 @@ class MiniMaxChatFormatter(AnthropicChatFormatter):
         block: DataBlock,
     ) -> dict[str, Any] | None:
         """Format video blocks natively and delegate other media."""
-        media_type = block.source.media_type
-        if media_type.startswith("video/") and any(
-            fnmatch.fnmatch(media_type, _)
-            for _ in self.supported_input_media_types
+        supported = self._get_supported_tool_result_block(block)
+        if supported is not None and supported.source.media_type.startswith(
+            "video/",
         ):
-            return self._format_source(block.source, "video")
+            return self._format_source(
+                supported.source,
+                "video",
+                supported.model_extra,
+            )
         return super()._format_anthropic_data_block(block)
 
 
@@ -71,10 +73,13 @@ class MiniMaxMultiAgentFormatter(AnthropicMultiAgentFormatter):
         block: DataBlock,
     ) -> dict[str, Any] | None:
         """Format video blocks natively and delegate other media."""
-        media_type = block.source.media_type
-        if media_type.startswith("video/") and any(
-            fnmatch.fnmatch(media_type, _)
-            for _ in self.supported_input_media_types
+        supported = self._get_supported_tool_result_block(block)
+        if supported is not None and supported.source.media_type.startswith(
+            "video/",
         ):
-            return self._format_source(block.source, "video")
+            return self._format_source(
+                supported.source,
+                "video",
+                supported.model_extra,
+            )
         return super()._format_anthropic_data_block(block)

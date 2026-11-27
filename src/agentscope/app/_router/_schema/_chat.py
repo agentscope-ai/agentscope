@@ -2,10 +2,16 @@
 """The chat endpoint schema."""
 
 from typing import Annotated, Literal, TypeAlias
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from ....message import Msg
+from ..._client_external_tool import (
+    ClientBuiltinToolName,
+    ClientExternalToolDefinition,
+)
+from ....message import Msg, ToolResultState
+from ....tool import AskUser, AskUserMetadata
 from ....event import UserConfirmResultEvent, ExternalExecutionResultEvent
 
 NonEmptyMsgList: TypeAlias = Annotated[list[Msg], Field(min_length=1)]
@@ -13,6 +19,25 @@ NonEmptyMsgList: TypeAlias = Annotated[list[Msg], Field(min_length=1)]
 
 class ChatRequest(BaseModel):
     """Request body for the chat endpoint."""
+
+    mode: Literal["chat", "pipeline_voice"] = "chat"
+    submission_id: UUID | None = None
+    client_request_id: UUID | None = Field(
+        default=None,
+        description="Correlation ID echoed when the queue item starts.",
+    )
+
+    @model_validator(mode="after")
+    def validate_voice_input(self) -> "ChatRequest":
+        """Only new messages may request a pipeline voice configuration."""
+        if self.submission_id is not None and self.mode != "pipeline_voice":
+            raise ValueError("Submission identity requires pipeline voice.")
+        if self.mode == "pipeline_voice" and not isinstance(
+            self.input,
+            (Msg, list),
+        ):
+            raise ValueError("Pipeline voice requires a new input message.")
+        return self
 
     agent_id: str = Field(
         description="Agent ID for the chat endpoint.",
@@ -31,6 +56,48 @@ class ChatRequest(BaseModel):
     ) = Field(
         description="The input message(s), or agent event, or None.",
     )
+
+    client_builtin_tools: list[ClientBuiltinToolName] = Field(
+        default_factory=list,
+        max_length=1,
+        description="Native external tools supported by this client run.",
+    )
+
+    client_external_tools: list[ClientExternalToolDefinition] = Field(
+        default_factory=list,
+        max_length=16,
+        description=(
+            "External tools the active client can execute for this run."
+        ),
+    )
+
+    @field_validator("client_external_tools")
+    @classmethod
+    def validate_unique_client_external_tools(
+        cls,
+        value: list[ClientExternalToolDefinition],
+    ) -> list[ClientExternalToolDefinition]:
+        """Reject ambiguous duplicate client tool names."""
+        names = [tool.name for tool in value]
+        if len(names) != len(set(names)):
+            raise ValueError("Client external tool names must be unique.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_native_answers(self) -> "ChatRequest":
+        """Validate resumed native results even if the tool was disabled.
+
+        Disabling a tool governs future calls, not the contract of a call
+        already waiting for its result.
+        """
+        if isinstance(self.input, ExternalExecutionResultEvent):
+            for result in self.input.execution_results:
+                if (
+                    result.name == AskUser.name
+                    and result.state == ToolResultState.SUCCESS
+                ):
+                    AskUserMetadata.model_validate(result.metadata)
+        return self
 
 
 class ChatTriggerResponse(BaseModel):

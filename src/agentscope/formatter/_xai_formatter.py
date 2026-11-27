@@ -9,13 +9,16 @@ other formatter, the ``format()`` method returns a list of
 """
 
 import base64
-from fnmatch import fnmatch
+from fnmatch import fnmatchcase
 from typing import Any, List
-from urllib.request import url2pathname
 
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import (
+    FormatterBase,
+    _normalize_media_type,
+    file_url_to_path,
+)
 from .._logging import logger
 from ..message import (
     Msg,
@@ -62,8 +65,9 @@ def _xai_user_args_from_blocks(
         if isinstance(sub, TextBlock):
             args.append(sub.text)
         elif isinstance(sub, DataBlock):
-            if not sub.source.media_type.startswith("image/") or not any(
-                fnmatch(sub.source.media_type, pattern)
+            media_type = _normalize_media_type(sub.source.media_type)
+            if not media_type.startswith("image/") or not any(
+                fnmatchcase(media_type, pattern)
                 for pattern in supported_media_types
             ):
                 logger.warning(
@@ -77,15 +81,14 @@ def _xai_user_args_from_blocks(
             if isinstance(sub.source, URLSource):
                 url_str = str(sub.source.url)
                 if url_str.startswith("file://"):
-                    local_path = url2pathname(url_str.removeprefix("file://"))
+                    local_path = file_url_to_path(url_str)
                     with open(local_path, "rb") as f:
                         encoded = base64.b64encode(f.read()).decode(
                             "utf-8",
                         )
                     args.append(
                         image(
-                            f"data:{sub.source.media_type};"
-                            f"base64,{encoded}",
+                            f"data:{media_type};base64,{encoded}",
                             **(sub.model_extra or {}),
                         ),
                     )
@@ -96,8 +99,7 @@ def _xai_user_args_from_blocks(
             elif isinstance(sub.source, Base64Source):
                 args.append(
                     image(
-                        f"data:{sub.source.media_type};"
-                        f"base64,{sub.source.data}",
+                        f"data:{media_type};base64,{sub.source.data}",
                         **(sub.model_extra or {}),
                     ),
                 )
@@ -162,22 +164,9 @@ class XAIChatFormatter(FormatterBase):
         def flush_assistant(
             text_blocks: list[TextBlock],
             tool_calls: list[ToolCallBlock],
-            media: list[DataBlock],
         ) -> None:
             """Emit one assistant segment before its tool results or hint."""
             text = "\n".join(block.text for block in text_blocks)
-            media_args = _xai_user_args_from_blocks(
-                media,
-                image,
-                self.supported_input_media_types,
-            )
-            if media_args:
-                if text:
-                    xai_messages.append(assistant(text))
-                    text = ""
-                # Keep promoted media ahead of the tool call/result sequence.
-                xai_messages.append(user(*media_args))
-
             if tool_calls:
                 msg_proto = chat_pb2.Message()
                 msg_proto.role = chat_pb2.MessageRole.Value("ROLE_ASSISTANT")
@@ -197,7 +186,6 @@ class XAIChatFormatter(FormatterBase):
 
             text_blocks.clear()
             tool_calls.clear()
-            media.clear()
 
         for msg in msgs:
             blocks = msg.get_content_blocks()
@@ -251,7 +239,6 @@ class XAIChatFormatter(FormatterBase):
                 pending_text: list[TextBlock] = []
                 pending_tool_calls: list[ToolCallBlock] = []
                 pending_media: list[Any] = []
-                assistant_media: list[DataBlock] = []
 
                 for block in blocks:
                     if pending_media and not isinstance(
@@ -265,7 +252,6 @@ class XAIChatFormatter(FormatterBase):
                         flush_assistant(
                             pending_text,
                             pending_tool_calls,
-                            assistant_media,
                         )
 
                         (
@@ -300,15 +286,10 @@ class XAIChatFormatter(FormatterBase):
                     elif isinstance(block, ThinkingBlock):
                         pass
 
-                    elif isinstance(block, DataBlock):
-                        # xAI requires media in user messages.
-                        assistant_media.append(block)
-
                     elif isinstance(block, HintBlock):
                         flush_assistant(
                             pending_text,
                             pending_tool_calls,
-                            assistant_media,
                         )
                         if isinstance(block.hint, str):
                             xai_messages.append(user(block.hint))
@@ -325,7 +306,6 @@ class XAIChatFormatter(FormatterBase):
                 flush_assistant(
                     pending_text,
                     pending_tool_calls,
-                    assistant_media,
                 )
 
             else:

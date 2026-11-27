@@ -2,14 +2,17 @@
 """The Moonshot AI formatter for agentscope."""
 
 import base64
-from fnmatch import fnmatch
 from typing import Any
-from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
 
-from ._openai_formatter import _OpenAIFormatterBase
+from ._formatter_base import file_url_to_path
+from ._openai_formatter import (
+    _OPENAI_AUDIO_FORMATS,
+    _OpenAIFormatterBase,
+    _format_message_name,
+)
 from .._logging import logger
 from ..message import (
     Msg,
@@ -55,7 +58,7 @@ def _moonshot_format_media_source(
     elif isinstance(source, URLSource):
         url_str = str(source.url)
         if url_str.startswith("file://"):
-            local_path = url2pathname(url_str.removeprefix("file://"))
+            local_path = file_url_to_path(url_str)
             with open(local_path, "rb") as f:
                 encoded = base64.b64encode(f.read()).decode("utf-8")
             url = f"data:{source.media_type};base64,{encoded}"
@@ -91,12 +94,13 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
         default_factory=lambda: [
             "text/plain",
             "image/*",
-            "audio/*",
+            *_OPENAI_AUDIO_FORMATS,
             "video/*",
         ],
         description=(
             "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "audio/*", "video/*"]``.'
+            '``["text/plain", "image/*", "audio/wav", "audio/mp3", '
+            '"audio/mpeg", "video/*"]``.'
         ),
     )
 
@@ -111,14 +115,13 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
-        media_type = block.source.media_type
-        if media_type.startswith("video/") and any(
-            fnmatch(media_type, pattern)
-            for pattern in self.supported_input_media_types
+        supported = self._get_supported_tool_result_block(block)
+        if supported is not None and supported.source.media_type.startswith(
+            "video/",
         ):
             return _moonshot_format_media_source(
-                block.source,
-                block.model_extra,
+                supported.source,
+                supported.model_extra,
             )
         return super()._format_openai_data_block(block)
 
@@ -181,7 +184,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                     if content_blocks or tool_calls or reasoning_parts:
                         msg_moonshot = {
                             "role": msg.role,
-                            "name": msg.name,
+                            **_format_message_name(msg.name),
                             "content": content_blocks or None,
                         }
                         if msg.role == "assistant":
@@ -240,7 +243,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                     if content_blocks or tool_calls or reasoning_parts:
                         msg_flush = {
                             "role": msg.role,
-                            "name": msg.name,
+                            **_format_message_name(msg.name),
                             "content": content_blocks or None,
                         }
                         if msg.role == "assistant":
@@ -302,7 +305,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
 
             msg_moonshot = {
                 "role": msg.role,
-                "name": msg.name,
+                **_format_message_name(msg.name),
                 "content": content_blocks or None,
             }
 
@@ -357,12 +360,13 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
         default_factory=lambda: [
             "text/plain",
             "image/*",
-            "audio/*",
+            *_OPENAI_AUDIO_FORMATS,
             "video/*",
         ],
         description=(
             "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "audio/*", "video/*"]``.'
+            '``["text/plain", "image/*", "audio/wav", "audio/mp3", '
+            '"audio/mpeg", "video/*"]``.'
         ),
     )
 
@@ -377,14 +381,13 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
-        media_type = block.source.media_type
-        if media_type.startswith("video/") and any(
-            fnmatch(media_type, pattern)
-            for pattern in self.supported_input_media_types
+        supported = self._get_supported_tool_result_block(block)
+        if supported is not None and supported.source.media_type.startswith(
+            "video/",
         ):
             return _moonshot_format_media_source(
-                block.source,
-                block.model_extra,
+                supported.source,
+                supported.model_extra,
             )
         return super()._format_openai_data_block(block)
 

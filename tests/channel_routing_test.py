@@ -8,6 +8,12 @@ determinism across calls.
 """
 from unittest import TestCase
 
+from pydantic import ValidationError
+
+from agentscope.app._router._schema._channel import (
+    CreateChannelRequest,
+    UpdateChannelRequest,
+)
 from agentscope.app.channel._base import ChannelEvent
 from agentscope.app.channel._routing import resolve
 from agentscope.app.storage import (
@@ -157,6 +163,38 @@ class ChannelRoutingTest(TestCase):
                     ChannelBinding(match_value="oc_1", agent_id="b"),
                 ],
             )
+
+    def test_routing_requires_bindings(self) -> None:
+        """An omitted binding list is rejected instead of defaulting empty.
+
+        The default used to bypass the validator, so a channel stored with
+        ``routing: {}`` held no catch-all and every inbound message died in
+        ``resolve`` on ``bindings[-1]``.
+        """
+        with self.assertRaises(ValidationError):
+            RoutingConfig()
+        with self.assertRaises(ValidationError):
+            RoutingConfig.model_validate({})
+
+    def test_request_rejects_empty_routing(self) -> None:
+        """A request body carrying ``routing: {}`` fails validation."""
+        body = {
+            "channel_type": "feishu",
+            "credentials": {"app_id": "x", "app_secret": "y"},
+            "routing": {},
+            "session": {
+                "chat_model_config": {
+                    "type": "x",
+                    "credential_id": "cred-1",
+                    "model": "m",
+                    "parameters": {},
+                },
+            },
+        }
+        with self.assertRaises(ValidationError):
+            CreateChannelRequest.model_validate(body)
+        with self.assertRaises(ValidationError):
+            UpdateChannelRequest.model_validate({"routing": {}})
 
     def test_routing_rejects_duplicates(self) -> None:
         """Duplicate (match_key, match_value) pairs are rejected."""

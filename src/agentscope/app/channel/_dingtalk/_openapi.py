@@ -748,6 +748,19 @@ class _DingTalkOpenAPI:
                     code,
                 )
                 return False
+            # batchSend answers HTTP 200 even when it did not deliver to
+            # every recipient; those ids are listed here instead of in a
+            # ``code``. Group sends carry neither field.
+            rejected = [
+                *(result.get("invalidStaffIdList") or []),
+                *(result.get("flowControlledStaffIdList") or []),
+            ]
+            if rejected:
+                logger.warning(
+                    "DingTalk message not delivered to %s",
+                    ", ".join(map(str, rejected)),
+                )
+                return False
             return True
         except Exception:  # pylint: disable=broad-except
             logger.exception("DingTalk message send failed")

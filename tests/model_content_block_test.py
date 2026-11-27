@@ -371,6 +371,7 @@ class ContentBlockCompatibilityTest(IsolatedAsyncioTestCase):
         model.raise_on_content_filter = False
         response = SimpleNamespace(
             id="filtered-response",
+            status="incomplete",
             incomplete_details=SimpleNamespace(reason="content_filter"),
             error=None,
             output=[
@@ -1117,6 +1118,7 @@ class OpenAIResponseContentBlockTest(IsolatedAsyncioTestCase):
                 fields = {"code": code, "message": "policy block"}
                 response = SimpleNamespace(
                     id="response-policy",
+                    status="failed",
                     incomplete_details=None,
                     error=SimpleNamespace(**fields),
                     output=[],

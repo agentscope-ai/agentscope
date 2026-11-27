@@ -1119,3 +1119,33 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
         self.assertEqual(tool_messages[0]["tool_name"], "get_capital")
         # The OpenAI-style tool_call_id must NOT be emitted for Ollama.
         self.assertNotIn("tool_call_id", tool_messages[0])
+
+    async def test_chat_formatter_uppercase_base64_image_media_type(
+        self,
+    ) -> None:
+        """A mixed-case MIME type is matched case-insensitively."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="IMAGE/PNG",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "",
+                    "images": [self.image_b64],
+                },
+            ],
+            res,
+        )

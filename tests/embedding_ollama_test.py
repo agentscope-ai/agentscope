@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for OllamaEmbeddingModel."""
+import json
 import os
 from dataclasses import asdict
 from tempfile import TemporaryDirectory
@@ -111,6 +112,46 @@ class OllamaEmbeddingCallTest(IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(call_count, 2)
+
+    async def test_mismatched_batches_cannot_cancel_out(self) -> None:
+        """Reject invalid batches whose combined vector count looks valid."""
+        vectors = {
+            "a": [[1.0]],
+            "c": [[3.0], [4.0], [99.0]],
+        }
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            first_input = json.loads(request.content)["input"][0]
+            return httpx.Response(
+                200,
+                json={"embeddings": vectors[first_input]},
+            )
+
+        client = ollama.AsyncClient(
+            host="http://offline.invalid:11434",
+            transport=httpx.MockTransport(respond),
+            trust_env=False,
+        )
+        self.addAsyncCleanup(client._client.aclose)
+        with TemporaryDirectory() as cache_dir:
+            cache = FileEmbeddingCache(cache_dir=cache_dir)
+            with patch("ollama.AsyncClient", return_value=client):
+                model = OllamaEmbeddingModel(
+                    credential=_cred(),
+                    model="embed",
+                    dimensions=1,
+                    embedding_cache=cache,
+                )
+            model.batch_size = 2
+
+            with patch.object(cache, "store", wraps=cache.store) as store:
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    r"Ollama returned [13] embedding vectors for 2 inputs",
+                ):
+                    await model(["a", "b", "c", "d"])
+
+                store.assert_not_awaited()
 
     async def test_token_usage(self) -> None:
         """Preserve optional token counts parsed by the real Ollama SDK."""
@@ -239,6 +280,42 @@ class OllamaEmbeddingCacheHostTest(IsolatedAsyncioTestCase):
                 "endpoint",
                 model_b.client.embed.await_args.kwargs,
             )
+
+    async def test_invalid_cached_count_is_replaced(self) -> None:
+        """Refetch old entries with a short or overlong vector list."""
+        for count in (1, 3):
+            with self.subTest(count=count):
+                with TemporaryDirectory() as cache_dir:
+                    cache = FileEmbeddingCache(cache_dir=cache_dir)
+                    model = self._make_model(
+                        cache,
+                        "http://localhost:11434",
+                        [1.0, 0.0],
+                    )
+                    inputs = ["one", "two"]
+                    await cache.store(
+                        identifier={
+                            "endpoint": model._cache_endpoint,
+                            "api_kwargs": {
+                                "input": inputs,
+                                "model": model.model,
+                                "dimensions": model.dimensions,
+                            },
+                        },
+                        embeddings=[[9.0, 9.0]] * count,
+                    )
+                    vectors = [[1.0, 0.0], [0.0, 1.0]]
+                    model.client.embed.return_value = SimpleNamespace(
+                        embeddings=vectors,
+                    )
+
+                    self._assert_response(await model(inputs), vectors, "api")
+                    self._assert_response(
+                        await model(inputs),
+                        vectors,
+                        "cache",
+                    )
+                    model.client.embed.assert_awaited_once()
 
     async def test_cache_uses_host_from_environment(self) -> None:
         """The resolved OLLAMA_HOST must isolate cached vectors."""
