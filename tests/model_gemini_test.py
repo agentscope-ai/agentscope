@@ -1655,43 +1655,96 @@ class TestGeminiFormatTools(unittest.TestCase):
         self.assertEqual(fmt_tools, _FT_TOOLS_GEMINI)
         self.assertIsNone(fmt_choice)
 
-    def test_ref_bounds_fit_the_gemini_function_declaration(self) -> None:
-        """Compatible reference bounds fit in one SDK parameter schema."""
-        ref = {"$ref": "#/$defs/Text"}
-        parameters = {
-            "$defs": {
-                "Text": {"type": "string", "minLength": 1},
-                "Label": {"type": "string", "minLength": 1, "maxLength": 8},
-            },
-            "type": "object",
-            "properties": {
-                "x": {**ref, "maxLength": 10},
-                "label": {
-                    "$ref": "#/$defs/Label",
-                    "type": "string",
-                    "minLength": 3,
-                    "maxLength": 10,
-                },
-            },
+    def test_ref_constraints_fit_the_gemini_function_declaration(self) -> None:
+        """Preserve conjunctive constraints through the SDK entry point."""
+        fields = {name: {"type": "string"} for name in ("a", "b", "c")}
+        row = {"type": "object", "properties": fields}
+        cases: list[tuple[dict, dict, dict]] = [
+            (
+                {"type": "string", "minLength": 1},
+                {"maxLength": 10},
+                {"type": "string", "minLength": 1, "maxLength": 10},
+            ),
+            (
+                {"type": "string", "minLength": 1, "maxLength": 8},
+                {"type": "string", "minLength": 3, "maxLength": 10},
+                {"type": "string", "minLength": 3, "maxLength": 8},
+            ),
+            (
+                {"type": "string", "enum": ["a", "b"]},
+                {"enum": ["a"]},
+                {"type": "string", "enum": ["a"]},
+            ),
+            (
+                {**row, "required": ["a", "b"]},
+                {"required": ["b", "c"]},
+                {**row, "required": ["a", "b", "c"]},
+            ),
+        ]
+        for target, siblings, expected in cases:
+            with self.subTest(siblings=siblings):
+                parameters = {
+                    "$defs": {"T": target},
+                    "type": "object",
+                    "properties": {"x": {"$ref": "#/$defs/T", **siblings}},
+                }
+                function = {"name": "check", "parameters": parameters}
+                tools = [{"function": function}]
+                formatted, _ = self.model._format_tools(tools, None)
+                declaration = formatted[0]["function_declarations"][0]
+                FunctionDeclaration(**declaration)
+                self.assertEqual(
+                    declaration["parameters"],
+                    {"type": "object", "properties": {"x": expected}},
+                )
+
+    def test_unrepresentable_gemini_conjunctions_raise(self) -> None:
+        """Report the constraint instead of sending an invalid declaration."""
+        for left, right, keyword in (
+            ({"enum": ["a"]}, {"enum": ["b"]}, "enum"),
+            ({"pattern": "^a"}, {"pattern": "b$"}, "pattern"),
+            (
+                {"additionalProperties": False},
+                {"properties": {"x": {}}},
+                "additionalProperties",
+            ),
+        ):
+            with self.subTest(keyword=keyword), self.assertRaisesRegex(
+                ValueError,
+                f"allOf.*{keyword}",
+            ):
+                _sanitize_schema_for_gemini({"allOf": [left, right]})
+
+    def test_nested_gemini_conjunction_preserves_input(self) -> None:
+        """Combine constraints at the item, even in a property named allOf."""
+        first = {
+            "type": "array",
+            "items": {"type": "string", "enum": ["a", "b"]},
         }
-        tools = [{"function": {"name": "search", "parameters": parameters}}]
-        formatted, _ = self.model._format_tools(tools, None)
-        declaration = formatted[0]["function_declarations"][0]
-        FunctionDeclaration(**declaration)
+        second = {"items": {"const": "b"}}
+        schema = {
+            "type": "object",
+            "allOf": [
+                {"properties": {"allOf": first}},
+                {"properties": {"allOf": second}},
+            ],
+        }
+        original = copy.deepcopy(schema)
+        parameters = _sanitize_schema_for_gemini(schema)
+        FunctionDeclaration(name="check", parameters=parameters)
         self.assertEqual(
-            declaration["parameters"],
+            parameters,
             {
                 "type": "object",
                 "properties": {
-                    "x": {"type": "string", "minLength": 1, "maxLength": 10},
-                    "label": {
-                        "type": "string",
-                        "minLength": 3,
-                        "maxLength": 8,
+                    "allOf": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["b"]},
                     },
                 },
             },
         )
+        self.assertEqual(schema, original)
 
     def test_schema_keyword_removed_from_parameters(self) -> None:
         """The unsupported `$schema` keyword is removed before the call."""
@@ -2611,7 +2664,7 @@ class TestGeminiSchemaUtilsNestedDefs(unittest.TestCase):
             {
                 "properties": {
                     "conf": {"type": "object"},
-                    "e": {"minimum": 10},
+                    "e": {"minimum": 0, "allOf": [{"minimum": 10}]},
                 },
             },
         )
