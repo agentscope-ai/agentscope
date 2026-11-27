@@ -17,9 +17,11 @@ from utils import AnyString
 
 from agentscope.message import DataBlock
 from agentscope.rag import (
+    Chunk,
     ImageParser,
     PDFParser,
     PPTParser,
+    Section,
     TextParser,
     WordParser,
     ExcelParser,
@@ -52,6 +54,14 @@ def _make_pdf(pages: list[str]) -> bytes:
         pdf.showPage()
     pdf.save()
     return buffer.getvalue()
+
+
+def _dump_pdf_text(item: Section | Chunk) -> dict[str, Any]:
+    """Allow one optional page-final newline across pypdf versions."""
+    result = item.model_dump()
+    content = result["content"]
+    content["text"] = content["text"].removesuffix("\n")
+    return result
 
 
 def _make_pptx_simple(slides: list[str]) -> bytes:
@@ -996,12 +1006,12 @@ class PDFParserTest(IsolatedAsyncioTestCase):
         sections = await parser.parse(pdf_bytes, "demo.pdf")
 
         self.assertEqual(
-            [s.model_dump() for s in sections],
+            [_dump_pdf_text(section) for section in sections],
             [
                 {
                     "content": {
                         "type": "text",
-                        "text": "First page text\n",
+                        "text": "First page text",
                         "id": AnyString(),
                         "created_at": AnyString(),
                         "finished_at": None,
@@ -1012,7 +1022,7 @@ class PDFParserTest(IsolatedAsyncioTestCase):
                 {
                     "content": {
                         "type": "text",
-                        "text": "Second page text\n",
+                        "text": "Second page text",
                         "id": AnyString(),
                         "created_at": AnyString(),
                         "finished_at": None,
