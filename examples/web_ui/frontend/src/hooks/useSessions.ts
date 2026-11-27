@@ -79,15 +79,20 @@ export function useSessions(agentId: string | null) {
 		[invalidate],
 	);
 
-	/** Updates a session's model config and refreshes the list. */
+	/** Updates a session and refreshes the list. */
 	const update = useCallback(
-		async (sessionId: string, body: UpdateSessionRequest) => {
+		async (sessionId: string, body: UpdateSessionRequest, options?: { silent?: boolean }) => {
 			if (!agentId) throw new Error('No agent selected');
-			const res = await sessionApi.update(sessionId, agentId, body);
+			const res = await sessionApi.update(sessionId, agentId, body, options);
+			queryClient.setQueryData<SessionView[]>([...SESSIONS_KEY, agentId], (views) =>
+				views?.map((view) =>
+					view.session.id === sessionId ? { ...view, session: res } : view,
+				),
+			);
 			await invalidate();
 			return res;
 		},
-		[agentId, invalidate],
+		[agentId, invalidate, queryClient],
 	);
 
 	/** Deletes a session and refreshes the list. */

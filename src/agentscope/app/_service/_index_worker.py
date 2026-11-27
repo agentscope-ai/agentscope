@@ -221,9 +221,15 @@ class IndexWorker:
         self._lease_ttl = lease_ttl
         self._sem = asyncio.Semaphore(max_concurrency)
         self._parser_executor = parser_executor
-        # Renewal cadence: refresh while there is still half the lease
-        # left so a one-cycle missed renewal doesn't drop the lease.
-        self._renew_interval = max(lease_ttl / 2, timedelta(seconds=5))
+        # Renewal cadence: refresh while there is still half the
+        # lease left so a one-cycle missed renewal doesn't drop it.
+        # There is deliberately no floor on the interval: a floor
+        # pushes the renewal of a short lease to (or past) its
+        # expiry, and a sweeper that reaps the document in that
+        # window makes the live worker look dead.
+        if lease_ttl <= timedelta(0):
+            raise ValueError("lease_ttl must be positive.")
+        self._renew_interval = lease_ttl / 2
 
     async def process(
         self,
@@ -468,11 +474,13 @@ class IndexWorker:
             "chunking",
         )
         chunks = await chunker.chunk(sections)
-        if not chunks and media_type == "application/pdf":
-            raise ValueError(
-                "This PDF has no indexable text. If it is a scan, "
-                "apply OCR before uploading it.",
-            )
+        if not chunks:
+            if media_type == "application/pdf":
+                raise ValueError(
+                    "This PDF has no indexable text. If it is a scan, "
+                    "apply OCR before uploading it.",
+                )
+            raise ValueError("This document has no indexable content.")
 
         # ---- indexing ----
         await self._storage.update_knowledge_document_status(

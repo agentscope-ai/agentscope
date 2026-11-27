@@ -123,7 +123,12 @@ class WakeupDispatcher:
         self._registry = chat_run_registry
         self._task: asyncio.Task | None = None
         self._fallback_task: asyncio.Task | None = None
-        self._chat_queue = ChatInputQueue(message_bus, storage, chat_service)
+        self._chat_queue = ChatInputQueue(
+            message_bus,
+            storage,
+            chat_service,
+            chat_run_registry,
+        )
         # Detached resume timers. Held
         # so they are not garbage-collected mid-await and can be cancelled
         # on shutdown.
