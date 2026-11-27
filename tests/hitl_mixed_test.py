@@ -233,7 +233,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         tool_input: str,
         state: ToolCallState,
         *,
-        has_suggested_rule: bool = True,
+        has_suggested_rule: bool = False,
     ) -> dict:
         """Get the expected serialized tool call block."""
         return {
@@ -934,17 +934,12 @@ class AgentMixTest(IsolatedAsyncioTestCase):
     ) -> None:
         """Concurrent calls confirmed one at a time, without an allow rule.
 
-        Two concurrent calls to the same tool share one tool-name-level
-        suggested rule, so batch de-duplication surfaces only the first
-        confirmation and leaves the second PENDING. Confirming the first
-        WITHOUT the suggested rule sends it on to external execution and
-        surfaces the second call's own (deferred) prompt in the same run —
-        the state this fixture exists to cover, where one call sits on the
-        external gate while its peer sits on the confirmation gate.
-
-        Confirming the first WITH the always-allow rule instead is
-        ``hitl_user_confirmation_test``'s rule-dedup case, and is not
-        repeated here.
+        Base tools suggest no permission rules, so each concurrent call
+        surfaces its own confirmation. Confirming the first WITHOUT any
+        rule sends it on to external execution while the second keeps its
+        own confirmation — the state this fixture exists to cover, where
+        one call sits on the external gate while its peer sits on the
+        confirmation gate.
         """
         mixed_tool = MockMixedConcurrentTool()
         self.agent.toolkit = Toolkit(tools=[mixed_tool])
@@ -985,8 +980,8 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             self.tool_input_2,
         )
 
-        # Calls to the same tool share a suggested rule, so only the first
-        # call asks for confirmation while the second remains pending.
+        # Each call surfaces its own confirmation; with no suggested
+        # rules there is nothing to de-duplicate against.
         expected_events = [
             {
                 "type": "REPLY_START",
@@ -1013,6 +1008,12 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.concurrent_tool_name,
                 self.tool_input_1,
             ),
+            self._get_require_user_confirm_event(
+                reply_id,
+                self.tool_call_id_2,
+                self.concurrent_tool_name,
+                self.tool_input_2,
+            ),
         ]
         self.assertListEqual(
             events,
@@ -1033,7 +1034,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         self.tool_call_id_2,
                         self.concurrent_tool_name,
                         self.tool_input_2,
-                        ToolCallState.PENDING,
+                        ToolCallState.ASKING,
                         has_suggested_rule=False,
                     ),
                 ],
@@ -1043,9 +1044,8 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
 
-        # Confirming the first call without a rule hands it to external
-        # execution and, in the same run, surfaces the second call's own
-        # deferred prompt — the two gates are open at once.
+        # Confirming both calls (no rules are suggested) hands each to
+        # external execution. Neither call is silently auto-allowed.
         user_confirm_event = UserConfirmResultEvent(
             reply_id=reply_id,
             confirm_results=[
@@ -1053,6 +1053,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                     self.tool_call_id_1,
                     self.concurrent_tool_name,
                     self.tool_input_1,
+                ),
+                self._get_confirm_result(
+                    self.tool_call_id_2,
+                    self.concurrent_tool_name,
+                    self.tool_input_2,
                 ),
             ],
         )
@@ -1068,71 +1073,25 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.concurrent_tool_name,
                 self.tool_input_1,
             ),
-            self._get_require_user_confirm_event(
+            *self._get_require_external_execution_events(
                 reply_id,
                 self.tool_call_id_2,
                 self.concurrent_tool_name,
                 self.tool_input_2,
             ),
         ]
-        self.assertListEqual(
-            events,
-            [{**basic_dict, **_} for _ in expected_events_resume],
-        )
-
-        expected_context = [
-            self._get_expected_user_message(),
-            {
-                "content": [
-                    self._get_expected_tool_call_block(
-                        self.tool_call_id_1,
-                        self.concurrent_tool_name,
-                        self.tool_input_1,
-                        ToolCallState.SUBMITTED,
-                    ),
-                    # The deferred prompt restores the suggested rule the
-                    # PENDING placeholder above did not carry.
-                    self._get_expected_tool_call_block(
-                        self.tool_call_id_2,
-                        self.concurrent_tool_name,
-                        self.tool_input_2,
-                        ToolCallState.ASKING,
-                    ),
+        # Order of the two external-execution submissions may vary.
+        self.assertEqual(len(events), len(expected_events_resume))
+        for event in events:
+            self.assertIn(
+                {k: v for k, v in event.items() if k != "id"},
+                [
+                    {k: v for k, v in e.items() if k != "id"}
+                    for e in [
+                        {**basic_dict, **_} for _ in expected_events_resume
+                    ]
                 ],
-            },
-        ]
-        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
-        expected_context = [{**msg_base, **_} for _ in expected_context]
-        self.assertListEqual(context_dicts, expected_context)
-
-        # Confirming the second call sends it to the same external gate.
-        user_confirm_event = UserConfirmResultEvent(
-            reply_id=reply_id,
-            confirm_results=[
-                self._get_confirm_result(
-                    self.tool_call_id_2,
-                    self.concurrent_tool_name,
-                    self.tool_input_2,
-                ),
-            ],
-        )
-
-        events = []
-        async for event in self.agent.reply_stream(inputs=user_confirm_event):
-            events.append(event.model_dump())
-
-        expected_events_second_confirm = (
-            self._get_require_external_execution_events(
-                reply_id,
-                self.tool_call_id_2,
-                self.concurrent_tool_name,
-                self.tool_input_2,
             )
-        )
-        self.assertListEqual(
-            events,
-            [{**basic_dict, **_} for _ in expected_events_second_confirm],
-        )
 
         expected_context = [
             self._get_expected_user_message(),
@@ -1155,7 +1114,16 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         expected_context = [{**msg_base, **_} for _ in expected_context]
-        self.assertListEqual(context_dicts, expected_context)
+        # Order of the two tool-call blocks may vary.
+        self.assertEqual(len(context_dicts), len(expected_context))
+        for msg in context_dicts:
+            self.assertIn(
+                {k: v for k, v in msg.items() if k != "id"},
+                [
+                    {k: v for k, v in e.items() if k != "id"}
+                    for e in expected_context
+                ],
+            )
 
         external_result_event = ExternalExecutionResultEvent(
             reply_id=reply_id,
