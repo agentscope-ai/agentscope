@@ -3982,7 +3982,8 @@ class Agent:
             )
             block_ids["text"] = None
 
-        # Handle the tool calls that exist in the current chunk
+        # Tool deltas can interleave. An ID missing from this chunk may
+        # receive more arguments, so close it only at the model boundary.
         for tool_call in tool_call_blocks:
             # Not in previous chunk, start with a start event
             if tool_call.id not in block_ids["tools"]:
@@ -3997,19 +3998,6 @@ class Agent:
                 tool_call_id=tool_call.id,
                 delta=tool_call.input,
             )
-
-        # Audio-only deltas can arrive between tool argument deltas.
-        finished_ids = (
-            set()
-            if data_blocks and len(data_blocks) == len(chunk.content)
-            else set(block_ids["tools"]) - set(_.id for _ in tool_call_blocks)
-        )
-        for finished_id in finished_ids:
-            yield ToolCallEndEvent(
-                reply_id=self.state.reply_id,
-                tool_call_id=finished_id,
-            )
-            block_ids["tools"].remove(finished_id)
 
         # Handle the data blocks (streaming binary content, e.g. omni audio).
         # Each DataBlock chunk from the model carries a delta payload with a

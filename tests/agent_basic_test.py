@@ -1559,13 +1559,15 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(self.agent.state.cur_iter, 2)
 
     async def test_tool_call_boundaries_with_audio_chunks(self) -> None:
-        """Keep A open across audio and close it when B arrives with audio."""
+        """Keep interleaved tool calls open across tool and audio deltas."""
         tool = MockSequentialTool()
         self.agent.toolkit = Toolkit(tools=[tool])
         first = ToolCallBlock(id="a", name=tool.name, input='{"input": "abc"}')
         first_part = first.model_copy(update={"input": '{"input": '})
-        last_part = first.model_copy(update={"input": '"abc"}'})
+        first_end = first.model_copy(update={"input": '"abc"}'})
         second = ToolCallBlock(id="b", name=tool.name, input='{"input": "b"}')
+        second_part = second.model_copy(update={"input": '{"input": '})
+        second_end = second.model_copy(update={"input": '"b"}'})
         audio = DataBlock(
             id="audio",
             source=Base64Source(data="AAAA", media_type="audio/pcm"),
@@ -1576,8 +1578,9 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
                 [
                     ChatResponse(content=[first_part], is_last=False),
                     ChatResponse(content=[audio], is_last=False),
-                    ChatResponse(content=[last_part], is_last=False),
-                    ChatResponse(content=[second, audio], is_last=False),
+                    ChatResponse(content=[second_part, audio], is_last=False),
+                    ChatResponse(content=[first_end], is_last=False),
+                    ChatResponse(content=[second_end], is_last=False),
                     ChatResponse(content=[first, audio, second], is_last=True),
                 ],
                 [
@@ -1588,9 +1591,17 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         )
 
         boundaries = []
+        replayed = None
         async for event in self.agent.reply_stream(
             UserMsg(name="user", content="Test"),
         ):
+            if replayed is None:
+                replayed = AssistantMsg(
+                    name=self.agent.name,
+                    content=[],
+                    id=event.reply_id,
+                )
+            replayed.append_event(event)
             if isinstance(event, (ToolCallStartEvent, ToolCallEndEvent)):
                 boundaries.append((event.type.value, event.tool_call_id))
             elif isinstance(event, DataBlockDeltaEvent):
@@ -1602,10 +1613,19 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
                 ("TOOL_CALL_START", "a"),
                 ("DATA_BLOCK_DELTA", "audio"),
                 ("TOOL_CALL_START", "b"),
-                ("TOOL_CALL_END", "a"),
                 ("DATA_BLOCK_DELTA", "audio"),
+                ("TOOL_CALL_END", "a"),
                 ("TOOL_CALL_END", "b"),
             ],
+        )
+        assert replayed is not None
+        self.assertEqual(
+            [
+                (block.id, block.input)
+                for block in replayed.content
+                if isinstance(block, ToolCallBlock)
+            ],
+            [(first.id, first.input), (second.id, second.input)],
         )
 
     async def test_streaming_concurrent_tool_calls(self) -> None:
