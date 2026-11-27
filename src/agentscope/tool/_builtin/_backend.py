@@ -766,9 +766,9 @@ class LocalBackend(BackendBase):
 
         Args:
             workdir (`str | None`, optional):
-                Directory returned by :meth:`getcwd`, resolved to an
-                absolute path. When ``None``, use the host process's
-                current working directory at call time.
+                Default execution directory returned by :meth:`getcwd`,
+                resolved to an absolute path. When ``None``, use the host
+                process's current working directory at call time.
         """
         self._workdir = (
             os.path.abspath(workdir) if workdir is not None else None
@@ -791,8 +791,8 @@ class LocalBackend(BackendBase):
             command (`list[str]`):
                 Executable path/name followed by its arguments.
             cwd (`str | None`, optional):
-                Working directory for the subprocess. When ``None`` the
-                current process working directory is used.
+                Working directory for the subprocess. When ``None``, use
+                the configured workdir, or the process cwd if unset.
             timeout (`float | None`, optional):
                 Maximum number of seconds to wait before the process is
                 killed and an ``exit_code`` of ``-1`` is returned.
@@ -805,6 +805,8 @@ class LocalBackend(BackendBase):
                 the OS error message on stderr.
         """
         kwargs = _subprocess_creation_kwargs()
+        if cwd is None:
+            cwd = self._workdir
         if cwd is not None:
             kwargs["cwd"] = cwd
 

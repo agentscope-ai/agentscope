@@ -160,6 +160,8 @@ easier to review tool calls and give permission.
                 directory check.
             cwd (`str | os.PathLike[str] | None`, optional):
                 The working directory used when executing bash commands.
+                Defaults to the backend working directory. Relative paths
+                are resolved against that directory.
             middlewares (`List[ToolMiddlewareBase] | None`, optional):
                 Tool middlewares wrapping the tool execution.
             backend (`BackendBase | None`, optional):
@@ -175,6 +177,16 @@ easier to review tool calls and give permission.
         self.dangerous_directories = list(dangerous_directories)
         self._cwd = os.fspath(cwd) if cwd is not None else None
         self._backend = backend or LocalBackend()
+
+    async def _get_effective_cwd(self) -> str:
+        """Resolve the directory used by permission checks and execution."""
+        if self._cwd is not None and self._backend.isabs(self._cwd):
+            return self._cwd
+        backend_cwd = await self._backend.getcwd()
+        if self._cwd is None:
+            return backend_cwd
+        # Preserve symlink/.. traversal for the backend filesystem.
+        return self._backend.join_path(backend_cwd, self._cwd)
 
     async def check_read_only(
         self,
@@ -303,12 +315,12 @@ easier to review tool calls and give permission.
 
         # 4. Check for dangerous paths in sensitive config files/dirs
         # (safety check, bypass-immune). Relative targets are resolved
-        # against the backend directory the command will run in, not the
+        # against the effective directory the command will run in, not the
         # launcher's process cwd.
-        backend_cwd = await self._backend.getcwd()
+        effective_cwd = await self._get_effective_cwd()
         dangerous_paths = self._extract_dangerous_paths_from_bash(
             command,
-            base_dir=backend_cwd,
+            base_dir=effective_cwd,
         )
         if dangerous_paths:
             paths_str = ", ".join(dangerous_paths)
@@ -326,7 +338,10 @@ easier to review tool calls and give permission.
         # Checked separately from step 4 because these paths are not in the
         # dangerous_files/directories lists — they are system-level paths
         # that should never be removed regardless of user configuration.
-        removal_path = await self._check_dangerous_removal_path(command)
+        removal_path = await self._check_dangerous_removal_path(
+            command,
+            base_dir=effective_cwd,
+        )
         if removal_path:
             return PermissionDecision(
                 behavior=PermissionBehavior.ASK,
@@ -391,7 +406,7 @@ easier to review tool calls and give permission.
                     self._path_in_allowed_working_path(
                         path,
                         context,
-                        base_dir=backend_cwd,
+                        base_dir=effective_cwd,
                     )
                     for path in target_paths
                 ):
@@ -606,7 +621,11 @@ easier to review tool calls and give permission.
 
         return dangerous_paths
 
-    async def _check_dangerous_removal_path(self, command: str) -> str | None:
+    async def _check_dangerous_removal_path(
+        self,
+        command: str,
+        base_dir: str | None = None,
+    ) -> str | None:
         """Check if a rm/rmdir command targets a critical system path.
 
         Detects commands like `rm -rf /`, `rm -rf /usr`, `rmdir ~` that
@@ -624,6 +643,8 @@ easier to review tool calls and give permission.
         Args:
             command (`str`):
                 The bash command string
+            base_dir (`str | None`, optional):
+                The effective command directory. Resolved when omitted.
 
         Returns:
             `str | None`:
@@ -661,13 +682,17 @@ easier to review tool calls and give permission.
                     i += 1
                     continue
                 path = tok.strip("'\"")
-                if await self._is_dangerous_removal_path(path):
+                if await self._is_dangerous_removal_path(path, base_dir):
                     return path
                 i += 1
 
         return None
 
-    async def _is_dangerous_removal_path(self, path: str) -> bool:
+    async def _is_dangerous_removal_path(
+        self,
+        path: str,
+        base_dir: str | None = None,
+    ) -> bool:
         """Check if a path is a critical system directory that must not be
         removed.
 
@@ -678,6 +703,8 @@ easier to review tool calls and give permission.
         Args:
             path (`str`):
                 The path to check (may be relative, absolute, or contain ~)
+            base_dir (`str | None`, optional):
+                The effective command directory. Resolved when omitted.
 
         Returns:
             `bool`:
@@ -696,8 +723,9 @@ easier to review tool calls and give permission.
         # symlink on macOS but is still a root-child and should be
         # flagged.
         expanded = await self._backend.expanduser(path)
-        backend_cwd = await self._backend.getcwd()
-        abs_path = self._backend.abspath(expanded, cwd=backend_cwd)
+        if base_dir is None:
+            base_dir = await self._get_effective_cwd()
+        abs_path = self._backend.abspath(expanded, cwd=base_dir)
 
         # Home directory
         home = await self._backend.expanduser("~")
@@ -768,7 +796,7 @@ easier to review tool calls and give permission.
                 shell_command = ["/bin/sh", "-c", command]
             result = await self._backend.exec_shell(
                 shell_command,
-                cwd=self._cwd,
+                cwd=await self._get_effective_cwd(),
                 timeout=timeout_sec,
             )
 

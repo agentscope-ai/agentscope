@@ -132,6 +132,37 @@ class TestLocalBackendExec(IsolatedAsyncioTestCase):
         self.assertEqual(result.stdout, b"")
         self.assertNotEqual(result.stderr, b"")
 
+    async def test_exec_default_and_explicit_workdirs(self) -> None:
+        """Execution follows the configured directory unless overridden."""
+        with tempfile.TemporaryDirectory() as root:
+            configured = os.path.join(root, "configured directory")
+            override = os.path.join(root, "explicit directory")
+            os.makedirs(configured)
+            os.makedirs(override)
+            cases = (
+                (LocalBackend(), None, os.getcwd()),
+                (LocalBackend(workdir=configured), None, configured),
+                (LocalBackend(workdir=configured), override, override),
+            )
+            for backend, cwd, expected in cases:
+                with self.subTest(cwd=cwd, expected=expected):
+                    result = await backend.exec_shell(
+                        [
+                            sys.executable,
+                            "-c",
+                            "import os; print(os.path.realpath(os.getcwd()))",
+                        ],
+                        cwd=cwd,
+                    )
+                    self.assertEqual(
+                        (
+                            result.exit_code,
+                            result.stdout.decode().strip(),
+                            result.stderr,
+                        ),
+                        (0, os.path.realpath(expected), b""),
+                    )
+
     async def test_timeout_returns_minus_one(self) -> None:
         """A command exceeding ``timeout`` is killed and reports -1.
 
