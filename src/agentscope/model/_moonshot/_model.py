@@ -13,6 +13,7 @@ from .._content_block import (
 )
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
+from .._utils import _record_finish_reason
 from ..._utils._common import _generate_id
 from ...credential import MoonshotCredential
 from ...exception import ContentBlockedPhase
@@ -28,6 +29,8 @@ else:
     AsyncStream = Any
 
 _K3_MODELS = {"kimi-k3", "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"}
+
+_LENGTH_FINISH_REASONS = frozenset({"length"})
 
 
 class MoonshotChatModel(ChatModelBase):
@@ -387,6 +390,11 @@ class MoonshotChatModel(ChatModelBase):
                 )
                 if blocked_error is not None:
                     raise blocked_error
+                _record_finish_reason(
+                    delta_res,
+                    getattr(choice, "finish_reason", None),
+                    _LENGTH_FINISH_REASONS,
+                )
                 delta = choice.delta
 
                 # Thinking
@@ -426,7 +434,7 @@ class MoonshotChatModel(ChatModelBase):
                         input=delta_args or "",
                     )
 
-                if delta_res.content or usage:
+                if delta_res.content or usage or delta_res.metadata:
                     has_output = has_output or bool(delta_res.content)
                     delta_res.usage = usage
                     yield delta_res
@@ -503,7 +511,14 @@ class MoonshotChatModel(ChatModelBase):
         if response_id:
             resp_kwargs["id"] = response_id
 
-        return ChatResponse(**resp_kwargs)
+        chat_response = ChatResponse(**resp_kwargs)
+        if response.choices:
+            _record_finish_reason(
+                chat_response,
+                getattr(response.choices[0], "finish_reason", None),
+                _LENGTH_FINISH_REASONS,
+            )
+        return chat_response
 
     def _format_tools(
         self,

@@ -9,6 +9,7 @@ from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
+from .._utils import _record_finish_reason
 from ...credential import XAICredential
 from ...formatter import XAIChatFormatter
 from ...message import (
@@ -25,6 +26,42 @@ if TYPE_CHECKING:
 else:
     AsyncClient = Any
     Response = Any
+
+
+_LENGTH_FINISH_REASONS = frozenset(
+    {"REASON_MAX_LEN", "REASON_MAX_CONTEXT"},
+)
+
+
+def _extract_finish_reason(response: Any) -> str | None:
+    """Extract a meaningful xAI finish reason from the SDK response.
+
+    ``xai_sdk`` stores the reason as a protobuf enum on the last output.
+    ``REASON_INVALID`` (0) means the reason is not set yet.
+
+    Args:
+        response (`Any`):
+            The ``xai_sdk`` response object.
+
+    Returns:
+        `str | None`:
+            The symbolic finish-reason name, or ``None`` when it is unset.
+    """
+    proto = getattr(response, "proto", None)
+    outputs = getattr(proto, "outputs", None)
+    if not outputs:
+        return None
+
+    finish_reason = getattr(outputs[-1], "finish_reason", 0)
+    if not isinstance(finish_reason, int) or not finish_reason:
+        return None
+
+    from xai_sdk.proto import sample_pb2
+
+    try:
+        return sample_pb2.FinishReason.Name(finish_reason)
+    except ValueError:
+        return str(finish_reason)
 
 
 class XAIChatModel(ChatModelBase):
@@ -365,10 +402,11 @@ class XAIChatModel(ChatModelBase):
         finally:
             await client.close()
 
-        # ``xai_sdk`` does not stream tool calls or usage — both are only
-        # populated on the final accumulated ``response`` object. Emit a
-        # single trailing carrier delta so the base accumulator picks up
-        # the ``ToolCallBlock``s and ``ChatUsage``.
+        # ``xai_sdk`` does not stream tool calls, usage, or the terminal
+        # finish reason — they are only populated on the final accumulated
+        # ``response`` object. Emit one trailing carrier delta so the base
+        # accumulator picks up the ``ToolCallBlock``s, ``ChatUsage``, and
+        # finish reason. ``REASON_INVALID`` on earlier chunks is unset.
         trailing = ChatResponse(
             content=[],
             is_last=False,
@@ -382,6 +420,11 @@ class XAIChatModel(ChatModelBase):
                     name=tc.function.name,
                     input=tc.function.arguments,
                 )
+            _record_finish_reason(
+                trailing,
+                _extract_finish_reason(last_response),
+                _LENGTH_FINISH_REASONS,
+            )
 
         if last_response is not None and last_response.usage is not None:
             u = last_response.usage
@@ -396,7 +439,7 @@ class XAIChatModel(ChatModelBase):
                 ),
             )
 
-        if trailing.content or trailing.usage:
+        if trailing.content or trailing.usage or trailing.metadata:
             yield trailing
 
     def _parse_completion_response(
@@ -457,4 +500,10 @@ class XAIChatModel(ChatModelBase):
         if response_id:
             resp_kwargs["id"] = response_id
 
-        return ChatResponse(**resp_kwargs)
+        chat_response = ChatResponse(**resp_kwargs)
+        _record_finish_reason(
+            chat_response,
+            _extract_finish_reason(response),
+            _LENGTH_FINISH_REASONS,
+        )
+        return chat_response
