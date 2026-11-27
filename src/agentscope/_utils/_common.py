@@ -5,9 +5,12 @@ import copy
 import inspect
 import json
 import os
+import re
 import uuid
+from collections.abc import Iterator
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Final
+from urllib.parse import unquote
 
 from .._logging import logger
 from ..exception import ToolJSONDecodeError
@@ -17,6 +20,7 @@ from ..exception import ToolJSONDecodeError
 _SCHEMA_MAP_KEYWORDS = frozenset(
     {"properties", "patternProperties", "dependentSchemas", "dependencies"},
 )
+_NAMED_SCHEMA_MAPS = _SCHEMA_MAP_KEYWORDS | {"$defs", "definitions"}
 # These keywords hold instance data, which must be kept verbatim.
 _INSTANCE_VALUE_KEYWORDS = frozenset(
     {"default", "const", "enum", "examples"},
@@ -338,6 +342,94 @@ def _map_text_to_uuid(text: str) -> str:
     return str(uuid.uuid3(uuid.NAMESPACE_DNS, text))
 
 
+_MISSING: Final = object()
+
+
+def _schema_objects(node: Any) -> Iterator[dict]:
+    """Visit schema objects without interpreting names or instance values."""
+    if isinstance(node, dict):
+        yield node
+        for key, value in node.items():
+            if key in _INSTANCE_VALUE_KEYWORDS or key == "discriminator":
+                continue
+            if key in _NAMED_SCHEMA_MAPS and isinstance(value, dict):
+                for sub in value.values():
+                    yield from _schema_objects(sub)
+            else:
+                yield from _schema_objects(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _schema_objects(item)
+
+
+def _can_flatten(schema: dict) -> bool:
+    """Keep named resources intact when moving them could break references."""
+    has_defs = False
+    for node in _schema_objects(schema):
+        if (node is not schema and "$id" in node) or node.keys() & {
+            "$anchor",
+            "$dynamicAnchor",
+            "$recursiveAnchor",
+        }:
+            return False
+        has_defs |= isinstance(node.get("$defs"), dict) or isinstance(
+            node.get("definitions"),
+            dict,
+        )
+    return has_defs
+
+
+def _pointer_tokens(ref: Any) -> tuple[str, ...] | None:
+    """Decode a fragment once, before interpreting JSON Pointer escapes."""
+    if not isinstance(ref, str) or not ref.startswith("#"):
+        return None
+    if re.search(r"%(?![0-9A-Fa-f]{2})", ref):
+        return None
+    try:
+        fragment = unquote(ref[1:], errors="strict")
+    except UnicodeDecodeError:
+        return None
+    if not fragment:
+        return ()
+    if not fragment.startswith("/") or re.search(r"~(?![01])", fragment):
+        return None
+    return tuple(
+        raw.replace("~1", "/").replace("~0", "~")
+        for raw in fragment[1:].split("/")
+    )
+
+
+def _lookup_pointer(root: Any, tokens: tuple[str, ...]) -> Any:
+    """Return the referenced value or the missing sentinel."""
+    node = root
+    for token in tokens:
+        if isinstance(node, dict) and token in node:
+            node = node[token]
+        elif (
+            isinstance(node, list)
+            and re.fullmatch(r"0|[1-9][0-9]*", token)
+            and len(token) <= len(str(len(node)))
+            and int(token) < len(node)
+        ):
+            node = node[int(token)]
+        else:
+            return _MISSING
+    return node
+
+
+def _points_into_definition_block(tokens: tuple[str, ...]) -> bool:
+    """Recognize removed blocks while skipping user-defined map keys."""
+    parts = iter(tokens)
+    for key in parts:
+        if key in _SCHEMA_MAP_KEYWORDS:
+            next(parts, None)
+        elif key in _INSTANCE_VALUE_KEYWORDS or key == "discriminator":
+            return False
+        elif key in ("$defs", "definitions"):
+            return True
+    return False
+
+
 def _flatten_json_schema(schema: dict) -> dict:
     """Flatten a JSON schema by resolving all local ``$ref`` references.
 
@@ -355,9 +447,9 @@ def _flatten_json_schema(schema: dict) -> dict:
     are preserved. Other discriminators are left unchanged.
 
     Circular references are detected and replaced with a fallback object
-    schema to avoid infinite recursion.  Only local references of the
-    form ``#/$defs/<name>`` or ``#/definitions/<name>`` are expanded;
-    external ``$ref`` URLs are left unchanged.
+    schema to avoid infinite recursion. Local JSON Pointers resolve against
+    the input document. Schemas with embedded resource IDs or named anchors
+    retain their definition blocks so those references continue to resolve.
 
     Args:
         schema (`dict`):
@@ -368,34 +460,8 @@ def _flatten_json_schema(schema: dict) -> dict:
         `dict`:
             A flattened JSON schema with all references resolved inline.
     """
-    definition_blocks = {
-        key: schema[key]
-        for key in ("$defs", "definitions")
-        if isinstance(schema.get(key), dict)
-    }
-    if not definition_blocks:
+    if not isinstance(schema, dict) or not _can_flatten(schema):
         return schema
-
-    schema = copy.deepcopy(schema)
-    defs: dict[str, Any] = {}
-    for key in definition_blocks:
-        defs.update(schema.pop(key))
-
-    if not defs:
-        return schema
-
-    def _decode_token(token: str) -> str:
-        """Decode a JSON Pointer token in RFC 6901 order."""
-        return token.replace("~1", "/").replace("~0", "~")
-
-    def _targets_removed_definition(ref: Any) -> bool:
-        if not isinstance(ref, str):
-            return False
-        match ref.split("/", 3):
-            case ["#", keyword, token]:
-                block = definition_blocks.get(keyword, {})
-                return _decode_token(token) in block
-        return False
 
     def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
         if isinstance(obj, list):
@@ -404,55 +470,68 @@ def _flatten_json_schema(schema: dict) -> dict:
             return obj
 
         resolved: dict[str, Any] = {}
-        if "$ref" in obj:
-            ref_path = obj["$ref"]
-            if not isinstance(ref_path, str) or not ref_path.startswith(
-                ("#/$defs/", "#/definitions/"),
-            ):
-                return obj
-
-            def_name = _decode_token(ref_path.rsplit("/", 1)[-1])
-            if def_name in visited:
+        siblings = {}
+        tokens = _pointer_tokens(obj.get("$ref"))
+        target = (
+            _lookup_pointer(schema, tokens) if tokens is not None else _MISSING
+        )
+        if target is not _MISSING:
+            if tokens in visited:
+                ref_name = tokens[-1] if tokens else "#"
                 logger.warning(
                     "Circular reference detected for '%s' in tool schema",
-                    def_name,
+                    ref_name,
                 )
                 return {
                     "type": "object",
-                    "description": f"(circular: {def_name})",
+                    "description": f"(circular: {ref_name})",
                 }
-            if def_name not in defs:
-                return obj
-
-            visited = visited | {def_name}
-            resolved = _resolve_ref(defs[def_name], visited)
+            resolved = _resolve_ref(target, visited | {tokens})
             if resolved is True:
                 # True adds no constraints; preserve the reference's siblings.
                 resolved = {}
             elif not isinstance(resolved, dict):
                 return resolved
+        elif "$ref" in obj:
+            siblings["$ref"] = copy.deepcopy(obj["$ref"])
 
         for key, value in obj.items():
             if key in ("$ref", "$defs", "definitions"):
                 continue
             if key in _INSTANCE_VALUE_KEYWORDS:
-                resolved[key] = value
+                siblings[key] = copy.deepcopy(value)
             elif key == "discriminator" and isinstance(value, dict):
                 mapping = value.get("mapping")
                 if isinstance(mapping, dict) and any(
-                    _targets_removed_definition(ref)
+                    (tokens := _pointer_tokens(ref)) is not None
+                    and _points_into_definition_block(tokens)
+                    and _lookup_pointer(schema, tokens) is not _MISSING
                     for ref in mapping.values()
                 ):
                     continue
-                resolved[key] = value
+                siblings[key] = copy.deepcopy(value)
             elif key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
-                resolved[key] = {
+                siblings[key] = {
                     name: _resolve_ref(sub, visited)
                     for name, sub in value.items()
                 }
             else:
-                resolved[key] = _resolve_ref(value, visited)
-        return resolved
+                siblings[key] = _resolve_ref(value, visited)
+        if not resolved:
+            return siblings
+        # Adjacent applicators can interact even when their keys differ
+        # (e.g. properties beside a target's additionalProperties).
+        annotations = {"title", "description", "default", "examples"}
+        target_keys = resolved.keys() - annotations
+        sibling_keys = siblings.keys() - annotations
+        if resolved.get("type") == siblings.get("type"):
+            sibling_keys.discard("type")
+        if target_keys & sibling_keys or (
+            target_keys - {"type", "$ref"} and sibling_keys - {"type"}
+        ):
+            siblings["allOf"] = [*siblings.get("allOf", []), resolved]
+            return siblings
+        return {**resolved, **siblings}
 
     return _resolve_ref(schema)
 

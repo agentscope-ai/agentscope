@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
+from jsonschema import Draft202012Validator
 from pydantic import BaseModel, Field
 
 from ..._logging import logger
@@ -103,6 +104,78 @@ def _is_null_schema(schema: Any) -> bool:
     )
 
 
+_GEMINI_BOUNDS = {
+    "minimum": max,
+    "minLength": max,
+    "minItems": max,
+    "minProperties": max,
+    "maximum": min,
+    "maxLength": min,
+    "maxItems": min,
+    "maxProperties": min,
+}
+
+
+def _merge_gemini_all_of(schema: dict) -> dict:
+    """Express a conjunction as one Gemini Schema or identify the conflict."""
+    branches = schema["allOf"]
+    if not isinstance(branches, list) or not branches:
+        raise ValueError("Gemini allOf requires a nonempty list of schemas.")
+    merged: dict = {}
+    siblings = {k: v for k, v in schema.items() if k != "allOf"}
+    for branch in [*branches, siblings]:
+        if branch is True:
+            continue
+        if not isinstance(branch, dict):
+            raise ValueError(
+                f"Cannot represent Gemini allOf branch {branch!r}.",
+            )
+        if "allOf" in branch:
+            branch = _merge_gemini_all_of(branch)
+        for key, value in branch.items():
+            if key == "const":
+                key, value = "enum", [value]
+            if key == "enum":
+                if key in merged:
+                    allowed = Draft202012Validator({"enum": value})
+                    value = [v for v in merged[key] if allowed.is_valid(v)]
+                if not value:
+                    raise ValueError(
+                        "Gemini allOf has an empty enum intersection.",
+                    )
+            elif key == "required":
+                value = list(dict.fromkeys([*merged.get(key, []), *value]))
+            elif key in _GEMINI_BOUNDS:
+                value = _GEMINI_BOUNDS[key](merged.get(key, value), value)
+            elif key == "properties":
+                properties = merged.get(key, {}).copy()
+                for name, sub in value.items():
+                    if name in properties:
+                        sub = {"allOf": [properties[name], sub]}
+                    properties[name] = sub
+                value = properties
+            elif key == "items":
+                if key in merged:
+                    value = {"allOf": [merged[key], value]}
+            elif key in ("type", "format", "pattern"):
+                if key in merged and merged[key] != value:
+                    raise ValueError(
+                        f"Gemini allOf has conflicting values for {key!r}.",
+                    )
+            elif key not in (
+                "title",
+                "description",
+                "default",
+                "examples",
+                "deprecated",
+            ):
+                raise ValueError(
+                    f"Cannot safely merge Gemini allOf keyword {key!r}.",
+                )
+            merged[key] = value
+    return merged
+
+
 def _sanitize_schema_for_gemini(schema: Any) -> Any:
     """Sanitize a JSON schema to be compatible with the Gemini API.
 
@@ -117,6 +190,8 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
       ``uniqueItems``, ``examples`` and ``deprecated``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
+    - ``allOf``: merged when the constraints fit one Gemini schema.
+      Conjunctions that cannot be represented raise ``ValueError``.
     - ``oneOf``: converted to ``anyOf`` for discriminated unions.
       An existing ``anyOf`` raises ``ValueError`` rather than dropping
       conjunctive constraints.
@@ -150,6 +225,10 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
         return schema
 
     schema = dict(schema)
+    if "allOf" in schema:
+        schema = _merge_gemini_all_of(schema)
+        if not all(isinstance(v, str) for v in schema.get("enum", [])):
+            raise ValueError("Gemini allOf enum requires string values.")
 
     # Gemini's Schema model does not support the JSON Schema dialect marker.
     schema.pop("$schema", None)
@@ -246,7 +325,7 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
                 for k, v in schema.items():
                     if k != "anyOf":
                         merged.setdefault(k, v)
-                return merged
+                schema = merged
             elif non_null:
                 schema["anyOf"] = [
                     _sanitize_schema_for_gemini(v) for v in non_null
@@ -266,9 +345,10 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
         if key in schema:
             schema[key] = _sanitize_schema_for_gemini(schema[key])
 
-    for key in ["allOf", "oneOf", "anyOf"]:
-        if key in schema and isinstance(schema[key], list):
-            schema[key] = [_sanitize_schema_for_gemini(v) for v in schema[key]]
+    if isinstance(schema.get("anyOf"), list):
+        schema["anyOf"] = [
+            _sanitize_schema_for_gemini(v) for v in schema["anyOf"]
+        ]
 
     return schema
 

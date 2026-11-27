@@ -1655,6 +1655,97 @@ class TestGeminiFormatTools(unittest.TestCase):
         self.assertEqual(fmt_tools, _FT_TOOLS_GEMINI)
         self.assertIsNone(fmt_choice)
 
+    def test_ref_constraints_fit_the_gemini_function_declaration(self) -> None:
+        """Preserve conjunctive constraints through the SDK entry point."""
+        fields = {name: {"type": "string"} for name in ("a", "b", "c")}
+        row = {"type": "object", "properties": fields}
+        cases: list[tuple[dict, dict, dict]] = [
+            (
+                {"type": "string", "minLength": 1},
+                {"maxLength": 10},
+                {"type": "string", "minLength": 1, "maxLength": 10},
+            ),
+            (
+                {"type": "string", "minLength": 1, "maxLength": 8},
+                {"type": "string", "minLength": 3, "maxLength": 10},
+                {"type": "string", "minLength": 3, "maxLength": 8},
+            ),
+            (
+                {"type": "string", "enum": ["a", "b"]},
+                {"enum": ["a"]},
+                {"type": "string", "enum": ["a"]},
+            ),
+            (
+                {**row, "required": ["a", "b"]},
+                {"required": ["b", "c"]},
+                {**row, "required": ["a", "b", "c"]},
+            ),
+        ]
+        for target, siblings, expected in cases:
+            with self.subTest(siblings=siblings):
+                parameters = {
+                    "$defs": {"T": target},
+                    "type": "object",
+                    "properties": {"x": {"$ref": "#/$defs/T", **siblings}},
+                }
+                function = {"name": "check", "parameters": parameters}
+                tools = [{"function": function}]
+                formatted, _ = self.model._format_tools(tools, None)
+                declaration = formatted[0]["function_declarations"][0]
+                FunctionDeclaration(**declaration)
+                self.assertEqual(
+                    declaration["parameters"],
+                    {"type": "object", "properties": {"x": expected}},
+                )
+
+    def test_unrepresentable_gemini_conjunctions_raise(self) -> None:
+        """Report the constraint instead of sending an invalid declaration."""
+        for left, right, keyword in (
+            ({"enum": ["a"]}, {"enum": ["b"]}, "enum"),
+            ({"pattern": "^a"}, {"pattern": "b$"}, "pattern"),
+            (
+                {"additionalProperties": False},
+                {"properties": {"x": {}}},
+                "additionalProperties",
+            ),
+        ):
+            with self.subTest(keyword=keyword), self.assertRaisesRegex(
+                ValueError,
+                f"allOf.*{keyword}",
+            ):
+                _sanitize_schema_for_gemini({"allOf": [left, right]})
+
+    def test_nested_gemini_conjunction_preserves_input(self) -> None:
+        """Combine constraints at the item, even in a property named allOf."""
+        first = {
+            "type": "array",
+            "items": {"type": "string", "enum": ["a", "b"]},
+        }
+        second = {"items": {"const": "b"}}
+        schema = {
+            "type": "object",
+            "allOf": [
+                {"properties": {"allOf": first}},
+                {"properties": {"allOf": second}},
+            ],
+        }
+        original = copy.deepcopy(schema)
+        parameters = _sanitize_schema_for_gemini(schema)
+        FunctionDeclaration(name="check", parameters=parameters)
+        self.assertEqual(
+            parameters,
+            {
+                "type": "object",
+                "properties": {
+                    "allOf": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["b"]},
+                    },
+                },
+            },
+        )
+        self.assertEqual(schema, original)
+
     def test_schema_keyword_removed_from_parameters(self) -> None:
         """The unsupported `$schema` keyword is removed before the call."""
         tools = [
@@ -2500,6 +2591,266 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         identity)."""
         schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
         self.assertIs(_flatten_json_schema(schema), schema)
+
+
+class TestGeminiSchemaUtilsNestedDefs(unittest.TestCase):
+    """Local pointers that reach into a nested ``$defs`` block."""
+
+    def test_flatten_keeps_scope_sensitive_siblings_separate(self) -> None:
+        """Sibling properties must not reopen a closed referenced object."""
+        closed = {"type": "object", "additionalProperties": False}
+        schema = {
+            "$defs": {"Closed": closed},
+            "$ref": "#/$defs/Closed",
+            "properties": {"x": {"type": "string"}},
+        }
+        self.assertEqual(
+            _flatten_json_schema(schema),
+            {"properties": schema["properties"], "allOf": [closed]},
+        )
+
+    def test_flatten_resolves_pointer_into_a_nested_defs_block(self) -> None:
+        """A `$ref` below a property is inlined instead of left dangling.
+
+        The walk drops every `$defs` block it meets, so a pointer such as
+        `#/properties/conf/$defs/Entry` used to survive with its target gone.
+        """
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Root": {"type": "string"}},
+                    "properties": {
+                        "conf": {
+                            "$defs": {
+                                "Entry": {
+                                    "type": "object",
+                                    "properties": {"k": {"type": "string"}},
+                                },
+                            },
+                            "type": "object",
+                        },
+                        "e": {"$ref": "#/properties/conf/$defs/Entry"},
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "conf": {"type": "object"},
+                    "e": {
+                        "type": "object",
+                        "properties": {"k": {"type": "string"}},
+                    },
+                },
+            },
+        )
+
+    def test_flatten_nested_defs_without_a_root_block(self) -> None:
+        """A schema whose only definitions are nested is flattened too."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "properties": {
+                        "conf": {
+                            "$defs": {"Entry": {"minimum": 10}},
+                            "type": "object",
+                        },
+                        "e": {
+                            "$ref": "#/properties/conf/$defs/Entry",
+                            "minimum": 0,
+                        },
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "conf": {"type": "object"},
+                    "e": {"minimum": 0, "allOf": [{"minimum": 10}]},
+                },
+            },
+        )
+
+    def test_flatten_resolves_pointer_escapes_and_array_indexes(self) -> None:
+        """`~1` / `~0` escapes and numeric tokens resolve like any pointer."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"a/ b": {"type": "string"}, "a/%20b": {}},
+                    "anyOf": [{"type": "null"}, {"$ref": "#/$defs/a~1%20b"}],
+                    "properties": {
+                        "x": {"$ref": "#/anyOf/1"},
+                        "invalid": {"$ref": "#/anyOf/01"},
+                    },
+                },
+            ),
+            {
+                "anyOf": [{"type": "null"}, {"type": "string"}],
+                "properties": {
+                    "x": {"type": "string"},
+                    "invalid": {"$ref": "#/anyOf/01"},
+                },
+            },
+        )
+
+    def test_flatten_leaves_an_unresolvable_pointer_alone(self) -> None:
+        """A pointer that does not resolve keeps the node as written."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Real": {"type": "string"}},
+                    "properties": {"x": {"$ref": "#/$defs/Missing"}},
+                },
+            ),
+            {"properties": {"x": {"$ref": "#/$defs/Missing"}}},
+        )
+
+    def test_flatten_removes_a_discriminator_nested_in_a_property(
+        self,
+    ) -> None:
+        """A mapping into a nested definition block goes with that block."""
+        ref = "#/properties/properties/$defs/Entry"
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "properties": {
+                        "properties": {
+                            "$defs": {"Entry": {"type": "object"}},
+                            "type": "object",
+                        },
+                        "e": {"$ref": ref},
+                    },
+                    "discriminator": {
+                        "propertyName": "kind",
+                        "mapping": {"a": ref},
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "properties": {"type": "object"},
+                    "e": {"type": "object"},
+                },
+            },
+        )
+
+    def test_flatten_keeps_a_mapping_into_a_property_named_definitions(
+        self,
+    ) -> None:
+        """A property called `definitions` is a name, not a removed block.
+
+        The root block makes the walk run; the property itself survives it, so
+        its mapping still resolves and the discriminator has to stay. Reading
+        the pointer token as a keyword used to delete it.
+        """
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Ring": {"type": "object"}},
+                    "properties": {
+                        "definitions": {
+                            "type": "object",
+                            "properties": {"a": {"type": "string"}},
+                        },
+                        "r": {"$ref": "#/$defs/Ring"},
+                    },
+                    "discriminator": {
+                        "propertyName": "kind",
+                        "mapping": {
+                            "a": "#/properties/definitions/properties/a",
+                        },
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "definitions": {
+                        "type": "object",
+                        "properties": {"a": {"type": "string"}},
+                    },
+                    "r": {"type": "object"},
+                },
+                "discriminator": {
+                    "propertyName": "kind",
+                    "mapping": {"a": "#/properties/definitions/properties/a"},
+                },
+            },
+        )
+
+    def test_flatten_keeps_a_mapping_into_a_surviving_node(self) -> None:
+        """The kept arm: a target the walk leaves alone keeps its mapping.
+
+        The root block makes the walk run; `#/properties/x` is outside any
+        block and survives, so the guard has to look at *where* the pointer
+        points, not just whether it resolves.
+        """
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Ring": {"type": "object"}},
+                    "properties": {
+                        "x": {"type": "string"},
+                        "r": {"$ref": "#/$defs/Ring"},
+                    },
+                    "discriminator": {
+                        "propertyName": "kind",
+                        "mapping": {"a": "#/properties/x"},
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "x": {"type": "string"},
+                    "r": {"type": "object"},
+                },
+                "discriminator": {
+                    "propertyName": "kind",
+                    "mapping": {"a": "#/properties/x"},
+                },
+            },
+        )
+
+    def test_definition_keywords_as_names_preserve_identity(self) -> None:
+        """Schema-map entry names do not themselves declare definitions."""
+        for name in ("definitions", "$defs"):
+            with self.subTest(name=name):
+                schema = {"properties": {name: {"type": "object"}}}
+                self.assertIs(_flatten_json_schema(schema), schema)
+
+    def test_named_resources_keep_their_definitions(self) -> None:
+        """Local references must still resolve against their own resource."""
+        cases: list[tuple[dict, dict, str]] = [
+            ({"$id": "urn:inner"}, {}, "#/$defs/A"),
+            ({}, {"$anchor": "entry"}, "#entry"),
+        ]
+        for metadata, target, ref in cases:
+            with self.subTest(ref=ref):
+                child = {
+                    **metadata,
+                    "$defs": {"A": target},
+                    "properties": {"value": {"$ref": ref}},
+                }
+                schema = {"properties": {"child": child}}
+                original = copy.deepcopy(schema)
+                self.assertEqual(_flatten_json_schema(schema), original)
+
+    def test_ref_siblings_do_not_change_other_uses_of_a_target(self) -> None:
+        """Inline each occurrence independently, including external targets."""
+        remote = {"$ref": "https://example.org/other"}
+        ref = {"$ref": "#/$defs/T"}
+        schema = {
+            "$defs": {"T": remote},
+            "anyOf": [{**ref, "minimum": 3}, ref],
+        }
+        expected = {"anyOf": [{**remote, "minimum": 3}, remote.copy()]}
+        self.assertEqual(_flatten_json_schema(schema), expected)
+
+    def test_same_name_in_different_definition_blocks(self) -> None:
+        """A cross-namespace reference with the same name is not a cycle."""
+        schema = {
+            "$defs": {"A": {"$ref": "#/definitions/A"}},
+            "definitions": {"A": {"type": "string"}},
+            "$ref": "#/$defs/A",
+        }
+        self.assertEqual(_flatten_json_schema(schema), {"type": "string"})
 
 
 class TestFlattenEscapedDiscriminators(unittest.TestCase):
