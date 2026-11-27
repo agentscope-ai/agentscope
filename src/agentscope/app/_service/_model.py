@@ -11,6 +11,22 @@ REPLY_PIPELINE_VOICE = "_agentscope_pipeline_voice"
 REPLY_CHAT_CONFIG = "_agentscope_chat_config"
 
 
+def _no_chat_model_error(credential_id: str) -> ValueError:
+    """Return the error for a credential that serves no chat model.
+
+    A credential built for another model kind (``TypeSafeCredential``
+    serves classifiers only) raises ``NotImplementedError`` from
+    :meth:`~..credential.CredentialBase.get_chat_model_class` and its
+    ``get_chat_model_classes`` default. Picking such a credential is the
+    caller's mistake, so it is reported as the ``ValueError`` this module
+    documents — the chat route answers 400 — instead of escaping as an
+    unclassified server error.
+    """
+    return ValueError(
+        f"Credential {credential_id!r} does not support chat models.",
+    )
+
+
 async def get_model(
     user_id: str,
     config: ChatModelConfig,
@@ -43,7 +59,8 @@ async def get_model(
             404 when the credential is neither owned by ``user_id`` nor
             shared to them.
         `ValueError`:
-            If the credential does not support the explicit model class.
+            If the credential serves no chat model (e.g. a classifier-only
+            credential), or does not support the explicit model class.
     """
     credential_record = await access.resolve_credential(
         user_id,
@@ -52,7 +69,11 @@ async def get_model(
 
     credential = CredentialFactory.from_dict(credential_record.data)
     if config.model_class:
-        for model_cls in credential.get_chat_model_classes():
+        try:
+            candidates = credential.get_chat_model_classes()
+        except NotImplementedError as error:
+            raise _no_chat_model_error(config.credential_id) from error
+        for model_cls in candidates:
             if getattr(model_cls, "type", "") == config.model_class:
                 break
         else:
@@ -61,7 +82,10 @@ async def get_model(
                 f"for credential {config.credential_id!r}.",
             )
     else:
-        model_cls = credential.get_chat_model_class()
+        try:
+            model_cls = credential.get_chat_model_class()
+        except NotImplementedError as error:
+            raise _no_chat_model_error(config.credential_id) from error
 
     parameters = (
         model_cls.Parameters(**config.parameters)
