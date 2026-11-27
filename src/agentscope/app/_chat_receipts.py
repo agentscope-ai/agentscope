@@ -300,6 +300,21 @@ class ReceiptProbes:
                 return False
             del self._pending[key]
             if previous == record:
+                if task.cancelled():
+                    return False
+                error = task.exception()
+                if error is not None:
+                    # The reserved lookup failed (its own read timeout, or a
+                    # storage error). Treat the receipt as unfinished and let
+                    # the next sweep ask again: raising here would abort the
+                    # whole sweep and silently skip every receipt after this
+                    # one.
+                    logger.warning(
+                        "Chat receipt probe for %r failed, retrying: %s",
+                        key,
+                        error,
+                    )
+                    return False
                 return task.result()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -340,3 +355,10 @@ class ReceiptProbes:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             raise
+        except Exception as error:  # pylint: disable=broad-except
+            logger.warning(
+                "Chat receipt probe for %r failed, retrying: %s",
+                key,
+                error,
+            )
+            return False
