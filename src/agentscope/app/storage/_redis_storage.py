@@ -175,7 +175,8 @@ class RedisStorage(StorageBase):
             db (`int`, defaults to `0`): Redis database index.
             password (`str | None`, optional): Redis password if required.
             connection_pool (`ConnectionPool | None`, optional):
-                An externally managed connection pool.  When provided the pool
+                An externally managed connection pool, created with
+                ``decode_responses=True``.  When provided the pool
                 is used as-is and **not** closed by :meth:`aclose` — the
                 caller retains ownership of its lifecycle.  When omitted a
                 pool is created from *host*/*port*/*db*/*password* on
@@ -232,6 +233,21 @@ class RedisStorage(StorageBase):
 
         if self._external_pool is not None:
             pool = self._external_pool
+            # The record helpers below compare raw Redis strings
+            # (the MCP / skill name index hands back the id that
+            # owns a name, the bot index hands back a channel id)
+            # and read them back as text. A pool left at the redis
+            # default (bytes) makes every such comparison fail, so
+            # the same record looks like a different one and a
+            # second upsert is rejected as a name clash.
+            if not getattr(pool, "connection_kwargs", {}).get(
+                "decode_responses",
+            ):
+                raise ValueError(
+                    "RedisStorage needs an external pool created "
+                    "with decode_responses=True; a pool that returns "
+                    "bytes breaks the name and bot indexes.",
+                )
         else:
             self._owned_pool = aioredis.ConnectionPool(
                 host=self._host,
