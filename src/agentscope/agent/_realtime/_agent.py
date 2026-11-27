@@ -793,14 +793,41 @@ class RealtimeAgent:
             await self.model.push_audio(pcm)
 
     async def _on_control(self, frame: ControlFrame) -> None:
-        """Translate one upstream control frame into :meth:`send`."""
+        """Translate one upstream control frame into :meth:`send`.
+
+        The transport is an untrusted input boundary, so a malformed
+        remote frame is dropped with a warning rather than allowed to
+        fail the uplink and end the voice session with it.
+        """
         match frame.type:
             case ControlFrameType.TEXT:
-                await self.send(frame.data.get("text", ""))
+                text = frame.data.get("text")
+                if not isinstance(text, str) or not text:
+                    logger.warning(
+                        "RealtimeAgent: ignored a text frame with no text.",
+                    )
+                    return
+                await self.send(text)
             case ControlFrameType.USER_CONFIRM:
-                await self.send(UserConfirmResultEvent(**frame.data))
+                try:
+                    event = UserConfirmResultEvent(**frame.data)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "RealtimeAgent: ignored a malformed confirmation "
+                        "frame.",
+                    )
+                    return
+                await self.send(event)
             case ControlFrameType.EXTERNAL_EXECUTION_RESULT:
-                await self.send(ExternalExecutionResultEvent(**frame.data))
+                try:
+                    event = ExternalExecutionResultEvent(**frame.data)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "RealtimeAgent: ignored a malformed external "
+                        "result frame.",
+                    )
+                    return
+                await self.send(event)
             case ControlFrameType.INTERRUPT:
                 await self.send(UserInterruptEvent(reply_id=self._reply_id))
             case _:
@@ -959,22 +986,32 @@ class RealtimeAgent:
                             request_response=False,
                         )
 
-            case me.ResponseDoneEvent():
+            case (me.ResponseDoneEvent() as done) | me.ModelErrorEvent(
+                response=me.ResponseDoneEvent() as done,
+            ):
                 async with self._barge_lock:
                     reply = self._reply
-                    if reply is None or reply.item_id != event.item_id:
+                    if reply is None or reply.item_id != done.item_id:
                         return
-                    self._metrics.input_tokens = event.input_tokens
-                    self._metrics.output_tokens = event.output_tokens
+                    self._metrics.input_tokens = done.input_tokens
+                    self._metrics.output_tokens = done.output_tokens
                     message = self._find_reply_message(self._reply_id)
                     if message is not None:
                         message.append_usage(
                             Usage(
-                                input_tokens=event.input_tokens,
-                                output_tokens=event.output_tokens,
+                                input_tokens=done.input_tokens,
+                                output_tokens=done.output_tokens,
                             ),
                         )
-                    if self._pending_tools and self.toolkit is not None:
+                    if isinstance(event, me.ModelErrorEvent):
+                        logger.error(
+                            "RealtimeAgent: response %s failed (%s): %s",
+                            done.item_id,
+                            event.code,
+                            event.message,
+                        )
+                        self._finish_reply(ReplyFinishedReason.ERROR)
+                    elif self._pending_tools and self.toolkit is not None:
                         # The reply goes on: tools run, then the next
                         # response answers with their results.
                         reply_id = reply.reply_id

@@ -8,11 +8,16 @@ import {
 	type TextBlock,
 	type ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
-import { GitBranch, TriangleAlert } from 'lucide-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import { FolderOpen, GitBranch, TriangleAlert } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { ArtifactDrawer } from './artifacts/ArtifactDrawer';
+import { type FileArtifact, fileChangeVersion } from './artifacts/artifacts';
+import { useFileChanges } from './artifacts/useFileChanges';
+import { WorkspaceFilesDrawer } from './artifacts/WorkspaceFilesDrawer';
 import type { GitStatus } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
+import { getBaseUrl, getUserId } from '@/api/client';
 import { ASMessageBubble, SteeringMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
 import { ClientToolsMenu } from '@/components/chat/ClientToolsMenu';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
@@ -20,7 +25,7 @@ import { ExternalExecutionCard } from '@/components/chat/ExternalExecutionCard.t
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
 import { ManualClientToolCard } from '@/components/chat/ManualClientToolCard';
 import { QueuedMessages } from '@/components/chat/QueuedMessages.tsx';
-import { TextInput } from '@/components/chat/TextInput.tsx';
+import { TextInput, type TextInputRef } from '@/components/chat/TextInput.tsx';
 import { DiffStats } from '@/components/chat/tool-renderers/_shared';
 import { WorkingDirectoryDialog } from '@/components/dialog/WorkingDirectoryDialog';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
@@ -35,7 +40,7 @@ import {
 	MessageScrollerViewport,
 } from '@/components/ui/message-scroller.tsx';
 import { Spinner } from '@/components/ui/spinner';
-import type { ReplyPhase } from '@/hooks/useMessages';
+import { UnacknowledgedToolSubmission, type ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
 import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
@@ -92,7 +97,7 @@ interface ChatContentProps {
 	queueReorderDisabled: boolean;
 	activeReplyId: string | null;
 	disabled: boolean;
-	onSend: (content: ContentBlock[]) => Promise<void> | void;
+	onSend: (content: ContentBlock[], source?: 'continue') => Promise<void> | void;
 	onUserConfirm: (
 		toolCall: ToolCallBlock,
 		confirm: boolean,
@@ -103,8 +108,12 @@ interface ChatContentProps {
 		toolCall: ToolCallBlock,
 		result: ClientExternalToolResult,
 		replyId: string,
+		onUnconfirmed?: (error: Error) => void,
 	) => Promise<void>;
-	onExternalExecutionResult: (event: ExternalExecutionResultEvent) => Promise<void>;
+	onExternalExecutionResult: (
+		event: ExternalExecutionResultEvent,
+		onUnconfirmed?: (error: Error) => void,
+	) => Promise<void>;
 	autoComplete?: (input: string) => string | null;
 	className?: string;
 	/** Called when the user clicks the stop button. */
@@ -117,6 +126,7 @@ interface ChatContentProps {
 	voiceState?: RealtimeConnectionState;
 	onVoiceToggle?: () => void;
 	voiceDisabled?: boolean;
+	voiceDisabledReason?: string;
 	/** Audio media types accepted by the selected ASR model. */
 	asrInputTypes?: string[];
 	/** Transcribes one completed browser recording. */
@@ -155,6 +165,13 @@ interface ChatContentProps {
 	onRefreshGit?: () => void | Promise<void>;
 }
 
+/** Release the form for a manual retry while the hook still listens for its receipt. */
+function waitForReceiptOrRetry(submit: (allowRetry: (error: Error) => void) => Promise<void>) {
+	return new Promise<void>((resolve, reject) => {
+		submit(reject).then(resolve, reject);
+	});
+}
+
 const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
 	loading = false,
@@ -179,6 +196,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	voiceState,
 	onVoiceToggle,
 	voiceDisabled,
+	voiceDisabledReason,
 	asrInputTypes,
 	onTranscribe,
 	asrRealtime,
@@ -196,6 +214,27 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onRefreshGit,
 }) => {
 	const { t, i18n } = useTranslation();
+	const inputRef = useRef<TextInputRef>(null);
+	const scope = JSON.stringify([getBaseUrl(), getUserId(), agentId, sessionId]);
+	const fileChanges = useFileChanges(msgs, scope, loading);
+	const [fileView, setFileView] = useState<
+		| { scope: string; kind: 'preview'; artifact: FileArtifact }
+		| { scope: string; kind: 'browse' }
+		| null
+	>(null);
+	useEffect(() => setFileView(null), [scope]);
+	const openArtifact = useCallback(
+		(artifact: FileArtifact) => {
+			setFileView({ scope, kind: 'preview', artifact });
+		},
+		[scope],
+	);
+	const referenceFile = (path: string) => {
+		inputRef.current?.insertText(t('artifacts.referenceText', { path: JSON.stringify(path) }));
+		setFileView(null);
+		requestAnimationFrame(() => inputRef.current?.focus());
+	};
+
 	const { deferredItems, steeringMessages } = useMemo(() => {
 		const deferred: ChatQueueItem[] = [];
 		const steering: Pick<Msg, 'id' | 'content' | 'created_at'>[] = [];
@@ -255,7 +294,14 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				pendingExternalToolRegistration.canCompose(pendingExternalTool.toolCall),
 			));
 
-	const handleSend = async (content: ContentBlock[]) => {
+	const submitClientToolResult = (result: ClientExternalToolResult) => {
+		if (!pendingExternalTool) return Promise.resolve();
+		const { toolCall, replyId } = pendingExternalTool;
+		return waitForReceiptOrRetry((retry) =>
+			onClientExternalToolResult(toolCall, result, replyId, retry),
+		);
+	};
+	const handleSend = async (content: ContentBlock[], allowRetry?: () => void) => {
 		const pending = pendingExternalTool;
 		if (!pending || !acceptsInput) {
 			await onSend(content);
@@ -264,7 +310,12 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 
 		const result = pendingExternalToolRegistration?.composerResult?.(content, pending.toolCall);
 		if (result === null || result === undefined) return;
-		await onClientExternalToolResult(pending.toolCall, result, pending.replyId);
+		try {
+			await onClientExternalToolResult(pending.toolCall, result, pending.replyId, allowRetry);
+		} catch (error) {
+			// The question already has an answer. Keep the draft for the next question.
+			if (!(error instanceof UnacknowledgedToolSubmission)) throw error;
+		}
 	};
 
 	// On an empty session the prompt and the input centre together, so every box
@@ -277,6 +328,33 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				className,
 			)}
 		>
+			{!loading &&
+				agentId &&
+				sessionId &&
+				fileView?.scope === scope &&
+				(fileView.kind === 'preview' ? (
+					<ArtifactDrawer
+						key={JSON.stringify([scope, fileView.artifact.path])}
+						artifact={fileView.artifact}
+						changeVersion={fileChangeVersion(fileChanges, fileView.artifact.path)}
+						agentId={agentId}
+						sessionId={sessionId}
+						onClose={() => setFileView(null)}
+						referenceDisabled={disabled}
+						onReference={referenceFile}
+					/>
+				) : (
+					<WorkspaceFilesDrawer
+						key={scope}
+						agentId={agentId}
+						sessionId={sessionId}
+						initialPath={cwd ?? ''}
+						fileChanges={fileChanges}
+						onClose={() => setFileView(null)}
+						referenceDisabled={disabled}
+						onReference={referenceFile}
+					/>
+				))}
 			{loading ? (
 				<div className="flex flex-1 w-full items-center justify-center">
 					{showSpinner ? <Spinner className="size-5 text-muted-foreground" /> : null}
@@ -315,6 +393,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 											<ASMessageBubble
 												message={message}
 												onUserConfirm={onUserConfirm}
+												onOpenArtifact={
+													agentId && sessionId ? openArtifact : undefined
+												}
 											/>
 										</MessageScrollerItem>
 									);
@@ -350,20 +431,17 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 												<Button
 													size={'xs'}
 													onClick={() => {
+														const block: TextBlock = {
+															id: crypto.randomUUID(),
+															type: 'text',
+															text: t(
+																'chat.maxItersExceeded.continue',
+															),
+															created_at: new Date().toISOString(),
+															finished_at: new Date().toISOString(),
+														};
 														void Promise.resolve(
-															onSend([
-																{
-																	id: crypto.randomUUID(),
-																	type: 'text',
-																	text: t(
-																		'chat.maxItersExceeded.continue',
-																	),
-																	created_at:
-																		new Date().toISOString(),
-																	finished_at:
-																		new Date().toISOString(),
-																} as TextBlock,
-															]),
+															onSend([block], 'continue'),
 														).catch(() => {
 															// The send handler reports the failure.
 														});
@@ -409,13 +487,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 								<PendingExternalToolComponent
 									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
 									toolCall={pendingExternalTool.toolCall}
-									onSubmit={(result) =>
-										onClientExternalToolResult(
-											pendingExternalTool.toolCall,
-											result,
-											pendingExternalTool.replyId,
-										)
-									}
+									onSubmit={submitClientToolResult}
 									onCancel={onInterrupt}
 									cancelling={phase === 'interrupting'}
 								/>
@@ -423,13 +495,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 								<ManualClientToolCard
 									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
 									toolCall={pendingExternalTool.toolCall}
-									onSubmit={(result) =>
-										onClientExternalToolResult(
-											pendingExternalTool.toolCall,
-											result,
-											pendingExternalTool.replyId,
-										)
-									}
+									onSubmit={submitClientToolResult}
 									onCancel={onInterrupt}
 									cancelling={phase === 'interrupting'}
 								/>
@@ -438,7 +504,11 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
 									replyId={pendingExternalTool.replyId}
 									toolCall={pendingExternalTool.toolCall}
-									onResult={onExternalExecutionResult}
+									onResult={(event) =>
+										waitForReceiptOrRetry((retry) =>
+											onExternalExecutionResult(event, retry),
+										)
+									}
 								/>
 							)
 						) : (
@@ -461,7 +531,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				    edges parallel — a plain rectangle here would show the
 				    pill's corners cutting into it. */}
 					<TextInput
-						key={JSON.stringify([agentId, sessionId])}
+						key={scope}
+						ref={inputRef}
+						draftKey={scope}
 						className="min-w-full max-w-full w-full rounded-[32px] bg-muted p-1"
 						onSend={handleSend}
 						disabled={disabled}
@@ -475,6 +547,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						voiceState={voiceState}
 						onVoiceToggle={onVoiceToggle}
 						voiceDisabled={voiceDisabled}
+						voiceDisabledReason={voiceDisabledReason}
 						asrInputTypes={asrInputTypes}
 						onTranscribe={onTranscribe}
 						asrRealtime={asrRealtime}
@@ -482,14 +555,25 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						asrDisabled={asrDisabled}
 						asrResetKey={asrResetKey}
 						headerSlot={
-							<div className="flex w-full items-center justify-between px-2 py-1 text-sm text-muted-foreground">
-								<WorkingDirectoryDialog
-									agentId={agentId}
-									sessionId={sessionId}
-									value={cwd}
-									onChange={onCwdChange}
-								/>
-								<div className="flex items-center gap-1.5">
+							<div className="flex w-full flex-wrap items-center justify-between gap-1 px-2 py-1 text-sm text-muted-foreground">
+								<div className="flex min-w-0 flex-wrap items-center gap-1">
+									<WorkingDirectoryDialog
+										agentId={agentId}
+										sessionId={sessionId}
+										value={cwd}
+										onChange={onCwdChange}
+									/>
+									<Button
+										variant="ghost"
+										size="sm"
+										disabled={!agentId || !sessionId || loading}
+										onClick={() => setFileView({ scope, kind: 'browse' })}
+									>
+										<FolderOpen />
+										{t('artifacts.browseFiles')}
+									</Button>
+								</div>
+								<div className="flex flex-wrap items-center gap-1.5">
 									<ClientToolsMenu agentId={agentId} sessionId={sessionId} />
 									{git && (
 										<Button

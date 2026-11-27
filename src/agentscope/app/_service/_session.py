@@ -253,9 +253,16 @@ class SessionService:
         tool_calls = last_msg.get_content_blocks("tool_call")
         if not tool_calls:
             return SessionStatus.IDLE
-        if any(tc.state == ToolCallState.ASKING for tc in tool_calls):
+        return SessionService.derive_tool_call_status(
+            [tc.state for tc in tool_calls],
+        )
+
+    @staticmethod
+    def derive_tool_call_status(states: list[str]) -> SessionStatus:
+        """Resolve tail tool states with permission taking precedence."""
+        if ToolCallState.ASKING in states:
             return SessionStatus.AWAITING_PERMISSION
-        if any(tc.state == ToolCallState.SUBMITTED for tc in tool_calls):
+        if ToolCallState.SUBMITTED in states:
             return SessionStatus.AWAITING_EXTERNAL_RESULT
         return SessionStatus.IDLE
 
@@ -398,22 +405,23 @@ class SessionService:
             *(self.cancel_session_run(sid) for sid in all_sids),
         )
         async with AsyncExitStack() as locks:
-            # Match approval creation and run persistence. Ordered locking
-            # also covers worker sessions removed by the storage cascade.
-            deadline = (
-                asyncio.get_running_loop().time() + self._DELETE_LOCK_WAIT_SECS
-            )
+            # Serialize deletion with config PATCH, approvals and runs,
+            # including worker sessions removed by the storage cascade.
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self._DELETE_LOCK_WAIT_SECS
             try:
                 for sid in sorted(set(all_sids)):
-                    await locks.enter_async_context(
-                        self._bus.acquire_lock_bounded(
-                            MessageBusKeys.session_lock(sid),
-                            timeout_secs=max(
-                                0.0,
-                                deadline - asyncio.get_running_loop().time(),
+                    for key in (
+                        MessageBusKeys.session_config_lock(sid),
+                        MessageBusKeys.session_lock(sid),
+                    ):
+                        remaining = deadline - loop.time()
+                        await locks.enter_async_context(
+                            self._bus.acquire_lock_bounded(
+                                key,
+                                timeout_secs=max(0.0, remaining),
                             ),
-                        ),
-                    )
+                        )
             except TimeoutError as exc:
                 raise SessionBusyError(
                     "The session is still busy. "
@@ -706,6 +714,12 @@ class SessionService:
         await self._bus.registry_del(
             MessageBusKeys.chat_input_inflight_registry(),
             session_id,
+        )
+        await self._bus.registry_drop(
+            MessageBusKeys.chat_input_cancellations(session_id),
+        )
+        await self._bus.registry_drop(
+            MessageBusKeys.chat_submissions(session_id),
         )
         await cleanup_session(self._bus, session_id)
         await self._bus.registry_drop(

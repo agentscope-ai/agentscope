@@ -1,4 +1,3 @@
-import { useQueryClient } from '@tanstack/react-query';
 import {
 	AudioWaveform,
 	Plus,
@@ -9,7 +8,7 @@ import {
 	Upload,
 	Loader2,
 } from 'lucide-react';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 import { voiceProfileApi } from '@/api';
 import type { VoiceProfileRecord, VoiceProfileData, EngineInfo } from '@/api';
@@ -37,7 +36,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useVoiceEngines } from '@/hooks/useVoiceEngines';
-import { useVoiceProfiles, VOICE_PROFILES_KEY } from '@/hooks/useVoiceProfiles';
+import { notifyVoiceProfilesChanged, useVoiceProfiles } from '@/hooks/useVoiceProfiles';
 import { useTranslation } from '@/i18n/useI18n';
 
 const EMPTY_MODELS: EngineInfo['models'] = [];
@@ -700,16 +699,10 @@ function VoiceProfileDialog({
 export function VoiceProfilePage() {
 	const { t } = useTranslation();
 	const { profiles, loading: initialLoading } = useVoiceProfiles();
-	const queryClient = useQueryClient();
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [editProfile, setEditProfile] = useState<VoiceProfileRecord | null>(null);
 	const [deleteProfile, setDeleteProfile] = useState<VoiceProfileRecord | null>(null);
 	const { engineDetails } = useVoiceEngines();
-
-	const loadProfiles = useCallback(
-		() => queryClient.invalidateQueries({ queryKey: VOICE_PROFILES_KEY }),
-		[queryClient],
-	);
 
 	const getCredentialLabel = (profile: VoiceProfileRecord): string | null => {
 		if (!profile.data.credential_id || !profile.data.engine) return null;
@@ -723,7 +716,7 @@ export function VoiceProfilePage() {
 		try {
 			await voiceProfileApi.delete(deleteProfile.id);
 			setDeleteProfile(null);
-			await loadProfiles();
+			await notifyVoiceProfilesChanged();
 		} catch {
 			// Keep the dialog open; the API client already displays the error.
 		}
@@ -835,7 +828,7 @@ export function VoiceProfilePage() {
 					open={dialogOpen}
 					onOpenChange={setDialogOpen}
 					profile={editProfile}
-					onSaved={loadProfiles}
+					onSaved={notifyVoiceProfilesChanged}
 				/>
 			)}
 

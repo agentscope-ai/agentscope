@@ -1,4 +1,13 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from 'react';
 import type { ReactNode } from 'react';
 
 import { StreamingAudioManager } from '@/utils/streamingAudio';
@@ -7,7 +16,9 @@ import type { StreamingAudioState } from '@/utils/streamingAudio';
 const AudioContext = createContext<StreamingAudioManager | null>(null);
 
 interface ReplayController {
-	play: (el: HTMLAudioElement) => void;
+	blocked: boolean;
+	setBlocked: (blocked: boolean) => void;
+	play: (el: HTMLAudioElement) => Promise<void>;
 	stop: () => void;
 }
 
@@ -25,21 +36,39 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 	useEffect(() => () => manager.disposeAll(), [manager]);
 
 	const currentRef = useRef<HTMLAudioElement | null>(null);
+	const blockedRef = useRef(false);
+	const [blocked, setBlockedState] = useState(false);
+	const stop = useCallback(() => {
+		currentRef.current?.pause();
+		currentRef.current = null;
+	}, []);
+	const setBlocked = useCallback(
+		(next: boolean) => {
+			// Guard play() immediately, including clicks before the button re-renders.
+			if (blockedRef.current === next) return;
+			blockedRef.current = next;
+			if (next) stop();
+			setBlockedState(next);
+		},
+		[stop],
+	);
 	const replay: ReplayController = useMemo(
 		() => ({
-			play(el: HTMLAudioElement) {
-				manager.stopLivePlayback();
+			blocked,
+			setBlocked,
+			stop,
+			async play(el: HTMLAudioElement) {
+				if (blockedRef.current) return;
+				manager.stopAutoplay();
 				if (currentRef.current && currentRef.current !== el) {
 					currentRef.current.pause();
 					currentRef.current.currentTime = 0;
 				}
 				currentRef.current = el;
-			},
-			stop() {
-				currentRef.current = null;
+				await el.play();
 			},
 		}),
-		[manager],
+		[manager, blocked, setBlocked, stop],
 	);
 
 	return (
