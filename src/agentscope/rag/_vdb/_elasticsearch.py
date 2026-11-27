@@ -11,6 +11,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _record_identity_key,
     _reject_none_metadata_values,
 )
 
@@ -405,7 +406,7 @@ class ElasticsearchStore(VectorStoreBase):
     @staticmethod
     def _record_id(record: VectorRecord) -> str:
         """Build a stable ID so re-indexing replaces the same chunk."""
-        raw = f"{record.document_id}\0{record.chunk.chunk_index}"
+        raw = _record_identity_key(record)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     @staticmethod
