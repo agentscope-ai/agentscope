@@ -32,6 +32,7 @@ from ._registry import ChannelTypeRegistry, ChannelTypeSchema
 from ._dingtalk import DingTalkChannel
 from ._discord import DiscordChannel
 from ._feishu import FeishuChannel
+from ._slack import SlackChannel
 
 __all__ = [
     "ChannelBase",
@@ -55,4 +56,5 @@ __all__ = [
     "DingTalkChannel",
     "DiscordChannel",
     "FeishuChannel",
+    "SlackChannel",
 ]
