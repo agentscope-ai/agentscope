@@ -1,5 +1,5 @@
 import { asrApi } from '@/api/asr';
-import { getBaseUrl } from '@/api/client';
+import { getBaseUrl, getUserId, type ApiScope } from '@/api/client';
 
 export interface RealtimeASRConfig {
 	credentialId: string;
@@ -8,6 +8,7 @@ export interface RealtimeASRConfig {
 }
 
 interface RealtimeASRTransportOptions {
+	scope?: ApiScope;
 	config: RealtimeASRConfig;
 	onTranscript: (text: string, isLast: boolean) => void;
 	onError: (error: Error) => void;
@@ -35,14 +36,16 @@ export class BrowserRealtimeASRTransport {
 	}
 
 	async connect(sampleRate: number): Promise<void> {
+		const scope = this.options.scope ?? { baseUrl: getBaseUrl(), userId: getUserId() };
 		const { token } = await asrApi.createRealtimeToken(
 			this.options.config.credentialId,
 			this.options.config.model,
+			scope,
 		);
 		if (this.closedByClient) {
 			throw new Error('Realtime ASR connection was cancelled.');
 		}
-		const baseUrl = getBaseUrl() || window.location.origin;
+		const baseUrl = scope.baseUrl || window.location.origin;
 		const url = new URL('/asr/realtime', baseUrl);
 		url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
 		url.searchParams.set('token', token);
@@ -73,7 +76,7 @@ export class BrowserRealtimeASRTransport {
 			}
 		};
 
-		return ready;
+		return this.withTimeout(ready, 20_000);
 	}
 
 	sendAudio(audio: ArrayBuffer): void {
@@ -90,7 +93,7 @@ export class BrowserRealtimeASRTransport {
 			this.finalReject = reject;
 		});
 		this.socket.send(JSON.stringify({ type: 'stop' }));
-		return final;
+		return this.withTimeout(final, 35_000);
 	}
 
 	close(): void {
@@ -147,5 +150,17 @@ export class BrowserRealtimeASRTransport {
 		this.readyReject = null;
 		this.finalResolve = null;
 		this.finalReject = null;
+	}
+
+	private async withTimeout(pending: Promise<void>, timeoutMs: number): Promise<void> {
+		const timer = window.setTimeout(
+			() => this.fail(new Error('Speech recognition timed out.')),
+			timeoutMs,
+		);
+		try {
+			await pending;
+		} finally {
+			window.clearTimeout(timer);
+		}
 	}
 }

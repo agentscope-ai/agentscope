@@ -748,6 +748,35 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
         self.assertIn("read-only", decision.decision_reason.lower())
 
+    async def test_search_arguments_follow_permission_mode(self) -> None:
+        """Literal search data is safe; unresolved arguments need review."""
+        bash = Bash()
+        for mode, unresolved in (
+            (PermissionMode.DEFAULT, PermissionBehavior.ASK),
+            (PermissionMode.EXPLORE, PermissionBehavior.DENY),
+        ):
+            engine = PermissionEngine(PermissionContext(mode=mode))
+            for command, expected in (
+                ("rg -- --pre", PermissionBehavior.ALLOW),
+                ("rg --files", PermissionBehavior.ALLOW),
+                ("rg -l pattern src", PermissionBehavior.ALLOW),
+                ("rg -S pattern src", PermissionBehavior.ALLOW),
+                ("tree -I '-old*' src", PermissionBehavior.ALLOW),
+                ("tree -f src", PermissionBehavior.ALLOW),
+                ('rg "$PATTERN" README.md', unresolved),
+                ("tree $DIRECTORY", unresolved),
+                ("rg -ne pattern README.md", unresolved),
+                ("tree --unrecognized src", unresolved),
+                ("rg --pre=cat foo", unresolved),
+                ("tree -ao listing", unresolved),
+            ):
+                with self.subTest(mode=mode, command=command):
+                    decision = await engine.check_permission(
+                        bash,
+                        {"command": command},
+                    )
+                    self.assertEqual(decision.behavior, expected)
+
     async def test_ls_is_read_only(self) -> None:
         """Test that ls is auto-allowed as read-only."""
         decision = await self.engine.check_permission(

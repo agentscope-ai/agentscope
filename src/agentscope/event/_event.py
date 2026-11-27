@@ -509,6 +509,8 @@ class UserInterruptEvent(EventBase):
     the reply with :attr:`ReplyEndReason.INTERRUPTED`, and does **not**
     enter the reasoning-acting loop.
 
+    A stale ``reply_id`` is ignored without modifying the current reply.
+
     .. note:: This event is only meaningful for parked replies. To
         interrupt a running (actively-generating) reply, cancel the
         underlying task instead — the agent handles that path via its

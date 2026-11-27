@@ -51,7 +51,14 @@ class _FakeClient:
         self.bulk = AsyncMock(return_value={"errors": False, "items": []})
         self.open_point_in_time = AsyncMock()
         self.close_point_in_time = AsyncMock()
-        self.delete_by_query = AsyncMock()
+        self.delete_by_query = AsyncMock(
+            return_value={
+                "timed_out": False,
+                "version_conflicts": 0,
+                "failures": [],
+                "deleted": 0,
+            },
+        )
         self.search = AsyncMock()
         self.close = AsyncMock()
 
@@ -226,6 +233,24 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
             conflicts="proceed",
             refresh=True,
         )
+
+    async def test_delete_reports_incomplete_responses(self) -> None:
+        cases: tuple[tuple[dict[str, Any], str], ...] = (
+            ({"version_conflicts": 1}, "version_conflicts=1"),
+            ({"timed_out": True}, "timed_out=True"),
+            ({"failures": [{"status": 503}]}, "failures=1"),
+        )
+        for incomplete, diagnostic in cases:
+            with self.subTest(incomplete=incomplete):
+                self.client.delete_by_query.return_value = {
+                    "timed_out": False,
+                    "version_conflicts": 0,
+                    "failures": [],
+                    "deleted": 1,
+                    **incomplete,
+                }
+                with self.assertRaisesRegex(RuntimeError, diagnostic):
+                    await self.store.delete("kb-1", "doc-1")
 
     async def test_search_with_metadata_filter(self) -> None:
         chunk = _record("doc-1", 0, {"tenant": "bank-a"}).chunk

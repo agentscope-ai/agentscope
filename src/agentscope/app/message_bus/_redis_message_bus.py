@@ -3,12 +3,16 @@
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Self, TYPE_CHECKING
 
 from ..._logging import logger
-from ._base import MessageBus
+from ._base import (
+    MessageBus,
+    RegisterSubscriptionBarrier,
+    _stream_cursor_precedes,
+)
 
 if TYPE_CHECKING:
     from redis.asyncio import ConnectionPool, Redis
@@ -25,6 +29,14 @@ for _, entry in ipairs(entries) do
   redis.call('XDEL', KEYS[1], entry[1])
 end
 return entries
+"""
+
+# Return only the two IDs across the wire, never the previous audio payload.
+_LOG_APPEND_WITH_PREVIOUS_LUA = """
+local tail = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
+local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[1],
+                      '*', 'payload', ARGV[2])
+return {id, tail[1] and tail[1][1] or ''}
 """
 
 
@@ -156,8 +168,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             password (`str | None`, optional):
                 Redis password if required by the server.
             connection_pool (`ConnectionPool | None`, optional):
-                An externally managed connection pool. When provided
-                the pool is used as-is and **not** closed by
+                An externally managed pool returning bytes or text.
+                When provided the pool is used as-is and **not** closed by
                 :meth:`aclose` — the caller retains ownership of its
                 lifecycle. When omitted a pool is created from
                 *host*/*port*/*db*/*password* on :meth:`__aenter__`
@@ -268,6 +280,25 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
     # Helpers
     # ------------------------------------------------------------------
 
+    def _text(self, value: str | bytes) -> str:
+        """Decode a raw Redis reply using the client's encoding."""
+        if isinstance(value, bytes):
+            return self._client.get_encoder().decode(value, force=True)
+        return value
+
+    def _stream_entries(
+        self,
+        entries: Iterable[tuple[str | bytes, dict]],
+    ) -> list[tuple[str, dict]]:
+        """Read bus payloads from Redis Stream field maps."""
+        results = []
+        for entry_id, fields in entries:
+            raw = fields.get("payload", fields.get(b"payload"))
+            if raw is not None:
+                payload = json.loads(self._text(raw))
+                results.append((self._text(entry_id), payload))
+        return results
+
     @staticmethod
     def _exclusive_start(since: str | None) -> str:
         """Compute the exclusive start id for ``XRANGE`` given a cursor.
@@ -324,7 +355,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         )
         if ttl_secs is not None:
             await self._client.expire(key, ttl_secs)
-        return entry_id
+        return self._text(entry_id)
 
     async def queue_drain(
         self,
@@ -351,16 +382,11 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         """
         entries = await self._client.eval(_QUEUE_DRAIN_LUA, 1, key, max_count)
 
-        results: list[tuple[str, dict]] = []
-        for entry_id, fields in entries:
-            # Lua flattens an entry's field map into ``[name, value]``;
-            # ``queue_push`` only ever writes the ``payload`` field.
-            raw = dict(zip(fields[::2], fields[1::2])).get("payload")
-            if raw is None:
-                continue
-            results.append((entry_id, json.loads(raw)))
-
-        return results
+        # Lua returns each field map as alternating names and values.
+        return self._stream_entries(
+            (entry_id, dict(zip(fields[::2], fields[1::2])))
+            for entry_id, fields in entries
+        )
 
     async def queue_read(
         self,
@@ -380,12 +406,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 Decoded ``(stream_entry_id, payload)`` pairs.
         """
         entries = await self._client.xrange(key, count=max_count)
-        results: list[tuple[str, dict]] = []
-        for entry_id, fields in entries:
-            raw = fields.get("payload")
-            if raw is not None:
-                results.append((entry_id, json.loads(raw)))
-        return results
+        return self._stream_entries(entries)
 
     async def queue_replace(
         self,
@@ -412,7 +433,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     {"payload": json.dumps(payload, ensure_ascii=False)},
                 )
             results = await pipe.execute()
-        return [str(entry_id) for entry_id in results[1:]]
+        return [self._text(entry_id) for entry_id in results[1:]]
 
     async def queue_remove_if(
         self,
@@ -485,7 +506,32 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         )
         if ttl_secs is not None:
             await self._client.expire(key, ttl_secs)
-        return entry_id
+        return self._text(entry_id)
+
+    async def log_append_with_previous(
+        self,
+        key: str,
+        payload: dict,
+        *,
+        max_len: int,
+    ) -> tuple[str, str | None]:
+        """Append and identify the previous entry in the same Redis call."""
+        if type(self).log_append is not RedisMessageBus.log_append:
+            return await super().log_append_with_previous(
+                key,
+                payload,
+                max_len=max_len,
+            )
+        entry_id, previous = await self._client.eval(
+            _LOG_APPEND_WITH_PREVIOUS_LUA,
+            1,
+            key,
+            max_len,
+            json.dumps(payload, ensure_ascii=False),
+        )
+        return self._text(entry_id), self._text(previous)
+
+    log_cursor_precedes = staticmethod(_stream_cursor_precedes)
 
     async def log_read(
         self,
@@ -515,13 +561,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             min=start,
             count=max_count,
         )
-        results: list[tuple[str, dict]] = []
-        for entry_id, fields in entries:
-            raw = fields.get("payload")
-            if raw is None:
-                continue
-            results.append((entry_id, json.loads(raw)))
-        return results
+        return self._stream_entries(entries)
 
     async def log_trim(
         self,
@@ -616,12 +656,13 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
 
     async def registry_pop(self, namespace: str, field: str) -> str | None:
         """``HGET`` + ``HDEL`` as one Lua step. See base."""
-        return await self._client.eval(
+        value = await self._client.eval(
             _REGISTRY_POP_LUA,
             1,
             namespace,
             field,
         )
+        return self._text(value) if value is not None else None
 
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the Redis Hash at ``namespace``.
@@ -649,6 +690,10 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         """
         return bool(await self._client.hexists(namespace, field))
 
+    async def registry_has_entries(self, namespace: str) -> bool:
+        """Check for entries without fetching hash fields or values."""
+        return bool(await self._client.hlen(namespace))
+
     async def registry_getall(
         self,
         namespace: str,
@@ -663,7 +708,11 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             `dict[str, str]`:
                 All entries. Empty dict when the key is absent.
         """
-        return await self._client.hgetall(namespace) or {}
+        values = await self._client.hgetall(namespace)
+        return {
+            self._text(field): self._text(value)
+            for field, value in values.items()
+        }
 
     async def registry_get(
         self,
@@ -682,7 +731,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             `str | None`:
                 The stored value, or ``None`` if absent.
         """
-        return await self._client.hget(namespace, field)
+        value = await self._client.hget(namespace, field)
+        return self._text(value) if value is not None else None
 
     async def registry_get_many(
         self,
@@ -692,7 +742,11 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         """Read only the requested registry fields in their supplied order."""
         if not fields:
             return []
-        return await self._client.hmget(namespace, fields)
+        values = await self._client.hmget(namespace, fields)
+        return [
+            self._text(value) if value is not None else None
+            for value in values
+        ]
 
     async def registry_drop(self, namespace: str) -> None:
         """Delete the entire Hash at ``namespace``.
@@ -713,6 +767,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
     # drops idle connections) surfaces as a benign per-poll timeout that
     # we ignore, instead of a fatal error that tears down the generator.
     _SUBSCRIBE_POLL_TIMEOUT_SECS = 1.0
+    _BARRIER_ATTEMPT_TIMEOUT_SECS = 5.0
 
     async def publish(
         self,
@@ -738,6 +793,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         key: str,
         *,
         on_ready: Callable[[], None] | None = None,
+        on_barrier: RegisterSubscriptionBarrier | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Yield broadcast payloads on ``key`` until the consumer
         closes the generator.
@@ -751,6 +807,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 a "subscription is live" event so they can publish
                 immediately after starting a subscriber without losing
                 the first message to a SUBSCRIBE/PUBLISH race.
+            on_barrier (optional):
+                Register an ordered flush operation for this subscription.
 
         Yields:
             `dict`:
@@ -759,14 +817,35 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         from redis import exceptions as redis_exceptions
 
         pubsub = self._client.pubsub()
+        flushed = asyncio.Event()
+        marker = ""
+
+        async def flush() -> None:
+            nonlocal marker
+            for _ in range(3):
+                marker = uuid.uuid4().hex
+                flushed.clear()
+                try:
+                    async with asyncio.timeout(
+                        self._BARRIER_ATTEMPT_TIMEOUT_SECS,
+                    ):
+                        await pubsub.ping(marker)
+                        await flushed.wait()
+                    return
+                except asyncio.TimeoutError:
+                    continue
+            raise TimeoutError("Redis subscription barrier timed out.")
+
         try:
             await pubsub.subscribe(key)
+            if on_barrier is not None:
+                on_barrier(flush)
             if on_ready is not None:
                 on_ready()
             while True:
                 try:
-                    message = await pubsub.get_message(
-                        ignore_subscribe_messages=True,
+                    response = await pubsub.parse_response(
+                        block=False,
                         timeout=self._SUBSCRIBE_POLL_TIMEOUT_SECS,
                     )
                 except redis_exceptions.TimeoutError:
@@ -775,8 +854,23 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     # connections). No message arrived in this window;
                     # keep listening rather than crashing the loop.
                     continue
+                if response is None:
+                    continue
+                # RESP3 returns the PING payload as a scalar. Normalize it
+                # before redis-py can discard a decoded string as an ack.
+                if isinstance(response, (str, bytes)):
+                    response = ["pong", response]
+                message = await pubsub.handle_message(
+                    response,
+                    ignore_subscribe_messages=True,
+                )
                 if message is None:
-                    # No payload within the poll window — keep waiting.
+                    continue
+                if message.get("type") == "pong" and message.get("data") in (
+                    marker,
+                    marker.encode(),
+                ):
+                    flushed.set()
                     continue
                 if message.get("type") != "message":
                     # Skip ``subscribe`` ack and similar control frames.
@@ -784,7 +878,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 data = message.get("data")
                 if data is None:
                     continue
-                yield json.loads(data)
+                yield json.loads(self._text(data))
         finally:
             # Closing drops the subscription and returns the connection to
             # the pool; shield it so a cancelled consumer cannot leak it.

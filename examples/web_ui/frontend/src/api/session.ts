@@ -1,4 +1,4 @@
-import { client } from './client';
+import { client, type ApiRequestOptions } from './client';
 import type {
 	AgentEvent,
 	CreateSessionRequest,
@@ -17,6 +17,12 @@ export interface MessagesResponse {
 	has_more: boolean;
 }
 
+export interface InputResult {
+	queue_item_id?: string;
+	state: 'unknown' | 'reply' | 'finished';
+	reply_id: string | null;
+}
+
 /**
  * Sessions this tab created and has not opened yet.
  *
@@ -30,6 +36,9 @@ export interface MessagesResponse {
  */
 const freshlyCreated = new Set<string>();
 
+// Legacy replay can spend three 30-second intervals waiting for its barrier.
+const LEGACY_REPLAY_GRACE_MS = 90_000;
+
 /**
  * Whether `sessionId` was created by this tab and not yet opened.
  * Consumes the flag, so a second call for the same id returns false.
@@ -42,6 +51,18 @@ export function takeFreshlyCreated(sessionId: string): boolean {
 }
 
 export const sessionApi = {
+	inputResult: (
+		sessionId: string,
+		agentId: string,
+		messageId: string,
+		submissionId: string,
+		options?: ApiRequestOptions,
+	) =>
+		client.get<InputResult>(
+			`/sessions/${sessionId}/inputs/${messageId}/result`,
+			{ agent_id: agentId, submission_id: submissionId },
+			options,
+		),
 	list: (agentId: string) => client.get<SessionListResponse>('/sessions/', { agent_id: agentId }),
 
 	create: async (body: CreateSessionRequest) => {
@@ -71,6 +92,7 @@ export const sessionApi = {
 
 	/**
 	 * Request interruption of an in-progress reply (running or parked).
+	 * When replyId is provided, later replies are never interrupted by this request.
 	 *
 	 * Backend contract:
 	 * - 202 Accepted → returns `InterruptSessionResponse`; the cancel
@@ -79,17 +101,34 @@ export const sessionApi = {
 	 *   no-op at the agent layer.
 	 * - 404 Not Found → the session does not exist.
 	 */
-	interrupt: (sessionId: string, agentId: string) =>
-		client.post<InterruptSessionResponse>(`/sessions/${sessionId}/interrupt`, null, {
-			agent_id: agentId,
-		}),
+	interrupt: (
+		sessionId: string,
+		agentId: string,
+		replyId?: string,
+		options?: ApiRequestOptions,
+	) =>
+		client.post<InterruptSessionResponse>(
+			`/sessions/${sessionId}/interrupt`,
+			null,
+			{ agent_id: agentId, ...(replyId !== undefined && { reply_id: replyId }) },
+			options,
+		),
 
-	messages: (sessionId: string, agentId: string, params?: { before?: string; limit?: number }) =>
-		client.get<MessagesResponse>(`/sessions/${sessionId}/messages`, {
-			agent_id: agentId,
-			...(params?.before != null && { before: params.before }),
-			...(params?.limit != null && { limit: String(params.limit) }),
-		}),
+	messages: (
+		sessionId: string,
+		agentId: string,
+		params?: { before?: string; limit?: number },
+		options?: ApiRequestOptions,
+	) =>
+		client.get<MessagesResponse>(
+			`/sessions/${sessionId}/messages`,
+			{
+				agent_id: agentId,
+				...(params?.before != null && { before: params.before }),
+				...(params?.limit != null && { limit: String(params.limit) }),
+			},
+			options,
+		),
 
 	/**
 	 * Subscribe to a session's live event stream via SSE.
@@ -113,39 +152,81 @@ export const sessionApi = {
 		agentId: string,
 		signal?: AbortSignal,
 		after?: string | null,
+		onConnected?: () => void,
+		options?: Pick<ApiRequestOptions, 'baseUrl' | 'userId' | 'silent'> & {
+			onReplayComplete?: () => void;
+			onHistoryStatus?: (status: 'current' | 'changed' | 'pending') => void;
+		},
 	): AsyncGenerator<AgentEvent> {
+		const { onReplayComplete, onHistoryStatus, ...requestOptions } = options ?? {};
 		const res = await client.stream(`/sessions/${sessionId}/stream`, {
 			method: 'GET',
 			params: {
 				agent_id: agentId,
 				...(after != null && { after }),
+				...((onReplayComplete || onHistoryStatus) && { replay_notice: 'true' }),
+				...(onHistoryStatus && { validate_history: 'true' }),
 			},
 			signal,
+			...requestOptions,
 		});
 
 		const reader = res.body!.getReader();
+		onConnected?.();
 		const decoder = new TextDecoder();
-		let buffer = '';
+		const fragments: string[] = [];
+		let finishReplay = onReplayComplete;
+		let checkHistory = onHistoryStatus;
+		let legacyDeadline: ReturnType<typeof setTimeout> | undefined;
+		const complete = () => {
+			clearTimeout(legacyDeadline);
+			finishReplay?.();
+			finishReplay = undefined;
+		};
 
 		try {
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) break;
 
-				buffer += decoder.decode(value, { stream: true });
-				const lines = buffer.split('\n');
-				buffer = lines.pop() ?? '';
-
-				for (const line of lines) {
+				const lines = decoder.decode(value, { stream: true }).split('\n');
+				const tail = lines.pop()!;
+				for (let line of lines) {
+					if (fragments.length) {
+						fragments.push(line);
+						line = fragments.join('');
+						fragments.length = 0;
+					}
+					if (onHistoryStatus && line.startsWith(': history-')) {
+						const comment = line.trimEnd();
+						if (comment === ': history-changed' || comment === ': history-pending') {
+							onHistoryStatus(
+								comment === ': history-changed' ? 'changed' : 'pending',
+							);
+							return;
+						}
+					}
+					if (checkHistory && (line.startsWith(':') || line.startsWith('data: '))) {
+						// Older servers begin directly with replay data or a heartbeat.
+						checkHistory('current');
+						checkHistory = undefined;
+					}
 					if (line.startsWith('data: ')) {
 						const json = line.slice(6).trim();
 						if (json) yield JSON.parse(json) as AgentEvent;
+					} else if (finishReplay && line.startsWith(':')) {
+						const comment = line.trimEnd();
+						if (comment === ': replay-complete') complete();
+						else if (comment === ':' && legacyDeadline === undefined) {
+							// Older servers also send heartbeats while replay is pending.
+							legacyDeadline = setTimeout(complete, LEGACY_REPLAY_GRACE_MS);
+						}
 					}
-					// SSE comment frames (`:...\n`) are silently skipped
-					// (used for heartbeats).
 				}
+				if (tail) fragments.push(tail);
 			}
 		} finally {
+			clearTimeout(legacyDeadline);
 			reader.releaseLock();
 		}
 	},

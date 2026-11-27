@@ -639,7 +639,17 @@ class TestDomainHelpers(IsolatedAsyncioTestCase):
             '{"state":"claimed","payload":{"id":"queued"}}',
         )
 
+        receipts = (
+            MessageBusKeys.chat_submissions(sid),
+            MessageBusKeys.chat_input_cancellations(sid),
+        )
+        for key in receipts:
+            await self.bus.registry_set(key, "receipt", "{}")
         await self.bus.session_purge(sid)
+        self.assertEqual(
+            [await self.bus.registry_getall(key) for key in receipts],
+            [{}, {}],
+        )
 
         self.assertEqual(await self.bus.session_read_events(sid), [])
         self.assertEqual(
