@@ -341,25 +341,29 @@ class DashScopeRealtimeASRModel(ASRModelBase):
         if not isinstance(text, str):
             return
         self._current_sentence = text
-        transcript = self._complete_text()
-        if transcript:
-            # Partial transcripts are cumulative; older snapshots are stale.
-            self._latest_partial = ASRResponse(
-                content=TextBlock(text=transcript),
-                is_last=False,
-            )
         if sentence.get("sentence_end") and text:
             self._committed_sentences.append(text)
             self._current_sentence = ""
+        if self._committed_sentences or self._current_sentence:
+            # Keep the response metadata from receipt time, but only store
+            # its uncommitted suffix until the consumer reads it.
+            self._latest_partial = ASRResponse(
+                content=TextBlock(text=self._current_sentence),
+                is_last=False,
+            )
 
-    def _complete_text(self) -> str:
+    def _complete_text(self, suffix: str | None = None) -> str:
         """Concatenate committed and current text without normalization."""
-        return "".join([*self._committed_sentences, self._current_sentence])
+        if suffix is None:
+            suffix = self._current_sentence
+        return "".join([*self._committed_sentences, suffix])
 
     def _drain_latest_response(self) -> ASRResponse:
         """Return and clear the latest pending partial response."""
         latest = self._latest_partial
         self._latest_partial = None
+        if latest is not None and latest.content is not None:
+            latest.content.text = self._complete_text(latest.content.text)
         return latest or ASRResponse(content=None, is_last=False)
 
     def _raise_provider_error(self) -> None:
