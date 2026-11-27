@@ -20,6 +20,21 @@ from ._steering_queue import (
     SteeringReceipt,
     SteeringSource,
 )
+from ._trajectory import (
+    CompactionRecord,
+    InMemoryTrajectorySink,
+    JsonlTrajectorySink,
+    ModelStepRecord,
+    RewardRecord,
+    StepUsage,
+    ToolExecutionRecord,
+    TrajectoryMiddleware,
+    TrajectoryRecord,
+    TrajectorySink,
+    TrajectoryStatus,
+    TrajectoryVerifier,
+    read_trajectories_jsonl,
+)
 
 __all__ = [
     "MiddlewareBase",
@@ -38,4 +53,17 @@ __all__ = [
     "SteeringQueue",
     "SteeringReceipt",
     "SteeringSource",
+    "CompactionRecord",
+    "InMemoryTrajectorySink",
+    "JsonlTrajectorySink",
+    "ModelStepRecord",
+    "RewardRecord",
+    "StepUsage",
+    "ToolExecutionRecord",
+    "TrajectoryMiddleware",
+    "TrajectoryRecord",
+    "TrajectorySink",
+    "TrajectoryStatus",
+    "TrajectoryVerifier",
+    "read_trajectories_jsonl",
 ]
