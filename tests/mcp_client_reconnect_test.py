@@ -523,3 +523,122 @@ server.run(transport="stdio")
 
         self.assertEqual(len(transports), 2)
         self.assertTrue(all(_.enter_count == 1 for _ in transports))
+
+    async def test_close_during_handshake_closes_the_connection(self) -> None:
+        """close() during the handshake must not orphan the client.
+
+        A close request that lands while the handshake is still running
+        should wait for the lifecycle to finish and tear the connection
+        down, instead of raising "not connected" and leaving a live
+        client nobody owns.
+        """
+        handshake_started = asyncio.Event()
+        finish_handshake = asyncio.Event()
+        transport = _OneShotTransport()
+
+        class _BlockingClient(_FakeClient):
+            """Hold the first handshake open while another task closes."""
+
+            async def connect(self) -> None:
+                """Wait for the test to release the first connection."""
+                handshake_started.set()
+                await finish_handshake.wait()
+
+        with patch(
+            "agentscope.mcp._mcp_client.stdio_client",
+            return_value=transport,
+        ) as create_transport, patch(
+            "agentscope.mcp._mcp_client.SDKClient",
+            _BlockingClient,
+        ):
+            client = MCPClient(
+                name="close_during_handshake",
+                is_stateful=True,
+                mcp_config=StdioMCPConfig(command="unused"),
+            )
+            connecting = asyncio.create_task(client.connect())
+            await asyncio.wait_for(handshake_started.wait(), timeout=5)
+            closing = asyncio.create_task(client.close())
+            # Release the handshake concurrently: close() waits for the
+            # lifecycle to finish before tearing the connection down.
+            finish_handshake.set()
+            await asyncio.wait_for(closing, timeout=5)
+            await asyncio.wait_for(connecting, timeout=5)
+
+            self.assertFalse(client.is_connected)
+
+            # The transport was entered and exited exactly once: the
+            # handshake completed into a connection that close() tore
+            # down instead of leaving it orphaned.
+            self.assertEqual(
+                (transport.enter_count, transport.exit_count),
+                (1, 1),
+            )
+            self.assertFalse(client.is_connected)
+
+        create_transport.assert_called_once()
+
+    async def test_concurrent_close_during_handshake_preserves_replacement(
+        self,
+    ) -> None:
+        """Overlapping closes during a handshake leave the new session usable.
+
+        Both waiters start closing while the handshake is still running.
+        The one that returns first reconnects, so the other must not clear
+        the replacement when its own close resumes (same contract as
+        overlapping closes on a connected client).
+        """
+        handshake_started = asyncio.Event()
+        finish_handshake = asyncio.Event()
+        teardown_started = asyncio.Event()
+        finish_teardown = asyncio.Event()
+        client = MCPClient(
+            name="concurrent_close_during_handshake",
+            is_stateful=True,
+            mcp_config=StdioMCPConfig(command="unused"),
+        )
+
+        async def hold_handshake() -> Any:
+            handshake_started.set()
+            await finish_handshake.wait()
+            return old
+
+        async def slow_teardown(*_args: Any) -> None:
+            teardown_started.set()
+            await finish_teardown.wait()
+
+        async def first_close_then_reconnect() -> None:
+            await handshake_started.wait()
+            await _close_then_reconnect(client)
+
+        async def second_close() -> None:
+            await handshake_started.wait()
+            await client.close()
+
+        old, new = AsyncMock(), AsyncMock()
+        old.__aenter__.side_effect = hold_handshake
+        old.__aexit__.side_effect = slow_teardown
+        with patch.object(
+            MCPClient,
+            "_create_sdk_client",
+            side_effect=[old, new],
+        ):
+            async with asyncio.timeout(5):
+                connecting = asyncio.create_task(client.connect())
+                await handshake_started.wait()
+                first = asyncio.create_task(first_close_then_reconnect())
+                second = asyncio.create_task(second_close())
+                # Let both waiters reach the handshake gate first.
+                await asyncio.sleep(0)
+                finish_handshake.set()
+                # The lifecycle is tearing the old session down while both
+                # closes wait for it to finish.
+                await teardown_started.wait()
+                finish_teardown.set()
+                await connecting
+                await asyncio.gather(first, second)
+                # The replacement must still be owned and closable.
+                await client.close(ignore_errors=False)
+
+        old.__aexit__.assert_awaited_once()
+        new.__aexit__.assert_awaited_once()

@@ -439,6 +439,15 @@ class MCPClient(BaseModel):
             result = startup_result[0]
             if isinstance(result, BaseException):
                 raise result
+            if close_requested.is_set():
+                # close() completed while the handshake was finishing;
+                # the lifecycle has already torn the connection down, so
+                # do not resurrect the connected state here.
+                logger.info(
+                    "MCP '%s' was closed while connecting.",
+                    self.name,
+                )
+                return
             self._client = result
             self._is_connected = True
             logger.info("MCP connected: %s", self.name)
@@ -495,10 +504,40 @@ class MCPClient(BaseModel):
             return
 
         if not self._is_connected:
-            raise RuntimeError(
-                f"MCP '{self.name}' is not connected. "
-                "Call connect() first.",
-            )
+            lifecycle_task = self._lifecycle_task
+            close_requested = self._close_requested
+            if lifecycle_task is None or close_requested is None:
+                raise RuntimeError(
+                    f"MCP '{self.name}' is not connected. "
+                    "Call connect() first.",
+                )
+            # A handshake is still in progress: request the close so
+            # the lifecycle exits as soon as it connects, and wait for
+            # it instead of leaving an orphaned live connection.
+            close_requested.set()
+            try:
+                await lifecycle_task
+            except Exception as e:
+                if not ignore_errors:
+                    raise e
+                logger.warning(
+                    "Error closing MCP '%s': %s",
+                    self.name,
+                    str(e),
+                )
+            finally:
+                # Another waiter may have closed this lifecycle and started
+                # a replacement while this close was waiting for the same
+                # task (same contract as overlapping closes below).
+                if self._lifecycle_task is lifecycle_task:
+                    self._client = None
+                    self._lifecycle_task = None
+                    self._close_requested = None
+                    self._is_connected = False
+                    # Rediscover tools after reconnecting.
+                    self._cached_tools = None
+                    logger.info("MCP closed: %s", self.name)
+            return
 
         lifecycle_task = self._lifecycle_task
         close_requested = self._close_requested
