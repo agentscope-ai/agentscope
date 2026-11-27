@@ -104,7 +104,9 @@ class StubAgent:
             yield chunk
 
 
-class GoalPipelineTest(IsolatedAsyncioTestCase):
+class GoalPipelineTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """The goal pipeline test case."""
 
     async def asyncSetUp(self) -> None:
@@ -190,6 +192,58 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
             verifier.conversation_before_calls,
             [([prior], "prior summary"), ([prior], "prior summary")],
         )
+
+    async def test_resets_verifier_conversation_after_a_passing_run(
+        self,
+    ) -> None:
+        """A settled verdict does not leak into the next goal."""
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        prior = UserMsg("user", "prior verdict")
+        verifier.state.context.append(prior)
+        verifier.state.summary = "prior summary"
+        pipe = GoalPipeline(executor, verifier)
+
+        await self._run(pipe, self.query)
+
+        self.assertListEqual(verifier.state.context, [])
+        self.assertEqual(verifier.state.summary, "")
+
+    async def test_resets_verifier_conversation_after_an_impossible_run(
+        self,
+    ) -> None:
+        """An impossible verdict is settled too and clears the same way."""
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent("verifier", [[_verdict("impossible")]])
+        prior = UserMsg("user", "prior verdict")
+        verifier.state.context.append(prior)
+        verifier.state.summary = "prior summary"
+        pipe = GoalPipeline(executor, verifier)
+
+        await self._run(pipe, self.query)
+
+        self.assertListEqual(verifier.state.context, [])
+        self.assertEqual(verifier.state.summary, "")
+
+    async def test_can_keep_verifier_conversation_after_a_passing_run(
+        self,
+    ) -> None:
+        """Opting out also preserves the conversation of a settled run."""
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        prior = UserMsg("user", "prior verdict")
+        verifier.state.context.append(prior)
+        verifier.state.summary = "prior summary"
+        pipe = GoalPipeline(
+            executor,
+            verifier,
+            verifier_reset_context=False,
+        )
+
+        await self._run(pipe, self.query)
+
+        self.assertListEqual(verifier.state.context, [prior])
+        self.assertEqual(verifier.state.summary, "prior summary")
 
     async def test_stops_at_max_iters(self) -> None:
         """A verdict that never passes stops once the budget is spent."""
