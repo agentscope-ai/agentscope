@@ -614,6 +614,32 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
                     },
                 )
 
+    async def test_uppercase_video_media_type(self) -> None:
+        """Both Moonshot formatters match uppercase video MIME types."""
+        block = DataBlock(
+            source=Base64Source(
+                data="ZmFrZSB2aWRlbw==",
+                media_type="VIDEO/MP4",
+            ),
+        )
+        for formatter_type in (
+            MoonshotChatFormatter,
+            MoonshotMultiAgentFormatter,
+        ):
+            with self.subTest(formatter=formatter_type.__name__):
+                result = await formatter_type().format(
+                    [UserMsg(name="user", content=[block])],
+                )
+                self.assertEqual(
+                    result[0]["content"][-1],
+                    {
+                        "type": "video_url",
+                        "video_url": {
+                            "url": "data:video/mp4;base64,ZmFrZSB2aWRlbw==",
+                        },
+                    },
+                )
+
     async def test_chat_formatter_url_image_in_tool_result(
         self,
     ) -> None:

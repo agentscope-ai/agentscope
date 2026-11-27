@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import quote
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
@@ -26,6 +27,8 @@ from agentscope.app.hub import (
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
+from agentscope.mcp import MCPClient
+from agentscope.workspace import LocalWorkspace
 
 HEADERS = {"X-User-ID": "alice"}
 
@@ -239,24 +242,25 @@ def _fake_backends() -> tuple:
     return _Storage(), _Bus()
 
 
-class HubRouterTest(IsolatedAsyncioTestCase):
-    """Browse and install through the hub endpoints."""
+class _WorkspaceRouterTestCase(IsolatedAsyncioTestCase):
+    """Provide a local workspace and an agent/session for route tests."""
 
-    def setUp(self) -> None:
-        """Start an app wired to the fake hubs and a local workspace."""
+    _client: TestClient
+    _scope: dict[str, str]
+
+    def _start_app(self, **options: Any) -> None:
+        """Start a fresh app configured with the given create_app options."""
         # enterContext is the unittest-native way to bind a context
         # manager to the test's lifetime; pylint does not recognise it.
         # pylint: disable=consider-using-with
         workdir = self.enterContext(tempfile.TemporaryDirectory())
         storage, bus = _fake_backends()
-        self._skill_hub = FakeSkillHub()
         app = create_app(
             storage=storage,
             message_bus=bus,
             workspace_manager=LocalWorkspaceManager(workdir),
-            mcp_hubs=[FakeMCPHub()],
-            skill_hubs=[self._skill_hub],
             enable_index_worker=False,
+            **options,
         )
         self._client = self.enterContext(TestClient(app))
 
@@ -271,6 +275,71 @@ class HubRouterTest(IsolatedAsyncioTestCase):
             headers=HEADERS,
         ).json()["session_id"]
         self._scope = {"agent_id": agent_id, "session_id": session_id}
+
+
+class WorkspaceStdioAllowlistTest(_WorkspaceRouterTestCase):
+    """Check the registration policy through the workspace endpoint."""
+
+    def _register(self, config: dict[str, str]) -> int:
+        """Register a client and return the HTTP status code."""
+        response = self._client.post(
+            "/workspace/mcp",
+            params=self._scope,
+            headers=HEADERS,
+            json={
+                "name": "probe",
+                "is_stateful": config["type"] == "stdio_mcp",
+                "mcp_config": config,
+            },
+        )
+        return response.status_code
+
+    def test_rejected_stdio_commands(self) -> None:
+        """Refuse unlisted commands before adding or storing a client."""
+        for allowed, commands in (
+            ([], ["npx"]),
+            (["npx"], ["cmd", "/tmp/bin/npx", "npx.exe", "NPX", "npx "]),
+        ):
+            self._start_app(allowed_stdio_commands=allowed)
+            for command in commands:
+                with self.subTest(allowed=allowed, command=command):
+                    with patch.object(LocalWorkspace, "add_mcp") as add_mcp:
+                        status = self._register(
+                            {"type": "stdio_mcp", "command": command},
+                        )
+                    self.assertEqual(status, 403)
+                    add_mcp.assert_not_called()
+            records = self._client.get("/mcp", headers=HEADERS).json()
+            self.assertEqual(records, [])
+
+    def test_permitted_mcp_registration(self) -> None:
+        """Register listed, unrestricted and HTTP clients in the library."""
+        stdio = {"type": "stdio_mcp", "command": "npx"}
+        http = {"type": "http_mcp", "url": "https://example.invalid/mcp"}
+        cases: list[tuple[dict[str, list[str]], dict[str, str]]] = [
+            ({"allowed_stdio_commands": ["npx"]}, stdio),
+            ({}, stdio),
+            ({"allowed_stdio_commands": []}, http),
+        ]
+        for options, config in cases:
+            with self.subTest(options=options, config=config):
+                self._start_app(**options)
+                with patch.object(MCPClient, "connect"):
+                    self.assertEqual(self._register(config), 201)
+                records = self._client.get("/mcp", headers=HEADERS).json()
+                self.assertEqual(
+                    [record["name"] for record in records],
+                    ["probe"],
+                )
+
+
+class HubRouterTest(_WorkspaceRouterTestCase):
+    """Browse and install through the hub endpoints."""
+
+    def setUp(self) -> None:
+        """Start an app wired to the fake hubs and a local workspace."""
+        self._skill_hub = FakeSkillHub()
+        self._start_app(mcp_hubs=[FakeMCPHub()], skill_hubs=[self._skill_hub])
 
     # ── browse ────────────────────────────────────────────────────
 
@@ -654,6 +723,51 @@ class HubRouterTest(IsolatedAsyncioTestCase):
         ).json()
         self.assertEqual([m["name"] for m in listed], ["echo"])
 
+    def test_library_add_checks_current_stdio_allowlist(self) -> None:
+        """Reject a stored stdio entry and continue with the HTTP entry."""
+        stdio = self._install_mcp("gitlab", values={"api_key": "test"})
+        http = self._install_mcp("echo")
+        self._client.app.state.allowed_stdio_commands = frozenset()
+
+        with patch.object(LocalWorkspace, "add_mcp") as add_mcp:
+            response = self._client.post(
+                "/workspace/mcp/from-library",
+                params=self._scope,
+                json={"mcp_ids": [stdio.json()["id"], http.json()["id"]]},
+                headers=HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            response.json(),
+            {
+                "added": ["echo"],
+                "failed": {
+                    "gitlab": "Stdio MCP command 'uvx' is not in "
+                    "this service's allowed stdio commands.",
+                },
+            },
+        )
+        add_mcp.assert_awaited_once()
+        self.assertEqual(add_mcp.await_args.args[0].name, "echo")
+
+    def test_library_add_permits_listed_stdio_command(self) -> None:
+        """Add a stored stdio client whose command is still permitted."""
+        stdio = self._install_mcp("gitlab", values={"api_key": "test"})
+        self._client.app.state.allowed_stdio_commands = frozenset({"uvx"})
+
+        with patch.object(MCPClient, "connect") as connect:
+            response = self._client.post(
+                "/workspace/mcp/from-library",
+                params=self._scope,
+                json={"mcp_ids": [stdio.json()["id"]]},
+                headers=HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json(), {"added": ["gitlab"], "failed": {}})
+        connect.assert_awaited_once()
+
     def test_add_from_library_skips_what_is_already_there(self) -> None:
         """Adding twice is a no-op, not a duplicate or an error."""
         mcp_id = self._install_mcp("echo").json()["id"]
@@ -941,9 +1055,6 @@ class HubRegistrationTest(IsolatedAsyncioTestCase):
         The sandboxed backends already enforced this; the local one used
         to append silently.
         """
-        from agentscope.mcp import MCPClient
-        from agentscope.workspace import LocalWorkspace
-
         with tempfile.TemporaryDirectory() as tmp:
             workspace = LocalWorkspace(workdir=tmp)
             await workspace.initialize()

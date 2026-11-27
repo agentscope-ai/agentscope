@@ -390,6 +390,10 @@ class ToolResultDataDeltaEvent(EventBase):
     """Unique identifier of the data block created by this event."""
     media_type: str
     """MIME type of the binary content."""
+    name: str | None = None
+    """Name of the data, e.g. the source file name of a file returned by a
+    tool. Carried so that a reply rebuilt from the event stream keeps the
+    same name as the tool result it was built from."""
     data: str | None = None
     """Base64-encoded binary data, mutually exclusive with `url`."""
     url: str | None = None
@@ -504,6 +508,8 @@ class UserInterruptEvent(EventBase):
     interrupted tool result, emits a fallback assistant message, ends
     the reply with :attr:`ReplyEndReason.INTERRUPTED`, and does **not**
     enter the reasoning-acting loop.
+
+    A stale ``reply_id`` is ignored without modifying the current reply.
 
     .. note:: This event is only meaningful for parked replies. To
         interrupt a running (actively-generating) reply, cancel the
