@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
 # pylint: disable=protected-access, too-many-public-methods
+import asyncio
 import hashlib
 import json
 import os
@@ -2908,6 +2909,39 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             await agent.compress_context()
 
         self.assertEqual(agent.state, expected_state)
+
+    async def test_repeated_cancellation_finishes_compression(self) -> None:
+        """Keep the context update protected after multiple interruptions."""
+        agent, _ = _make_failing_compression_agent(
+            offloader=FixedPathOffloader(),
+        )
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+
+        async def clear_cache(_messages: list[Msg]) -> None:
+            """Pause between offloading and publishing the updated context."""
+            cleanup_started.set()
+            await release_cleanup.wait()
+
+        with patch.object(
+            agent,
+            "_clear_unreserved_read_cache",
+            side_effect=clear_cache,
+        ):
+            compression = asyncio.create_task(agent.compress_context())
+            try:
+                await asyncio.wait_for(cleanup_started.wait(), timeout=2)
+                compression.cancel()
+                await asyncio.sleep(0)
+                compression.cancel()
+                await asyncio.sleep(0)
+            finally:
+                release_cleanup.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await compression
+
+        self.assertIn("sessions/123/context.jsonl", agent.state.summary)
+        self.assertNotIn("1", [msg.id for msg in agent.state.context])
 
     async def test_offload_reminder_is_not_duplicated(self) -> None:
         """Repeated fallback preserves one reminder for a stable path."""
