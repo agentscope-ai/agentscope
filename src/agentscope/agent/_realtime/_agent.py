@@ -269,6 +269,7 @@ class RealtimeAgent:
         self._tasks: set[asyncio.Task] = set()
         self._barge_lock = asyncio.Lock()
         self._live_session_id = ""
+        self._live_playout_epoch = 0
         self._live_replies: dict[str, _Reply] = {}
         self._live_message_ids: set[str] = set()
         self._live_transcript: deque[tuple[str, str, int, int]] = deque()
@@ -859,6 +860,10 @@ class RealtimeAgent:
         async with self._barge_lock:
             if self._transport is not None and self._audio_pending:
                 await self._transport.clear_audio()
+                # The transport blocks the cleared item id until a new one
+                # arrives. Advance the epoch so later speech in the same
+                # Live session is not mistaken for the stale item.
+                self._live_playout_epoch += 1
                 self._audio_pending = False
             if self._connected:
                 await self.model.interrupt_speech()
@@ -1047,6 +1052,7 @@ class RealtimeAgent:
         match event:
             case me.SessionStartedEvent():
                 self._live_session_id = event.session_id
+                self._live_playout_epoch = 0
                 self._last_live_checkpoint_at = None
                 self._last_live_checkpoint_end_ms = None
 
@@ -1055,6 +1061,8 @@ class RealtimeAgent:
                     return
                 reply = self._start_live_reply("assistant")
                 playout_id = f"live:{self._live_session_id}"
+                if self._live_playout_epoch:
+                    playout_id = f"{playout_id}:{self._live_playout_epoch}"
                 await self._transport.send_audio(event.pcm, playout_id)
                 self._audio_pending = True
                 self._emit_audio(reply, event.pcm, event.sample_rate)
