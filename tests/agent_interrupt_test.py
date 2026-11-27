@@ -14,12 +14,14 @@
 import asyncio
 from typing import Any, AsyncGenerator, Callable
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, InjectionConfig, ReActConfig
 from agentscope.event import (
     ReplyEndEvent,
+    ToolResultEndEvent,
     ToolResultStartEvent,
     UserInterruptEvent,
 )
@@ -402,6 +404,205 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                 "finished_reason": ["interrupted"],
             },
         )
+
+    async def test_worker_cancel_before_toolkit_entry(self) -> None:
+        """A child-only cancellation closes the call without re-execution."""
+        for propagate in (False, True):
+            for sibling_error in (False, True):
+                with self.subTest(
+                    propagate=propagate,
+                    sibling_error=sibling_error,
+                ):
+                    await self._check_worker_cancel(propagate, sibling_error)
+
+    async def _check_worker_cancel(
+        self,
+        propagate: bool,
+        sibling_error: bool,
+    ) -> None:
+        """Cancel one worker externally while its sibling finishes."""
+        entered = asyncio.Event()
+        sibling_done = asyncio.Event()
+        worker: asyncio.Task | None = None
+        middleware_entries: list[str] = []
+        tool_entries: list[str] = []
+
+        class WaitingMiddleware(MiddlewareBase):
+            """Expose the first target worker to a separate controller."""
+
+            async def on_acting(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                """Block before the toolkit on the first entry only."""
+                nonlocal worker
+                call = input_kwargs["tool_call"]
+                if call.name == "record":
+                    middleware_entries.append(call.id)
+                    if len(middleware_entries) == 1:
+                        worker = asyncio.current_task()
+                        entered.set()
+                        await asyncio.Event().wait()
+                async for chunk in next_handler(**input_kwargs):
+                    yield chunk
+
+        async def record() -> ToolChunk:
+            """Record an action that must not run after cancellation."""
+            tool_entries.append("record")
+            return ToolChunk(content=[TextBlock(text="unexpected")])
+
+        async def sibling() -> ToolChunk:
+            """Finish independently, optionally with a recoverable error."""
+            tool_entries.append("sibling")
+            sibling_done.set()
+            if sibling_error:
+                raise RuntimeError("sibling failed")
+            return ToolChunk(content=[TextBlock(text="sibling completed")])
+
+        tools = [
+            FunctionTool(func, is_concurrency_safe=True, is_read_only=True)
+            for func in (record, sibling)
+        ]
+        model = MockModel()
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a test agent.",
+            model=model,
+            toolkit=Toolkit(tools=tools),
+            middlewares=[WaitingMiddleware()],
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            react_config=ReActConfig(
+                interruption_raise_cancelled_error=propagate,
+            ),
+        )
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(id="c1", name="record", input="{}"),
+                        ToolCallBlock(id="c2", name="sibling", input="{}"),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="unexpected completion")],
+                    is_last=True,
+                ),
+            ],
+        )
+        events: list[Any] = []
+
+        async def drive() -> None:
+            """Consume the reply through its cancellation cleanup."""
+            async for event in agent.reply_stream(UserMsg("user", "Hi")):
+                events.append(event)
+
+        task = asyncio.create_task(drive())
+
+        async def cancel_worker() -> None:
+            """Cancel only the child task and wait for its termination."""
+            await entered.wait()
+            await sibling_done.wait()
+            assert worker is not None
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+
+        controller = asyncio.create_task(cancel_worker())
+        try:
+            if propagate:
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 5)
+            else:
+                await asyncio.wait_for(task, 5)
+            await asyncio.wait_for(controller, 5)
+        finally:
+            for pending in (task, controller):
+                if not pending.done():
+                    pending.cancel()
+            await asyncio.gather(task, controller, return_exceptions=True)
+
+        self.assertIsNot(worker, task)
+        self.assertIsNotNone(worker)
+        assert worker is not None
+        self.assertTrue(worker.done())
+        self.assertTrue(worker.cancelled())
+        self.assertEqual(task.cancelling(), 0)
+        self.assertEqual(middleware_entries, ["c1"])
+        self.assertEqual(tool_entries, ["sibling"])
+        self.assertEqual(model.cnt, 1)
+        self.assertEqual(
+            [
+                event.tool_call_id
+                for event in events
+                if isinstance(event, ToolResultStartEvent)
+            ],
+            ["c1", "c2"],
+        )
+        expected_states = {
+            "c1": "interrupted",
+            "c2": "error" if sibling_error else "success",
+        }
+        self.assertEqual(
+            {
+                event.tool_call_id: event.state
+                for event in events
+                if isinstance(event, ToolResultEndEvent)
+            },
+            expected_states,
+        )
+        self.assertEqual(
+            len([e for e in events if isinstance(e, ToolResultEndEvent)]),
+            2,
+        )
+        self.assertEqual(
+            {
+                block.id: block.state
+                for msg in agent.state.context
+                for block in msg.get_content_blocks("tool_result")
+            },
+            expected_states,
+        )
+        self.assertEqual(agent.state.get_unfinished_tool_calls(agent.name), [])
+        _assert_interrupted_end(
+            self,
+            events,
+            reply_id=agent.state.reply_id,
+            session_id=agent.state.session_id,
+        )
+
+    async def test_concurrent_worker_exception_propagates(self) -> None:
+        """A cancelled sibling must not hide an ordinary worker exception."""
+        agent, _ = self._make_agent([])
+        completed: list[str] = []
+
+        async def execute(
+            call: ToolCallBlock,
+            _kept_rules: Any = None,
+        ) -> AsyncGenerator:
+            """Simulate worker failures outside the toolkit's error handler."""
+            completed.append(call.id)
+            if call.id == "cancelled":
+                raise asyncio.CancelledError()
+            raise RuntimeError("worker failed")
+            yield  # pylint: disable=unreachable
+
+        calls = [
+            ToolCallBlock(id=identity, name="unused", input="{}")
+            for identity in ("cancelled", "failed")
+        ]
+        with patch.object(agent, "_execute_tool_call", execute):
+            with self.assertRaises(ExceptionGroup) as caught:
+                # Inspect grouping before the public reply handles failures.
+                # pylint: disable-next=protected-access
+                async for _ in agent._execute_concurrent_tool_calls(calls):
+                    pass
+        self.assertEqual(completed, ["cancelled", "failed"])
+        self.assertEqual(len(caught.exception.exceptions), 1)
+        error = caught.exception.exceptions[0]
+        self.assertIsInstance(error, RuntimeError)
+        self.assertEqual(str(error), "worker failed")
 
     async def test_cancelled_error_propagates_after_tool_cleanup(self) -> None:
         """With ``interruption_raise_cancelled_error`` the cancellation
