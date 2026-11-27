@@ -6,7 +6,7 @@ import inspect
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from .._logging import logger
@@ -23,7 +23,9 @@ _INSTANCE_VALUE_KEYWORDS = frozenset(
 )
 
 _id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
-_timestamp_factory: Callable[[], str] = lambda: datetime.now().isoformat()
+_timestamp_factory: Callable[[], str] = lambda: datetime.now(
+    timezone.utc,
+).isoformat()
 
 
 def set_id_factory(factory: Callable[[], str]) -> None:
