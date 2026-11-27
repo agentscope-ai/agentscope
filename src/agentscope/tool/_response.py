@@ -61,8 +61,11 @@ class ToolResponse(BaseModel):
         ToolResultState.DENIED,
         ToolResultState.INTERRUPTED,
         ToolResultState.SUCCESS,
+        ToolResultState.OFFLOADED,
     ] = ToolResultState.SUCCESS
-    """The execution state of the tool response."""
+    """The execution state of the tool response. ``OFFLOADED`` marks a
+    placeholder for a tool still running in the background (see
+    ``ToolOffloadMiddleware``); it is not a final result."""
 
     metadata: dict = Field(default_factory=dict)
     """The metadata to be accessed within the agent, so that we don't need to

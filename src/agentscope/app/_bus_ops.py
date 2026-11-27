@@ -1757,7 +1757,9 @@ async def deliver_to_inbox(
             The agent that owns the session.
         payload (`dict`):
             JSON-serialisable payload, normally a serialised
-            :class:`~agentscope.message.HintBlock`.
+            :class:`~agentscope.message.HintBlock`, or a serialised
+            :class:`~agentscope.message.ToolResultBlock` for a
+            completed background tool.
     """
     async with bus.acquire_lock(
         MessageBusKeys.inbox_lock(session_id),

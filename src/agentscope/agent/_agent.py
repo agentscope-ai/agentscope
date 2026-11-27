@@ -3656,9 +3656,13 @@ class Agent:
 
         last_msg = self._get_last_msg()
         if last_msg is not None:
-            # In case wrong tool call state, first filter with the results
+            # In case wrong tool call state, first filter with the results.
+            # An OFFLOADED placeholder is not a final result, so the
+            # offloaded call does not count as finished here either.
             finished_ids = {
-                _.id for _ in last_msg.get_content_blocks("tool_result")
+                _.id
+                for _ in last_msg.get_content_blocks("tool_result")
+                if _.state != ToolResultState.OFFLOADED
             }
             # With awaiting tool calls, PENDING ones are blocked (e.g.
             # deduplicated in a batch) and wait; only ALLOWED ones execute

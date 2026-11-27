@@ -6,12 +6,16 @@ When a tool times out, this middleware:
 - Lets the underlying asyncio task keep running via
   :class:`BackgroundTaskManager` (the task is **never cancelled**).
 - Yields a synthetic placeholder :class:`ToolResponse` so the agent
-  loop unblocks immediately. The placeholder carries structured
-  metadata (``background_task_id`` / ``tool_name`` / ``tool_state`` /
-  ``offloaded_at``) so downstream consumers can distinguish it from a
-  real tool success without parsing the placeholder text.
+  loop unblocks immediately. The placeholder carries the
+  :attr:`~agentscope.message.ToolResultState.OFFLOADED` state and
+  structured metadata (``background_task_id`` / ``tool_name`` /
+  ``tool_state`` / ``offloaded_at``) so downstream consumers can
+  distinguish it from a real tool success without parsing the
+  placeholder text. The offloaded call still counts as unfinished
+  until the real result arrives.
 - On task completion, pushes the real result as a
-  :class:`HintBlock` to the session's inbox via the message bus and
+  :class:`ToolResultBlock` (same tool call id and name as the
+  offloaded call) to the session's inbox via the message bus and
   enqueues a wakeup. From there the result follows the same path as a
   team message: :class:`InboxMiddleware` drains it into context on
   the next reasoning step (same run or a fresh wakeup-driven run),
@@ -33,8 +37,8 @@ from ...middleware import MiddlewareBase
 from ...tool import ToolChunk, ToolResponse
 from ...message import (
     DataBlock,
-    HintBlock,
     TextBlock,
+    ToolResultBlock,
     ToolResultState,
 )
 from ...agent import Agent
@@ -124,8 +128,9 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             the running asyncio task so :class:`ToolStop` can target it.
         message_bus (`MessageBus`):
             Application message bus. The completion callback uses it to
-            push the result HintBlock to the session's inbox and to
-            enqueue a wakeup so an idle session is woken on any process.
+            push the result ToolResultBlock to the session's inbox and
+            to enqueue a wakeup so an idle session is woken on any
+            process.
         user_id (`str`):
             User id of the current request — included in the wakeup
             payload so the dispatcher can re-invoke ``ChatService.run``.
@@ -187,7 +192,8 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
           :class:`ToolStop` can target it and shutdown can cancel it.
         - A separate watcher coroutine is spawned to await the task's
           completion and then push the result as a
-          :class:`HintBlock` to the session inbox + enqueue a wakeup.
+          :class:`ToolResultBlock` to the session inbox + enqueue a
+          wakeup.
         - A synthetic :class:`~agentscope.tool.ToolResponse` notifying
           the agent of the background task id is yielded instead.
 
@@ -326,6 +332,8 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
 
         # Fall back to the tool call id if no placeholder can be yielded.
         notification_id = tool_call.id
+        # Shared by the placeholder metadata and the delivered result.
+        offloaded_at = time.time()
 
         async def _deliver_when_done() -> None:
             """Wait for the offloaded tool to finish, then push its
@@ -362,25 +370,16 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 elif response.state == ToolResultState.INTERRUPTED:
                     outcome = "been cancelled"
 
-            tool_call_id = tool_call.id
-
-            hint_source = json.dumps(
-                {
-                    "label": "tool_output",
-                    "sublabel": f"{tool_name} · {tool_call_id}",
-                },
-                ensure_ascii=False,
-            )
-
+            # Deliver the real result as a ToolResultBlock tied to the
+            # original tool call (same id and name), not as a HintBlock:
+            # the agent can then interpret it as the completion of the
+            # offloaded call instead of a plain-text notification.
             if response is None or len(response.content) == 0:
-                hint = HintBlock(
-                    hint=(
-                        f"<system-notification>"
-                        f"Tool '{tool_name}' running in background "
-                        f"(id={notification_id}) has {outcome} with no output."
-                        f"</system-notification>"
-                    ),
-                    source=hint_source,
+                output: str | list[TextBlock | DataBlock] = (
+                    f"<system-notification>"
+                    f"Tool '{tool_name}' running in background "
+                    f"(id={notification_id}) has {outcome} with no output."
+                    f"</system-notification>"
                 )
 
             else:
@@ -412,10 +411,24 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                         TextBlock(text=suffix),
                     )
 
-                hint = HintBlock(
-                    hint=content_blocks,
-                    source=hint_source,
-                )
+                output = content_blocks
+
+            result_block = ToolResultBlock(
+                id=tool_call.id,
+                name=tool_name,
+                output=output,
+                state=(
+                    response.state
+                    if response is not None
+                    else ToolResultState.SUCCESS
+                ),
+                metadata={
+                    "background_task_id": notification_id,
+                    "tool_name": tool_name,
+                    "tool_state": "offloaded",
+                    "offloaded_at": offloaded_at,
+                },
+            )
 
             # Deliver via inbox + wakeup — same path as a team message.
             # InboxMiddleware drains the inbox into context on the next
@@ -433,7 +446,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 user_id=self._user_id,
                 session_id=session_id,
                 agent_id=self._agent_id,
-                payload=hint.model_dump(mode="json"),
+                payload=result_block.model_dump(mode="json"),
             )
 
         try:
@@ -473,22 +486,25 @@ this run.
 </system-reminder>"""
 
         # Identify background placeholders without parsing their text.
+        # The OFFLOADED state (not SUCCESS) marks that the tool is
+        # still running: the call stays unfinished until the real
+        # result is delivered as a ToolResultBlock.
         offload_metadata = {
             "background_task_id": task_id,
             "tool_name": tool_name,
             "tool_state": "running",
-            "offloaded_at": time.time(),
+            "offloaded_at": offloaded_at,
         }
 
         yield ToolChunk(
             content=[TextBlock(text=placeholder_text)],
-            state=ToolResultState.SUCCESS,
+            state=ToolResultState.OFFLOADED,
             metadata=dict(offload_metadata),
         )
 
         yield ToolResponse(
             content=[TextBlock(text=placeholder_text)],
-            state=ToolResultState.SUCCESS,
+            state=ToolResultState.OFFLOADED,
             id=tool_call.id,
             metadata=dict(offload_metadata),
         )

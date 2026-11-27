@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from pydantic import BaseModel
 
 
-from utils import AnyString, MockModel
+from utils import AnyString, AnyValue, MockModel
 
 from agentscope.agent import Agent
 from agentscope.app.message_bus import (
@@ -25,7 +25,12 @@ from agentscope.app._manager import BackgroundTaskManager, TaskStatus
 from agentscope.app._manager._background_task_manager import (
     BackgroundTaskRecord,
 )
-from agentscope.message import TextBlock, ToolCallBlock, ToolResultState
+from agentscope.message import (
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+)
 from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
@@ -364,7 +369,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                     "finished_at": None,
                 },
             ],
-            "state": "success",
+            "state": "offloaded",
             "metadata": {
                 "background_task_id": task_id,
                 "tool_name": "slow_tool",
@@ -501,18 +506,10 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                     inbox,
                     [
                         {
-                            "type": "hint",
-                            "id": AnyString(),
-                            "created_at": AnyString(),
-                            "finished_at": AnyString(),
-                            "source": json.dumps(
-                                {
-                                    "label": "tool_output",
-                                    "sublabel": "slow_tool · call_bg",
-                                },
-                                ensure_ascii=False,
-                            ),
-                            "hint": [
+                            "type": "tool_result",
+                            "id": "call_bg",
+                            "name": "slow_tool",
+                            "output": [
                                 {
                                     "type": "text",
                                     "text": "<system-notification>Tool "
@@ -526,6 +523,15 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                                     "finished_at": None,
                                 },
                             ],
+                            "state": "success",
+                            "metadata": {
+                                "background_task_id": notification_id,
+                                "tool_name": "slow_tool",
+                                "tool_state": "offloaded",
+                                "offloaded_at": AnyValue(),
+                            },
+                            "created_at": AnyString(),
+                            "finished_at": None,
                         },
                     ],
                 )
@@ -679,9 +685,9 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                     "<system-notification>Tool 'slow_tool' running in "
                     f"background (id={bg.id}) has been cancelled"
                 )
-                expected_hint: str | list[dict]
+                expected_output: str | list[dict]
                 if output:
-                    expected_hint = [
+                    expected_output = [
                         dict(
                             original["content"][0],
                             text=f"{prefix}.\n\nResult:\n\n{output}"
@@ -689,7 +695,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                         ),
                     ]
                 else:
-                    expected_hint = (
+                    expected_output = (
                         f"{prefix} with no output.</system-notification>"
                     )
                 inbox = [
@@ -704,22 +710,88 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                     inbox,
                     [
                         {
-                            "type": "hint",
-                            "id": AnyString(),
+                            "type": "tool_result",
+                            "id": "call_interrupted",
+                            "name": "slow_tool",
+                            "output": expected_output,
+                            "state": "interrupted",
+                            "metadata": {
+                                "background_task_id": bg.id,
+                                "tool_name": "slow_tool",
+                                "tool_state": "offloaded",
+                                "offloaded_at": AnyValue(),
+                            },
                             "created_at": AnyString(),
-                            "finished_at": AnyString(),
-                            "source": json.dumps(
-                                {
-                                    "label": "tool_output",
-                                    "sublabel": "slow_tool · call_interrupted",
-                                },
-                                ensure_ascii=False,
-                            ),
-                            "hint": expected_hint,
+                            "finished_at": None,
                         },
                     ],
                 )
                 self.assertEqual(response.model_dump(mode="json"), original)
+
+    async def test_offloaded_tool_call_stays_unfinished_until_real_result(
+        self,
+    ) -> None:
+        """An offloaded call is not SUCCESS and stays unfinished until
+        its background result is delivered as a ToolResultBlock."""
+
+        toolkit = Toolkit(tools=[SlowTool()])
+        agent, middleware = self._make_agent(toolkit, timeout_secs=0.05)
+
+        tool_call = ToolCallBlock(
+            id="call_pending",
+            name="slow_tool",
+            input=json.dumps({"delay": 0.2}),
+        )
+
+        # pylint: disable=protected-access
+        results = [item async for item in agent._acting(tool_call)]
+        responses = [r for r in results if isinstance(r, ToolResponse)]
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(responses[0].state, ToolResultState.OFFLOADED)
+
+        # Mirror what _execute_tool_call saves to context: the call and
+        # its placeholder result land in the current reply message.
+        agent._save_to_context(
+            [
+                tool_call,
+                ToolResultBlock(
+                    id=tool_call.id,
+                    name=tool_call.name,
+                    output=[TextBlock(text="placeholder")],
+                    state=responses[0].state,
+                ),
+            ],
+        )
+        self.assertEqual(
+            [
+                c.id
+                for c in agent.state.get_unfinished_tool_calls("test_agent")
+            ],
+            ["call_pending"],
+        )
+
+        # Wait for the background tool to finish and deliver.
+        await asyncio.sleep(0.5)
+        mock_bus = middleware._message_bus
+        inbox = [
+            call.args[1]
+            for call in mock_bus.queue_push.call_args_list
+            if call.args[0] == MessageBusKeys.inbox(agent.state.session_id)
+        ]
+        self.assertEqual(len(inbox), 1)
+        self.assertEqual(inbox[0]["type"], "tool_result")
+        delivered = ToolResultBlock.model_validate(inbox[0])
+        self.assertEqual(delivered.id, "call_pending")
+        self.assertEqual(delivered.name, "slow_tool")
+        self.assertEqual(delivered.state, ToolResultState.SUCCESS)
+        self.assertIn("SlowTool finished after 0.2s", str(delivered.output))
+
+        # Once the real result lands, the call is finished.
+        agent._save_to_context([delivered])
+        self.assertEqual(
+            agent.state.get_unfinished_tool_calls("test_agent"),
+            [],
+        )
 
     async def test_tool_stop_cancels_background_task(self) -> None:
         """ToolStop tool cancels the running background asyncio task."""

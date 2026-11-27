@@ -16,6 +16,7 @@ from ..message import (
     ToolCallBlock,
     ToolCallState,
     ToolResultBlock,
+    ToolResultState,
     HintBlock,
 )
 from ..permission import PermissionContext
@@ -422,7 +423,14 @@ class AgentState(BaseModel):
         last_msg = self.get_reply_message(name)
         if last_msg is None:
             return []
-        result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
+        # An OFFLOADED placeholder is not a final result: the tool is
+        # still running in the background, so the call stays unfinished
+        # until the real result is delivered.
+        result_ids = {
+            b.id
+            for b in last_msg.get_content_blocks("tool_result")
+            if b.state != ToolResultState.OFFLOADED
+        }
         return [
             tc
             for tc in last_msg.get_content_blocks("tool_call")
