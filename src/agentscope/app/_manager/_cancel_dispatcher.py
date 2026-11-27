@@ -244,8 +244,25 @@ class CancelDispatcher:
 
         def _on_payload(payload: dict) -> None:
             sid = payload.get("session_id")
+            reply_id = payload.get("reply_id")
+            queue_item_id = payload.get("queue_item_id")
+            if "queue_item_id" in payload and (
+                not isinstance(queue_item_id, str) or not queue_item_id
+            ):
+                return
+            if "reply_id" in payload and (
+                not isinstance(reply_id, str) or not reply_id
+            ):
+                return
             if isinstance(sid, str):
-                self._interrupt_session(sid)
+                if queue_item_id is not None:
+                    self._interrupt_session(
+                        sid,
+                        reply_id=reply_id,
+                        queue_item_id=queue_item_id,
+                    )
+                else:
+                    self._interrupt_session(sid, reply_id=reply_id)
 
         await self._consume_subscription(
             MessageBusKeys.session_interrupt_channel(),
@@ -311,7 +328,12 @@ class CancelDispatcher:
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, _SUBSCRIBE_BACKOFF_MAX_SECS)
 
-    def _interrupt_session(self, session_id: str) -> None:
+    def _interrupt_session(
+        self,
+        session_id: str,
+        reply_id: str | None = None,
+        queue_item_id: str | None = None,
+    ) -> None:
         """Cancel the local chat-run task for a session.
 
         Unlike ``_cancel_session``, this method only cancels the
@@ -322,8 +344,17 @@ class CancelDispatcher:
         Args:
             session_id (`str`):
                 The session whose chat run should be interrupted.
+            reply_id (`str | None`, optional):
+                Only interrupt this active reply. Stale targets are no-ops.
+            queue_item_id (`str | None`, optional):
+                Only interrupt initialization of this queued input.
         """
-        task = self._registry.get(session_id)
+        # No await may separate this identity check from task.cancel().
+        task = self._registry.get(
+            session_id,
+            reply_id=reply_id,
+            queue_item_id=queue_item_id,
+        )
         if task is not None and not task.done():
             logger.info(
                 "CancelDispatcher: interrupting local chat run for "

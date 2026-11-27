@@ -177,6 +177,26 @@ class BashToolTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
+    async def test_unicode_copy_permissions(self) -> None:
+        """Check each copy target under the same working-directory policy."""
+        bash = Bash(dangerous_files=["protected.txt"])
+        context = PermissionContext(mode=PermissionMode.ACCEPT_EDITS)
+        cases = [
+            ("cp 中文 copy.txt", PermissionBehavior.ALLOW, False),
+            ("cp 中文 protected.txt", PermissionBehavior.ASK, True),
+            ("cp 中文 ../copy.txt", PermissionBehavior.PASSTHROUGH, False),
+        ]
+        for command, behavior, bypass_immune in cases:
+            with self.subTest(command=command):
+                decision = await bash.check_permissions(
+                    {"command": command},
+                    context,
+                )
+                self.assertEqual(
+                    (decision.behavior, decision.bypass_immune),
+                    (behavior, bypass_immune),
+                )
+
     async def test_simple_command(self) -> None:
         """Test executing a simple bash command."""
         chunks = []

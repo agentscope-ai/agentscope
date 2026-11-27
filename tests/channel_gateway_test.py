@@ -630,29 +630,23 @@ class TrustedChannelIdentityTest(IsolatedAsyncioTestCase):
                 )
 
 
-class FeishuPostParseTest(IsolatedAsyncioTestCase):
-    """Feishu rich-text ``post`` flattens to ordered text + data blocks."""
+class FeishuMediaTest(IsolatedAsyncioTestCase):
+    """Feishu media downloads and rich-text parsing."""
 
-    async def test_mixed_text_image_link(self) -> None:
-        channel = FeishuChannel(
+    def setUp(self) -> None:
+        self.channel = FeishuChannel(
             "c",
             FeishuChannel.Credentials(app_id="a", app_secret="s"),
             FeishuChannel.Config(),
         )
+        self.download = AsyncMock(return_value=None)
+        self.channel._download_resource = self.download
 
-        async def _fake_download(
-            message_id: str,
-            key: str,
-            resource_type: str,
-            default_mime: str,
-            name: str,
-        ) -> DataBlock:
-            return DataBlock(
-                source=Base64Source(data="aW1n", media_type=default_mime),
-                name=name,
-            )
-
-        setattr(channel, "_download_resource", _fake_download)
+    async def test_mixed_text_image_link(self) -> None:
+        self.download.return_value = DataBlock(
+            source=Base64Source(data="aW1n", media_type="image/png"),
+            name="img",
+        )
         post = {
             "title": "T",
             "content": [
@@ -663,7 +657,7 @@ class FeishuPostParseTest(IsolatedAsyncioTestCase):
                 [{"tag": "a", "text": "link", "href": "http://x"}],
             ],
         }
-        blocks = await channel._parse_post(post, "m1")
+        blocks = await self.channel._parse_post(post, "m1")
         self.assertIsInstance(blocks[0], TextBlock)
         self.assertIn("hello", blocks[0].text)
         self.assertIsInstance(blocks[1], DataBlock)
@@ -672,13 +666,47 @@ class FeishuPostParseTest(IsolatedAsyncioTestCase):
             any(isinstance(b, TextBlock) and "link" in b.text for b in blocks),
         )
 
+    async def test_video_message_downloads_file(self) -> None:
+        message = SimpleNamespace(
+            message_id="m1",
+            content='{"file_key":"video","image_key":"cover"}',
+        )
+        await self.channel._download_media(message, "media")
+        self.download.assert_awaited_once_with(
+            "m1",
+            "video",
+            "file",
+            "video/mp4",
+            "media",
+        )
+
+    async def test_image_message_downloads_image(self) -> None:
+        message = SimpleNamespace(
+            message_id="m1",
+            content='{"image_key":"img-1"}',
+        )
+        await self.channel._download_media(message, "image")
+        self.download.assert_awaited_once_with(
+            "m1",
+            "img-1",
+            "image",
+            "image/png",
+            "image",
+        )
+
+    async def test_post_video_downloads_file(self) -> None:
+        video = {"tag": "media", "file_key": "video", "image_key": "cover"}
+        await self.channel._parse_post({"content": [[video]]}, "m1")
+        self.download.assert_awaited_once_with(
+            "m1",
+            "video",
+            "file",
+            "video/mp4",
+            "media",
+        )
+
     async def test_code_block_is_kept(self) -> None:
         """Code retains its whitespace and position relative to prose."""
-        channel = FeishuChannel(
-            "c",
-            FeishuChannel.Credentials(app_id="a", app_secret="s"),
-            FeishuChannel.Config(),
-        )
         code = "    first()\n    second()\n"
         snippet = [{"tag": "code_block", "language": "python", "text": code}]
         intro = [{"tag": "text", "text": "Explain:"}]
@@ -689,7 +717,10 @@ class FeishuPostParseTest(IsolatedAsyncioTestCase):
             ([[{"tag": "code_block", "text": "  \n"}]], []),
         ):
             with self.subTest(rows=rows):
-                blocks = await channel._parse_post({"content": rows}, "m1")
+                blocks = await self.channel._parse_post(
+                    {"content": rows},
+                    "m1",
+                )
                 self.assertEqual(
                     [block.model_dump() for block in blocks],
                     [

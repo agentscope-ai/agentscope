@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import posixpath
 import shlex
 import tarfile
 from typing import Any, AsyncIterator
 
+from .._overwrite import WriteUnconfirmedError, overwrite_command
 from ...tool import BackendBase, ExecResult
 
 
@@ -158,8 +160,6 @@ class K8sBackend(BackendBase):
                             elif channel == 2:  # stderr
                                 stderr_parts.append(payload)
                             elif channel == 3:  # error/status
-                                import json
-
                                 try:
                                     status = json.loads(
                                         payload.decode("utf-8"),
@@ -302,6 +302,19 @@ class K8sBackend(BackendBase):
             path,
         )
 
+    async def overwrite_file(self, path: str, data: bytes) -> None:
+        """Update the existing inode without extracting tar metadata."""
+        from aiohttp import ClientError
+
+        try:
+            await self._exec_ws_stdin(
+                overwrite_command(path, len(data)),
+                [data],
+                path,
+            )
+        except (ClientError, OSError) as exc:
+            raise WriteUnconfirmedError(path) from exc
+
     async def write_stream(
         self,
         path: str,
@@ -365,7 +378,6 @@ class K8sBackend(BackendBase):
                 _preload_content=False,
             )
             stderr_parts: list[bytes] = []
-            exit_code = 0
 
             async with ws as sock:
                 if isinstance(stdin, list):
@@ -391,25 +403,19 @@ class K8sBackend(BackendBase):
                     if channel == 2:
                         stderr_parts.append(payload)
                     elif channel == 3:
-                        import json
-
                         try:
-                            status = json.loads(
-                                payload.decode("utf-8"),
-                            )
-                            if status.get("status") != "Success":
-                                exit_code = 1
-                        except (
-                            json.JSONDecodeError,
-                            ValueError,
-                        ):
-                            exit_code = 1
-
-            if exit_code != 0:
-                stderr_text = b"".join(stderr_parts).decode(
-                    errors="replace",
-                )
-                raise RuntimeError(
-                    f"write to {path!r} failed: "
-                    f"{command[0]} exited {exit_code}: {stderr_text}",
-                )
+                            status = json.loads(payload)
+                        except ValueError as exc:
+                            raise WriteUnconfirmedError(path) from exc
+                        if isinstance(status, dict):
+                            if status.get("status") == "Success":
+                                return
+                            if status.get("status") == "Failure":
+                                stderr = b"".join(stderr_parts).decode(
+                                    errors="replace",
+                                )
+                                raise RuntimeError(
+                                    f"write to {path!r} failed: {stderr}",
+                                )
+                        break
+            raise WriteUnconfirmedError(path)

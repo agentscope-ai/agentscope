@@ -248,24 +248,26 @@ class TestInboxHandoff(IsolatedAsyncioTestCase):
         service._purge_subagent_hitl = AsyncMock()
         service._purge_session_bus = AsyncMock()
 
-        async with self.bus.acquire_lock(
+        worker_locks = (
             MessageBusKeys.session_lock("z-worker"),
-        ):
-            with self.assertRaises(SessionBusyError):
-                await asyncio.wait_for(
-                    service.delete_session("u", "a", self.sid),
-                    timeout=1.0,
+            MessageBusKeys.session_config_lock("z-worker"),
+        )
+        all_locks = (
+            MessageBusKeys.session_lock(self.sid),
+            MessageBusKeys.session_config_lock(self.sid),
+            *worker_locks,
+        )
+        for busy in worker_locks:
+            async with self.bus.acquire_lock(busy):
+                with self.assertRaises(SessionBusyError):
+                    await asyncio.wait_for(
+                        service.delete_session("u", "a", self.sid),
+                        timeout=1.0,
+                    )
+                self.assertEqual(
+                    [await self.bus.is_locked(key) for key in all_locks],
+                    [key == busy for key in all_locks],
                 )
-            self.assertFalse(
-                await self.bus.is_locked(
-                    MessageBusKeys.session_lock(self.sid),
-                ),
-            )
-            self.assertTrue(
-                await self.bus.is_locked(
-                    MessageBusKeys.session_lock("z-worker"),
-                ),
-            )
         storage.delete_session.assert_not_awaited()
         service._purge_subagent_hitl.assert_not_awaited()
         service._purge_session_bus.assert_not_awaited()

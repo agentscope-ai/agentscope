@@ -107,6 +107,18 @@ class _FakeStorage:
         """Return the agent name used by canonical HITL detection."""
         return SimpleNamespace(data=SimpleNamespace(name="agent"))
 
+    async def get_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> object | None:
+        """Read the latest detached message written by an upsert."""
+        for owner, sid, msg in reversed(self.persisted_messages):
+            if (owner, sid, msg.id) == (user_id, session_id, message_id):
+                return msg.model_copy(deep=True)
+        return None
+
     async def upsert_message(
         self,
         user_id: str,
@@ -325,6 +337,7 @@ class _FakeChatService:
         client_builtin_tools: list[str] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
+        submission_id: str | None = None,
     ) -> None:
         """Record the call and signal a waiter."""
         call: dict[str, Any] = {
@@ -360,6 +373,7 @@ class _BlockingChatService(_FakeChatService):
         client_builtin_tools: list[str] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
+        submission_id: str | None = None,
     ) -> None:
         await super().run(
             user_id,
@@ -368,6 +382,7 @@ class _BlockingChatService(_FakeChatService):
             input_msg,
             queue_item_id=queue_item_id,
             input_persisted=input_persisted,
+            submission_id=submission_id,
             client_external_tools=client_external_tools,
             client_builtin_tools=client_builtin_tools,
         )

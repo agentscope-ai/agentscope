@@ -15,7 +15,7 @@ long text stays intact inside a section and is split downstream by a
 """
 import base64
 import io
-from collections.abc import Iterator
+from collections.abc import Callable
 from typing import Any, Literal
 
 from ..._logging import logger
@@ -28,27 +28,46 @@ from ._utils import (
     _table_to_markdown,
 )
 
+_MC_NS = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+# The shape elements python-pptx has a shape class for. It also lists
+# ``p:contentPart`` (ink) as a shape, but has no class for it.
+_SHAPE_TAGS = frozenset(
+    "{http://schemas.openxmlformats.org/presentationml/2006/main}" + tag
+    for tag in ("sp", "grpSp", "graphicFrame", "cxnSp", "pic")
+)
 
-def _iter_shapes(shapes: Any) -> Iterator[Any]:
-    """Yield every shape on a slide, descending into groups.
 
-    A group carries no picture, table or text frame of its own; its
-    children do. Iterating ``slide.shapes`` alone therefore never reaches
-    what is inside one, and the text is dropped without an error.
+def _read_shapes(
+    shapes: Any,
+    parent: Any,
+    read_leaf: Callable[[Any], bool],
+) -> bool:
+    """Read shapes in document order and report whether any content was added.
 
-    Args:
-        shapes (`Any`):
-            A python-pptx shape collection.
-
-    Yields:
-        `Any`: Each leaf shape, in depth-first shape-tree order.
+    python-pptx skips shapes wrapped in ``mc:AlternateContent``, such as a
+    text box holding an equation. Visit each branch until one adds content.
     """
-    for shape in shapes:
-        # A group is the only shape with its own ``shapes`` collection.
-        if hasattr(shape, "shapes"):
-            yield from _iter_shapes(shape.shapes)
-        else:
-            yield shape
+    added_content = False
+    for element in parent.iterchildren():
+        if element.tag == _MC_NS + "AlternateContent":
+            branches = element.iterchildren(
+                _MC_NS + "Choice",
+                _MC_NS + "Fallback",
+            )
+            for branch in branches:
+                if _read_shapes(shapes, branch, read_leaf):
+                    added_content = True
+                    break
+        elif element.tag in _SHAPE_TAGS:
+            # pylint: disable-next=protected-access
+            shape = shapes._shape_factory(element)
+            if hasattr(shape, "shapes"):
+                children = shape.shapes
+                if _read_shapes(children, children.element, read_leaf):
+                    added_content = True
+            elif read_leaf(shape):
+                added_content = True
+    return added_content
 
 
 def _normalise_breaks(text: str) -> str:
@@ -307,7 +326,8 @@ class PPTParser(ParserBase):
             )
             text_buffer.clear()
 
-        for shape in _iter_shapes(slide.shapes):
+        def read_leaf(shape: Any) -> bool:
+            """Return True when the shape adds content to the slide."""
             # 1. Pictures — flush running text, emit a DataBlock section.
             if self.include_image:
                 image_data = _extract_image_data(shape)
@@ -331,7 +351,7 @@ class PPTParser(ParserBase):
                             },
                         ),
                     )
-                    continue
+                    return True
 
             # 2. Tables — render to text; optionally flush around them.
             if getattr(shape, "has_table", False):
@@ -346,14 +366,14 @@ class PPTParser(ParserBase):
                         slide_no,
                         e,
                     )
-                    continue
+                    return False
                 rendered = (
                     _table_to_markdown(rows)
                     if self.table_format == "markdown"
                     else _table_to_json(rows)
                 )
                 if not rendered:
-                    continue
+                    return False
                 if self.separate_table:
                     flush_text()
                     slide_sections.append(
@@ -365,7 +385,7 @@ class PPTParser(ParserBase):
                     )
                 else:
                     text_buffer.append(rendered)
-                continue
+                return True
 
             # 3. Text frames.
             if getattr(shape, "has_text_frame", False):
@@ -381,9 +401,13 @@ class PPTParser(ParserBase):
                         slide_no,
                         e,
                     )
-                    continue
+                    return False
                 if parts:
                     text_buffer.append("\n".join(parts))
+                    return True
+            return False
+
+        _read_shapes(slide.shapes, slide.shapes.element, read_leaf)
 
         flush_text()
         # Decorate real text only: wrappers are not indexable slide content.

@@ -43,6 +43,7 @@ from agentscope.middleware._longterm_memory._mem0._utils import (
 )
 from agentscope.model import ChatResponse
 from agentscope.tool import Toolkit
+from agentscope.types import ReplyFinishedReason
 
 
 # ----------------------------------------------------------------------
@@ -487,6 +488,28 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         for m in msgs:
             self.assertNotEqual(getattr(m, "name", None), "memory")
         self.assertEqual(len(fake.search_calls), 1)
+
+    async def test_interrupted_reply_is_not_written_back(self) -> None:
+        """An interrupted reply ends with the agent's canned interruption
+        message instead of an answer, so nothing is written back."""
+        fake = _FakeAsyncMem0Client()
+        mw = Mem0Middleware(
+            client=fake,
+            user_id="alice",
+            mode="static_control",
+        )
+        agent = self._agent(mw)
+        # The model call is cancelled, as when the user stops the reply.
+        self.model.set_responses([asyncio.CancelledError()])
+
+        reply = await agent.reply(UserMsg("user", "plan my trip to Kyoto"))
+
+        self.assertEqual(
+            reply.finished_reason,
+            ReplyFinishedReason.INTERRUPTED,
+        )
+        self.assertEqual(len(fake.search_calls), 1)
+        self.assertListEqual(fake.add_calls, [])
 
     async def test_search_failure_does_not_break_reply(self) -> None:
         """Search errors should be logged but not block the reply."""
