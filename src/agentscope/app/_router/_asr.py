@@ -181,6 +181,8 @@ async def transcribe_audio(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(error),
         ) from error
+    finally:
+        await asr_model.close()
     return TranscriptionResponse(
         text=result.content.text if result.content is not None else "",
     )
