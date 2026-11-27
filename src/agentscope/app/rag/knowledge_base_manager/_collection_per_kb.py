@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from ._base import KnowledgeBaseManagerBase
 from ._dimension_policy import DimensionPolicy, DimensionPolicyKind
 from ._errors import KnowledgeBaseNotFoundError
+from ._published_knowledge import PublishedKnowledge
 from ._vector_slots import version_collection
 from ...._logging import logger
 from ....rag import KnowledgeBase
@@ -152,14 +153,6 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
         user_id: str,
         knowledge_base_id: str,
     ) -> KnowledgeBase:
-        """Return a read handle for the published document versions."""
-        return await self.get_published_knowledge(user_id, knowledge_base_id)
-
-    async def get_write_knowledge(
-        self,
-        user_id: str,
-        knowledge_base_id: str,
-    ) -> KnowledgeBase:
         """Resolve a :class:`KnowledgeBase` runtime for one knowledge base.
 
         Looks the record up in storage (raising
@@ -211,11 +204,17 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
             credential_record=credential_record,
             config=record.data.embedding_model_config,
         )
-        return KnowledgeBase(
+        primary = KnowledgeBase(
             name=record.data.name,
             description=record.data.description,
             embedding_model=embedding_model,
             vector_store=self._vector_store,
             collection=record.data.collection_name,
             metadata_filter=None,
+        )
+        return PublishedKnowledge(
+            primary,
+            self._storage,
+            user_id,
+            knowledge_base_id,
         )

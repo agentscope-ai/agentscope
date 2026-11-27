@@ -5,6 +5,7 @@
 import warnings
 from datetime import datetime, timedelta
 from functools import partial
+from uuid import uuid4
 from typing import Any, TYPE_CHECKING, Self
 
 from pydantic import BaseModel
@@ -2097,6 +2098,11 @@ class RedisStorage(StorageBase):
             user_id=user_id,
         )
         async with self._client.pipeline(transaction=True) as pipe:
+            pipe.set(
+                self._publication_revision_key(user_id, record.id),
+                uuid4().hex,
+                ex=self.key_ttl,
+            )
             pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(index_key, record.id)
             if record.data.reindex_pending:
@@ -2229,7 +2235,12 @@ class RedisStorage(StorageBase):
             self.key_config.knowledge_base_index,
             user_id=user_id,
         )
-        deleted = await self._client.delete(key)
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.delete(key)
+            pipe.delete(
+                self._publication_revision_key(user_id, knowledge_base_id),
+            )
+            deleted, _ = await pipe.execute()
         await self._client.srem(index_key, knowledge_base_id)
         await self._client.srem(
             self.key_config.knowledge_base_reindex_index,
@@ -2276,6 +2287,35 @@ class RedisStorage(StorageBase):
         """Encode (user_id, kb_id, doc_id) for the global sweeper index."""
         return f"{user_id}:{knowledge_base_id}:{document_id}"
 
+    def _publication_revision_key(self, user_id: str, kb: str) -> str:
+        return f"{self._document_index_key(user_id, kb)}:publication_revision"
+
+    async def get_knowledge_publication_revision(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        live_ids: set[str] | None,
+    ) -> str | None:
+        """Check explicit mutations and TTL loss in one Redis round trip."""
+        kb_key = self._key(
+            self.key_config.knowledge_base,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+        )
+        keys = [
+            self._document_key(user_id, knowledge_base_id, doc_id)
+            for doc_id in live_ids or ()
+        ]
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.get(
+                self._publication_revision_key(user_id, knowledge_base_id),
+            )
+            pipe.exists(kb_key, *keys)
+            revision, count = await pipe.execute()
+        if revision is None or count != len(keys) + 1:
+            return None
+        return _index_member(revision)
+
     def _primary_sdk_index(self, user_id: str, kb: str) -> str:
         """Upload IDs whose primary tilde slot is available to SDK callers."""
         return f"{self._document_index_key(user_id, kb)}:primary_sdk_ids"
@@ -2286,6 +2326,11 @@ class RedisStorage(StorageBase):
         doc: KnowledgeDocumentRecord,
     ) -> None:
         """Commit layout evidence in the same transaction as the upload."""
+        pipe.set(
+            self._publication_revision_key(doc.user_id, doc.knowledge_base_id),
+            uuid4().hex,
+            ex=self.key_ttl,
+        )
         index = self._primary_sdk_index(doc.user_id, doc.knowledge_base_id)
         if doc.data.has_legacy_alias:
             pipe.srem(index, doc.id)
@@ -2295,7 +2340,7 @@ class RedisStorage(StorageBase):
     async def _backfill_document_aliases(self) -> None:
         """Preserve known layouts before live pre-upgrade rows expire."""
         index = self.key_config.knowledge_document_global_index
-        checkpoint = f"{index}:primary_sdk_layouts_indexed"
+        checkpoint = f"{index}:primary_sdk_layouts_and_revisions_indexed"
         if await self._client.exists(checkpoint):
             return
 
@@ -2443,13 +2488,47 @@ class RedisStorage(StorageBase):
         ids = await self._client.smembers(
             self._document_index_key(user_id, knowledge_base_id),
         )
+        return await self._read_knowledge_documents(
+            user_id,
+            knowledge_base_id,
+            set(map(_index_member, ids)),
+        )
+
+    async def get_knowledge_documents(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        ids: set[str],
+    ) -> list[KnowledgeDocumentRecord]:
+        """Fetch matching document payloads in a single Redis request."""
+        if (
+            type(self).get_knowledge_document
+            is not RedisStorage.get_knowledge_document
+        ):
+            return await super().get_knowledge_documents(
+                user_id,
+                knowledge_base_id,
+                ids,
+            )
+        return await self._read_knowledge_documents(
+            user_id,
+            knowledge_base_id,
+            ids,
+        )
+
+    async def _read_knowledge_documents(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        ids: set[str],
+    ) -> list[KnowledgeDocumentRecord]:
         if not ids:
             return []
         keys = [
             self._document_key(
                 user_id,
                 knowledge_base_id,
-                _index_member(document_id),
+                document_id,
             )
             for document_id in ids
         ]
@@ -2469,6 +2548,11 @@ class RedisStorage(StorageBase):
         key = self._document_key(user_id, knowledge_base_id, document_id)
         async with self._client.pipeline(transaction=True) as pipe:
             pipe.delete(key)
+            pipe.set(
+                self._publication_revision_key(user_id, knowledge_base_id),
+                uuid4().hex,
+                ex=self.key_ttl,
+            )
             pipe.srem(
                 self._document_index_key(user_id, knowledge_base_id),
                 document_id,

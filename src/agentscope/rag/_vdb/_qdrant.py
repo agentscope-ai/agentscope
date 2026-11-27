@@ -18,6 +18,8 @@ import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
 from ._vector_store import (
+    _PublishPoints,
+    _ReadHits,
     DocumentSummary,
     VectorRecord,
     VectorSearchResult,
@@ -27,7 +29,7 @@ from .._document import Chunk
 
 if TYPE_CHECKING:
     from qdrant_client import AsyncQdrantClient
-    from qdrant_client.models import VectorParams
+    from qdrant_client.models import Distance, VectorParams
 
 
 class QdrantStore(VectorStoreBase):
@@ -102,9 +104,9 @@ class QdrantStore(VectorStoreBase):
                 The shared async client instance.
         """
         if self._client is None:
-            from qdrant_client import AsyncQdrantClient
+            from ._qdrant_client import _QdrantClient
 
-            self._client = AsyncQdrantClient(
+            self._client = _QdrantClient(
                 location=self._location,
                 url=self._url,
                 path=self._path,
@@ -112,6 +114,17 @@ class QdrantStore(VectorStoreBase):
                 **self._client_kwargs,
             )
         return self._client
+
+    async def _read_published_points(
+        self,
+        collection: str,
+        read: _ReadHits,
+        publish: _PublishPoints,
+    ) -> tuple[list[VectorSearchResult], bool]:
+        """Supply published candidates to a custom backend's native query."""
+        from ._qdrant_client import read_published_points
+
+        return await read_published_points(self, collection, read, publish)
 
     async def __aexit__(
         self,
@@ -169,6 +182,17 @@ class QdrantStore(VectorStoreBase):
                 f"Collection {name!r} requires an unnamed dense vector.",
             )
         return vectors
+
+    @staticmethod
+    def _score_sign(distance: "Distance") -> int:
+        """Normalize scores using the actual collection distance metric."""
+        from qdrant_client import models
+
+        return (
+            -1
+            if distance in (models.Distance.EUCLID, models.Distance.MANHATTAN)
+            else 1
+        )
 
     async def ensure_compatible_collection(
         self,
@@ -363,9 +387,9 @@ class QdrantStore(VectorStoreBase):
         from qdrant_client import models
 
         client = self.get_client()
-        # The constructor's metric only applies to newly created collections.
-        # Read the actual schema, including after an external recreation.
-        distance = (await self._vector_params(collection)).distance
+        sign = self._score_sign(
+            (await self._vector_params(collection)).distance,
+        )
         query_filter = self._build_metadata_filter(metadata_filter)
         if exclude_document_ids:
             query_filter = query_filter or models.Filter()
@@ -381,13 +405,6 @@ class QdrantStore(VectorStoreBase):
             limit=top_k,
             with_payload=True,
             query_filter=query_filter,
-        )
-        # ``Euclid`` / ``Manhattan`` are distances, so negate them to
-        # keep ``score`` higher-is-better like ``Cosine`` / ``Dot``.
-        sign = (
-            -1
-            if distance in (models.Distance.EUCLID, models.Distance.MANHATTAN)
-            else 1
         )
         return [
             VectorSearchResult(

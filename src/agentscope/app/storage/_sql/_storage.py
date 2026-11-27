@@ -2111,6 +2111,42 @@ class AsyncSQLAlchemyStorage(StorageBase):
             return None
         return _to_record(row, KnowledgeDocumentRecord)
 
+    async def get_knowledge_documents(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        ids: set[str],
+    ) -> list[KnowledgeDocumentRecord]:
+        """Fetch selected documents with the same owner and KB scope."""
+        if (
+            type(self).get_knowledge_document
+            is not AsyncSQLAlchemyStorage.get_knowledge_document
+        ):
+            return await super().get_knowledge_documents(
+                user_id,
+                knowledge_base_id,
+                ids,
+            )
+        if not ids:
+            return []
+        keys = list(ids)
+        rows = []
+        async with self._session() as sess:
+            # Keep each IN clause below SQLite's legacy parameter limit.
+            for start in range(0, len(keys), 900):
+                result = await sess.scalars(
+                    sa.select(KnowledgeDocumentRow).where(
+                        KnowledgeDocumentRow.id.in_(keys[start : start + 900]),
+                        KnowledgeDocumentRow.user_id == user_id,
+                        KnowledgeDocumentRow.knowledge_base_id
+                        == knowledge_base_id,
+                    ),
+                )
+                rows.extend(
+                    _to_record(row, KnowledgeDocumentRecord) for row in result
+                )
+        return rows
+
     async def list_knowledge_documents(
         self,
         user_id: str,

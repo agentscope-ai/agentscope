@@ -293,7 +293,10 @@ class KnowledgeBaseManagerBase(ABC):
         knowledge_base_id: str,
     ) -> "KnowledgeBase":
         """Return the underlying storage handle for the indexing worker."""
-        return await self.get_knowledge(user_id, knowledge_base_id)
+        selected = await self.get_knowledge(user_id, knowledge_base_id)
+        if isinstance(selected, PublishedKnowledge):
+            return selected.primary
+        return selected
 
     async def get_published_knowledge(
         self,
@@ -301,7 +304,9 @@ class KnowledgeBaseManagerBase(ABC):
         knowledge_base_id: str,
     ) -> "KnowledgeBase":
         """Resolve reads against each document's published vector slot."""
-        raw = await self.get_write_knowledge(user_id, knowledge_base_id)
+        raw = await self.get_knowledge(user_id, knowledge_base_id)
+        if isinstance(raw, PublishedKnowledge):
+            return raw
         return PublishedKnowledge(
             raw,
             self._storage,

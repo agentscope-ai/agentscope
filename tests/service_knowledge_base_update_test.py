@@ -5,8 +5,11 @@ import asyncio
 import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from functools import wraps
+from importlib.util import find_spec
 from io import BytesIO
 from typing import Any, AsyncIterator
+from unittest import skipUnless
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
@@ -48,9 +51,18 @@ from agentscope.rag import (
     Chunk,
     DocumentSummary,
     ElasticsearchStore,
+    KnowledgeBase,
     MongoDBStore,
+    QdrantStore,
     TextParser,
+    VectorRecord,
+    VectorSearchResult,
 )
+
+
+if find_spec("qdrant_client"):
+    from qdrant_client import AsyncQdrantClient
+    from qdrant_client.http import models as qdrant_models
 
 
 class _AlternateApproxTokenChunker(ApproxTokenChunker):
@@ -111,10 +123,8 @@ class _SnapshotESClient(_FakeESClient):
         return {"_shards": {"failed": 0}}
 
 
-class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
-    """Verify configuration persistence and reindex dispatch semantics."""
-
-    # pylint: disable=too-many-public-methods
+class _KnowledgeBaseServiceTestCase(IsolatedAsyncioTestCase):
+    """Provide an isolated knowledge base service and document records."""
 
     async def asyncSetUp(self) -> None:
         """Build the service with in-memory storage and message bus fakes."""
@@ -190,6 +200,1505 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
             ),
         )
         await self._storage.upsert_knowledge_document("user-1", record)
+
+
+class KnowledgeBaseChunkerUpdateTest(_KnowledgeBaseServiceTestCase):
+    """Verify configuration persistence and reindex dispatch semantics."""
+
+    # pylint: disable=too-many-public-methods
+
+    async def test_service_honors_collection_manager_read_override(
+        self,
+    ) -> None:
+        """Wrap the collection, store and filter selected by get_knowledge."""
+        owner, kb = "user-1", self._knowledge_base_id
+        primary = await self._manager.get_knowledge(owner, kb)
+        store = _FakeVectorStore()
+        custom = KnowledgeBase(
+            primary.name,
+            primary.description,
+            primary.embedding_model,
+            store,
+            "custom",
+            {"scope": "custom"},
+        )
+        for handle, key in ((primary, "default-hit"), (custom, "custom-hit")):
+            chunk = Chunk(
+                content=TextBlock(text=key),
+                source=key,
+                chunk_index=0,
+                total_chunks=1,
+            )
+            await handle.insert_document([chunk], key)
+
+        class CustomManager(CollectionPerKbManager):
+            """Route the original manager extension point to a custom KB."""
+
+            calls = 0
+
+            async def get_knowledge(
+                self,
+                user_id: str,
+                knowledge_base_id: str,
+            ) -> KnowledgeBase:
+                self.calls += 1
+                return custom
+
+        manager = CustomManager(self._storage, primary.vector_store)
+        with patch.object(self._service, "_manager", manager), patch.object(
+            self._storage,
+            "get_credential",
+            return_value=object(),
+        ), patch(
+            "agentscope.app.rag.knowledge_base_manager._collection_per_kb."
+            "build_embedding_model",
+            return_value=primary.embedding_model,
+        ), patch.object(
+            store,
+            "search",
+            wraps=store.search,
+        ) as searches:
+            hits = await self._service.search(owner, kb, "q")
+            self.assertEqual(
+                ([h.document_id for h in hits], manager.calls),
+                (["custom-hit"], 1),
+            )
+            self.assertEqual(
+                searches.await_args.kwargs["metadata_filter"],
+                {"scope": "custom"},
+            )
+            self.assertIs(await manager.get_write_knowledge(owner, kb), custom)
+
+    async def test_service_preserves_custom_search_and_published_hits(
+        self,
+    ) -> None:
+        """Run the selected instance's reranker over a full published page."""
+        owner, kb = "user-1", self._knowledge_base_id
+        raw = await self._manager.get_knowledge(owner, kb)
+
+        class RerankedKnowledge(KnowledgeBase):
+            """Prefer one published document regardless of vector rank."""
+
+            calls = 0
+
+            async def search(self, queries: list, top_k: int = 5) -> list:
+                self.calls += 1
+                hits = await super().search(queries, top_k)
+                if queries == ["tamper"]:
+                    hits[0].chunk.metadata["original"]["tag"] = "changed"
+                    hits[1].chunk.content.text = "replaced"
+                    return hits
+                observed.append((queries, top_k, [h.chunk for h in hits]))
+                hits = [hit.model_copy(deep=True) for hit in hits]
+                for hit in hits:
+                    hit.chunk.metadata["matched_by"] = "semantic"
+                return sorted(
+                    hits,
+                    key=lambda h: h.document_id != "preferred",
+                )
+
+        observed = []
+        selected = RerankedKnowledge(
+            raw.name,
+            raw.description,
+            raw.embedding_model,
+            raw.vector_store,
+            raw.collection,
+        )
+        chunks = [
+            Chunk(
+                content=TextBlock(text=key),
+                source=key,
+                chunk_index=0,
+                total_chunks=1,
+                metadata={"original": {"tag": "stored"}},
+            )
+            for key in ("preferred", "custom-hit", "unpublished")
+        ]
+        for chunk in chunks:
+            await selected.insert_document([chunk], chunk.source)
+        store_search = selected.vector_store.search
+
+        async def ranked_search(*args: Any, **kwargs: Any) -> list:
+            hits = await store_search(*args, **kwargs)
+            for hit in hits:
+                if hit.document_id == "unpublished":
+                    hit.score = 2.0
+            return hits
+
+        await self._store_document("unpublished", "ready")
+        await self._storage.update_knowledge_document_status(
+            owner,
+            kb,
+            "unpublished",
+            "ready",
+            alternate_index=True,
+            migrate_vector_slot=True,
+        )
+        with patch.object(
+            self._manager,
+            "get_knowledge",
+            return_value=selected,
+        ), patch.object(
+            selected.vector_store,
+            "search",
+            side_effect=ranked_search,
+        ):
+            hits = await self._service.search(owner, kb, "query", top_k=2)
+            self.assertEqual(
+                (selected.calls, observed, hits),
+                (
+                    1,
+                    [(["query"], 2, [chunks[1], chunks[0]])],
+                    [
+                        VectorSearchResult(
+                            document_id=c.source,
+                            chunk=c.model_copy(
+                                update={
+                                    "metadata": {
+                                        **c.metadata,
+                                        "matched_by": "semantic",
+                                    },
+                                },
+                            ),
+                            score=1.0,
+                        )
+                        for c in chunks[:2]
+                    ],
+                ),
+            )
+            self.assertEqual(
+                await self._service.search(owner, kb, "tamper", top_k=2),
+                [],
+            )
+            self.assertEqual(
+                await selected.list_chunks("custom-hit"),
+                [chunks[1]],
+            )
+
+    async def test_custom_search_scope_is_local_and_restored(self) -> None:
+        """An overlapping SDK read and a failed override keep raw routing."""
+        owner, kb = "user-1", self._knowledge_base_id
+        raw = await self._manager.get_knowledge(owner, kb)
+        entered, resume = asyncio.Event(), asyncio.Event()
+        observed = []
+
+        class PausedKnowledge(KnowledgeBase):
+            """Pause the hosted query before its call to the base search."""
+
+            async def search(self, queries: list, top_k: int = 5) -> list:
+                if queries == ["hosted"]:
+                    entered.set()
+                    await resume.wait()
+                    observed.extend(await super().search(queries, top_k))
+                    raise ValueError("reranking failed")
+                return await super().search(queries, top_k)
+
+        selected = PausedKnowledge(
+            raw.name,
+            raw.description,
+            raw.embedding_model,
+            raw.vector_store,
+            raw.collection,
+        )
+        old = Chunk(
+            content=TextBlock(text="old"),
+            source="note",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        new = old.model_copy(update={"content": TextBlock(text="new")})
+        await selected.insert_document([old], "note")
+        await version_knowledge(selected).insert_document([new], "note")
+        await self._store_document("note", "ready")
+        await self._storage.update_knowledge_document_status(
+            owner,
+            kb,
+            "note",
+            "ready",
+            alternate_index=True,
+            migrate_vector_slot=True,
+        )
+        with patch.object(
+            self._manager,
+            "get_knowledge",
+            return_value=selected,
+        ):
+
+            async def hosted_then_raw() -> list:
+                with self.assertRaisesRegex(ValueError, "reranking failed"):
+                    await self._service.search(owner, kb, "hosted")
+                return await selected.search(["raw"])
+
+            task = asyncio.create_task(hosted_then_raw())
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=5)
+                concurrent = await selected.search(["raw"])
+            finally:
+                resume.set()
+                after = await task
+        old_hit = VectorSearchResult(document_id="note", chunk=old, score=1)
+        new_hit = VectorSearchResult(document_id="note", chunk=new, score=1)
+        self.assertEqual(
+            (observed, concurrent, after),
+            ([new_hit], [old_hit], [old_hit]),
+        )
+
+    async def test_custom_search_checks_independently_retrieved_hits(
+        self,
+    ) -> None:
+        """Check retired chunks from a raw store search by content."""
+        owner, kb = "user-1", self._knowledge_base_id
+        raw = await self._manager.get_knowledge(owner, kb)
+        old = Chunk(
+            content=TextBlock(text="retired"),
+            source="note",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        new = old.model_copy(update={"content": TextBlock(text="published")})
+        await raw.insert_document([new], "sdk")
+        await raw.insert_document([old], "note")
+        await version_knowledge(raw).insert_document([new], "note")
+        await self._store_document("note", "ready")
+        await self._storage.update_knowledge_document_status(
+            owner,
+            kb,
+            "note",
+            "ready",
+            alternate_index=True,
+            migrate_vector_slot=True,
+        )
+        expected = [
+            VectorSearchResult(document_id=key, chunk=new, score=1)
+            for key in ("note", "sdk")
+        ]
+
+        async def direct_search(queries: list, top_k: int) -> list:
+            self.assertEqual(queries, ["q"])
+            return await raw.vector_store.search(raw.collection, [1.0], top_k)
+
+        with patch.object(
+            self._manager,
+            "get_knowledge",
+            return_value=raw,
+        ), patch.object(
+            raw,
+            "search",
+            side_effect=direct_search,
+        ) as override:
+            for supports_listing in (True, False):
+                with self.subTest(supports_listing=supports_listing):
+                    effect = (
+                        raw.vector_store.list_chunks
+                        if supports_listing
+                        else NotImplementedError
+                    )
+                    with patch.object(
+                        raw.vector_store,
+                        "list_chunks",
+                        side_effect=effect,
+                    ):
+                        hits = await self._service.search(owner, kb, "q", 2)
+                    self.assertEqual(hits, expected)
+            self.assertEqual(override.await_count, 2)
+
+    async def test_direct_search_follows_each_rebuilt_document(self) -> None:
+        """Use the same vector and scoped filter for both slots and refills."""
+        owner, kb = "user-1", self._knowledge_base_id
+        raw = await self._manager.get_knowledge(owner, kb)
+        scope = {"tenant": owner, "topic": "selected"}
+        calls = []
+
+        class FilteredStore(_FakeVectorStore):
+            """Rank matching chunks with a backend-specific score field."""
+
+            async def search(
+                self,
+                collection: str,
+                query_vector: list[float],
+                top_k: int = 5,
+                metadata_filter: dict | None = None,
+                *,
+                rank_field: str = "default",
+            ) -> list:
+                calls.append(
+                    (collection, query_vector, metadata_filter, top_k),
+                )
+                hits = await super().search(collection, query_vector, 100)
+                for hit in hits:
+                    hit.score = hit.chunk.metadata.get(rank_field, 0)
+                eligible = [
+                    h
+                    for h in hits
+                    if (metadata_filter or {}).items()
+                    <= h.chunk.metadata.items()
+                ]
+                return sorted(eligible, key=lambda h: -h.score)[:top_k]
+
+        class ForwardingStore(FilteredStore):
+            """Delegate the standard arguments and extra ranking options."""
+
+            async def search(
+                self,
+                collection: str,
+                query_vector: list[float],
+                *args: Any,
+                **options: Any,
+            ) -> list:
+                return await super().search(
+                    collection,
+                    query_vector,
+                    *args,
+                    **options,
+                )
+
+        store = ForwardingStore()
+        selected = KnowledgeBase(
+            raw.name,
+            raw.description,
+            raw.embedding_model,
+            store,
+            raw.collection,
+            {"tenant": owner},
+        )
+        versions = version_knowledge(selected)
+        query_filter = {"topic": "selected"}
+
+        async def custom(queries: list, top_k: int) -> list:
+            self.assertEqual(queries, ["q"])
+            hits = await store.search(
+                selected.collection,
+                [99.0],
+                top_k,
+                metadata_filter=query_filter,
+                rank_field="rank",
+            )
+            return list(reversed(hits))
+
+        async def insert(
+            handle: KnowledgeBase,
+            key: str,
+            ranks: list,
+            **metadata: Any,
+        ) -> list:
+            chunks = [
+                Chunk(
+                    source=key,
+                    chunk_index=i,
+                    total_chunks=len(ranks),
+                    content=TextBlock(text=f"{key}-{rank}"),
+                    metadata={**scope, **metadata, "rank": rank},
+                )
+                for i, rank in enumerate(ranks)
+            ]
+            await handle.insert_document(chunks, key)
+            return [
+                VectorSearchResult(document_id=key, chunk=c, score=r)
+                for c, r in zip(chunks, ranks)
+            ]
+
+        async def publish(key: str, ranks: list) -> list:
+            hits = await insert(versions, key, ranks)
+            await self._storage.update_knowledge_document_status(
+                owner,
+                kb,
+                key,
+                "ready",
+                alternate_index=True,
+                migrate_vector_slot=True,
+            )
+            return hits
+
+        for key in ("keep.txt", "changed.txt"):
+            await self._store_document(key, "ready")
+        keep = await insert(selected, "keep.txt", [5])
+        changed = await insert(selected, "changed.txt", [10, 9, 8, 7])
+        unscoped = KnowledgeBase(
+            raw.name,
+            raw.description,
+            raw.embedding_model,
+            store,
+            raw.collection,
+        )
+        await insert(unscoped, "other-tenant", [50], tenant="other")
+        await insert(selected, "other-topic", [50], topic="other")
+        with patch.object(
+            self._manager,
+            "get_knowledge",
+            return_value=selected,
+        ), patch.object(selected, "search", side_effect=custom):
+            self.assertEqual(
+                await self._service.search(owner, kb, "q", 1),
+                changed[:1],
+            )
+            changed = await publish("changed.txt", [6, 4])
+            self.assertEqual(
+                await self._service.search(owner, kb, "q", 1),
+                changed[:1],
+            )
+            self.assertEqual(
+                await self._service.search(owner, kb, "q", 4),
+                [changed[1], keep[0], changed[0]],
+            )
+            keep = await publish("keep.txt", [3])
+            self.assertEqual(
+                await self._service.search(owner, kb, "q", 4),
+                [keep[0], changed[1], changed[0]],
+            )
+            query_filter["tenant"] = "other"
+            self.assertEqual(await self._service.search(owner, kb, "q", 4), [])
+        self.assertEqual(
+            {c[0] for c in calls},
+            {selected.collection, versions.collection},
+        )
+        self.assertTrue(
+            all(v == [99.0] and f == scope for _, v, f, _ in calls),
+        )
+        self.assertTrue(any(k > 4 for _, _, _, k in calls))
+
+    @skipUnless(find_spec("qdrant_client"), "qdrant-client is required")
+    async def test_forwarded_search_preserves_filter_omission(self) -> None:
+        """Keep backend defaults across publication and tenant scope."""
+        owner, kb = "user-1", self._knowledge_base_id
+        raw = await self._manager.get_knowledge(owner, kb)
+        calls = []
+        filters = {
+            "omitted": {},
+            "none": {"metadata_filter": None},
+            "empty": {"metadata_filter": {}},
+            "english": {"metadata_filter": {"lang": "en"}},
+        }
+
+        class LanguageStore(QdrantStore):
+            """Apply the language default only when the caller omits it."""
+
+            @wraps(QdrantStore.search)
+            async def search(
+                self,
+                collection: str,
+                query_vector: list[float],
+                *args: Any,
+                **options: Any,
+            ) -> list:
+                calls.append(
+                    (
+                        collection,
+                        {
+                            k: v
+                            for k, v in options.items()
+                            if k == "metadata_filter"
+                        },
+                    ),
+                )
+                options.setdefault("metadata_filter", {"lang": "zh"})
+                return await super().search(
+                    collection,
+                    query_vector,
+                    *args,
+                    **options,
+                )
+
+        class DirectKnowledge(KnowledgeBase):
+            """Forward exactly the filter selected by the caller."""
+
+            async def search(self, queries: list, top_k: int = 5) -> list:
+                return await self.vector_store.search(
+                    self.collection,
+                    [1.0],
+                    top_k=top_k,
+                    **filters[queries[0]],
+                )
+
+        async with LanguageStore(location=":memory:", distance="Dot") as store:
+            plain = DirectKnowledge(
+                raw.name,
+                raw.description,
+                raw.embedding_model,
+                store,
+                raw.collection,
+            )
+            scoped = DirectKnowledge(
+                raw.name,
+                raw.description,
+                raw.embedding_model,
+                store,
+                raw.collection,
+                {"tenant": owner},
+            )
+            versions = version_knowledge(plain)
+            await plain.ensure_collection()
+
+            def record(
+                key: str,
+                lang: str,
+                tenant: str,
+                score: float,
+            ) -> VectorRecord:
+                return VectorRecord(
+                    document_id=key,
+                    vector=[score],
+                    chunk=Chunk(
+                        source=key,
+                        chunk_index=0,
+                        total_chunks=1,
+                        content=TextBlock(text=f"{key}-{score}"),
+                        metadata={"lang": lang, "tenant": tenant},
+                    ),
+                )
+
+            zh = record("changed", "zh", owner, 8)
+            keep = record("keep", "zh", owner, 6)
+            en = record("english", "en", owner, 10)
+            other = record("other-tenant", "zh", "other", 9)
+            await store.insert(plain.collection, [zh, keep, en, other])
+            for key in ("changed", "english"):
+                await self._store_document(key, "ready")
+            for rebuilt in (False, True):
+                if rebuilt:
+                    await versions.ensure_collection()
+                    en = record("english", "en", owner, 13)
+                    await store.insert(
+                        versions.collection,
+                        [record("changed", "zh", owner, 4), en],
+                    )
+                    for key in ("changed", "english"):
+                        await self._storage.update_knowledge_document_status(
+                            owner,
+                            kb,
+                            key,
+                            "ready",
+                            alternate_index=True,
+                            migrate_vector_slot=True,
+                        )
+                for handle, winner in (
+                    (plain, other),
+                    (scoped, keep if rebuilt else zh),
+                ):
+                    with patch.object(
+                        self._manager,
+                        "get_knowledge",
+                        return_value=handle,
+                    ):
+                        for mode, supplied in filters.items():
+                            with self.subTest(
+                                rebuilt=rebuilt,
+                                scope=handle.metadata_filter,
+                                mode=mode,
+                            ):
+                                calls.clear()
+                                hits = await self._service.search(
+                                    owner,
+                                    kb,
+                                    mode,
+                                    1,
+                                )
+                                row = winner if mode == "omitted" else en
+                                self.assertEqual(
+                                    hits,
+                                    [
+                                        VectorSearchResult(
+                                            document_id=row.document_id,
+                                            chunk=row.chunk,
+                                            score=row.vector[0],
+                                        ),
+                                    ],
+                                )
+                                self.assertEqual(
+                                    calls,
+                                    [(plain.collection, supplied)],
+                                )
+
+    @skipUnless(find_spec("qdrant_client"), "qdrant-client is required")
+    async def test_forwarded_search_preserves_omitted_limit(self) -> None:
+        """Use the forwarder's limit for the entire published ranking."""
+        owner, kb = "user-1", self._knowledge_base_id
+        raw = await self._manager.get_knowledge(owner, kb)
+        limits = []
+
+        class LimitedStore(QdrantStore):
+            """Apply a runtime default before forwarding to Qdrant."""
+
+            default_limit = 2
+
+            @wraps(QdrantStore.search)
+            async def search(
+                self,
+                collection: str,
+                query_vector: list[float],
+                *args: Any,
+                **options: Any,
+            ) -> list:
+                limits.append(options.get("top_k"))
+                options.setdefault("top_k", self.default_limit)
+                return await super().search(
+                    collection,
+                    query_vector,
+                    *args,
+                    **options,
+                )
+
+        class DirectKnowledge(KnowledgeBase):
+            """Rerank the backend's page after it resolves the limit."""
+
+            async def search(self, queries: list, top_k: int = 5) -> list:
+                options = {} if queries == ["omit"] else {"top_k": top_k}
+                hits = await self.vector_store.search(
+                    self.collection,
+                    [1.0],
+                    **options,
+                )
+                return hits[::-1]
+
+        def record(key: str, score: int, tenant: str = owner) -> VectorRecord:
+            return VectorRecord(
+                document_id=key,
+                vector=[score],
+                chunk=Chunk(
+                    source=key,
+                    chunk_index=0,
+                    total_chunks=1,
+                    content=TextBlock(text=f"{key}-{score}"),
+                    metadata={"tenant": tenant},
+                ),
+            )
+
+        async with LimitedStore(location=":memory:", distance="Dot") as store:
+            selected = DirectKnowledge(
+                raw.name,
+                raw.description,
+                raw.embedding_model,
+                store,
+                raw.collection,
+                {"tenant": owner},
+            )
+            versions = version_knowledge(selected)
+            await selected.ensure_collection()
+            rows = [record("a", 10), record("b", 9), record("c", 8)]
+            await store.insert(
+                selected.collection,
+                [*rows, record("foreign", 20, "other")],
+            )
+            direct = await store.search(
+                selected.collection,
+                [1.0],
+                metadata_filter={"tenant": owner},
+            )
+            self.assertEqual([hit.document_id for hit in direct], ["a", "b"])
+            for row in rows:
+                await self._store_document(row.document_id, "ready")
+
+            with patch.object(
+                self._manager,
+                "get_knowledge",
+                return_value=selected,
+            ):
+                for stage, replacements in (
+                    ("original", []),
+                    ("partial", [record("a", 7)]),
+                    ("rebuilt", [record("b", 11), record("c", 12)]),
+                ):
+                    if replacements:
+                        await versions.ensure_collection()
+                        await store.insert(versions.collection, replacements)
+                    for new in replacements:
+                        await self._storage.update_knowledge_document_status(
+                            owner,
+                            kb,
+                            new.document_id,
+                            "ready",
+                            alternate_index=True,
+                            migrate_vector_slot=True,
+                        )
+                        rows = [
+                            r for r in rows if r.document_id != new.document_id
+                        ]
+                        rows.append(new)
+                    ranked = sorted(rows, key=lambda r: -r.vector[0])
+                    for mode, requested, expected in (
+                        ("omit", 5, 2),
+                        ("explicit", 1, 1),
+                        ("explicit", 3, 3),
+                    ):
+                        with self.subTest(
+                            stage=stage,
+                            mode=mode,
+                            limit=requested,
+                        ):
+                            limits.clear()
+                            hits = await self._service.search(
+                                owner,
+                                kb,
+                                mode,
+                                requested,
+                            )
+                            self.assertEqual(
+                                hits,
+                                [
+                                    VectorSearchResult(
+                                        document_id=r.document_id,
+                                        chunk=r.chunk,
+                                        score=r.vector[0],
+                                    )
+                                    for r in ranked[:expected][::-1]
+                                ],
+                            )
+                            if mode == "omit":
+                                self.assertEqual(limits, [None])
+                # Neither slot alone contains seven eligible documents.
+                extra = [record(f"extra-{i}", i) for i in range(1, 5)]
+                await store.insert(selected.collection, extra)
+                store.default_limit = 7
+                limits.clear()
+                hits = await self._service.search(owner, kb, "omit", 7)
+                self.assertEqual(
+                    hits,
+                    [
+                        VectorSearchResult(
+                            document_id=r.document_id,
+                            chunk=r.chunk,
+                            score=r.vector[0],
+                        )
+                        for r in sorted(
+                            rows + extra,
+                            key=lambda r: r.vector[0],
+                        )
+                    ],
+                )
+                self.assertEqual(limits, [None])
+
+    @skipUnless(find_spec("qdrant_client"), "qdrant-client is required")
+    async def test_direct_qdrant_client_omitted_limit(self) -> None:
+        """Apply the backend's Qdrant limit to the merged published page."""
+        owner, kb = "user-1", self._knowledge_base_id
+        raw = await self._manager.get_knowledge(owner, kb)
+
+        pages = []
+
+        class ClientStore(QdrantStore):
+            """Resolve the limit without going through a parent search."""
+
+            default_limit = 7
+            oversample = 1
+            reverse_candidates = False
+            offset = 0
+            native_options = {}
+
+            async def search(
+                self,
+                collection: str,
+                query_vector: list[float],
+                **options: Any,
+            ) -> list:
+                limit = options.get("top_k", self.default_limit)
+                response = await self.get_client().query_points(
+                    collection_name=collection,
+                    query=query_vector,
+                    limit=limit * self.oversample,
+                    with_payload=["document_id", "chunk"],
+                    offset=self.offset,
+                    **self.native_options,
+                )
+                points = response.points
+                pages.append([p.payload["document_id"] for p in points])
+                if self.reverse_candidates:
+                    points = points[::-1]
+                return [
+                    VectorSearchResult(
+                        document_id=point.payload["document_id"],
+                        chunk=Chunk.model_validate(point.payload["chunk"]),
+                        score=point.score,
+                    )
+                    for point in points[:limit]
+                ]
+
+        class DirectKnowledge(KnowledgeBase):
+            """Allow the caller to request the backend's own default."""
+
+            async def search(self, queries: list, top_k: int = 5) -> list:
+                options = {} if queries == ["omit"] else {"top_k": top_k}
+                return await self.vector_store.search(
+                    self.collection,
+                    [1.0],
+                    **options,
+                )
+
+        def row(i: int, score: int) -> VectorRecord:
+            return VectorRecord(
+                document_id=str(i),
+                chunk=Chunk(
+                    source=str(i),
+                    content=TextBlock(text=str(score)),
+                    chunk_index=0,
+                    total_chunks=1,
+                ),
+                vector=[score],
+            )
+
+        async with ClientStore(location=":memory:", distance="Dot") as store:
+            selected = DirectKnowledge(
+                raw.name,
+                raw.description,
+                raw.embedding_model,
+                store,
+                raw.collection,
+            )
+            versions = version_knowledge(selected)
+            await selected.ensure_collection()
+            rows = [row(i, i + 1) for i in range(8)]
+            await store.insert(selected.collection, rows)
+            for record in rows:
+                await self._store_document(record.document_id, "ready")
+
+            async def check_page(limit: int) -> None:
+                store.default_limit = limit
+                pages.clear()
+                explicit = await self._service.search(
+                    owner,
+                    kb,
+                    "explicit",
+                    limit,
+                )
+                ranked = sorted(rows, key=lambda r: -r.vector[0])
+                candidates = ranked[store.offset :][: limit * store.oversample]
+                expected_page = [r.document_id for r in candidates]
+                if store.reverse_candidates:
+                    candidates = candidates[::-1]
+                expected = candidates[:limit]
+                self.assertEqual(
+                    explicit,
+                    [
+                        VectorSearchResult(
+                            document_id=r.document_id,
+                            chunk=r.chunk,
+                            score=r.vector[0],
+                        )
+                        for r in expected
+                    ],
+                )
+                omitted = await self._service.search(owner, kb, "omit", 5)
+                self.assertEqual(omitted, explicit)
+                self.assertEqual(pages, [expected_page, expected_page])
+
+            reference = "published-reference"
+            await store.create_collection(reference, dimensions=1)
+
+            async def check_prefetch(
+                limit: int,
+                expected_ids: list[str],
+                **options: Any,
+            ) -> None:
+                store.native_options = options
+                store.default_limit = limit
+                try:
+                    await store.insert(reference, rows)
+                    native = await store.search(reference, [1.0], top_k=limit)
+                    expected_page = pages[-1]
+                    self.assertEqual(
+                        [hit.document_id for hit in native],
+                        expected_ids,
+                    )
+                    pages.clear()
+                    for mode in ("omit", "explicit"):
+                        hits = await self._service.search(
+                            owner,
+                            kb,
+                            mode,
+                            limit,
+                        )
+                        self.assertEqual(hits, native)
+                    self.assertEqual(pages, [expected_page, expected_page])
+                finally:
+                    store.native_options = {}
+
+            with patch.object(
+                self._manager,
+                "get_knowledge",
+                return_value=selected,
+            ):
+                with self.subTest(stage="original"):
+                    await check_page(7)
+                with self.subTest(stage="prefetch before rebuild"):
+                    await check_prefetch(
+                        7,
+                        list("7654321"),
+                        prefetch=qdrant_models.Prefetch(query=[1.0], limit=8),
+                    )
+                await versions.ensure_collection()
+                # The old top hits must be excluded before refilling.
+                rows[4:] = [row(i, i - 10) for i in range(4, 8)]
+                await store.insert(versions.collection, rows[4:])
+                for record in rows[4:]:
+                    await self._storage.update_knowledge_document_status(
+                        owner,
+                        kb,
+                        record.document_id,
+                        "ready",
+                        alternate_index=True,
+                        migrate_vector_slot=True,
+                    )
+                with self.subTest(stage="partial"):
+                    await check_page(2)
+                with self.subTest(stage="retired points lead prefetch"):
+                    await check_prefetch(
+                        2,
+                        ["3", "2"],
+                        prefetch=qdrant_models.Prefetch(query=[1.0], limit=2),
+                    )
+                for record in rows[4:]:
+                    await store.delete(selected.collection, record.document_id)
+                rows[:2] = [row(0, 7), row(1, 6)]
+                await store.insert(selected.collection, rows[:2])
+                rows[4:6] = [row(4, 11), row(5, 10)]
+                await store.insert(versions.collection, rows[4:6])
+                store.oversample = 2
+                with self.subTest(stage="four candidates, two results"):
+                    await check_page(2)
+
+                def exclude(key: str) -> qdrant_models.Filter:
+                    return qdrant_models.Filter(
+                        must_not=[
+                            qdrant_models.FieldCondition(
+                                key="document_id",
+                                match=qdrant_models.MatchValue(value=key),
+                            ),
+                        ],
+                    )
+
+                prefetch = qdrant_models.Prefetch
+                cases: list[tuple[str, list[str], Any, Any]] = [
+                    (
+                        "same ranking",
+                        ["4", "5"],
+                        prefetch(query=[1.0], limit=4),
+                        None,
+                    ),
+                    (
+                        "opposite ranking",
+                        ["3", "2"],
+                        prefetch(query=[-1.0], limit=4),
+                        None,
+                    ),
+                    (
+                        "separate stage filters",
+                        ["1", "7"],
+                        prefetch(query=[-1.0], limit=4, filter=exclude("3")),
+                        exclude("2"),
+                    ),
+                    (
+                        "overlapping nested prefetches",
+                        ["4", "2"],
+                        [
+                            prefetch(
+                                query=[-1.0],
+                                limit=3,
+                                prefetch=prefetch(query=[1.0]),
+                            ),
+                            prefetch(query=[1.0], limit=1),
+                            prefetch(query=[-1.0], limit=1),
+                        ],
+                        None,
+                    ),
+                    (
+                        "empty prefetch",
+                        [],
+                        prefetch(query=[1.0], score_threshold=99.0),
+                        None,
+                    ),
+                ]
+                for name, expected, sources, outer_filter in cases:
+                    with self.subTest(prefetch=name):
+                        await check_prefetch(
+                            2,
+                            expected,
+                            prefetch=sources,
+                            query_filter=outer_filter,
+                        )
+                store.reverse_candidates = True
+                with self.subTest(stage="rerank global candidates"):
+                    await check_page(2)
+                store.offset = 1
+                with self.subTest(stage="global offset before reranking"):
+                    await check_page(2)
+                store.offset = 0
+                store.reverse_candidates = False
+                store.oversample = 1
+                with self.subTest(stage="four per collection"):
+                    await check_page(7)
+
+                native_query = AsyncQdrantClient.query_points
+                switched = False
+
+                async def publish_before_rescore(
+                    client: AsyncQdrantClient,
+                    collection_name: str,
+                    query: Any,
+                    *args: Any,
+                    **kwargs: Any,
+                ) -> qdrant_models.QueryResponse:
+                    nonlocal switched
+                    if (
+                        not switched
+                        and collection_name != reference
+                        and query == [1.0]
+                    ):
+                        switched = True
+                        await store.insert(versions.collection, [rows[3]])
+                        await self._storage.update_knowledge_document_status(
+                            owner,
+                            kb,
+                            "3",
+                            "ready",
+                            alternate_index=True,
+                            migrate_vector_slot=True,
+                        )
+                    return await native_query(
+                        client,
+                        collection_name,
+                        query,
+                        *args,
+                        **kwargs,
+                    )
+
+                with self.subTest(
+                    stage="publish between stages",
+                ), patch.object(
+                    AsyncQdrantClient,
+                    "query_points",
+                    publish_before_rescore,
+                ):
+                    await check_prefetch(
+                        2,
+                        ["3", "2"],
+                        prefetch=qdrant_models.Prefetch(query=[-1.0], limit=4),
+                    )
+                    self.assertTrue(switched)
+
+    async def test_forwarded_search_after_rebuild_and_delete(self) -> None:
+        """Compare standard and forwarded calls on the same published data."""
+        owner, kb = "user-1", self._knowledge_base_id
+        raw = await self._manager.get_knowledge(owner, kb)
+
+        class ForwardAll(_FakeVectorStore):
+            """Forward the entire public call."""
+
+            async def search(self, *args: Any, **kwargs: Any) -> list:
+                return await super().search(*args, **kwargs)
+
+        class ForwardWindow(_FakeVectorStore):
+            """Declare the target and vector and forward window arguments."""
+
+            async def search(
+                self,
+                collection: str,
+                query_vector: list[float],
+                *args: Any,
+                **kwargs: Any,
+            ) -> list:
+                return await super().search(
+                    collection,
+                    query_vector,
+                    *args,
+                    **kwargs,
+                )
+
+        class ForwardFilter(_FakeVectorStore):
+            """Declare a custom limit and accept the filter by keyword."""
+
+            async def search(
+                self,
+                collection: str,
+                query_vector: list[float],
+                top_k: int = 2,
+                **kwargs: Any,
+            ) -> list:
+                return await super().search(
+                    collection,
+                    query_vector,
+                    top_k,
+                    **kwargs,
+                )
+
+        class DirectKnowledge(KnowledgeBase):
+            """Exercise the call styles used by SDK custom search methods."""
+
+            async def search(self, queries: list, top_k: int = 5) -> list:
+                if queries == ["defaults"]:
+                    return await self.vector_store.search(
+                        self.collection,
+                        [1.0],
+                    )
+                if queries == ["positional"]:
+                    return await self.vector_store.search(
+                        self.collection,
+                        [1.0],
+                        top_k,
+                    )
+                return await self.vector_store.search(
+                    collection=self.collection,
+                    query_vector=[1.0],
+                    top_k=top_k,
+                    metadata_filter={},
+                )
+
+        versions = version_knowledge(raw)
+        published = []
+        for key, count in (("changed.txt", 2), ("keep.txt", 1)):
+            await self._store_document(key, "ready")
+            chunks = [
+                Chunk(
+                    source=key,
+                    chunk_index=i,
+                    total_chunks=count,
+                    content=TextBlock(text=f"new {key} {i}"),
+                )
+                for i in range(count)
+            ]
+            old = chunks[0].model_copy(
+                update={"content": TextBlock(text="old")},
+            )
+            await raw.insert_document([old], key)
+            await versions.insert_document(chunks, key)
+            await self._storage.update_knowledge_document_status(
+                owner,
+                kb,
+                key,
+                "ready",
+                alternate_index=True,
+                migrate_vector_slot=True,
+            )
+            published.extend(
+                VectorSearchResult(document_id=key, chunk=c, score=1)
+                for c in chunks
+            )
+        published.reverse()
+        for deleted in (False, True):
+            if deleted:
+                await self._service.delete_document(owner, kb, "changed.txt")
+                published = published[:1]
+            for cls in (
+                _FakeVectorStore,
+                ForwardAll,
+                ForwardWindow,
+                ForwardFilter,
+            ):
+                store = cls()
+                store._collections = raw.vector_store._collections
+                selected = DirectKnowledge(
+                    raw.name,
+                    raw.description,
+                    raw.embedding_model,
+                    store,
+                    raw.collection,
+                )
+
+                with patch.object(
+                    self._manager,
+                    "get_knowledge",
+                    return_value=selected,
+                ):
+                    for style in ("positional", "keywords", "defaults"):
+                        limit = (
+                            2
+                            if cls is ForwardFilter and style == "defaults"
+                            else 4
+                        )
+                        with self.subTest(
+                            store=cls.__name__,
+                            style=style,
+                            deleted=deleted,
+                        ):
+                            self.assertEqual(
+                                await self._service.search(
+                                    owner,
+                                    kb,
+                                    style,
+                                    4,
+                                ),
+                                published[:limit],
+                            )
+
+    async def test_search_only_store_keeps_custom_vector_winner(self) -> None:
+        """A custom vector can rank a published hit outside default top-k."""
+        owner, kb = "user-1", self._knowledge_base_id
+        raw = await self._manager.get_knowledge(owner, kb)
+
+        class SearchOnlyStore(_FakeVectorStore):
+            """Choose a different winner for each query vector."""
+
+            switch = False
+
+            async def search(
+                self,
+                collection: str,
+                query_vector: list[float],
+                top_k: int = 5,
+                metadata_filter: dict | None = None,
+            ) -> list:
+                vectors.append(query_vector)
+                hits = await super().search(
+                    collection,
+                    query_vector,
+                    2,
+                    metadata_filter,
+                )
+                if query_vector == [99.0]:
+                    hits.sort(key=lambda h: h.document_id != "preferred")
+                if self.switch and collection == raw.collection:
+                    self.switch = False
+                    await reuse_primary()
+                return hits[:top_k]
+
+            async def list_chunks(self, *args: Any, **kwargs: Any) -> list:
+                raise NotImplementedError
+
+        vectors = []
+        store = SearchOnlyStore()
+        selected = KnowledgeBase(
+            raw.name,
+            raw.description,
+            raw.embedding_model,
+            store,
+            raw.collection,
+        )
+        preferred = Chunk(
+            content=TextBlock(text="preferred"),
+            source="preferred",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        await selected.insert_document([preferred], "preferred")
+        updated = preferred.model_copy(
+            update={"content": TextBlock(text="republished")},
+        )
+        other = preferred.model_copy(
+            update={"content": TextBlock(text="other")},
+        )
+        await selected.insert_document([other], "other")
+        self.assertEqual(
+            await store.search(raw.collection, [1.0], 1),
+            [VectorSearchResult(document_id="other", chunk=other, score=1)],
+        )
+        vectors.clear()
+
+        async def reuse_primary() -> None:
+            await self._storage.update_knowledge_document_status(
+                owner,
+                kb,
+                "preferred",
+                "ready",
+                alternate_index=True,
+            )
+            await store.delete(raw.collection, "preferred")
+            await selected.insert_document([updated], "preferred")
+            await self._storage.update_knowledge_document_status(
+                owner,
+                kb,
+                "preferred",
+                "ready",
+                alternate_index=False,
+            )
+
+        async def custom(queries: list, top_k: int) -> list:
+            self.assertEqual(queries, ["q"])
+            return await store.search(raw.collection, [99.0], top_k)
+
+        with patch.object(
+            self._manager,
+            "get_knowledge",
+            return_value=selected,
+        ), patch.object(selected, "search", side_effect=custom):
+            hits = await self._service.search(owner, kb, "q", 1)
+            with patch.object(
+                self._storage,
+                "get_knowledge_publication_revision",
+                return_value=None,
+            ):
+                without_revision = await self._service.search(
+                    owner,
+                    kb,
+                    "q",
+                    1,
+                )
+            await self._store_document("preferred", "ready")
+            store.switch = True
+            switched = await self._service.search(owner, kb, "q", 1)
+        self.assertEqual(
+            hits,
+            [
+                VectorSearchResult(
+                    document_id="preferred",
+                    chunk=preferred,
+                    score=1,
+                ),
+            ],
+        )
+        self.assertEqual(
+            switched,
+            [
+                VectorSearchResult(
+                    document_id="preferred",
+                    chunk=updated,
+                    score=1,
+                ),
+            ],
+        )
+        self.assertEqual(without_revision, hits)
+        self.assertEqual({tuple(v) for v in vectors}, {(99.0,)})
+
+    async def test_stable_search_and_listing_storage_calls(self) -> None:
+        """Count backend reads for managed hits and a stable catalog."""
+        owner, kb = "user-1", self._knowledge_base_id
+        primary = await self._manager.get_write_knowledge(owner, kb)
+        reader = await self._manager.get_published_knowledge(owner, kb)
+        for i in range(5):
+            key = f"doc{i}"
+            await self._store_document(key, "ready")
+            chunk = Chunk(
+                content=TextBlock(text=key),
+                source=key,
+                chunk_index=0,
+                total_chunks=1,
+            )
+            await primary.insert_document([chunk], key)
+        for count in (1, 5):
+            with self.subTest(top_k=count), patch.object(
+                self._redis,
+                "mget",
+                wraps=self._redis.mget,
+            ) as batch, patch.object(
+                self._storage,
+                "get_knowledge_document",
+                wraps=self._storage.get_knowledge_document,
+            ) as singles:
+                hits = await self._service.search(owner, kb, "q", top_k=count)
+                self.assertEqual(
+                    (len(hits), batch.call_count, singles.await_count),
+                    (count, 1, 0),
+                )
+        with patch.object(
+            self._storage,
+            "list_knowledge_documents",
+            wraps=self._storage.list_knowledge_documents,
+        ) as rows, patch.object(
+            self._storage,
+            "get_knowledge_vector_ownership",
+            wraps=self._storage.get_knowledge_vector_ownership,
+        ) as owners:
+            docs = await reader.list_documents()
+        self.assertEqual(
+            (len(docs), rows.await_count, owners.await_count),
+            (5, 1, 1),
+        )
+
+    async def test_legacy_storage_publication_fallback(self) -> None:
+        """A custom storage can supply its original per-ID visibility rules."""
+        owner, kb = "user-1", self._knowledge_base_id
+        await self._store_document("hidden", "ready")
+        await self._store_document("visible", "ready")
+
+        class LegacyStorage(RedisStorage):
+            """Look up public records through the original storage methods."""
+
+            async def get_knowledge_document(
+                self,
+                user_id: str,
+                knowledge_base_id: str,
+                document_id: str,
+            ) -> KnowledgeDocumentRecord | None:
+                docs = await self.list_knowledge_documents(
+                    user_id,
+                    knowledge_base_id,
+                )
+                return next(
+                    (
+                        d
+                        for d in docs
+                        if d.id == document_id and d.id != "hidden"
+                    ),
+                    None,
+                )
+
+        async with LegacyStorage(
+            connection_pool=self._redis.connection_pool,
+        ) as legacy:
+            docs = await legacy.get_knowledge_documents(
+                owner,
+                kb,
+                {"visible", "hidden", "missing"},
+            )
+            self.assertEqual([d.id for d in docs], ["visible"])
+        self.assertIsNone(
+            await StorageBase.get_knowledge_publication_revision(
+                self._storage,
+                owner,
+                kb,
+                None,
+            ),
+        )
+
+    async def test_listing_rechecks_publication_and_expiry(self) -> None:
+        """Redis expiration and a slot switch can occur between the reads."""
+        owner, kb, key = "user-1", self._knowledge_base_id, "doc"
+        await self._store_document(key, "ready")
+        row = await self._storage.get_knowledge_document(owner, kb, key)
+        row.data.slot_layout = "isolated"
+        await self._storage.upsert_knowledge_document(owner, row)
+        reader = await self._manager.get_published_knowledge(owner, kb)
+        old = Chunk(
+            content=TextBlock(text="A"),
+            source="A",
+            chunk_index=0,
+            total_chunks=1,
+        )
+        await reader._primary.insert_document([old], key)
+        await reader._versions.insert_document(
+            [old.model_copy(update={"source": "B"})],
+            key,
+        )
+        read = reader._versions.list_documents
+
+        async def publish_after_read() -> list:
+            docs = await read()
+            await self._storage.update_knowledge_document_status(
+                owner,
+                kb,
+                key,
+                "ready",
+                alternate_index=True,
+            )
+            return docs
+
+        with patch.object(
+            reader._versions,
+            "list_documents",
+            publish_after_read,
+        ):
+            self.assertEqual(
+                await reader.list_documents(),
+                [
+                    DocumentSummary(
+                        document_id=key,
+                        source="B",
+                        chunk_count=1,
+                    ),
+                ],
+            )
+
+        async def expire_after_read() -> list:
+            docs = await read()
+            await self._redis.expire(
+                self._storage._document_key(owner, kb, key),
+                0,
+            )
+            return docs
+
+        with patch.object(
+            reader._versions,
+            "list_documents",
+            expire_after_read,
+        ):
+            self.assertEqual(await reader.list_documents(), [])
 
     async def test_redis_expired_upload_is_not_an_sdk_document(self) -> None:
         """A live KB must not expose the old four chunks after row expiry."""
@@ -1702,8 +3211,8 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
             wraps=store.search,
         ) as searches, patch.object(
             self._storage,
-            "get_knowledge_document",
-            wraps=self._storage.get_knowledge_document,
+            "get_knowledge_documents",
+            wraps=self._storage.get_knowledge_documents,
         ) as reads, patch.object(
             self._storage,
             "list_knowledge_documents",

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-public-methods
 """The storage base class."""
+import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Any, Self
@@ -1166,6 +1167,21 @@ class StorageBase(ABC):
                 All knowledge base records belonging to the user.
         """
 
+    async def get_knowledge_publication_revision(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        live_ids: set[str] | None,
+    ) -> str | None:
+        """Return a catalog revision, or None to require a full reread.
+
+        Return None if any previously observed live row has since expired.
+        Backends providing this shortcut must invalidate the revision when
+        upload ownership, publication routing or retired KB aliases change.
+        """
+        del user_id, knowledge_base_id, live_ids
+        return None
+
     async def get_knowledge_vector_ownership(
         self,
         user_id: str,
@@ -1264,6 +1280,21 @@ class StorageBase(ABC):
             `KnowledgeDocumentRecord | None`:
                 The record, or ``None`` if not found.
         """
+
+    async def get_knowledge_documents(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        ids: set[str],
+    ) -> list[KnowledgeDocumentRecord]:
+        """Fetch selected uploads, honoring legacy single-record lookups."""
+        rows = await asyncio.gather(
+            *(
+                self.get_knowledge_document(user_id, knowledge_base_id, key)
+                for key in ids
+            ),
+        )
+        return [row for row in rows if row is not None]
 
     @abstractmethod
     async def list_knowledge_documents(

@@ -1197,6 +1197,41 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             [],
         )
 
+    async def test_scoped_batch_document_reads(self) -> None:
+        """Fetch documents from one owner's KB in a single session."""
+        owner = "user-1"
+        kb, other = _kb_record(owner), _kb_record(owner)
+        for record in (kb, other):
+            await self.storage.upsert_knowledge_base(owner, record)
+        docs = [_kd_record(owner, kb.id) for _ in range(5)]
+        foreign = _kd_record(owner, other.id)
+        for doc in [*docs, foreign]:
+            await self.storage.upsert_knowledge_document(owner, doc)
+        ids = {doc.id for doc in [*docs, foreign]} | {"missing"}
+        with patch.object(
+            self.storage,
+            "_session",
+            wraps=self.storage._session,
+        ) as sessions:
+            selected = await self.storage.get_knowledge_documents(
+                owner,
+                kb.id,
+                ids,
+            )
+        self.assertEqual(sessions.call_count, 1)
+        self.assertCountEqual(selected, docs)
+        self.assertEqual(
+            await self.storage.get_knowledge_documents("other", kb.id, ids),
+            [],
+        )
+        self.assertIsNone(
+            await self.storage.get_knowledge_publication_revision(
+                owner,
+                kb.id,
+                {doc.id for doc in docs},
+            ),
+        )
+
     async def test_pending_reindex_query_and_document_batch(self) -> None:
         """JSON batch markers survive SQL writes and status transitions."""
         kb = _kb_record("user-1")

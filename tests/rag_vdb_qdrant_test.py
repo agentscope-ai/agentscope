@@ -212,9 +212,9 @@ class QdrantMetricTest(IsolatedAsyncioTestCase):
                         set(),
                         set(),
                     )
-                    storage.get_knowledge_document.side_effect = (
-                        lambda _owner, _kb, key, row=far: (
-                            row if key == row.id else None
+                    storage.get_knowledge_documents.side_effect = (
+                        lambda _owner, _kb, ids, row=far: (
+                            [row] if row.id in ids else []
                         )
                     )
                     published = PublishedKnowledge(kb, storage, "user", "kb")

@@ -1,18 +1,38 @@
 # -*- coding: utf-8 -*-
 """Resolve hosted document IDs to their last fully published vectors."""
 
-import asyncio
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from typing import TYPE_CHECKING
 
+from ....message import DataBlock, TextBlock
 from ....rag import KnowledgeBase
-from ....rag._vdb import DocumentSummary, VectorSearchResult
+from ....rag._knowledge import _use_vector_search
+from ....rag._vdb import DocumentSummary, QdrantStore, VectorSearchResult
+from ....rag._vdb._vector_store import (
+    _observe_store_searches,
+    _RankStages,
+    _ReadHits,
+    _ReadWindow,
+    _StoreQuery,
+)
 from ._vector_slots import version_knowledge
 
 if TYPE_CHECKING:
     from ....rag import Chunk
     from ...storage import KnowledgeDocumentRecord, StorageBase
+
+
+def _matches_chunk(original: "Chunk", candidate: "Chunk") -> bool:
+    """Allow the ranker to add annotations to an otherwise identical chunk."""
+    return (
+        original.content == candidate.content
+        and original.source == candidate.source
+        and original.chunk_index == candidate.chunk_index
+        and original.total_chunks == candidate.total_chunks
+        and original.metadata.items() <= candidate.metadata.items()
+    )
 
 
 @dataclass(frozen=True)
@@ -61,11 +81,14 @@ class _Publications:
         lane: bool,
         key: str,
         logical: str,
+        *,
+        require_prior: bool = False,
     ) -> bool:
         """Check ownership on both sides of a reusable or SDK slot read."""
         row = self.records.get(logical)
         if (
-            row
+            not require_prior
+            and row
             and not row.data.alternate_index
             and row.data.reindex_id is None
         ):
@@ -77,6 +100,8 @@ class _Publications:
         if previous.visible_id(lane, key) != logical:
             return False
         prior = previous.records.get(logical)
+        if require_prior:
+            return prior == row
         if row and prior:
             return row.data.reindex_id == prior.data.reindex_id
         return row is None and prior is None
@@ -150,6 +175,237 @@ class PublishedKnowledge(KnowledgeBase):
         self._primary = knowledge
         self._versions = version_knowledge(knowledge)
 
+    @property
+    def primary(self) -> KnowledgeBase:
+        """Return the original handle selected by the manager."""
+        return self._primary
+
+    async def search(
+        self,
+        queries: list[str | TextBlock | DataBlock],
+        top_k: int = 5,
+        score_threshold: float | None = None,
+    ) -> list[VectorSearchResult]:
+        """Let the selected handle rank candidates from the published slots."""
+        search = self._primary.search
+        if getattr(search, "__func__", None) is KnowledgeBase.search:
+            return await super().search(queries, top_k, score_threshold)
+
+        verified: dict[tuple[str, int], "Chunk"] = {}
+
+        def snapshot(
+            hits: list[VectorSearchResult],
+        ) -> list[VectorSearchResult]:
+            for hit in hits:
+                key = (hit.document_id, hit.chunk.chunk_index)
+                verified[key] = hit.chunk.model_copy(deep=True)
+            # A ranker may mutate hits in place, even with a caching store.
+            return [hit.model_copy(deep=True) for hit in hits]
+
+        async def retrieve(
+            vector: list[float],
+            limit: int,
+        ) -> list[VectorSearchResult]:
+            with _observe_store_searches(None):
+                hits = await self._search_vector(vector, limit)
+            return snapshot(hits)
+
+        async def observe(
+            collection: str,
+            query: _StoreQuery,
+        ) -> list[VectorSearchResult]:
+            if collection not in (self.collection, self._versions.collection):
+                return await query.read()
+            alternate = collection == self._versions.collection
+            if alternate or not query.is_vector_search:
+                return snapshot(
+                    await self._published_physical_hits(alternate, query.read),
+                )
+            requested = query.argument("metadata_filter") or {}
+            scope = self.metadata_filter or {}
+            if any(
+                requested[k] != scope[k]
+                for k in requested.keys() & scope.keys()
+            ):
+                return []
+            metadata_filter = {**scope, **requested} or None
+
+            async def publish(
+                limit: int,
+                read_window: _ReadWindow,
+                *,
+                observed: dict[tuple[bool, str], _Publications] | None = None,
+            ) -> list[VectorSearchResult]:
+                return await self._search_vector(
+                    query.argument("query_vector"),
+                    limit,
+                    read_window=read_window,
+                    metadata_filter=metadata_filter,
+                    observed=observed,
+                )
+
+            async def publish_points(
+                rank: _RankStages,
+                staged: bool,
+            ) -> list[VectorSearchResult]:
+                if not staged:
+                    return snapshot(await rank(publish))
+                # A publication can move a prefetched point before rescoring.
+                # Recheck only the candidates selected by these stages.
+                observed = {}
+                while True:
+                    hits = await rank(partial(publish, observed=observed))
+                    if not observed:
+                        return snapshot(hits)
+                    current = await self._publications(
+                        {key for _, key in observed},
+                    )
+                    if all(
+                        (logical := current.visible_id(lane, key)) is not None
+                        and current.confirms_hit(
+                            prior,
+                            lane,
+                            key,
+                            logical,
+                            require_prior=True,
+                        )
+                        for (lane, key), prior in observed.items()
+                    ):
+                        return snapshot(hits)
+                    observed.clear()
+
+            if (
+                isinstance(query.store, QdrantStore)
+                and type(query.store).search is not QdrantStore.search
+            ):
+                # Let the backend rerank the complete native result page.
+                # pylint: disable-next=protected-access
+                hits, handled = await query.store._read_published_points(
+                    collection,
+                    query.read,
+                    publish_points,
+                )
+                if handled:
+                    return hits
+            if query.forwards_omitted_limit:
+                # Let the forwarder apply its own default on the logical
+                # collection. Rank and refill at the call receiving that limit.
+                forwarded = False
+
+                async def delegated(
+                    target: str,
+                    inner: _StoreQuery,
+                ) -> list[VectorSearchResult]:
+                    nonlocal forwarded
+                    if target != collection or not inner.is_vector_search:
+                        return await inner.read()
+                    forwarded = True
+                    return await observe(target, inner)
+
+                with _observe_store_searches((None, delegated)):
+                    hits = await query.read()
+                if forwarded:
+                    return hits
+            if query.argument("top_k") > 0:
+                return snapshot(
+                    await publish(query.argument("top_k"), query.window),
+                )
+            return snapshot(
+                await self._published_physical_hits(alternate, query.read),
+            )
+
+        with _observe_store_searches(
+            (self.vector_store, observe),
+        ), _use_vector_search(self._primary, retrieve):
+            if score_threshold is None:
+                hits = await search(queries=queries, top_k=top_k)
+            else:
+                hits = await search(
+                    queries=queries,
+                    top_k=top_k,
+                    score_threshold=score_threshold,
+                )
+
+        # Independently supplied hits can still match a published page.
+        result = []
+        for hit in hits:
+            key = (hit.document_id, hit.chunk.chunk_index)
+            original = verified.get(key)
+            if original is None:
+                try:
+                    chunks = await self.list_chunks(
+                        hit.document_id,
+                        offset=hit.chunk.chunk_index,
+                        limit=1,
+                    )
+                except NotImplementedError:
+                    continue
+                if not chunks:
+                    continue
+                original = chunks[0]
+            if _matches_chunk(original, hit.chunk):
+                result.append(hit)
+        return result
+
+    async def _published_physical_hits(
+        self,
+        alternate: bool,
+        read: _ReadHits,
+    ) -> list[VectorSearchResult]:
+        """Verify hits in the physical collection queried by the override."""
+        revision = await self._storage.get_knowledge_publication_revision(
+            self._owner,
+            self._kb_id,
+            None,
+        )
+        prior = None
+        while True:
+            hits = await read()
+            if not hits:
+                return hits
+            ids = {hit.document_id for hit in hits}
+            view = await self._publications(ids)
+            visible = []
+            for hit in hits:
+                logical = view.visible_id(alternate, hit.document_id)
+                if logical is not None and (
+                    (self.metadata_filter or {}).items()
+                    <= hit.chunk.metadata.items()
+                ):
+                    visible.append((logical, hit))
+            if revision is not None:
+                stable = revision == (
+                    await self._storage.get_knowledge_publication_revision(
+                        self._owner,
+                        self._kb_id,
+                        set(view.records),
+                    )
+                )
+                revision = None
+            else:
+                stable = (
+                    prior is not None
+                    and (prior.queried is None or ids <= prior.queried)
+                    and all(
+                        prior.visible_id(alternate, hit.document_id) == logical
+                        and prior.records.get(logical)
+                        == view.records.get(logical)
+                        for logical, hit in visible
+                    )
+                )
+            if stable:
+                return [
+                    hit.model_copy(update={"document_id": logical})
+                    for logical, hit in visible
+                ]
+            # Bracket a reusable slot or SDK hit with publication reads. A
+            # tied winner may change between calls even with the same vector.
+            prior = (
+                await self._publications(ids, bulk=True)
+                if prior is not None
+                else view
+            )
+
     async def _address(
         self,
         document_id: str,
@@ -171,28 +427,14 @@ class PublishedKnowledge(KnowledgeBase):
             return _DocumentAddress(self._versions, document_id)
         return _DocumentAddress(self._primary, document_id)
 
-    async def _records(
-        self,
-        ids: set[str],
-    ) -> dict[str, "KnowledgeDocumentRecord"]:
-        records = await asyncio.gather(
-            *(
-                self._storage.get_knowledge_document(
-                    self._owner,
-                    self._kb_id,
-                    key,
-                )
-                for key in ids
-            ),
-        )
-        return {record.id: record for record in records if record}
-
     async def _candidates(
         self,
         vector: list[float],
         top_k: int,
         excluded: set[tuple[bool, str]],
         collections: set[bool],
+        read_window: _ReadWindow | None,
+        metadata_filter: dict | None,
     ) -> dict[bool, list[VectorSearchResult]]:
         """Fetch each collection's best hits with its own exclusions."""
         candidates = {}
@@ -208,22 +450,33 @@ class PublishedKnowledge(KnowledgeBase):
                 candidates[alternate] = []
                 continue
             if alternate:
-                if (
-                    not await self.vector_store.is_search_index_ready(
-                        handle.collection,
-                    )
-                    and not await self._has_published_versions()
-                ):
+                if not await self.vector_store.is_search_index_ready(
+                    handle.collection,
+                ) and not await self._has_published_versions(metadata_filter):
                     candidates[alternate] = []
                     continue
                 await handle.ensure_collection()
             omit = {key for lane, key in excluded if lane == alternate}
-            if omit:
+            if read_window is not None:
+                hits = await read_window(
+                    handle.collection,
+                    top_k,
+                    metadata_filter,
+                    omit,
+                )
+                if metadata_filter:
+                    hits = [
+                        hit
+                        for hit in hits
+                        if metadata_filter.items()
+                        <= hit.chunk.metadata.items()
+                    ]
+            elif omit:
                 hits = await self.vector_store.search_excluding(
                     handle.collection,
                     vector,
                     top_k,
-                    self.metadata_filter,
+                    metadata_filter,
                     exclude_document_ids=omit,
                 )
             else:
@@ -231,16 +484,19 @@ class PublishedKnowledge(KnowledgeBase):
                     collection=handle.collection,
                     query_vector=vector,
                     top_k=top_k,
-                    metadata_filter=self.metadata_filter,
+                    metadata_filter=metadata_filter,
                 )
             candidates[alternate] = hits
         return candidates
 
-    async def _has_published_versions(self) -> bool:
+    async def _has_published_versions(
+        self,
+        metadata_filter: dict | None,
+    ) -> bool:
         """Check whether an unavailable companion holds any visible rows."""
         docs = await self.vector_store.list_documents(
             self._versions.collection,
-            metadata_filter=self.metadata_filter,
+            metadata_filter=metadata_filter,
         )
         ids = {doc.document_id for doc in docs}
         if not ids:
@@ -264,7 +520,12 @@ class PublishedKnowledge(KnowledgeBase):
             missing = None
         else:
             logical = ids | {key[1:] for key in ids if key.startswith("~")}
-            records = await self._records(logical)
+            rows = await self._storage.get_knowledge_documents(
+                self._owner,
+                self._kb_id,
+                logical,
+            )
+            records = {row.id: row for row in rows}
             missing = logical - records.keys()
         owned, retired = set(), set()
         if missing is None or missing:
@@ -293,6 +554,10 @@ class PublishedKnowledge(KnowledgeBase):
         self,
         vector: list[float],
         top_k: int,
+        *,
+        read_window: _ReadWindow | None = None,
+        metadata_filter: dict | None = None,
+        observed: dict[tuple[bool, str], _Publications] | None = None,
     ) -> list[VectorSearchResult]:
         """Refill only windows that can still improve the published top-k."""
         excluded: set[tuple[bool, str]] = set()
@@ -307,7 +572,16 @@ class PublishedKnowledge(KnowledgeBase):
             for lane in refill:
                 before_read[lane] = view
             windows.update(
-                await self._candidates(vector, top_k, excluded, refill),
+                await self._candidates(
+                    vector,
+                    top_k,
+                    excluded,
+                    refill,
+                    read_window,
+                    self.metadata_filter
+                    if read_window is None
+                    else metadata_filter,
+                ),
             )
             candidates = [
                 ((lane, hit.document_id), hit)
@@ -361,7 +635,13 @@ class PublishedKnowledge(KnowledgeBase):
                 logical = visible[lane, key]
                 assert logical is not None
                 prior = before_read[lane]
-                if not view.confirms_hit(prior, lane, key, logical):
+                if not view.confirms_hit(
+                    prior,
+                    lane,
+                    key,
+                    logical,
+                    require_prior=read_window is not None,
+                ):
                     refill.add(lane)
                     # Approximate search may return a different tied winner.
                     if (
@@ -371,6 +651,9 @@ class PublishedKnowledge(KnowledgeBase):
                     ):
                         bulk = True
             if not refill:
+                if observed is not None:
+                    for address, _ in ranked:
+                        observed.setdefault(address, view)
                 return [
                     hit.model_copy(update={"document_id": visible[addr]})
                     for addr, hit in ranked
@@ -444,6 +727,11 @@ class PublishedKnowledge(KnowledgeBase):
 
     async def list_documents(self) -> list[DocumentSummary]:
         """Expose one summary per published logical document."""
+        revision = await self._storage.get_knowledge_publication_revision(
+            self._owner,
+            self._kb_id,
+            None,
+        )
         view = await self._publications(set(), bulk=True)
         collections = [False, True]
         docs: dict[bool, list[DocumentSummary]] = {}
@@ -457,6 +745,17 @@ class PublishedKnowledge(KnowledgeBase):
                     docs[True] = await self._versions.list_documents()
                 else:
                     docs[True] = []
+            if revision is not None:
+                observed = (
+                    await self._storage.get_knowledge_publication_revision(
+                        self._owner,
+                        self._kb_id,
+                        set(view.records),
+                    )
+                )
+                if observed == revision:
+                    break
+                revision = observed
             current = await self._publications(set(), bulk=True)
             collections = [
                 lane

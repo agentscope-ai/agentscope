@@ -32,6 +32,9 @@ buggy parser cannot rebind a record into another scope.
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from ._document import Chunk
 from ._vdb import VectorRecord, VectorSearchResult, VectorStoreBase
@@ -39,6 +42,30 @@ from .._utils._common import _generate_id
 from ..embedding import EmbeddingModelBase
 from ..message import DataBlock, TextBlock
 from ._vdb import DocumentSummary
+
+
+_VectorSearch = Callable[
+    [list[float], int],
+    Awaitable[list[VectorSearchResult]],
+]
+_vector_search_scope: ContextVar[
+    tuple[tuple["KnowledgeBase", _VectorSearch], ...]
+] = ContextVar("knowledge_vector_search", default=())
+
+
+@contextmanager
+def _use_vector_search(
+    handle: "KnowledgeBase",
+    search: _VectorSearch,
+) -> Iterator[None]:
+    """Scope candidate retrieval to this handle and async context."""
+    token = _vector_search_scope.set(
+        ((handle, search), *_vector_search_scope.get()),
+    )
+    try:
+        yield
+    finally:
+        _vector_search_scope.reset(token)
 
 
 class KnowledgeBase:
@@ -256,8 +283,13 @@ class KnowledgeBase:
         await self.ensure_collection()
         response = await self._embedding_model(queries)
 
+        search = self._search_vector
+        for handle, retrieve in _vector_search_scope.get():
+            if handle is self:
+                search = retrieve
+                break
         tasks = [
-            asyncio.create_task(self._search_vector(vector, top_k))
+            asyncio.create_task(search(vector, top_k))
             for vector in response.embeddings
         ]
         try:
