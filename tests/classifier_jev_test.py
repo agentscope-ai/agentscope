@@ -264,6 +264,34 @@ class JevClassifierModelTest(IsolatedAsyncioTestCase):
             },
         )
 
+    @patch("typesafe_sdk.AsyncTypeSafeClient")
+    async def test_a_question_without_instructions_uses_its_name(
+        self,
+        client_cls: Any,
+    ) -> None:
+        """An omitted instruction falls back to the name, as in the OpenAI
+        adapter, so the question is never asked with no text at all."""
+        client = MagicMock()
+        client.system_one = AsyncMock(
+            return_value=SimpleNamespace(
+                model="jev-1.13.0",
+                answers={
+                    "restricted": typesafe_sdk.NoulAnswer(
+                        type="noul",
+                        noul=0.2,
+                    ),
+                },
+                usage=typesafe_sdk.Usage(input_tokens=5, output_tokens=1),
+            ),
+        )
+        client_cls.return_value = client
+        model = JevClassifierModel(TypeSafeCredential(api_key="secret"))
+
+        await model(state="hello", questions={"restricted": BinaryQuestion()})
+
+        questions = client.system_one.await_args.kwargs["questions"]
+        self.assertEqual(questions["restricted"].instructions, "restricted")
+
     async def test_incompatible_sdk_has_clear_error(self) -> None:
         """Missing SDK exports should produce an actionable error."""
         incompatible_sdk = SimpleNamespace(AsyncTypeSafeClient=MagicMock())

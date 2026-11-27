@@ -23,25 +23,31 @@ from .._usage import ClassifierUsage
 from ...credential import TypeSafeCredential
 
 
-def _to_sdk_question(question: ClassifierQuestion) -> Any:
-    """Translate an AgentScope question to a TypeSafe question."""
+def _to_sdk_question(name: str, question: ClassifierQuestion) -> Any:
+    """Translate an AgentScope question to a TypeSafe question.
+
+    The name stands in for the instructions when the question gives none,
+    so the model is never asked something with no text to it — the same
+    default the OpenAI Decisions adapter uses.
+    """
     from typesafe_sdk import Choice, Noul, Score
 
+    instructions = question.instructions or name
     match question:
         case BinaryQuestion():
             # The binary question maps to TypeSafe's Noul primitive
             criteria = question.criteria and question.criteria.model_dump(
                 exclude_unset=True,
             )
-            return Noul(instructions=question.instructions, criteria=criteria)
+            return Noul(instructions=instructions, criteria=criteria)
         case ChoiceQuestion():
             return Choice(
-                instructions=question.instructions,
+                instructions=instructions,
                 criteria=question.criteria,
             )
         case ScoreQuestion():
             return Score(
-                instructions=question.instructions,
+                instructions=instructions,
                 criteria=question.criteria,
             )
 
@@ -149,7 +155,7 @@ class JevClassifierModel(ClassifierModelBase):
             **{
                 "state": state,
                 "questions": {
-                    name: _to_sdk_question(question)
+                    name: _to_sdk_question(name, question)
                     for name, question in questions.items()
                 },
                 "model": self.model,
