@@ -438,6 +438,37 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
                 self.assertFalse(await self.bus.try_lock("k", ttl_secs=600))
             self.assertFalse(await self.bus.is_locked("k"))
 
+    async def test_expired_holder_cannot_release_a_successor_lease(
+        self,
+    ) -> None:
+        """A late ``unlock`` from an expired holder keeps the new claim."""
+        with patch.object(_bus.time, "monotonic") as monotonic:
+            monotonic.return_value = 1_000.0
+            claimed = asyncio.Event()
+            late_unlock = asyncio.Event()
+
+            async def stale_holder() -> None:
+                """Claim, outlive the lease, then clean up as usual."""
+                self.assertTrue(await self.bus.try_lock("k", ttl_secs=10))
+                claimed.set()
+                await late_unlock.wait()
+                await self.bus.unlock("k")
+
+            holder = asyncio.create_task(stale_holder())
+            await claimed.wait()
+
+            # The first lease expires and a second task claims the key.
+            monotonic.return_value = 1_000.0 + 30
+            self.assertFalse(await self.bus.is_locked("k"))
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
+
+            # The old holder now runs its cleanup and must not touch it.
+            late_unlock.set()
+            await holder
+
+            self.assertTrue(await self.bus.is_locked("k"))
+            self.assertFalse(await self.bus.try_lock("k", ttl_secs=600))
+
 
 class TestRegistryPrimitive(IsolatedAsyncioTestCase):
     """Mode F — ``registry_*`` hash-keyed namespace operations."""
