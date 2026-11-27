@@ -1695,6 +1695,91 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
                 result = self.parser.check_dangerous_command(cmd)
                 self.assertIsNone(result, f"Expected '{cmd}' to be safe")
 
+    async def test_quoted_dangerous_patterns(self) -> None:
+        """Shell quoting must not hide a dangerous pattern.
+
+        The shell removes quoting before executing the command, so every
+        quoted spelling below runs exactly like its unquoted form.
+        """
+        test_cases = [
+            ("chmod '777' /tmp/x", "chmod 777"),
+            ("chmod '-R' 777 /tmp/x", "chmod -R 777"),
+            ('chmod "777" /tmp/x', "chmod 777"),
+            ("chown '-R' root /tmp/x", "chown -R"),
+            ("kill '-9' 1", "kill -9"),
+            ("echo x > '/dev/sda'", "> /dev/"),
+            ("rm '-rf' /tmp/x", "rm -rf"),
+            ("sudo 'rm' file.txt", "sudo rm"),
+            (r"chmod \777 /tmp/x", "chmod 777"),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertEqual(result, expected)
+
+    async def test_quoted_safe_commands(self) -> None:
+        """Quoting alone must not turn a safe command into a dangerous one."""
+        safe_commands = [
+            "chmod '644' file.txt",
+            "chmod '+x' script.sh",
+            "kill '-l'",
+            "echo 'hello world'",
+        ]
+        for cmd in safe_commands:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsNone(result, f"Expected '{cmd}' to be safe")
+
+    async def test_ansi_c_quoted_dangerous_patterns(self) -> None:
+        """ANSI-C quoting is decoded by the shell before execution.
+
+        ``$'...'`` is one more way to spell the same bytes, so it must not
+        hide a pattern either.
+        """
+        test_cases = [
+            ("chmod $'777' /tmp/x", "chmod 777"),
+            (r"chmod $'\x37\x37\x37' /tmp/x", "chmod 777"),
+            ("kill $'-9' 1", "kill -9"),
+            ("echo x > $'/dev/sda'", "> /dev/"),
+            ("rm $'-rf' /tmp/x", "rm -rf"),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertEqual(result, expected)
+
+    async def test_ansi_c_quoted_safe_commands(self) -> None:
+        """Decoding ANSI-C quoting must not invent a dangerous pattern."""
+        safe_commands = [
+            "chmod $'644' file.txt",
+            "chmod $'+x' script.sh",
+            r"chmod $'\x36\x34\x34' file.txt",
+            "echo $'hello world'",
+        ]
+        for cmd in safe_commands:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsNone(result, f"Expected '{cmd}' to be safe")
+
+    async def test_ansi_c_out_of_range_codepoint_is_total(self) -> None:
+        """An escape naming no Unicode scalar must still return a decision.
+
+        ``\\U`` accepts up to eight hex digits, so it can name a value that
+        is not a Unicode scalar. ``chr`` raises for those, and nothing in the
+        permission check catches it, so the whole decision used to abort with
+        a traceback instead of answering. Keeping the escape literal makes
+        the check total: no pattern is invented, and no exception escapes.
+        """
+        commands = [
+            r"echo $'\U00110000'",
+            r"kill $'\uD800' 1",
+            r"chmod $'\U00110000' 777 /tmp/x",
+        ]
+        for cmd in commands:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsInstance(result, (str, type(None)))
+
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         self.parser = None
