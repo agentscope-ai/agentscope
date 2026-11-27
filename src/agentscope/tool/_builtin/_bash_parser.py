@@ -318,7 +318,8 @@ class BashCommandParser:
         """Extract file paths from a bash command using tree-sitter.
 
         Returns paths that are arguments to file-manipulating commands
-        (rm, mv, cp, chmod, chown, etc.) and output redirection targets.
+        (rm, mv, cp, chmod, chown, tee, etc.) and output redirection
+        targets.
 
         Args:
             command (`str`):
@@ -390,6 +391,12 @@ class BashCommandParser:
                 "sed",
                 "mkdir",
                 "rmdir",
+                # ``tee`` writes to every one of its file operands and to
+                # nothing else. In ``echo <key> | tee -a <file>`` the pipe
+                # is not a redirection and no other word names a file, so
+                # without this entry the command had no extractable path at
+                # all and the dangerous-path check never saw its target.
+                "tee",
             ]:
                 # Extract file arguments (skip flags)
                 for arg in args:
@@ -440,6 +447,7 @@ class BashCommandParser:
                 "touch",
                 "mkdir",
                 "rmdir",
+                "tee",
             ]:
                 cmd_name = token
                 # Look for file arguments after this command
