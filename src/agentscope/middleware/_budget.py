@@ -180,11 +180,15 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
                 }
 
             elif isinstance(event, ModelCallEndEvent):
-                # Update the used tokens
-                agent.state.middle_context[middleware_key][event.reply_id] += (
+                # A resumed reply may have no saved counter.
+                costs = agent.state.middle_context.get(middleware_key, {})
+                cost = (
                     self.input_token_weight * event.input_tokens
                     + self.output_token_weight * event.output_tokens
                 )
+                agent.state.middle_context[middleware_key] = {
+                    event.reply_id: costs.get(event.reply_id, 0) + cost,
+                }
 
             yield event
 
