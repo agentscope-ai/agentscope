@@ -177,6 +177,26 @@ class BashToolTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
+    async def test_unicode_copy_permissions(self) -> None:
+        """Check each copy target under the same working-directory policy."""
+        bash = Bash(dangerous_files=["protected.txt"])
+        context = PermissionContext(mode=PermissionMode.ACCEPT_EDITS)
+        cases = [
+            ("cp 中文 copy.txt", PermissionBehavior.ALLOW, False),
+            ("cp 中文 protected.txt", PermissionBehavior.ASK, True),
+            ("cp 中文 ../copy.txt", PermissionBehavior.PASSTHROUGH, False),
+        ]
+        for command, behavior, bypass_immune in cases:
+            with self.subTest(command=command):
+                decision = await bash.check_permissions(
+                    {"command": command},
+                    context,
+                )
+                self.assertEqual(
+                    (decision.behavior, decision.bypass_immune),
+                    (behavior, bypass_immune),
+                )
+
     async def test_simple_command(self) -> None:
         """Test executing a simple bash command."""
         chunks = []
@@ -217,6 +237,52 @@ class BashToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(chunks), 1)
         self.assertEqual(chunks[0].state, "error")
         self.assertIn("timed out", chunks[0].content[0].text.lower())
+
+    async def test_invalid_timeout_rejected(self) -> None:
+        """Reject nonpositive timeouts without calling the backend."""
+        for timeout in (0, -1):
+            with self.subTest(timeout=timeout):
+                backend = AsyncMock()
+                tool = Bash(backend=backend)
+                chunks = [
+                    chunk.model_dump(
+                        exclude={
+                            "id": True,
+                            "content": {"__all__": {"id", "created_at"}},
+                        },
+                    )
+                    async for chunk in tool.call(
+                        command='echo "hello world"',
+                        timeout=timeout,
+                    )
+                ]
+
+                self.assertEqual(
+                    chunks,
+                    [
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "Error: timeout must be at least "
+                                        f"1ms, got: {timeout}."
+                                    ),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": "error",
+                            "is_last": True,
+                            "metadata": {},
+                        },
+                    ],
+                )
+                backend.exec_shell.assert_not_awaited()
+
+    async def test_timeout_schema_minimum_is_one(self) -> None:
+        """JSON schema minimum for timeout is 1ms (#3307)."""
+        timeout_schema = self.bash_tool.input_schema["properties"]["timeout"]
+        self.assertEqual(timeout_schema["minimum"], 1)
 
 
 @unittest.skipIf(
@@ -651,3 +717,75 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
         """Clean up test fixtures."""
         self.bash_tool = None
         self.context = None
+
+
+class BashOutputLimitTest(IsolatedAsyncioTestCase):
+    """Test how the bash tool limits long output."""
+
+    @staticmethod
+    def _backend(exit_code: int, stdout: bytes) -> AsyncMock:
+        backend = AsyncMock()
+        backend.os_name = "posix"
+        backend.exec_shell.return_value = ExecResult(exit_code, stdout, b"")
+        return backend
+
+    async def _text(self, tool: Bash) -> tuple[str, str]:
+        chunks = [chunk async for chunk in await tool(command="long")]
+        return chunks[0].content[0].text, chunks[0].state
+
+    async def test_cut_output_reports_original_length(self) -> None:
+        """A cut output starts by saying how long it was."""
+        tool = Bash(backend=self._backend(0, b"x" * 100), max_output_chars=10)
+
+        text, state = await self._text(tool)
+
+        notice, output = text.split("\n", 1)
+        self.assertEqual(state, "running")
+        self.assertIn("the first 10 of 100 characters", notice)
+        self.assertEqual(output, "x" * 10)
+
+    async def test_failed_command_output_is_cut_the_same_way(self) -> None:
+        """A failed command's output gets the same limit and notice."""
+        tool = Bash(backend=self._backend(1, b"x" * 30001))
+
+        text, state = await self._text(tool)
+
+        notice, output = text.split("\n", 1)
+        self.assertEqual(state, "error")
+        message = "Command failed: long\n\nStdout:\n" + "x" * 30001
+        self.assertEqual(
+            notice,
+            "[Failure message truncated: showing the first 30000 of "
+            f"{len(message)} characters. To see the rest of the command "
+            "output, write it to a file and read the part you need.]",
+        )
+        self.assertEqual(output, message[:30000])
+
+    async def test_silent_failure_truncates_only_the_message(self) -> None:
+        """A silent failure has no command output to redirect."""
+        tool = Bash(backend=self._backend(1, b""), max_output_chars=10)
+
+        self.assertEqual(
+            await self._text(tool),
+            (
+                "[Failure message truncated: showing the first 10 of 21 "
+                "characters.]\nCommand fa",
+                "error",
+            ),
+        )
+
+    async def test_no_limit_returns_whole_output(self) -> None:
+        """``max_output_chars=None`` leaves the limit to the agent."""
+        tool = Bash(
+            backend=self._backend(0, b"x" * 100000),
+            max_output_chars=None,
+        )
+
+        text, _ = await self._text(tool)
+
+        self.assertEqual(text, "x" * 100000)
+
+    def test_rejects_non_positive_limit(self) -> None:
+        """A limit of zero or less is a configuration error."""
+        with self.assertRaises(ValueError):
+            Bash(max_output_chars=0)

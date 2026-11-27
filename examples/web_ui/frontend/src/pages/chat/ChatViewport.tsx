@@ -1,20 +1,28 @@
+import type { AgentEvent } from '@agentscope-ai/agentscope/event';
 import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
 import {
+	Activity,
 	BookText,
+	BrainCircuit,
 	ChevronDown,
 	Database,
 	ListTodo,
+	Mic,
 	PanelRight,
+	RefreshCw,
 	ShieldCheck,
 	UsersRound,
+	X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 
 import type {
 	ASRModelConfig,
 	ChatModelConfig,
 	PermissionMode,
+	PipelineVoiceConfig,
 	RealtimeModelConfig,
 	SessionKnowledgeConfig,
 	TTSModelConfig,
@@ -25,6 +33,7 @@ import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
+import { BackgroundTasksPanel } from '@/components/panel/BackgroundTasksPanel';
 import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
 import { McpPanel } from '@/components/panel/McpPanel';
 import { PanelDock, type PanelDescriptor, type PanelKey } from '@/components/panel/PanelDock.tsx';
@@ -34,6 +43,7 @@ import { TaskPanel } from '@/components/panel/TaskPanel';
 import { TeamPanel } from '@/components/panel/TeamPanel';
 import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBaseParametersPopover';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
+import { PipelineVoiceSettings } from '@/components/popover/PipelineVoiceSettings';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
 import { RealtimeModelSelect } from '@/components/select/RealtimeModelSelect';
@@ -43,6 +53,7 @@ import {
 	DropdownMenu,
 	DropdownMenuCheckboxItem,
 	DropdownMenuContent,
+	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -50,18 +61,33 @@ import {
 	ResizablePanel,
 	ResizablePanelGroup,
 } from '@/components/ui/resizable.tsx';
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select';
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { SidebarTrigger } from '@/components/ui/sidebar';
-import { useAvailableASRModels } from '@/hooks/useAvailableASRModels';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { findASRModelCard, useAvailableASRModels } from '@/hooks/useAvailableASRModels';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useAvailableRealtimeModels } from '@/hooks/useAvailableRealtimeModels';
+import { useBackgroundTasks } from '@/hooks/useBackgroundTasks';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
+import { usePipelineVoice } from '@/hooks/usePipelineVoice';
 import { useRealtimeVoice } from '@/hooks/useRealtimeVoice';
 import { useSessions } from '@/hooks/useSessions';
+import { useVoiceEngines } from '@/hooks/useVoiceEngines';
+import { useVoiceProfiles } from '@/hooks/useVoiceProfiles';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
+import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
+import type { VoicePlayback } from '@/lib/pipelineVoiceSession';
 
 const REALTIME_EXCLUDED_ENUM_VALUES: Record<string, unknown[]> = {
 	turn_detection: ['none'],
@@ -94,6 +120,9 @@ const MAX_PANELS_PER_COLUMN = 2;
 /** localStorage key holding the dock layout across page navigations. */
 const PANEL_LAYOUT_KEY = 'chat_panel_layout';
 
+/** localStorage key holding the preferred voice mode. */
+const VOICE_MODE_KEY = 'chat_voice_mode';
+
 // Typed as a full Record so adding a PanelKey without listing it here
 // is a compile error rather than a silently unrestorable panel.
 const KNOWN_PANELS: Record<PanelKey, true> = {
@@ -103,6 +132,7 @@ const KNOWN_PANELS: Record<PanelKey, true> = {
 	permission: true,
 	knowledge: true,
 	team: true,
+	background: true,
 };
 
 /**
@@ -180,7 +210,8 @@ function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
  */
 export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatViewportProps) {
 	const { t } = useTranslation();
-	const { sessions, refetch: refetchSessions } = useSessions(agentId);
+	const { sessions, refetch: refetchSessions, update: updateSession } = useSessions(agentId);
+	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
 	const { groups } = useAvailableModels();
 	const { groups: realtimeGroups } = useAvailableRealtimeModels();
 	const { groups: asrGroups, loading: asrModelsLoading } = useAvailableASRModels();
@@ -191,6 +222,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	);
 	const [selectedTTSModel, setSelectedTTSModel] = useState<TTSModelConfig | null>(null);
 	const [selectedASRModel, setSelectedASRModel] = useState<ASRModelConfig | null>(null);
+	const pipelineConfig = view?.session.config.pipeline_voice_config ?? null;
 	const [selectedRealtimeModel, setSelectedRealtimeModel] = useState<RealtimeModelConfig | null>(
 		null,
 	);
@@ -201,10 +233,48 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
 	const [configPending, setConfigPending] = useState(false);
+	const configWrite = useRef<symbol | null>(null);
+	useLayoutEffect(() => {
+		setConfigPending(false);
+		return () => {
+			configWrite.current = null;
+		};
+	}, [agentId, sessionId]);
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
 	// Persisted so leaving and returning to /chat keeps the same panels.
 	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>(loadPanelLayout);
+	const viewportRef = useRef<HTMLElement>(null);
+	const [panelsInSheet, setPanelsInSheet] = useState(false);
+	// Dismissing the narrow-screen overlay must preserve the desktop layout.
+	const [sheetOpen, setSheetOpen] = useState(true);
+	const [selectedSheetPanel, setSelectedSheetPanel] = useState<PanelKey | null>(null);
+
+	useEffect(() => {
+		const viewport = viewportRef.current;
+		if (!viewport) return;
+		let frame = 0;
+		// Measure available chat space, including changes to the app sidebars.
+		const observer = new ResizeObserver(([entry]) => {
+			// Change layout in the next frame, outside the observer's delivery loop.
+			window.cancelAnimationFrame(frame);
+			frame = window.requestAnimationFrame(() => {
+				setPanelsInSheet(entry.contentRect.width < 768);
+			});
+		});
+		observer.observe(viewport);
+		return () => {
+			observer.disconnect();
+			window.cancelAnimationFrame(frame);
+		};
+	}, []);
+
+	const dockLayout = panelsInSheet ? [] : panelLayout;
+	const sheetPanelKeys = panelLayout.flat();
+	const activeSheetPanel =
+		selectedSheetPanel && sheetPanelKeys.includes(selectedSheetPanel)
+			? selectedSheetPanel
+			: sheetPanelKeys[0];
 
 	useEffect(() => {
 		localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
@@ -263,13 +333,31 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	);
 
 	const realtimeVoice = useRealtimeVoice(agentId, sessionId);
-	const voiceBusy = realtimeVoice.state === 'active' || realtimeVoice.state === 'connecting';
+	const realtimeBusy = realtimeVoice.state === 'active' || realtimeVoice.state === 'connecting';
+	const [voiceMode, setVoiceMode] = useState<'realtime' | 'pipeline'>(() => {
+		try {
+			return localStorage.getItem(VOICE_MODE_KEY) === 'pipeline' ? 'pipeline' : 'realtime';
+		} catch {
+			return 'realtime';
+		}
+	});
+	useEffect(() => {
+		try {
+			localStorage.setItem(VOICE_MODE_KEY, voiceMode);
+		} catch {
+			// Keep mode switching available when browser storage is unavailable.
+		}
+	}, [voiceMode]);
+	const pipelineEventsRef = useRef<(event: AgentEvent) => VoicePlayback>(() => false);
+	const pipelineStopRef = useRef<() => void>(() => undefined);
 	const {
 		msgs,
 		loading: messagesLoading,
+		streamConnected,
 		phase,
 		activeReplyId,
 		queuedCount,
+		hasPendingInput,
 		queuedItems,
 		queueReorderDisabled,
 		send,
@@ -279,15 +367,21 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		moveQueued,
 		reorderQueued,
 		onUserConfirm,
+		onClientExternalToolResult,
+		onExternalExecutionResult,
 		onSubagentConfirm,
 		subagentHitl,
 		interrupt,
 	} = useMessages(agentId, sessionId, {
+		sessionName: view?.session.config.name,
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
 		onSessionUpdated: handleSessionUpdated,
-		isRealtimeAudioActive: () => voiceBusy,
+		isRealtimeAudioActive: () => realtimeBusy,
+		onVoiceEvent: (event) => pipelineEventsRef.current(event),
+		onStreamClosed: () => pipelineStopRef.current(),
 		sendRealtimeUserConfirm: realtimeVoice.userConfirm,
+		sendRealtimeExternalExecutionResult: realtimeVoice.externalExecutionResult,
 	});
 	const {
 		mcps,
@@ -322,6 +416,21 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		(key: PanelKey) => panelLayout.some((column) => column.includes(key)),
 		[panelLayout],
 	);
+	const backgroundOpen = isPanelOpen('background');
+	const {
+		data: backgroundData,
+		isPending: backgroundLoading,
+		error: backgroundError,
+		isPaused: backgroundPaused,
+		isFetching: backgroundRefreshing,
+		dataUpdatedAt: backgroundUpdatedAt,
+		refetch: refetchBackground,
+		visible: backgroundVisible,
+	} = useBackgroundTasks(
+		sessionId,
+		panelsInSheet ? sheetOpen && activeSheetPanel === 'background' : backgroundOpen,
+	);
+	const backgroundUnavailable = !!backgroundError || backgroundPaused;
 
 	/**
 	 * Persist a knowledge-base attachment change. `null` detaches every
@@ -353,20 +462,21 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	 * @param apply - Mirrors the change into local state on success.
 	 */
 	const patchConfig = useCallback(
-		async (body: UpdateSessionRequest, apply: () => void) => {
+		async (body: UpdateSessionRequest, apply?: () => void) => {
 			if (!sessionId || !agentId) return;
+			const write = Symbol();
+			configWrite.current = write;
 			setConfigPending(true);
 			try {
-				await sessionApi.update(sessionId, agentId, body);
-				apply();
-				await refetchSessions();
+				await updateSession(sessionId, body);
+				if (configWrite.current === write) apply?.();
 			} catch {
 				// Toast already shown; local state deliberately untouched.
 			} finally {
-				setConfigPending(false);
+				if (configWrite.current === write) setConfigPending(false);
 			}
 		},
-		[sessionId, agentId, refetchSessions],
+		[sessionId, agentId, updateSession],
 	);
 
 	const handleKnowledgeConfigChange = useCallback(
@@ -377,11 +487,6 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		},
 		[patchConfig],
 	);
-
-	// Declared above `panels` — the memo factory reads `view.team`
-	// eagerly on first render, so a later `const` would still be in
-	// the temporal dead zone.
-	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
 
 	const { status: workspaceStatus, refetch: refetchWorkspaceStatus } = useWorkspaceStatus(
 		agentId,
@@ -405,6 +510,52 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	// dock itself stays free of any data dependency.
 	const panels = useMemo<Record<PanelKey, PanelDescriptor>>(
 		() => ({
+			background: {
+				title: (
+					<span className="flex items-center gap-2">
+						{t('panel.background.title')}
+						{backgroundData && !backgroundUnavailable && (
+							<Badge variant="outline" className="tabular-nums">
+								{t('panel.background.runningCount', {
+									count: backgroundData.tasks.filter(
+										(task) => task.status === 'running',
+									).length,
+								})}
+							</Badge>
+						)}
+					</span>
+				),
+				icon: <Activity className="size-4" />,
+				actions: (
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						aria-label={t('panel.background.refresh')}
+						tooltip={t('panel.background.refresh')}
+						disabled={!sessionId || backgroundRefreshing}
+						onClick={() => void refetchBackground()}
+					>
+						<RefreshCw
+							className={
+								backgroundRefreshing ? 'motion-safe:animate-spin' : undefined
+							}
+						/>
+					</Button>
+				),
+				content: (
+					<BackgroundTasksPanel
+						key={sessionId}
+						sessionId={sessionId}
+						tasks={backgroundData?.tasks}
+						loading={backgroundLoading && !backgroundUnavailable}
+						error={backgroundUnavailable}
+						refreshing={backgroundRefreshing}
+						visible={backgroundVisible}
+						updatedAt={backgroundUpdatedAt}
+						onRefresh={() => void refetchBackground()}
+					/>
+				),
+			},
 			plan: {
 				title: t('panel.plan.title'),
 				icon: <ListTodo className="size-4" />,
@@ -495,6 +646,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		}),
 		[
 			t,
+			backgroundData,
+			backgroundUnavailable,
+			backgroundLoading,
+			backgroundRefreshing,
+			backgroundUpdatedAt,
+			backgroundVisible,
+			refetchBackground,
 			tasksContext,
 			mcps,
 			mcpsLoading,
@@ -557,7 +715,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 			if (card) return card;
 		}
 		return null;
-	}, [groups, selectedModel?.type, selectedModel?.model, selectedModel?.model_class]);
+	}, [groups, selectedModel]);
 
 	const selectedRealtimeModelCard = useMemo(() => {
 		if (!selectedRealtimeModel) return null;
@@ -574,16 +732,81 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		}
 		return null;
 	}, [realtimeGroups, selectedRealtimeModel]);
+	const realtimeUsesSessionChat =
+		selectedRealtimeModelCard?.delegation_backend === 'session_chat';
 
-	const selectedASRModelCard = useMemo(() => {
-		if (!selectedASRModel) return null;
-		for (const item of asrGroups[selectedASRModel.type] ?? []) {
-			if (item.credential.id !== selectedASRModel.credential_id) continue;
-			const card = item.models.find((model) => model.name === selectedASRModel.model);
-			if (card) return card;
-		}
-		return null;
-	}, [asrGroups, selectedASRModel]);
+	const selectedASRModelCard = useMemo(
+		() => findASRModelCard(asrGroups, selectedASRModel),
+		[asrGroups, selectedASRModel],
+	);
+
+	const pipelineASR = pipelineConfig?.asr_model_config ?? null;
+	const pipelineTTS = pipelineConfig?.tts_model_config ?? null;
+	const pipelineLLM = pipelineConfig?.chat_model_config ?? selectedModel;
+	const pipelineASRCard = useMemo(
+		() => findASRModelCard(asrGroups, pipelineASR),
+		[asrGroups, pipelineASR],
+	);
+	const pipelineConfigured =
+		!!pipelineLLM &&
+		!!pipelineTTS &&
+		!!pipelineASR &&
+		!!pipelineASRCard &&
+		(pipelineASRCard.realtime ||
+			pipelineASRCard.input_types.some((type) =>
+				['audio/wav', 'audio/x-wav', 'audio/*'].includes(type),
+			));
+	const storedPCM = pipelineTTS?.parameters?.response_format === 'pcm';
+	const checkProfile = storedPCM && !!pipelineTTS.voice_profile_id;
+	const { profiles, loading: profilesLoading } = useVoiceProfiles(checkProfile);
+	const { engineDetails, loading: enginesLoading } = useVoiceEngines(checkProfile);
+	const profile = profiles.find((item) => item.id === pipelineTTS?.voice_profile_id)?.data;
+	// A change of model or provider discards the saved format during server resolution.
+	const pipelineUnsupportedPCM =
+		storedPCM &&
+		(!pipelineTTS.voice_profile_id ||
+			(profile?.model === pipelineTTS.model &&
+				engineDetails.some(
+					(engine) =>
+						engine.name === profile.engine &&
+						engine.credential_type === pipelineTTS.type,
+				)));
+	const pipelineCanStart =
+		pipelineConfigured &&
+		!(checkProfile && (profilesLoading || enginesLoading)) &&
+		!pipelineUnsupportedPCM &&
+		streamConnected &&
+		!messagesLoading &&
+		!configPending &&
+		phase === 'idle' &&
+		!hasPendingInput &&
+		!realtimeBusy &&
+		getPendingHitlCalls(msgs).length === 0 &&
+		subagentHitl.length === 0;
+	const pipelineVoice = usePipelineVoice({
+		agentId,
+		sessionId,
+		asr: pipelineASR,
+		realtimeASR: !!pipelineASRCard?.realtime,
+		canStart: pipelineCanStart,
+		send: (blocks, observer) => send(blocks, 'pipeline_voice', observer),
+	});
+	const { onEvent: onPipelineEvent, stop: stopPipelineVoice, busy: pipelineBusy } = pipelineVoice;
+	useEffect(() => {
+		pipelineEventsRef.current = onPipelineEvent;
+		pipelineStopRef.current = () => {
+			if (pipelineBusy) {
+				toast.error(t('pipelineVoice.disconnected'));
+				void stopPipelineVoice();
+			}
+		};
+	}, [onPipelineEvent, stopPipelineVoice, pipelineBusy, t]);
+	const voiceBusy = realtimeBusy || pipelineVoice.busy;
+	const pipelineDisabledReason = !pipelineConfigured
+		? t('pipelineVoice.configure')
+		: pipelineUnsupportedPCM
+			? t('pipelineVoice.unsupportedPCM')
+			: t('pipelineVoice.busy');
 
 	/**
 	 * Pick the first model the available-models endpoint surfaces, used
@@ -740,6 +963,11 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		await patchConfig({ asr_model_config: config }, () => setSelectedASRModel(config));
 	};
 
+	/** Update pipeline speech settings without changing ordinary chat. */
+	const handlePipelineChange = async (patch: Partial<PipelineVoiceConfig>) => {
+		await patchConfig({ pipeline_voice_config: patch });
+	};
+
 	/** Persist the model used by browser realtime voice mode. */
 	const handleRealtimeModelChange = async (config: RealtimeModelConfig | null) => {
 		await patchConfig({ realtime_model_config: config }, () =>
@@ -779,8 +1007,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	/**
 	 * Persist a new working directory.
 	 *
-	 * Nothing local mirrors it — the value is read straight off the
-	 * session view, which `patchConfig` refetches on success.
+	 * The displayed directory comes from the session list cache.
 	 *
 	 * @param next - Directory relative to the workspace root, or `null`
 	 *   for the root itself.
@@ -790,12 +1017,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		// stays open on it, so the toast would be a duplicate and the
 		// swallowed rejection would let the dialog close as if it worked.
 		if (!sessionId || !agentId) return;
+		const write = Symbol();
+		configWrite.current = write;
 		setConfigPending(true);
 		try {
-			await sessionApi.update(sessionId, agentId, { cwd: next }, { silent: true });
-			await refetchSessions();
+			await updateSession(sessionId, { cwd: next }, { silent: true });
 		} finally {
-			setConfigPending(false);
+			if (configWrite.current === write) setConfigPending(false);
 		}
 	};
 
@@ -807,15 +1035,21 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 
 	return (
 		<>
-			<main className="flex size-full">
+			<main ref={viewportRef} className="flex size-full min-w-0">
 				<ResizablePanelGroup orientation="horizontal">
 					<ResizablePanel
 						className="flex flex-1 rounded-[22px] bg-card shadow-panel"
-						minSize="24rem"
+						minSize={panelsInSheet ? '100%' : '24rem'}
 					>
 						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
 							<div className="flex flex-row gap-x-2 justify-between">
-								<div className="flex min-w-0 flex-row items-center gap-x-1">
+								<div
+									className={
+										panelsInSheet
+											? 'flex min-w-0 max-w-24 self-start items-center gap-x-1'
+											: 'flex min-w-0 flex-row items-center gap-x-1'
+									}
+								>
 									<SidebarTrigger className="md:hidden" />
 									{/* The open session, named opposite its own
 									    settings. The sidebar is the only other
@@ -839,34 +1073,74 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										</span>
 									)}
 								</div>
-								{/* Never squeezed by a long session name: the
-								    name truncates instead. */}
-								<div className="flex shrink-0 flex-row gap-x-1">
-									<RealtimeModelSelect
-										value={selectedRealtimeModel}
-										onChange={handleRealtimeModelChange}
-										onAddCredential={() => setCredentialOpen(true)}
-										disabled={configPending || voiceBusy}
-										className="text-muted-foreground hover:text-foreground"
-									/>
-									<ModelParametersPopover
-										selectedModel={selectedRealtimeModel}
-										modelCard={selectedRealtimeModelCard}
-										onChange={handleRealtimeParametersChange}
-										idPrefix="realtime"
-										triggerLabel={t('realtime.parameters')}
-										disabled={configPending || voiceBusy}
-										hideArrayParameters
-										excludedEnumValues={REALTIME_EXCLUDED_ENUM_VALUES}
-									/>
+								{/* Keep the panel menu reachable when chat space is narrow. */}
+								<div
+									className={
+										panelsInSheet
+											? 'flex min-w-0 flex-1 flex-wrap justify-end gap-1'
+											: 'flex shrink-0 flex-row gap-x-1'
+									}
+								>
+									<Select
+										value={voiceMode}
+										onValueChange={(value) =>
+											setVoiceMode(value as 'realtime' | 'pipeline')
+										}
+										disabled={voiceBusy}
+									>
+										<SelectTrigger
+											size="sm"
+											aria-label={t('pipelineVoice.mode')}
+											className="max-w-full"
+										>
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="realtime">
+												{t('pipelineVoice.realtime')}
+											</SelectItem>
+											<SelectItem value="pipeline">
+												{t('pipelineVoice.pipeline')}
+											</SelectItem>
+										</SelectContent>
+									</Select>
+									{voiceMode === 'pipeline' && (
+										<PipelineVoiceSettings
+											config={pipelineConfig}
+											chatModel={selectedModel}
+											onChange={(patch) => void handlePipelineChange(patch)}
+											disabled={configPending || voiceBusy}
+										/>
+									)}
+									{voiceMode === 'realtime' && (
+										<>
+											<RealtimeModelSelect
+												value={selectedRealtimeModel}
+												onChange={handleRealtimeModelChange}
+												onAddCredential={() => setCredentialOpen(true)}
+												disabled={configPending || voiceBusy}
+												className="text-muted-foreground hover:text-foreground"
+											/>
+											<ModelParametersPopover
+												selectedModel={selectedRealtimeModel}
+												modelCard={selectedRealtimeModelCard}
+												onChange={handleRealtimeParametersChange}
+												idPrefix="realtime"
+												triggerLabel={t('realtime.parameters')}
+												disabled={configPending || voiceBusy}
+												hideArrayParameters
+												excludedEnumValues={REALTIME_EXCLUDED_ENUM_VALUES}
+											/>
+										</>
+									)}
 									<LlmSelect
 										id="tour-llm-select"
 										variant="ghost"
-										className="font-mono text-muted-foreground hover:text-foreground"
+										className="max-w-full font-mono text-muted-foreground hover:text-foreground"
 										value={selectedModel}
 										onChange={handleLlmChange}
 										onAddCredential={() => setCredentialOpen(true)}
-										disabled={configPending}
+										disabled={configPending || voiceBusy}
 									/>
 									<ModelParametersPopover
 										selectedModel={selectedModel}
@@ -878,7 +1152,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										onTTSChange={handleTTSChange}
 										selectedASRModel={selectedASRModel}
 										onASRChange={handleASRChange}
-										disabled={configPending}
+										disabled={configPending || voiceBusy}
 									/>
 									<PermissionModeSelect
 										id="tour-permission-mode"
@@ -900,58 +1174,104 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 											</Button>
 										</DropdownMenuTrigger>
 										<DropdownMenuContent align="end" className="w-auto">
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('plan')}
-												onCheckedChange={() => togglePanel('plan')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<ListTodo />
-												{t('panel.plan.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('mcp')}
-												onCheckedChange={() => togglePanel('mcp')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<MCPSvg className="size-4" />
-												MCP
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('skill')}
-												onCheckedChange={() => togglePanel('skill')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<BookText />
-												{t('panel.skill.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('permission')}
-												onCheckedChange={() => togglePanel('permission')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<ShieldCheck />
-												{t('panel.permission.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('knowledge')}
-												onCheckedChange={() => togglePanel('knowledge')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<Database />
-												{t('panel.knowledge.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('team')}
-												onCheckedChange={() => togglePanel('team')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<UsersRound />
-												{t('common.team')}
-											</DropdownMenuCheckboxItem>
+											{(
+												[
+													['background', t('panel.background.title')],
+													['plan', t('panel.plan.title')],
+													['mcp', 'MCP'],
+													['skill', t('panel.skill.title')],
+													['permission', t('panel.permission.title')],
+													['knowledge', t('panel.knowledge.title')],
+													['team', t('common.team')],
+												] satisfies [PanelKey, string][]
+											).map(([key, title]) =>
+												panelsInSheet ? (
+													<DropdownMenuItem
+														key={key}
+														onSelect={() => {
+															setPanelLayout((layout) =>
+																openPanelInLayout(layout, key),
+															);
+															setSelectedSheetPanel(key);
+															setSheetOpen(true);
+														}}
+													>
+														{panels[key].icon}
+														{title}
+													</DropdownMenuItem>
+												) : (
+													<DropdownMenuCheckboxItem
+														key={key}
+														checked={isPanelOpen(key)}
+														onCheckedChange={() => togglePanel(key)}
+														onSelect={(e) => e.preventDefault()}
+													>
+														{panels[key].icon}
+														{title}
+													</DropdownMenuCheckboxItem>
+												),
+											)}
 										</DropdownMenuContent>
 									</DropdownMenu>
 								</div>
 							</div>
+							{voiceMode === 'pipeline' &&
+								(pipelineVoice.busy ||
+									!pipelineConfigured ||
+									pipelineUnsupportedPCM) && (
+									<div className="mx-auto w-full max-w-3xl px-4 py-2 text-sm">
+										<div className="flex items-start gap-3">
+											<Mic className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+											<div
+												className="min-w-0 flex-1"
+												role="status"
+												aria-live="polite"
+											>
+												<p className="font-medium">
+													{t(
+														`pipelineVoice.states.${pipelineVoice.state}`,
+													)}
+												</p>
+												<p className="text-xs text-muted-foreground break-words">
+													{(pipelineUnsupportedPCM &&
+														t('pipelineVoice.unsupportedPCM')) ||
+														pipelineVoice.transcript ||
+														(pipelineConfigured
+															? t('pipelineVoice.description')
+															: t('pipelineVoice.configure'))}
+												</p>
+											</div>
+											{pipelineVoice.busy && (
+												<Button
+													size="sm"
+													variant="outline"
+													onClick={() => {
+														void pipelineVoice.stop();
+													}}
+												>
+													{t('realtime.stop')}
+												</Button>
+											)}
+										</div>
+									</div>
+								)}
+							{voiceMode === 'realtime' && realtimeUsesSessionChat && (
+								<div
+									className={
+										'flex min-h-7 items-center justify-end gap-1.5 px-2 ' +
+										'text-xs text-muted-foreground'
+									}
+								>
+									<BrainCircuit className="size-3.5 shrink-0" />
+									<span className="max-w-full truncate">
+										{selectedModel
+											? t('realtime.backendFollows', {
+													model: selectedModel.model,
+												})
+											: t('realtime.backendMissing')}
+									</span>
+								</div>
+							)}
 							<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:48rem]">
 								<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
@@ -971,15 +1291,55 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									disabled={selectedModel === null || voiceBusy}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
-									onInterrupt={interrupt}
+									onClientExternalToolResult={onClientExternalToolResult}
+									onExternalExecutionResult={onExternalExecutionResult}
+									onInterrupt={
+										pipelineVoice.busy
+											? () => {
+													void pipelineVoice.stop();
+												}
+											: interrupt
+									}
 									onUpdateQueued={updateQueued}
 									onDeleteQueued={deleteQueued}
 									onSteerQueued={steerQueued}
 									onMoveQueued={moveQueued}
 									onReorderQueued={reorderQueued}
-									voiceState={realtimeVoice.state}
-									onVoiceToggle={() => void realtimeVoice.toggle()}
-									voiceDisabled={!selectedRealtimeModel || !agentId || !sessionId}
+									voiceState={
+										voiceMode === 'pipeline'
+											? pipelineVoice.busy
+												? 'active'
+												: 'idle'
+											: realtimeVoice.state
+									}
+									voiceDisabledReason={
+										voiceMode === 'pipeline'
+											? pipelineDisabledReason
+											: undefined
+									}
+									onVoiceToggle={() => {
+										if (voiceMode === 'pipeline') {
+											void pipelineVoice.toggle();
+											return;
+										}
+										if (
+											!voiceBusy &&
+											realtimeUsesSessionChat &&
+											getPendingHitlCalls(msgs).length > 0
+										) {
+											toast.error(t('realtime.pendingChatInteraction'));
+											return;
+										}
+										void realtimeVoice.toggle();
+									}}
+									voiceDisabled={
+										voiceMode === 'pipeline'
+											? !pipelineCanStart
+											: !selectedRealtimeModel ||
+												!agentId ||
+												!sessionId ||
+												(realtimeUsesSessionChat && !selectedModel)
+									}
 									asrInputTypes={selectedASRModelCard?.input_types ?? []}
 									onTranscribe={handleTranscribe}
 									asrRealtime={!!selectedASRModelCard?.realtime}
@@ -1075,12 +1435,64 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 							</div>
 						</div>
 					</ResizablePanel>
-					{panelLayout.length > 0 && (
+					{dockLayout.length > 0 && (
 						<ResizableHandle withHandle className="bg-transparent w-1.5" />
 					)}
-					<PanelDock layout={panelLayout} panels={panels} onClosePanel={closePanel} />
+					<PanelDock layout={dockLayout} panels={panels} onClosePanel={closePanel} />
 				</ResizablePanelGroup>
 			</main>
+			{panelsInSheet && activeSheetPanel && (
+				<Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+					<SheetContent
+						className="gap-0 data-[side=right]:w-full sm:max-w-md"
+						aria-describedby={undefined}
+						showCloseButton={false}
+					>
+						<SheetHeader className="flex-row items-center justify-between gap-2">
+							<SheetTitle className="min-w-0 text-sm">
+								{panels[activeSheetPanel].title}
+							</SheetTitle>
+							<div className="flex shrink-0 items-center gap-1">
+								{panels[activeSheetPanel].actions}
+								<SheetClose asChild>
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										aria-label={t('common.close')}
+									>
+										<X />
+									</Button>
+								</SheetClose>
+							</div>
+						</SheetHeader>
+						<Tabs
+							value={activeSheetPanel}
+							onValueChange={(key) => setSelectedSheetPanel(key as PanelKey)}
+							className="min-h-0 flex-1 gap-3 px-4 pb-4"
+						>
+							<div className="shrink-0 overflow-x-auto">
+								<TabsList>
+									{sheetPanelKeys.map((key) => (
+										<TabsTrigger key={key} value={key}>
+											{panels[key].icon}
+											{panels[key].title}
+										</TabsTrigger>
+									))}
+								</TabsList>
+							</div>
+							{sheetPanelKeys.map((key) => (
+								<TabsContent
+									key={key}
+									value={key}
+									className="min-h-0 overflow-y-auto"
+								>
+									{panels[key].content}
+								</TabsContent>
+							))}
+						</Tabs>
+					</SheetContent>
+				</Sheet>
+			)}
 			<CreateCredentialDialog open={credentialOpen} onOpenChange={setCredentialOpen} />
 		</>
 	);

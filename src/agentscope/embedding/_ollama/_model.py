@@ -101,6 +101,10 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
 
         Returns:
             `EmbeddingResponse`: Embedding vectors and usage info.
+
+        Raises:
+            `RuntimeError`: The API returned a different number of vectors
+                than the number of inputs in this batch.
         """
         api_kwargs: dict[str, Any] = {
             "input": inputs,
@@ -116,11 +120,12 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
             "endpoint": self._cache_endpoint,
             "api_kwargs": api_kwargs,
         }
+        cached = None
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
                 identifier=cache_identifier,
             )
-            if cached:
+            if cached is not None and len(cached) == len(inputs):
                 return EmbeddingResponse(
                     embeddings=cached,
                     usage=EmbeddingUsage(tokens=0, time=0),
@@ -131,14 +136,22 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
         response = await self.client.embed(**api_kwargs)
         time = (datetime.now() - start_time).total_seconds()
 
+        embeddings = response.embeddings
+        if len(embeddings) != len(inputs):
+            raise RuntimeError(
+                f"Ollama returned {len(embeddings)} embedding vectors "
+                f"for {len(inputs)} inputs.",
+            )
+
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=cache_identifier,
-                embeddings=response.embeddings,
+                embeddings=embeddings,
+                overwrite=cached is not None,
             )
 
         return EmbeddingResponse(
-            embeddings=response.embeddings,
+            embeddings=embeddings,
             usage=EmbeddingUsage(
                 tokens=getattr(response, "prompt_eval_count", None),
                 time=time,

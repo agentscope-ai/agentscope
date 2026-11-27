@@ -1,6 +1,8 @@
 name: qwen3-tts-flash-realtime
 label: Qwen3-TTS-Flash-Realtime
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2025-11-27
 realtime: true
 
 input_types:

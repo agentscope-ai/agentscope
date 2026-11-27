@@ -51,7 +51,14 @@ class _FakeClient:
         self.bulk = AsyncMock(return_value={"errors": False, "items": []})
         self.open_point_in_time = AsyncMock()
         self.close_point_in_time = AsyncMock()
-        self.delete_by_query = AsyncMock()
+        self.delete_by_query = AsyncMock(
+            return_value={
+                "timed_out": False,
+                "version_conflicts": 0,
+                "failures": [],
+                "deleted": 0,
+            },
+        )
         self.search = AsyncMock()
         self.close = AsyncMock()
 
@@ -181,6 +188,42 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
                     refresh=True,
                 )
 
+    async def test_none_metadata_filter_value_is_rejected(self) -> None:
+        """None cannot be expressed as an Elasticsearch term query."""
+        unreachable = AssertionError("the filter must fail before any request")
+        self.client.search.side_effect = unreachable
+        self.client.open_point_in_time.side_effect = unreachable
+        self.client.delete_by_query.side_effect = unreachable
+        scope = {"reviewer": None}
+        calls = {
+            "search": lambda: self.store.search(
+                "shared",
+                [1.0, 0.0],
+                metadata_filter=scope,
+            ),
+            "list_documents": lambda: self.store.list_documents(
+                "shared",
+                metadata_filter=scope,
+            ),
+            "list_chunks": lambda: self.store.list_chunks(
+                "shared",
+                "doc",
+                metadata_filter=scope,
+            ),
+            "delete": lambda: self.store.delete(
+                "shared",
+                "doc",
+                metadata_filter=scope,
+            ),
+        }
+        for name, call_store in calls.items():
+            with self.subTest(method=name):
+                with self.assertRaisesRegex(ValueError, "'reviewer'"):
+                    await call_store()
+        self.client.search.assert_not_awaited()
+        self.client.open_point_in_time.assert_not_awaited()
+        self.client.delete_by_query.assert_not_awaited()
+
     async def test_delete_by_document_id(self) -> None:
         await self.store.delete("kb-1", "doc-1")
 
@@ -190,6 +233,24 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
             conflicts="proceed",
             refresh=True,
         )
+
+    async def test_delete_reports_incomplete_responses(self) -> None:
+        cases: tuple[tuple[dict[str, Any], str], ...] = (
+            ({"version_conflicts": 1}, "version_conflicts=1"),
+            ({"timed_out": True}, "timed_out=True"),
+            ({"failures": [{"status": 503}]}, "failures=1"),
+        )
+        for incomplete, diagnostic in cases:
+            with self.subTest(incomplete=incomplete):
+                self.client.delete_by_query.return_value = {
+                    "timed_out": False,
+                    "version_conflicts": 0,
+                    "failures": [],
+                    "deleted": 1,
+                    **incomplete,
+                }
+                with self.assertRaisesRegex(RuntimeError, diagnostic):
+                    await self.store.delete("kb-1", "doc-1")
 
     async def test_search_with_metadata_filter(self) -> None:
         chunk = _record("doc-1", 0, {"tenant": "bank-a"}).chunk

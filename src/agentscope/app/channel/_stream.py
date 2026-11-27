@@ -62,7 +62,8 @@ async def open_reply_stream(
         """Buffer live subscription events into the local queue."""
         try:
             async for evt in bus.subscribe(event_key, on_ready=ready.set):
-                await queue.put(evt)
+                if MessageBusKeys.SESSION_BARRIER_FIELD not in evt:
+                    await queue.put(evt)
         except Exception as error:
             await queue.put(error)
             raise
@@ -146,6 +147,10 @@ async def _read(
                 if str(eid) in seen:
                     continue
                 seen.add(str(eid))
+            if "_previous_entry_id" in evt:
+                evt = {
+                    k: v for k, v in evt.items() if k != "_previous_entry_id"
+                }
             yield evt
             if evt.get("type", "") in _TERMINAL_EVENTS:
                 return

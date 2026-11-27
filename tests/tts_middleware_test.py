@@ -15,7 +15,7 @@ from agentscope.event import (
     TextBlockDeltaEvent,
     TextBlockEndEvent,
 )
-from agentscope.message import Base64Source, DataBlock
+from agentscope.message import Base64Source, DataBlock, UserMsg
 from agentscope.middleware import TTSMiddleware
 from agentscope.tts import TTSModelBase, TTSResponse
 
@@ -496,11 +496,18 @@ class TestTTSFailureIsolation(IsolatedAsyncioTestCase):
                     "__aexit__": ("cleanup", len(self.events)),
                 }[operation]
                 expected = list(self.events)
+                failure_value: dict = {"reply_id": "reply-1", "stage": stage}
+                if stage == "initialization":
+                    failure_value = {
+                        "reply_id": None,
+                        "stage": stage,
+                        "message_ids": [],
+                    }
                 expected.insert(
                     position,
                     CustomEvent(
                         name="tts_error",
-                        value={"reply_id": "reply-1", "stage": stage},
+                        value=failure_value,
                     ),
                 )
                 self.assertEqual(
@@ -510,6 +517,40 @@ class TestTTSFailureIsolation(IsolatedAsyncioTestCase):
                 failing.assert_awaited_once()
                 failing.side_effect = None
                 self.tts.reset_mock()
+
+    async def test_initialization_error_identifies_new_input(self) -> None:
+        """An old state reply ID must not label a new input's TTS failure."""
+        self.tts.__aenter__.side_effect = RuntimeError("provider unavailable")
+        inputs = [UserMsg(name="user", content="voice", id="new-input")]
+        for previous in ("", "previous-reply"):
+            with self.subTest(previous=previous):
+                emitted = [
+                    event
+                    async for event in TTSMiddleware(
+                        self.tts,
+                        continue_on_error=True,
+                    ).on_reply(
+                        _make_agent_stub(reply_id=previous),
+                        {"inputs": inputs},
+                        self._text,
+                    )
+                ]
+                self.assertEqual(
+                    [_dump(event) for event in emitted],
+                    [
+                        _dump(
+                            CustomEvent(
+                                name="tts_error",
+                                value={
+                                    "stage": "initialization",
+                                    "message_ids": ["new-input"],
+                                    "reply_id": None,
+                                },
+                            ),
+                        ),
+                    ]
+                    + [_dump(event) for event in self.events],
+                )
 
     async def test_stream_failure_closes_audio_block_and_continues_text(
         self,

@@ -23,3 +23,4 @@ export type {
 export type { TTSModelCard } from './types';
 export { channelApi } from './channel';
 export { healthApi } from './health';
+export { backgroundTaskApi } from './backgroundTask';

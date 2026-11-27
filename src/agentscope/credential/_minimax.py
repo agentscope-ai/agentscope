@@ -9,6 +9,7 @@ from ._base import CredentialBase
 
 if TYPE_CHECKING:
     from ..model import ChatModelBase
+    from ..tts import TTSModelBase, VoiceCloningClientBase
 
 # MiniMax's recommended Anthropic-compatible endpoint (international site)
 _MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
@@ -40,3 +41,19 @@ class MiniMaxCredential(CredentialBase):
         from ..model import MiniMaxChatModel
 
         return MiniMaxChatModel
+
+    @classmethod
+    def get_voice_cloning_client_class(
+        cls,
+    ) -> Type["VoiceCloningClientBase"] | None:
+        """Return the MiniMax voice creation client."""
+        from ..tts import MiniMaxVoiceCloningClient
+
+        return MiniMaxVoiceCloningClient
+
+    @classmethod
+    def get_tts_model_classes(cls) -> list[Type["TTSModelBase"]]:
+        """Return the MiniMax TTS model classes."""
+        from ..tts import MiniMaxTTSModel
+
+        return [MiniMaxTTSModel]

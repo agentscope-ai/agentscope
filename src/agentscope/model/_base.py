@@ -17,7 +17,11 @@ from ._utils import _StreamAccumulator
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..credential import CredentialBase
-from ..exception import StructuredOutputError, ToolJSONDecodeError
+from ..exception import (
+    ContentBlockedError,
+    StructuredOutputError,
+    ToolJSONDecodeError,
+)
 from ..message import (
     Msg,
     TextBlock,
@@ -68,6 +72,8 @@ class ChatModelBase:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         context_size: int = 32768,
+        raise_on_refusal: bool = False,
+        raise_on_content_filter: bool = False,
     ) -> None:
         """Initialize the chat model base.
 
@@ -88,6 +94,22 @@ class ChatModelBase:
                 Seconds to sleep between retry attempts.
             context_size (`int`, defaults to `32768`):
                 The model context size used for context compression.
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether a provider's explicit refusal signal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
+            raise_on_content_filter (`bool`, defaults to `False`):
+                Opt in to content-filter exceptions and SDK error
+                normalization, including structured-output calls. When
+                disabled, preserve legacy parsing and SDK exceptions.
+                This does not change the provider's filtering policy.
+
+        Content-block exceptions do not use this model's SDK retry budget.
+        Before a result or stream is returned, Agent may retry OUTPUT blocks
+        within ``ModelConfig.max_retries`` if no output was emitted and no
+        review is required. After a stream is returned, consumption errors
+        are surfaced without Agent retries or fallback-model switching,
+        even before the first chunk. This boundary depends on when the error
+        occurs, not just whether ``stream`` is enabled.
         """
         self.credential = credential
         self.model = model
@@ -96,6 +118,8 @@ class ChatModelBase:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.context_size = context_size
+        self.raise_on_refusal = raise_on_refusal
+        self.raise_on_content_filter = raise_on_content_filter
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -107,6 +131,32 @@ class ChatModelBase:
         optional dependency.
         """
         return ()
+
+    def _normalize_exception(self, error: Exception) -> Exception:
+        """Normalize a provider exception before retry classification.
+
+        Provider implementations can override this hook to translate SDK
+        exceptions into AgentScope exceptions such as
+        :class:`~agentscope.exception.ContentBlockedError`. Returning the
+        original exception preserves the default behavior.
+
+        The hook is used for ordinary calls, stream-consumption failures,
+        and structured-output calls. Return an exception rather than raising
+        it here: the caller classifies retries or structured-output fallback
+        and chains a replacement exception when raising it. Stream failures
+        are normalized without retrying inside the model stream wrapper.
+        This hook does not invoke agent recovery middleware.
+
+        Args:
+            error (`Exception`):
+                The exception raised by the provider SDK.
+
+        Returns:
+            `Exception`:
+                A normalized exception, or the original object unchanged
+                when the provider signal is not recognized.
+        """
+        return error
 
     def _get_disable_thinking_kwargs(self) -> dict:
         """Return kwargs that disable thinking for this provider.
@@ -226,16 +276,19 @@ class ChatModelBase:
                 )
 
             except Exception as e:
-                if not isinstance(e, retryable):
+                normalized_error = self._normalize_exception(e)
+                if not isinstance(normalized_error, retryable):
+                    if normalized_error is not e:
+                        raise normalized_error from e
                     raise
-                last_error = e
+                last_error = normalized_error
                 if attempt < self.max_retries:
                     logger.warning(
                         "Attempt %d failed for model %s: %s. "
                         "Retrying in %.1fs...",
                         attempt + 1,
                         self.model,
-                        str(e),
+                        str(normalized_error),
                         self.retry_delay,
                     )
                     await asyncio.sleep(self.retry_delay)
@@ -264,6 +317,7 @@ class ChatModelBase:
             # For backward compatibility
             yield_acc_res = True
             acc_res = _StreamAccumulator()
+            emitted = False
             try:
                 async for chunk in res:
                     if not chunk.is_last:
@@ -281,10 +335,18 @@ class ChatModelBase:
                             continue
                     else:
                         yield_acc_res = False
+                    emitted = True
                     yield chunk
             except asyncio.CancelledError:
                 acc_res.finished_reason = FinishedReason.INTERRUPTED
                 yield_acc_res = True
+            except Exception as e:
+                normalized_error = self._normalize_exception(e)
+                if isinstance(normalized_error, ContentBlockedError):
+                    normalized_error.partial_output |= emitted
+                if normalized_error is not e:
+                    raise normalized_error from e
+                raise
             finally:
                 # Closing this wrapper does not close the delegated iterator.
                 # Wait for provider cleanup before ``aclose`` returns.
@@ -561,10 +623,11 @@ class ChatModelBase:
                     # CancelledError / KeyboardInterrupt derive from
                     # BaseException and are not caught here, so they
                     # propagate as expected.
+                    normalized_error = self._normalize_exception(e)
                     if first_error is None:
-                        first_error = e
-                    last_error = e
-                    if isinstance(e, retryable):
+                        first_error = normalized_error
+                    last_error = normalized_error
+                    if isinstance(normalized_error, retryable):
                         # Transient error: retry the same strategy. A
                         # different strategy hits the same endpoint, so
                         # switching would not help a rate limit or timeout.
@@ -574,13 +637,17 @@ class ChatModelBase:
                                 "failed: %s. Retrying in %.1fs...",
                                 attempt + 1,
                                 self.model,
-                                e,
+                                normalized_error,
                                 self.retry_delay,
                             )
                             await asyncio.sleep(self.retry_delay)
                             continue
-                        raise  # retries exhausted -> give up
-                    if not isinstance(e, fallback):
+                        if normalized_error is not e:
+                            raise normalized_error from e
+                        raise
+                    if not isinstance(normalized_error, fallback):
+                        if normalized_error is not e:
+                            raise normalized_error from e
                         raise
                     # Structured-output compatibility failure: try the next
                     # strategy.
@@ -589,7 +656,7 @@ class ChatModelBase:
                         "Trying next.",
                         name,
                         self.model,
-                        e,
+                        normalized_error,
                     )
                     break
 

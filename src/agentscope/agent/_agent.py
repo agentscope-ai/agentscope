@@ -2,8 +2,8 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import collections
-import json
 import inspect
+import json
 import re
 import warnings
 
@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import (
     Any,
     AsyncGenerator,
+    Iterator,
     Sequence,
     List,
     TYPE_CHECKING,
@@ -22,7 +23,7 @@ from typing import (
 )
 
 import jsonschema
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ._config import (
     ContextConfig,
@@ -31,8 +32,7 @@ from ._config import (
     InjectionConfig,
     _validate_context_config_ratios,
 )
-from ..state import AgentState
-from ..state._state import ReplyContext
+from ..state import AgentState, ReplyContext
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
 from .._logging import logger
 from .._utils._common import (
@@ -72,7 +72,11 @@ from ..event import (
     UserInterruptEvent,
     HintBlockEvent,
 )
-from ..exception import AgentOrientedException
+from ..exception import (
+    AgentOrientedException,
+    ContentBlockedError,
+    ContentBlockedPhase,
+)
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -97,6 +101,8 @@ from ..message import (
     HintBlock,
 )
 from ..tool import (
+    AskUser,
+    AskUserParams,
     Toolkit,
     ToolBase,
     ToolChunk,
@@ -115,6 +121,7 @@ from ..workspace import Offloader, WorkspaceBase
 
 # The name of the tool that the agent uses to compress its own context
 _COMPRESSION_TOOL_NAME = "CompressContext"
+_EXTERNAL_REQUEST_ID = "_agentscope_external_request_id"
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
@@ -455,6 +462,10 @@ class Agent:
             await self.compress_context(context_config=context_config)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
+            if isinstance(e, ContentBlockedError) and (
+                e.partial_output or e.requires_review
+            ):
+                raise
             return ToolChunk(
                 content=[TextBlock(text=f"Context compression failed: {e}")],
                 state=ToolResultState.ERROR,
@@ -630,6 +641,10 @@ class Agent:
             )
 
         except Exception as error:
+            if isinstance(error, ContentBlockedError) and (
+                error.partial_output or error.requires_review
+            ):
+                raise
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -668,6 +683,11 @@ class Agent:
                         structured_model=cfg.summary_schema,
                     )
                 except Exception as retry_error:
+                    if isinstance(retry_error, ContentBlockedError) and (
+                        retry_error.partial_output
+                        or retry_error.requires_review
+                    ):
+                        raise
                     error = retry_error
 
             if res is None:
@@ -741,10 +761,12 @@ class Agent:
                 and self._get_reply_usage() is None
             ):
                 self.state.append_context(self.name, [])
-                self.state.context[-1].usage = current_reply_usage
+                reply = self.state.get_reply_message(self.name)
+                assert reply is not None
+                reply.usage = current_reply_usage
 
             # The compression call is not covered by the model call events,
-            # so record its cost on the context tail to keep it in the token
+            # so record its cost in the context to keep it in the token
             # accounting
             if res is not None and res.usage is not None:
                 if not self.state.context:
@@ -752,7 +774,11 @@ class Agent:
                     # empty message, which is skipped by the formatters
                     self.state.append_context(self.name, [])
 
-                self.state.context[-1].append_usage(
+                usage_message = (
+                    self.state.get_reply_message(self.name)
+                    or self.state.context[-1]
+                )
+                usage_message.append_usage(
                     Usage(
                         input_tokens=res.usage.input_tokens,
                         output_tokens=res.usage.output_tokens,
@@ -962,70 +988,63 @@ class Agent:
                     self._receive_reply_end = True
                 yield item
 
-    async def _close_unfinished_tool_calls(
-        self,
-    ) -> AsyncGenerator[
-        ToolResultStartEvent | ToolResultTextDeltaEvent | ToolResultEndEvent,
-        None,
-    ]:
-        """Close the unfinished tool calls on interruption, so the next
-        input will be handled normally."""
-        if not self.state.context:
-            return
-
-        last_msg = self.state.context[-1]
-        if last_msg.role != "assistant" or last_msg.name != self.name:
-            return
-
-        # Searching for tool calls that requires user confirmation or external
-        # execution without tool results
-        awaiting_tool_calls: dict = {}
-        for index, block in enumerate(last_msg.content):
-            if isinstance(block, ToolCallBlock):
-                awaiting_tool_calls[block.id] = index
-            elif isinstance(block, ToolResultBlock):
-                awaiting_tool_calls.pop(block.id, None)
-
+    @staticmethod
+    def interrupt_reply(
+        state: AgentState,
+        name: str,
+    ) -> Iterator[AgentEvent]:
+        """Close the current reply's unfinished tools and emit its end."""
         interruption_message = (
             "<system-reminder>The tool call has been interrupted by "
             "the user.</system-reminder>"
         )
+        reply = state.get_reply_message(name)
+        pending: dict[str, ToolCallBlock] = {}
+        if reply is not None:
+            for block in reply.content:
+                if isinstance(block, ToolCallBlock):
+                    pending[block.id] = block
+                elif isinstance(block, ToolResultBlock):
+                    pending.pop(block.id, None)
 
-        for index in awaiting_tool_calls.values():
-            call_block = last_msg.content[index]
-            assert isinstance(call_block, ToolCallBlock)
-
-            # ALLOWED calls are running and SUBMITTED external calls are
-            # awaiting their result; both already emitted START.
-            if call_block.state not in (
+        for call in pending.values():
+            # Running and externally submitted calls already emitted START.
+            if call.state not in (
                 ToolCallState.ALLOWED,
                 ToolCallState.SUBMITTED,
             ):
                 yield ToolResultStartEvent(
-                    reply_id=self.state.reply_id,
-                    tool_call_id=last_msg.content[index].id,
-                    tool_call_name=last_msg.content[index].name,
+                    reply_id=state.reply_id,
+                    tool_call_id=call.id,
+                    tool_call_name=call.name,
                 )
-
-            call_block.state = ToolCallState.FINISHED
+            call.state = ToolCallState.FINISHED
             yield ToolResultTextDeltaEvent(
-                reply_id=self.state.reply_id,
-                tool_call_id=last_msg.content[index].id,
+                reply_id=state.reply_id,
+                tool_call_id=call.id,
                 delta=interruption_message,
             )
             yield ToolResultEndEvent(
-                reply_id=self.state.reply_id,
-                tool_call_id=last_msg.content[index].id,
+                reply_id=state.reply_id,
+                tool_call_id=call.id,
                 state=ToolResultState.INTERRUPTED,
             )
-            last_msg.content.append(
-                ToolResultBlock(
-                    id=last_msg.content[index].id,
-                    name=last_msg.content[index].name,
-                    output=interruption_message,
-                    state=ToolResultState.INTERRUPTED,
-                ),
+            state.append_context(
+                name,
+                [
+                    ToolResultBlock(
+                        id=call.id,
+                        name=call.name,
+                        output=interruption_message,
+                        state=ToolResultState.INTERRUPTED,
+                    ),
+                ],
             )
+        yield ReplyEndEvent(
+            session_id=state.session_id,
+            reply_id=state.reply_id,
+            finished_reason=ReplyFinishedReason.INTERRUPTED,
+        )
 
     async def _reply_impl(  # pylint: disable=too-many-branches
         self,
@@ -1039,7 +1058,7 @@ class Agent:
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
 
-        end_event: ReplyEndEvent | None = None
+        interrupted = False
         try:
             # Dispatch the unified inputs by type into the legacy local
             # variables
@@ -1071,18 +1090,11 @@ class Agent:
                     "schema is used instead.",
                 )
 
-            # Parked-interrupt short-circuit: only signal an INTERRUPTED
-            # end when there is actual HITL work to close; otherwise the
-            # session is effectively idle and the call is a silent no-op.
-            # ``finally`` reuses the CancelledError cleanup path when
-            # ``end_event`` is set — no reasoning-acting loop either way.
             if isinstance(inputs, UserInterruptEvent):
-                if self.state.has_awaiting_tool_calls(self.name):
-                    end_event = ReplyEndEvent(
-                        session_id=self.state.session_id,
-                        reply_id=self.state.reply_id,
-                        finished_reason=ReplyFinishedReason.INTERRUPTED,
-                    )
+                interrupted = (
+                    inputs.reply_id == self.state.reply_id
+                    and self.state.has_awaiting_tool_calls(self.name)
+                )
                 return
 
             # ===================================================================
@@ -1277,37 +1289,23 @@ class Agent:
         except asyncio.CancelledError:
             # Handle the CancelledError within the _reply_impl for the
             # agent middlewares
-            end_event = ReplyEndEvent(
-                session_id=self.state.session_id,
-                reply_id=self.state.reply_id,
-                finished_reason=ReplyFinishedReason.INTERRUPTED,
-            )
+            interrupted = True
 
             if self.react_config.interruption_raise_cancelled_error:
                 raise
 
         finally:
-            if end_event is not None:
-                interrupted_end = (
-                    end_event.finished_reason
-                    == ReplyFinishedReason.INTERRUPTED
+            if interrupted:
+                for event in self.interrupt_reply(self.state, self.name):
+                    yield event
+                # The fallback message terminates the stream.
+                yield AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    content=self.react_config.interruption_message,
+                    usage=self._get_reply_usage(),
+                    finished_reason=ReplyFinishedReason.INTERRUPTED,
                 )
-                if interrupted_end:
-                    # Handle the context when interruption
-                    async for _ in self._close_unfinished_tool_calls():
-                        yield _
-
-                yield end_event
-
-                if interrupted_end:
-                    # The fallback msg goes last: Msg terminates the stream
-                    yield AssistantMsg(
-                        id=self.state.reply_id,
-                        name=self.name,
-                        content=self.react_config.interruption_message,
-                        usage=self._get_reply_usage(),
-                        finished_reason=ReplyFinishedReason.INTERRUPTED,
-                    )
 
     def _get_repeated_tool_error(self) -> tuple[str, int] | None:
         """Detect the same tool call, i.e. the same tool name and arguments,
@@ -1954,7 +1952,8 @@ class Agent:
                 The events generated during the handling of the incoming event.
         """
         # Return directly if no event
-        if event is None or len(self.state.context) == 0:
+        last_msg = self.state.get_reply_message(self.name)
+        if event is None or last_msg is None:
             return
 
         if isinstance(event, UserConfirmResultEvent):
@@ -1964,7 +1963,6 @@ class Agent:
             }
 
             # Update the state with the confirmed tool calls
-            last_msg = self.state.context[-1]
             for tool_call in last_msg.get_content_blocks("tool_call"):
                 if len(confirmed_tool_calls) == 0:
                     break
@@ -2013,6 +2011,17 @@ class Agent:
                 tool = await self.toolkit.get_tool(tool_result.name)
                 if tool is not None:
                     await tool.check_external_result(tool_result)
+
+                # Correlate requested receipts after validating tool metadata.
+                if event.metadata.get(_EXTERNAL_REQUEST_ID) == event.id:
+                    tool_result = tool_result.model_copy(
+                        update={
+                            "metadata": {
+                                **tool_result.metadata,
+                                _EXTERNAL_REQUEST_ID: event.id,
+                            },
+                        },
+                    )
 
                 async for evt in self._convert_tool_chunk_to_event(
                     tool_result.id,
@@ -2502,10 +2511,23 @@ class Agent:
             # TODO: Maybe some logic to mix the validation error in runtime
             try:
                 jsonschema.validate(parsed_input, tool.input_schema)
+                if isinstance(tool, AskUser):
+                    # JSON Schema omits the model's uniqueness validators.
+                    AskUserParams.model_validate(parsed_input)
             except jsonschema.ValidationError as e:
                 raise AgentOrientedException(
                     f"Input validation failed for tool '{tool_call.name}': "
                     f"{e.message} (at {e.json_path})",
+                ) from e
+            except ValidationError as e:
+                raise AgentOrientedException(
+                    f"Input validation failed for tool '{tool_call.name}': "
+                    f"{e}",
+                ) from e
+            except Exception as e:
+                raise AgentOrientedException(
+                    f"Input schema evaluation failed for tool "
+                    f"'{tool_call.name}': {e}",
                 ) from e
 
         # The exceptions that
@@ -2610,6 +2632,12 @@ class Agent:
             )
             # Send requiring external execution event if it's an external tool
             if tool.is_external_tool:
+                # External clients should receive the same repaired and
+                # schema-validated JSON that permission checks consumed.
+                tool_call.input = json.dumps(
+                    parsed_input,
+                    ensure_ascii=False,
+                )
                 # Update the state to "submitted" BEFORE yielding
                 # because the outer loop will break immediately after
                 # receiving this event, preventing any code after yield
@@ -3394,7 +3422,7 @@ class Agent:
                 try:
                     # Apply middleware to wrap the actual model() call
                     if not self._model_call_middlewares:
-                        return await model(
+                        result = await model(
                             messages=messages,
                             tools=tools,
                             tool_choice=tool_choice,
@@ -3442,9 +3470,27 @@ class Agent:
                                     next_handler=next_handler,
                                 )
 
-                        return await execute_chain()
+                        result = await execute_chain()
+
+                    if inspect.isasyncgen(result):
+                        return self._observe_model_stream(result, model)
+                    return result
                 except Exception as e:
                     last_exception = e
+                    if isinstance(e, ContentBlockedError):
+                        # Custom models or middleware may consume a stream
+                        # before returning. Honor any reported output rather
+                        # than replaying a partially delivered response.
+                        if e.partial_output or e.requires_review:
+                            raise
+                        if e.phase != ContentBlockedPhase.OUTPUT:
+                            message = (
+                                f"Model {model.model} blocked content for "
+                                f"agent {self.name}; skipping retries with "
+                                f"the same payload."
+                            )
+                            logger.warning(message)
+                            break
                     # Only log a "Retrying" message when there's actually a
                     # next attempt left for this model. When ``max_retries=0``
                     # or the last retry has been used, the outer loop either
@@ -3468,11 +3514,41 @@ class Agent:
                         )
 
         if last_exception:
+            if isinstance(last_exception, ContentBlockedError):
+                raise last_exception
             raise last_exception from None
 
         raise RuntimeError(
             "Model call failed after retries, but no exception was raised.",
         )
+
+    async def _observe_model_stream(
+        self,
+        stream: AsyncGenerator[ChatResponse, None],
+        model: ChatModelBase,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Observe a returned model stream without replaying model calls.
+
+        Yield chunks unchanged. Log and re-raise content-block errors that
+        occur during consumption. At this point
+        the agent's model-selection loop has returned, so this wrapper does
+        not retry or switch fallback models, even before the first chunk.
+        Always close the delegated stream when iteration exits, including
+        on error or explicit closure of this wrapper.
+        """
+        try:
+            async for chunk in stream:
+                yield chunk
+        except ContentBlockedError:
+            message = (
+                f"Model {model.model} blocked content for agent {self.name} "
+                f"during stream consumption; Agent-level retries and "
+                f"fallback model switching are not attempted."
+            )
+            logger.warning(message)
+            raise
+        finally:
+            await stream.aclose()
 
     def _update_tool_call_state(
         self,
@@ -3489,10 +3565,8 @@ class Agent:
             state (`ToolCallState`):
                 The new state of the tool call.
         """
-        if len(self.state.context) == 0:
-            return
-        last_msg = self.state.context[-1]
-        if last_msg.role != "assistant" or last_msg.name != self.name:
+        last_msg = self.state.get_reply_message(self.name)
+        if last_msg is None:
             return
         for block in last_msg.get_content_blocks():
             if isinstance(block, ToolCallBlock) and block.id == tool_call_id:
@@ -3549,16 +3623,13 @@ class Agent:
         self.state.append_context(self.name, persisted_blocks)
 
         if msg_usage is not None:
-            self.state.context[-1].append_usage(msg_usage)
+            reply = self.state.get_reply_message(self.name)
+            assert reply is not None
+            reply.append_usage(msg_usage)
 
     def _get_last_msg(self) -> Msg | None:
-        """Get the last message in the context that belongs to this agent."""
-        if len(self.state.context) == 0:
-            return None
-        last_msg = self.state.context[-1]
-        if last_msg.role == "assistant" and last_msg.name == self.name:
-            return last_msg
-        return None
+        """Get the current reply without assuming it is the context tail."""
+        return self.state.get_reply_message(self.name)
 
     def _get_reply_usage(self) -> Usage | None:
         """Get a copy of the accumulated usage for the current reply."""
@@ -3927,10 +3998,11 @@ class Agent:
                 delta=tool_call.input,
             )
 
-        # Handle the tool calls that exist in the previous chunk but not in the
-        # current chunk
-        finished_ids = set(block_ids["tools"]) - set(
-            _.id for _ in tool_call_blocks
+        # Audio-only deltas can arrive between tool argument deltas.
+        finished_ids = (
+            set()
+            if data_blocks and len(data_blocks) == len(chunk.content)
+            else set(block_ids["tools"]) - set(_.id for _ in tool_call_blocks)
         )
         for finished_id in finished_ids:
             yield ToolCallEndEvent(
@@ -3954,6 +4026,11 @@ class Agent:
                     reply_id=self.state.reply_id,
                     block_id=data_block.id,
                     media_type=data_block.source.media_type,
+                    **(
+                        {"name": data_block.name}
+                        if data_block.name is not None
+                        else {}
+                    ),
                 )
             yield DataBlockDeltaEvent(
                 reply_id=self.state.reply_id,
@@ -3992,6 +4069,7 @@ class Agent:
                         # Keep the block id so replay groups one payload.
                         block_id=block.id,
                         media_type=block.source.media_type,
+                        name=block.name,
                         data=block.source.data,
                     )
                 elif isinstance(block.source, URLSource):
@@ -4000,5 +4078,6 @@ class Agent:
                         tool_call_id=tool_call_id,
                         block_id=block.id,
                         media_type=block.source.media_type,
+                        name=block.name,
                         url=str(block.source.url),
                     )

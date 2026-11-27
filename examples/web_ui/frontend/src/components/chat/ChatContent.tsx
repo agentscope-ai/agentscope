@@ -1,21 +1,31 @@
-import { ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
+import {
+	type ExternalExecutionResultEvent,
+	ReplyFinishedReason,
+} from '@agentscope-ai/agentscope/event';
 import {
 	type ContentBlock,
-	getContentBlocks,
 	type Msg,
 	type TextBlock,
 	type ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
-import { GitBranch, TriangleAlert } from 'lucide-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import { FolderOpen, GitBranch, TriangleAlert } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { ArtifactDrawer } from './artifacts/ArtifactDrawer';
+import { type FileArtifact, fileChangeVersion } from './artifacts/artifacts';
+import { useFileChanges } from './artifacts/useFileChanges';
+import { WorkspaceFilesDrawer } from './artifacts/WorkspaceFilesDrawer';
 import type { GitStatus } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
+import { getBaseUrl, getUserId } from '@/api/client';
 import { ASMessageBubble, SteeringMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
+import { ClientToolsMenu } from '@/components/chat/ClientToolsMenu';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
+import { ExternalExecutionCard } from '@/components/chat/ExternalExecutionCard.tsx';
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
+import { ManualClientToolCard } from '@/components/chat/ManualClientToolCard';
 import { QueuedMessages } from '@/components/chat/QueuedMessages.tsx';
-import { TextInput } from '@/components/chat/TextInput.tsx';
+import { TextInput, type TextInputRef } from '@/components/chat/TextInput.tsx';
 import { DiffStats } from '@/components/chat/tool-renderers/_shared';
 import { WorkingDirectoryDialog } from '@/components/dialog/WorkingDirectoryDialog';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
@@ -30,10 +40,15 @@ import {
 	MessageScrollerViewport,
 } from '@/components/ui/message-scroller.tsx';
 import { Spinner } from '@/components/ui/spinner';
-import type { ReplyPhase } from '@/hooks/useMessages';
+import { UnacknowledgedToolSubmission, type ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
 import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
+import {
+	getClientExternalToolRegistration,
+	type ClientExternalToolResult,
+} from '@/lib/client-external-tools';
+import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 import { cn } from '@/lib/utils';
 
 /** How long a load may run before it is worth showing a spinner. */
@@ -73,8 +88,7 @@ interface ChatContentProps {
 	loading?: boolean;
 	/**
 	 * Reply lifecycle phase from ``useMessages`` — forwarded to
-	 * ``TextInput`` so it can show a separate Stop action while keeping
-	 * Send available for queued turns and coordinate realtime voice.
+	 * ``TextInput`` to select the primary action for the current draft.
 	 */
 	phase: ReplyPhase;
 	/** Number of locally submitted user turns waiting to start. */
@@ -83,12 +97,22 @@ interface ChatContentProps {
 	queueReorderDisabled: boolean;
 	activeReplyId: string | null;
 	disabled: boolean;
-	onSend: (content: ContentBlock[]) => Promise<void> | void;
+	onSend: (content: ContentBlock[], source?: 'continue') => Promise<void> | void;
 	onUserConfirm: (
 		toolCall: ToolCallBlock,
 		confirm: boolean,
 		replyId: string,
 		rules?: ToolCallBlock['suggested_rules'],
+	) => Promise<void>;
+	onClientExternalToolResult: (
+		toolCall: ToolCallBlock,
+		result: ClientExternalToolResult,
+		replyId: string,
+		onUnconfirmed?: (error: Error) => void,
+	) => Promise<void>;
+	onExternalExecutionResult: (
+		event: ExternalExecutionResultEvent,
+		onUnconfirmed?: (error: Error) => void,
 	) => Promise<void>;
 	autoComplete?: (input: string) => string | null;
 	className?: string;
@@ -102,6 +126,7 @@ interface ChatContentProps {
 	voiceState?: RealtimeConnectionState;
 	onVoiceToggle?: () => void;
 	voiceDisabled?: boolean;
+	voiceDisabledReason?: string;
 	/** Audio media types accepted by the selected ASR model. */
 	asrInputTypes?: string[];
 	/** Transcribes one completed browser recording. */
@@ -140,6 +165,13 @@ interface ChatContentProps {
 	onRefreshGit?: () => void | Promise<void>;
 }
 
+/** Release the form for a manual retry while the hook still listens for its receipt. */
+function waitForReceiptOrRetry(submit: (allowRetry: (error: Error) => void) => Promise<void>) {
+	return new Promise<void>((resolve, reject) => {
+		submit(reject).then(resolve, reject);
+	});
+}
+
 const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
 	loading = false,
@@ -151,6 +183,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	disabled,
 	onSend,
 	onUserConfirm,
+	onClientExternalToolResult,
+	onExternalExecutionResult,
 	autoComplete,
 	className,
 	onInterrupt,
@@ -162,6 +196,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	voiceState,
 	onVoiceToggle,
 	voiceDisabled,
+	voiceDisabledReason,
 	asrInputTypes,
 	onTranscribe,
 	asrRealtime,
@@ -179,9 +214,30 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onRefreshGit,
 }) => {
 	const { t, i18n } = useTranslation();
+	const inputRef = useRef<TextInputRef>(null);
+	const scope = JSON.stringify([getBaseUrl(), getUserId(), agentId, sessionId]);
+	const fileChanges = useFileChanges(msgs, scope, loading);
+	const [fileView, setFileView] = useState<
+		| { scope: string; kind: 'preview'; artifact: FileArtifact }
+		| { scope: string; kind: 'browse' }
+		| null
+	>(null);
+	useEffect(() => setFileView(null), [scope]);
+	const openArtifact = useCallback(
+		(artifact: FileArtifact) => {
+			setFileView({ scope, kind: 'preview', artifact });
+		},
+		[scope],
+	);
+	const referenceFile = (path: string) => {
+		inputRef.current?.insertText(t('artifacts.referenceText', { path: JSON.stringify(path) }));
+		setFileView(null);
+		requestAnimationFrame(() => inputRef.current?.focus());
+	};
+
 	const { deferredItems, steeringMessages } = useMemo(() => {
 		const deferred: ChatQueueItem[] = [];
-		const steering: Array<{ id: string; content: ContentBlock[] }> = [];
+		const steering: Pick<Msg, 'id' | 'content' | 'created_at'>[] = [];
 		for (const item of queuedItems) {
 			if (item.state !== 'steering') {
 				deferred.push(item);
@@ -192,6 +248,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				steering.push({
 					id: `${item.id}:${message.id}`,
 					content: message.content,
+					created_at: message.created_at,
 				});
 			}
 		}
@@ -217,14 +274,49 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		return () => clearTimeout(timer);
 	}, [loading]);
 
-	const toConfirmedToolCalls = useMemo(() => {
-		if (msgs.length === 0) return [];
+	const pendingHitlCalls = useMemo(() => getPendingHitlCalls(msgs), [msgs]);
+	const toConfirmedToolCalls = pendingHitlCalls.filter((call) => call.kind === 'confirmation');
+	const externalToolCalls = pendingHitlCalls.filter((call) => call.kind === 'external_execution');
 
-		const lastMsg = msgs[msgs.length - 1];
-		return getContentBlocks(lastMsg, 'tool_call')
-			.filter((tc) => tc.state === 'asking')
-			.map((tc) => ({ replyId: lastMsg.id, toolCall: tc }));
-	}, [msgs]);
+	const pendingExternalTool = externalToolCalls[0];
+	const pendingExternalToolRegistration = pendingExternalTool
+		? getClientExternalToolRegistration(pendingExternalTool.toolCall.name)
+		: undefined;
+	const PendingExternalToolComponent = pendingExternalToolRegistration?.PendingComponent;
+	const isManualClientTool =
+		pendingExternalTool?.toolCall.name.startsWith('client__') === true &&
+		!PendingExternalToolComponent;
+	const acceptsInput =
+		Boolean(pendingExternalToolRegistration?.composerResult) &&
+		(!pendingExternalToolRegistration?.canCompose ||
+			Boolean(
+				pendingExternalTool &&
+				pendingExternalToolRegistration.canCompose(pendingExternalTool.toolCall),
+			));
+
+	const submitClientToolResult = (result: ClientExternalToolResult) => {
+		if (!pendingExternalTool) return Promise.resolve();
+		const { toolCall, replyId } = pendingExternalTool;
+		return waitForReceiptOrRetry((retry) =>
+			onClientExternalToolResult(toolCall, result, replyId, retry),
+		);
+	};
+	const handleSend = async (content: ContentBlock[], allowRetry?: () => void) => {
+		const pending = pendingExternalTool;
+		if (!pending || !acceptsInput) {
+			await onSend(content);
+			return;
+		}
+
+		const result = pendingExternalToolRegistration?.composerResult?.(content, pending.toolCall);
+		if (result === null || result === undefined) return;
+		try {
+			await onClientExternalToolResult(pending.toolCall, result, pending.replyId, allowRetry);
+		} catch (error) {
+			// The question already has an answer. Keep the draft for the next question.
+			if (!(error instanceof UnacknowledgedToolSubmission)) throw error;
+		}
+	};
 
 	// On an empty session the prompt and the input centre together, so every box
 	// down to the message list shrinks to its content instead of filling.
@@ -236,6 +328,33 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				className,
 			)}
 		>
+			{!loading &&
+				agentId &&
+				sessionId &&
+				fileView?.scope === scope &&
+				(fileView.kind === 'preview' ? (
+					<ArtifactDrawer
+						key={JSON.stringify([scope, fileView.artifact.path])}
+						artifact={fileView.artifact}
+						changeVersion={fileChangeVersion(fileChanges, fileView.artifact.path)}
+						agentId={agentId}
+						sessionId={sessionId}
+						onClose={() => setFileView(null)}
+						referenceDisabled={disabled}
+						onReference={referenceFile}
+					/>
+				) : (
+					<WorkspaceFilesDrawer
+						key={scope}
+						agentId={agentId}
+						sessionId={sessionId}
+						initialPath={cwd ?? ''}
+						fileChanges={fileChanges}
+						onClose={() => setFileView(null)}
+						referenceDisabled={disabled}
+						onReference={referenceFile}
+					/>
+				))}
 			{loading ? (
 				<div className="flex flex-1 w-full items-center justify-center">
 					{showSpinner ? <Spinner className="size-5 text-muted-foreground" /> : null}
@@ -274,6 +393,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 											<ASMessageBubble
 												message={message}
 												onUserConfirm={onUserConfirm}
+												onOpenArtifact={
+													agentId && sessionId ? openArtifact : undefined
+												}
 											/>
 										</MessageScrollerItem>
 									);
@@ -285,6 +407,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 									>
 										<SteeringMessageBubble
 											blocks={message.content}
+											createdAt={message.created_at}
 											status="steering"
 										/>
 									</MessageScrollerItem>
@@ -308,20 +431,17 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 												<Button
 													size={'xs'}
 													onClick={() => {
+														const block: TextBlock = {
+															id: crypto.randomUUID(),
+															type: 'text',
+															text: t(
+																'chat.maxItersExceeded.continue',
+															),
+															created_at: new Date().toISOString(),
+															finished_at: new Date().toISOString(),
+														};
 														void Promise.resolve(
-															onSend([
-																{
-																	id: crypto.randomUUID(),
-																	type: 'text',
-																	text: t(
-																		'chat.maxItersExceeded.continue',
-																	),
-																	created_at:
-																		new Date().toISOString(),
-																	finished_at:
-																		new Date().toISOString(),
-																} as TextBlock,
-															]),
+															onSend([block], 'continue'),
 														).catch(() => {
 															// The send handler reports the failure.
 														});
@@ -342,7 +462,11 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 			{loading ? null : (
 				<div className="relative min-w-full max-w-full w-full">
 					<FlipCard
-						visible={toConfirmedToolCalls.length > 0 || footerSlot !== null}
+						visible={
+							toConfirmedToolCalls.length > 0 ||
+							externalToolCalls.length > 0 ||
+							footerSlot !== null
+						}
 						className="absolute bottom-full left-0 right-0 mb-2 z-50"
 					>
 						{toConfirmedToolCalls.length > 0 ? (
@@ -358,6 +482,35 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 									)
 								}
 							/>
+						) : pendingExternalTool ? (
+							PendingExternalToolComponent ? (
+								<PendingExternalToolComponent
+									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
+									toolCall={pendingExternalTool.toolCall}
+									onSubmit={submitClientToolResult}
+									onCancel={onInterrupt}
+									cancelling={phase === 'interrupting'}
+								/>
+							) : isManualClientTool ? (
+								<ManualClientToolCard
+									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
+									toolCall={pendingExternalTool.toolCall}
+									onSubmit={submitClientToolResult}
+									onCancel={onInterrupt}
+									cancelling={phase === 'interrupting'}
+								/>
+							) : (
+								<ExternalExecutionCard
+									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
+									replyId={pendingExternalTool.replyId}
+									toolCall={pendingExternalTool.toolCall}
+									onResult={(event) =>
+										waitForReceiptOrRetry((retry) =>
+											onExternalExecutionResult(event, retry),
+										)
+									}
+								/>
+							)
 						) : (
 							footerSlot
 						)}
@@ -378,19 +531,23 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				    edges parallel — a plain rectangle here would show the
 				    pill's corners cutting into it. */}
 					<TextInput
-						key={JSON.stringify([agentId, sessionId])}
+						key={scope}
+						ref={inputRef}
+						draftKey={scope}
 						className="min-w-full max-w-full w-full rounded-[32px] bg-muted p-1"
-						onSend={onSend}
+						onSend={handleSend}
 						disabled={disabled}
 						autoComplete={autoComplete}
-						allowedInputTypes={allowedInputTypes}
+						allowedInputTypes={acceptsInput ? [] : allowedInputTypes}
 						fileProcessor={fileProcessor}
 						phase={phase}
+						acceptsInput={acceptsInput}
 						queuedCount={queuedCount}
 						onInterrupt={onInterrupt}
 						voiceState={voiceState}
 						onVoiceToggle={onVoiceToggle}
 						voiceDisabled={voiceDisabled}
+						voiceDisabledReason={voiceDisabledReason}
 						asrInputTypes={asrInputTypes}
 						onTranscribe={onTranscribe}
 						asrRealtime={asrRealtime}
@@ -398,46 +555,60 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						asrDisabled={asrDisabled}
 						asrResetKey={asrResetKey}
 						headerSlot={
-							<div className="flex w-full items-center justify-between px-2 py-1 text-sm text-muted-foreground">
-								<WorkingDirectoryDialog
-									agentId={agentId}
-									sessionId={sessionId}
-									value={cwd}
-									onChange={onCwdChange}
-								/>
-								{git && (
+							<div className="flex w-full flex-wrap items-center justify-between gap-1 px-2 py-1 text-sm text-muted-foreground">
+								<div className="flex min-w-0 flex-wrap items-center gap-1">
+									<WorkingDirectoryDialog
+										agentId={agentId}
+										sessionId={sessionId}
+										value={cwd}
+										onChange={onCwdChange}
+									/>
 									<Button
-										className="font-mono"
-										variant="secondary"
+										variant="ghost"
 										size="sm"
-										onClick={() => void onRefreshGit?.()}
-										title={t('workdir.gitTooltip', {
-											staged: git.staged,
-											unstaged: git.unstaged,
-											untracked: git.untracked,
-										})}
+										disabled={!agentId || !sessionId || loading}
+										onClick={() => setFileView({ scope, kind: 'browse' })}
 									>
-										<GitBranch />
-										{/* A detached HEAD has no branch to name, so
-										    fall back to the commit it sits on. The
-										    server sends no git at all when it has
-										    neither. */}
-										{git.branch ?? git.head?.slice(0, 7)}
-										{git.ahead !== null && git.ahead > 0 && (
-											<span className="text-xs">↑{git.ahead}</span>
-										)}
-										{git.behind !== null && git.behind > 0 && (
-											<span className="text-xs">↓{git.behind}</span>
-										)}
-										{/* Renders nothing when both are zero, so a
-										    clean tree shows just the branch. */}
-										<DiffStats
-											className="text-xs font-mono"
-											insertions={git.insertions}
-											deletions={git.deletions}
-										/>
+										<FolderOpen />
+										{t('artifacts.browseFiles')}
 									</Button>
-								)}
+								</div>
+								<div className="flex flex-wrap items-center gap-1.5">
+									<ClientToolsMenu agentId={agentId} sessionId={sessionId} />
+									{git && (
+										<Button
+											className="font-mono"
+											variant="secondary"
+											size="sm"
+											onClick={() => void onRefreshGit?.()}
+											title={t('workdir.gitTooltip', {
+												staged: git.staged,
+												unstaged: git.unstaged,
+												untracked: git.untracked,
+											})}
+										>
+											<GitBranch />
+											{/* A detached HEAD has no branch to name, so
+											    fall back to the commit it sits on. The
+											    server sends no git at all when it has
+											    neither. */}
+											{git.branch ?? git.head?.slice(0, 7)}
+											{git.ahead !== null && git.ahead > 0 && (
+												<span className="text-xs">↑{git.ahead}</span>
+											)}
+											{git.behind !== null && git.behind > 0 && (
+												<span className="text-xs">↓{git.behind}</span>
+											)}
+											{/* Renders nothing when both are zero, so a
+											    clean tree shows just the branch. */}
+											<DiffStats
+												className="text-xs font-mono"
+												insertions={git.insertions}
+												deletions={git.deletions}
+											/>
+										</Button>
+									)}
+								</div>
 							</div>
 						}
 					/>

@@ -1,4 +1,7 @@
-import type { UserConfirmResultEvent } from '@agentscope-ai/agentscope/event';
+import type {
+	ExternalExecutionResultEvent,
+	UserConfirmResultEvent,
+} from '@agentscope-ai/agentscope/event';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -65,5 +68,11 @@ export function useRealtimeVoice(agentId: string | null, sessionId: string | nul
 		transport.userConfirm(event);
 	}, []);
 
-	return { state, toggle, userConfirm };
+	const externalExecutionResult = useCallback(async (event: ExternalExecutionResultEvent) => {
+		const transport = transportRef.current;
+		if (!transport) throw new Error('Realtime voice mode is not active.');
+		transport.externalExecutionResult(event);
+	}, []);
+
+	return { state, toggle, userConfirm, externalExecutionResult };
 }

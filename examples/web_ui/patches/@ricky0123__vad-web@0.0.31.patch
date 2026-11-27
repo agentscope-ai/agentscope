@@ -1,0 +1,59 @@
+diff --git a/dist/real-time-vad.js b/dist/real-time-vad.js
+--- a/dist/real-time-vad.js
++++ b/dist/real-time-vad.js
+@@ -301,20 +301,43 @@
+             mediaStreamAudioSourceNode.disconnect();
+             this.frameProcessor.pause(this.handleFrameProcessorEvent);
+         };
+-        this.destroy = async () => {
++        let destroyPromise;
++        this.destroy = () => {
++            if (destroyPromise) {
++                return destroyPromise;
++            }
+             logging_1.log.debug("destroy called");
+             this.initializationState = "destroyed";
+-            const { vadNode } = this.getAudioInstances();
+-            if (vadNode instanceof AudioWorkletNode) {
+-                vadNode.port.postMessage(messages_1.Message.SpeechStop);
+-            }
+-            if (this.listening) {
+-                await this.pause();
+-            }
+-            await this.model.release();
+-            if (this.ownsAudioContext) {
+-                await this._audioContext?.close();
+-            }
++            destroyPromise = (async () => {
++                try {
++                    if (typeof AudioWorkletNode !== "undefined" && this._vadNode instanceof AudioWorkletNode) {
++                        this._vadNode.port.postMessage(messages_1.Message.SpeechStop);
++                    }
++                    if (this.listening) {
++                        await this.pause();
++                    }
++                    else if (this._stream) {
++                        await this.options.pauseStream(this._stream);
++                    }
++                }
++                finally {
++                    try {
++                        this._mediaStreamAudioSourceNode?.disconnect();
++                        this._vadNode?.disconnect();
++                    }
++                    finally {
++                        try {
++                            await this.model.release();
++                        }
++                        finally {
++                            if (this.ownsAudioContext) {
++                                await this._audioContext?.close();
++                            }
++                        }
++                    }
++                }
++            })();
++            return destroyPromise;
+         };
+         this.setOptions = (update) => {
+             this.frameProcessor.setOptions(update);

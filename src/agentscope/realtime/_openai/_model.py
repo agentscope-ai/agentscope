@@ -112,6 +112,10 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         await self.close()
         while not self._queue.empty():
             self._queue.get_nowait()
+        # A response of the closed session cannot be cancelled or
+        # completed in the new one.
+        self._response_id = ""
+        self._item_id = ""
 
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(

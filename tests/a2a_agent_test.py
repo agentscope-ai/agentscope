@@ -16,7 +16,7 @@ from a2a.utils.errors import TaskNotFoundError
 from utils import AnyString
 
 from agentscope.agent import A2AAgent
-from agentscope.message import UserMsg
+from agentscope.message import Base64Source, DataBlock, UserMsg
 from agentscope.state import A2AAgentState
 
 
@@ -325,6 +325,64 @@ class A2AAgentReplyTest(IsolatedAsyncioTestCase):
         )
         # A completed Task is over, so the next reply starts a new one.
         self.assertIsNone(agent.state.task_id)
+        await agent.aclose()
+
+    async def test_empty_status_update_keeps_streamed_text_open(self) -> None:
+        """A status update without a message does not split streamed text."""
+        client = _FakeClient(
+            [
+                [
+                    types.StreamResponse(
+                        artifact_update=types.TaskArtifactUpdateEvent(
+                            task_id="task-1",
+                            context_id="context-1",
+                            artifact=types.Artifact(
+                                artifact_id="artifact-1",
+                                parts=[types.Part(text="first ")],
+                            ),
+                        ),
+                    ),
+                    types.StreamResponse(
+                        status_update=types.TaskStatusUpdateEvent(
+                            task_id="task-1",
+                            context_id="context-1",
+                            status=types.TaskStatus(
+                                state=types.TaskState.TASK_STATE_WORKING,
+                            ),
+                        ),
+                    ),
+                    types.StreamResponse(
+                        artifact_update=types.TaskArtifactUpdateEvent(
+                            task_id="task-1",
+                            context_id="context-1",
+                            artifact=types.Artifact(
+                                artifact_id="artifact-1",
+                                parts=[types.Part(text="second")],
+                            ),
+                            append=True,
+                            last_chunk=True,
+                        ),
+                    ),
+                    types.StreamResponse(
+                        status_update=types.TaskStatusUpdateEvent(
+                            task_id="task-1",
+                            context_id="context-1",
+                            status=types.TaskStatus(
+                                state=types.TaskState.TASK_STATE_COMPLETED,
+                            ),
+                        ),
+                    ),
+                ],
+            ],
+        )
+        agent = A2AAgent(self.card, client=client)
+
+        msg = await agent.reply(UserMsg(name="user", content="draw"))
+
+        self.assertEqual(
+            [(block.type, block.text) for block in msg.content],
+            [("text", "first second")],
+        )
         await agent.aclose()
 
     async def test_task_snapshot_yields_artifacts_then_status(self) -> None:
@@ -809,6 +867,55 @@ class A2AAgentTaskContinuationTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             [_.get_text_content() for _ in agent.state.observed_context],
             ["earlier"],
+        )
+        await agent.aclose()
+
+    async def test_rejected_input_keeps_observed_messages(self) -> None:
+        """An input the request builder rejects must not consume the
+        observed messages or start a reply that never ends."""
+        client = _FakeClient(
+            [
+                [
+                    types.StreamResponse(
+                        message=types.Message(
+                            message_id="msg-1",
+                            context_id="context-1",
+                            role=types.Role.ROLE_AGENT,
+                            parts=[types.Part(text="ok")],
+                        ),
+                    ),
+                ],
+            ],
+        )
+        agent = A2AAgent(self.card, client=client)
+
+        await agent.observe(UserMsg(name="user", content="earlier"))
+
+        bad = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=Base64Source(data="!!", media_type="image/png"),
+                ),
+            ],
+        )
+        events = []
+        with self.assertRaises(ValueError):
+            async for event in agent.reply_stream(bad):
+                events.append(event)
+
+        self.assertListEqual(events, [])
+        self.assertListEqual(client.requests, [])
+        self.assertEqual(
+            [_.get_text_content() for _ in agent.state.observed_context],
+            ["earlier"],
+        )
+
+        await agent.reply(UserMsg(name="user", content="later"))
+
+        self.assertEqual(
+            [_.text for _ in client.requests[0].message.parts],
+            ["earlier", "later"],
         )
         await agent.aclose()
 

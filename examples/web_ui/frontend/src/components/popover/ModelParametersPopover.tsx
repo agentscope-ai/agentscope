@@ -35,7 +35,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { type CredentialWithASRModels, useAvailableASRModels } from '@/hooks/useAvailableASRModels';
+import {
+	type CredentialWithASRModels,
+	findASRModelCard,
+	useAvailableASRModels,
+} from '@/hooks/useAvailableASRModels';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useAvailableTTSModels } from '@/hooks/useAvailableTTSModels';
 import { useVoiceEngines } from '@/hooks/useVoiceEngines';
@@ -363,26 +367,421 @@ function JsonField({ id, label, required, prop, value, onChange }: FieldProps) {
 	);
 }
 
-interface ASRModelMenuProps {
+interface SpeechMenuProps {
+	standalone?: boolean;
+	disabled?: boolean;
+	className?: string;
+}
+
+/** Reuse the same menu contents in settings and beside pipeline voice. */
+function SpeechMenu({
+	standalone,
+	disabled,
+	className,
+	label,
+	value,
+	children,
+}: SpeechMenuProps & {
+	label: string;
+	value: string;
+	children: React.ReactNode;
+}) {
+	if (standalone)
+		return (
+			<DropdownMenu key={disabled ? 'locked' : 'ready'}>
+				<DropdownMenuTrigger asChild>
+					<Button
+						variant="ghost"
+						size="sm"
+						disabled={disabled}
+						title={value}
+						aria-label={`${label}: ${value}`}
+						className={cn(
+							'min-w-0 max-w-28 shrink gap-1.5 px-2 text-xs font-normal text-muted-foreground hover:text-foreground sm:max-w-44',
+							className,
+						)}
+					>
+						<span className="w-6 shrink-0 text-[10px] font-medium">{label}</span>
+						<span className="min-w-0 flex-1 truncate text-left">{value}</span>
+						<ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent
+					align="start"
+					className="w-72 max-w-[calc(100vw-2rem)] max-h-(--radix-dropdown-menu-content-available-height) overflow-y-auto"
+				>
+					{children}
+				</DropdownMenuContent>
+			</DropdownMenu>
+		);
+	return (
+		<DropdownMenuSub>
+			<DropdownMenuSubTrigger>
+				<span className="truncate">{label}</span>
+			</DropdownMenuSubTrigger>
+			<DropdownMenuSubContent className="max-h-96 w-max max-w-[calc(100vw-2rem)] overflow-y-auto">
+				{children}
+			</DropdownMenuSubContent>
+		</DropdownMenuSub>
+	);
+}
+
+export function TTSModelMenu({
+	selectedTTSModel,
+	onTTSChange,
+	standalone = false,
+	disabled,
+	className,
+}: SpeechMenuProps & {
+	selectedTTSModel: TTSModelConfig | null;
+	onTTSChange: (config: TTSModelConfig | null) => void;
+}) {
+	const { t } = useTranslation();
+	const { groups: ttsGroups } = useAvailableTTSModels();
+	const { profiles: voiceProfiles } = useVoiceProfiles();
+	const { engineDetails } = useVoiceEngines();
+	const ttsGroupEntries = Object.entries(ttsGroups)
+		.map(
+			([type, items]) =>
+				[
+					type,
+					items
+						.map((item) => ({
+							...item,
+							models: item.models.filter((model) => {
+								// Hide models with no preset voices from manual selection.
+								const schema = model.parameter_schema as
+									| ParameterSchema
+									| undefined;
+								const voice = schema?.properties?.voice;
+								if (!voice) return true;
+								const { enumValues } = resolveType(voice);
+								return enumValues !== null && enumValues.length > 0;
+							}),
+						}))
+						.filter((item) => item.models.length > 0),
+				] as const,
+		)
+		.filter(([, usable]) => usable.length > 0);
+
+	const profile = voiceProfiles.find((item) => item.id === selectedTTSModel?.voice_profile_id);
+	const card = Object.values(ttsGroups)
+		.flat()
+		.filter((item) => item.credential.id === selectedTTSModel?.credential_id)
+		.flatMap((item) => item.models)
+		.find((item) => item.name === selectedTTSModel?.model);
+	const value =
+		profile?.data.name ??
+		card?.label ??
+		selectedTTSModel?.model ??
+		t('pipelineVoice.selectTTS');
+	return (
+		<SpeechMenu
+			standalone={standalone}
+			disabled={disabled}
+			className={className}
+			label={standalone ? 'TTS' : t('model-parameters.ttsLabel')}
+			value={value}
+		>
+			{/* Voice Profiles section */}
+			{voiceProfiles.length > 0 && (
+				<>
+					<DropdownMenuLabel>{t('model-parameters.voiceProfiles')}</DropdownMenuLabel>
+					{voiceProfiles.map((vp) => {
+						const isProfileActive =
+							selectedTTSModel != null && selectedTTSModel.voice_profile_id === vp.id;
+						const binding = resolveVoiceProfileBinding(vp, engineDetails);
+						const unavailable = binding === null;
+						const item = (
+							<DropdownMenuCheckboxItem
+								key={vp.id}
+								checked={isProfileActive}
+								disabled={unavailable}
+								onSelect={(e) => {
+									if (!standalone) e.preventDefault();
+								}}
+								onCheckedChange={(checked) => {
+									if (!checked || !binding) return;
+
+									const params = extractDefaults(binding.schema);
+									if (vp.data.voice) {
+										params.voice = vp.data.voice;
+									}
+
+									onTTSChange({
+										type: binding.type,
+										credential_id: binding.credentialId,
+										model: binding.modelName,
+										voice_profile_id: vp.id,
+										parameters: params,
+									});
+								}}
+							>
+								<span className="truncate">{vp.data.name}</span>
+								{vp.data.engine && (
+									<Badge
+										variant="secondary"
+										className="ml-1.5 text-[10px] px-1 py-0"
+									>
+										{vp.data.engine}
+									</Badge>
+								)}
+							</DropdownMenuCheckboxItem>
+						);
+
+						if (!unavailable) {
+							return item;
+						}
+
+						return (
+							<Tooltip key={vp.id}>
+								<TooltipTrigger asChild>
+									<div className="cursor-not-allowed">{item}</div>
+								</TooltipTrigger>
+								<TooltipContent side="left">
+									{t('model-parameters.voiceProfileUnavailable')}
+								</TooltipContent>
+							</Tooltip>
+						);
+					})}
+					<DropdownMenuSeparator />
+				</>
+			)}
+
+			{ttsGroupEntries.length === 0 && voiceProfiles.length === 0 ? (
+				<div className="px-2 py-3 text-center text-sm text-muted-foreground">
+					<p>{t('model-parameters.ttsEmpty')}</p>
+				</div>
+			) : (
+				ttsGroupEntries.map(([type, usable], idx) => {
+					const isSingle = usable.length === 1;
+
+					const renderTTSItems = (credential: CredentialView, models: TTSModelCard[]) =>
+						models.map((m) => {
+							const isSelected =
+								!selectedTTSModel?.voice_profile_id &&
+								selectedTTSModel?.credential_id === credential.id &&
+								selectedTTSModel?.model === m.name;
+							return (
+								<DropdownMenuCheckboxItem
+									key={`${credential.id}-${m.name}`}
+									checked={isSelected}
+									onSelect={(e) => {
+										if (!standalone) e.preventDefault();
+									}}
+									onCheckedChange={(checked) => {
+										if (!checked) return;
+										onTTSChange({
+											type,
+											credential_id: credential.id,
+											model: m.name,
+											parameters: extractDefaults(
+												m.parameter_schema as ParameterSchema | undefined,
+											),
+										});
+									}}
+								>
+									{m.label}
+									{m.realtime && (
+										<Badge
+											variant="outline"
+											className="ml-1.5 text-[10px] px-1 py-0"
+										>
+											Realtime
+										</Badge>
+									)}
+								</DropdownMenuCheckboxItem>
+							);
+						});
+
+					return (
+						<DropdownMenuGroup key={type}>
+							{idx > 0 && <DropdownMenuSeparator />}
+							<DropdownMenuLabel>
+								{type.replace(/_credential$/, '')}
+							</DropdownMenuLabel>
+							{isSingle
+								? renderTTSItems(usable[0].credential, usable[0].models)
+								: usable.map(({ credential, models }) => {
+										const hasSelected = models.some(
+											(m) =>
+												!selectedTTSModel?.voice_profile_id &&
+												selectedTTSModel?.credential_id === credential.id &&
+												selectedTTSModel?.model === m.name,
+										);
+										return (
+											<DropdownMenuSub key={credential.id}>
+												<DropdownMenuSubTrigger>
+													<Check
+														className={cn(
+															'size-4 mr-1.5 shrink-0',
+															!hasSelected && 'invisible',
+														)}
+													/>
+													{credentialLabel(credential)}
+												</DropdownMenuSubTrigger>
+												<DropdownMenuPortal>
+													<DropdownMenuSubContent className="max-h-60 overflow-y-auto">
+														{renderTTSItems(credential, models)}
+													</DropdownMenuSubContent>
+												</DropdownMenuPortal>
+											</DropdownMenuSub>
+										);
+									})}
+						</DropdownMenuGroup>
+					);
+				})
+			)}
+
+			{/* TTS parameters sub-panel (hover to expand right) */}
+			{!standalone && selectedTTSModel && !selectedTTSModel.voice_profile_id && (
+				<>
+					<DropdownMenuSeparator />
+					<DropdownMenuSub>
+						<DropdownMenuSubTrigger>
+							{t('model-parameters.ttsParameters')}
+						</DropdownMenuSubTrigger>
+						<DropdownMenuSubContent className="w-72 max-h-96 overflow-y-auto p-3">
+							<div className="mb-3">
+								<p className="text-sm font-medium">{t('model-parameters.title')}</p>
+								<p className="text-muted-foreground text-xs">
+									{t('model-parameters.ttsParametersDescription')}
+								</p>
+							</div>
+							{(() => {
+								if (!selectedTTSModel) return null;
+								const selType = selectedTTSModel.type;
+								const selItems = ttsGroups[selType];
+								if (!selItems) return null;
+								let selModel: TTSModelCard | undefined;
+								for (const { credential, models } of selItems) {
+									if (credential.id !== selectedTTSModel.credential_id) continue;
+									selModel = models.find(
+										(m) => m.name === selectedTTSModel.model,
+									);
+									if (selModel) break;
+								}
+								if (!selModel) return null;
+								const mSchema = selModel.parameter_schema as
+									| ParameterSchema
+									| undefined;
+								const mProps = mSchema?.properties ?? {};
+								const mRequired = mSchema?.required ?? [];
+								const mEntries = Object.entries(mProps);
+								if (mEntries.length === 0) {
+									return (
+										<p className="text-muted-foreground text-xs">
+											{t('model-parameters.empty')}
+										</p>
+									);
+								}
+								const curParams = selectedTTSModel.parameters ?? {};
+
+								return (
+									<div
+										className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3"
+										onPointerDown={(e) => e.stopPropagation()}
+										onKeyDown={(e) => e.stopPropagation()}
+									>
+										{mEntries.map(([key, prop]) => {
+											const { type: effectiveType, enumValues } =
+												resolveType(prop);
+											const label = prop.title ?? key;
+											const isReq = mRequired.includes(key);
+											const fieldProps: FieldProps = {
+												id: `tts-${selModel!.name}-${key}`,
+												label,
+												required: isReq,
+												prop,
+												value: curParams[key],
+												onChange: (v) => {
+													const next = {
+														...curParams,
+														[key]: v,
+													};
+													if (v === '' || v === undefined) {
+														delete next[key];
+													}
+													onTTSChange({
+														...selectedTTSModel,
+														parameters: next,
+													});
+												},
+											};
+
+											let field: React.ReactNode;
+											if (effectiveType === 'boolean') {
+												field = <BooleanField {...fieldProps} />;
+											} else if (enumValues) {
+												field = <EnumField {...fieldProps} />;
+											} else if (
+												effectiveType === 'number' ||
+												effectiveType === 'integer'
+											) {
+												field = <NumberField {...fieldProps} />;
+											} else {
+												field = <StringField {...fieldProps} />;
+											}
+
+											return (
+												<Tooltip key={key}>
+													<TooltipTrigger asChild>
+														<div className="col-span-2 grid grid-cols-subgrid items-center">
+															{field}
+														</div>
+													</TooltipTrigger>
+													{prop.description && (
+														<TooltipContent side="left">
+															{prop.description}
+														</TooltipContent>
+													)}
+												</Tooltip>
+											);
+										})}
+									</div>
+								);
+							})()}
+						</DropdownMenuSubContent>
+					</DropdownMenuSub>
+				</>
+			)}
+
+			<DropdownMenuSeparator />
+			<DropdownMenuCheckboxItem
+				checked={!selectedTTSModel}
+				onSelect={(e) => {
+					if (!standalone) e.preventDefault();
+				}}
+				onCheckedChange={(checked) => {
+					if (checked) onTTSChange(null);
+				}}
+			>
+				{t('model-parameters.noTts')}
+			</DropdownMenuCheckboxItem>
+		</SpeechMenu>
+	);
+}
+
+interface ASRModelMenuProps extends SpeechMenuProps {
 	groups: Record<string, CredentialWithASRModels[]>;
 	selectedASRModel: ASRModelConfig | null;
 	onASRChange: (config: ASRModelConfig | null) => void;
 }
 
-function ASRModelMenu({ groups, selectedASRModel, onASRChange }: ASRModelMenuProps) {
+export function ASRModelMenu({
+	groups,
+	selectedASRModel,
+	onASRChange,
+	standalone = false,
+	disabled,
+	className,
+}: ASRModelMenuProps) {
 	const { t } = useTranslation();
 	const groupEntries = Object.entries(groups)
 		.map(([type, items]) => [type, items.filter((item) => item.models.length > 0)] as const)
 		.filter(([, items]) => items.length > 0);
 
-	let selectedCard: ASRModelCard | undefined;
-	if (selectedASRModel) {
-		for (const item of groups[selectedASRModel.type] ?? []) {
-			if (item.credential.id !== selectedASRModel.credential_id) continue;
-			selectedCard = item.models.find((model) => model.name === selectedASRModel.model);
-			if (selectedCard) break;
-		}
-	}
+	const selectedCard = findASRModelCard(groups, selectedASRModel);
 
 	const renderModels = (type: string, credential: CredentialView, models: ASRModelCard[]) =>
 		models.map((model) => {
@@ -393,7 +792,9 @@ function ASRModelMenu({ groups, selectedASRModel, onASRChange }: ASRModelMenuPro
 				<DropdownMenuCheckboxItem
 					key={`${credential.id}-${model.name}`}
 					checked={selected}
-					onSelect={(event) => event.preventDefault()}
+					onSelect={(event) => {
+						if (!standalone) event.preventDefault();
+					}}
 					onCheckedChange={(checked) => {
 						if (!checked) return;
 						onASRChange({
@@ -419,150 +820,152 @@ function ASRModelMenu({ groups, selectedASRModel, onASRChange }: ASRModelMenuPro
 		});
 
 	return (
-		<DropdownMenuSub>
-			<DropdownMenuSubTrigger>
-				<span className="truncate">{t('model-parameters.asrLabel')}</span>
-			</DropdownMenuSubTrigger>
-			<DropdownMenuSubContent className="max-h-96 w-max max-w-[calc(100vw-2rem)] overflow-y-auto">
-				{groupEntries.length === 0 ? (
-					<div className="px-2 py-3 text-center text-sm text-muted-foreground">
-						<p>{t('model-parameters.asrEmpty')}</p>
-					</div>
-				) : (
-					groupEntries.map(([type, items], index) => {
-						const singleCredential = items.length === 1;
-						return (
-							<DropdownMenuGroup key={type}>
-								{index > 0 && <DropdownMenuSeparator />}
-								<DropdownMenuLabel>
-									{type.replace(/_credential$/, '')}
-								</DropdownMenuLabel>
-								{singleCredential
-									? renderModels(type, items[0].credential, items[0].models)
-									: items.map(({ credential, models }) => {
-											const selected = models.some(
-												(model) =>
-													selectedASRModel?.credential_id ===
-														credential.id &&
-													selectedASRModel.model === model.name,
-											);
+		<SpeechMenu
+			standalone={standalone}
+			disabled={disabled}
+			label={standalone ? 'ASR' : t('model-parameters.asrLabel')}
+			className={className}
+			value={selectedCard?.label ?? selectedASRModel?.model ?? t('pipelineVoice.selectASR')}
+		>
+			{groupEntries.length === 0 ? (
+				<div className="px-2 py-3 text-center text-sm text-muted-foreground">
+					<p>{t('model-parameters.asrEmpty')}</p>
+				</div>
+			) : (
+				groupEntries.map(([type, items], index) => {
+					const singleCredential = items.length === 1;
+					return (
+						<DropdownMenuGroup key={type}>
+							{index > 0 && <DropdownMenuSeparator />}
+							<DropdownMenuLabel>
+								{type.replace(/_credential$/, '')}
+							</DropdownMenuLabel>
+							{singleCredential
+								? renderModels(type, items[0].credential, items[0].models)
+								: items.map(({ credential, models }) => {
+										const selected = models.some(
+											(model) =>
+												selectedASRModel?.credential_id === credential.id &&
+												selectedASRModel.model === model.name,
+										);
+										return (
+											<DropdownMenuSub key={credential.id}>
+												<DropdownMenuSubTrigger>
+													<Check
+														className={cn(
+															'size-4 mr-1.5 shrink-0',
+															!selected && 'invisible',
+														)}
+													/>
+													{credentialLabel(credential)}
+												</DropdownMenuSubTrigger>
+												<DropdownMenuPortal>
+													<DropdownMenuSubContent className="max-h-60 w-max max-w-[calc(100vw-2rem)] overflow-y-auto">
+														{renderModels(type, credential, models)}
+													</DropdownMenuSubContent>
+												</DropdownMenuPortal>
+											</DropdownMenuSub>
+										);
+									})}
+						</DropdownMenuGroup>
+					);
+				})
+			)}
+
+			{!standalone && selectedASRModel && selectedCard && (
+				<>
+					<DropdownMenuSeparator />
+					<DropdownMenuSub>
+						<DropdownMenuSubTrigger>
+							{t('model-parameters.asrParameters')}
+						</DropdownMenuSubTrigger>
+						<DropdownMenuSubContent className="w-80 max-h-96 overflow-y-auto p-3">
+							<p className="mb-3 text-xs text-muted-foreground">
+								{t('model-parameters.asrParametersDescription')}
+							</p>
+							{(() => {
+								const schema = selectedCard.parameter_schema as
+									| ParameterSchema
+									| undefined;
+								const entries = Object.entries(schema?.properties ?? {});
+								if (entries.length === 0) {
+									return (
+										<p className="text-xs text-muted-foreground">
+											{t('model-parameters.empty')}
+										</p>
+									);
+								}
+								const required = schema?.required ?? [];
+								const values = selectedASRModel.parameters ?? {};
+								return (
+									<div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3">
+										{entries.map(([key, prop]) => {
+											const fieldProps: FieldProps = {
+												id: `asr-${selectedCard.name}-${key}`,
+												label: prop.title ?? key,
+												required: required.includes(key),
+												prop,
+												value: values[key],
+												onChange: (value) => {
+													const parameters = {
+														...values,
+														[key]: value,
+													};
+													if (value === '' || value === undefined)
+														delete parameters[key];
+													onASRChange({
+														...selectedASRModel,
+														parameters,
+													});
+												},
+											};
+											const { type, enumValues } = resolveType(prop);
+											let field: React.ReactNode;
+											if (type === 'boolean')
+												field = <BooleanField {...fieldProps} />;
+											else if (enumValues)
+												field = <EnumField {...fieldProps} />;
+											else if (type === 'number' || type === 'integer')
+												field = <NumberField {...fieldProps} />;
+											else if (type === 'array' || type === 'object')
+												field = <JsonField {...fieldProps} />;
+											else field = <StringField {...fieldProps} />;
 											return (
-												<DropdownMenuSub key={credential.id}>
-													<DropdownMenuSubTrigger>
-														<Check
-															className={cn(
-																'size-4 mr-1.5 shrink-0',
-																!selected && 'invisible',
-															)}
-														/>
-														{credentialLabel(credential)}
-													</DropdownMenuSubTrigger>
-													<DropdownMenuPortal>
-														<DropdownMenuSubContent className="max-h-60 w-max max-w-[calc(100vw-2rem)] overflow-y-auto">
-															{renderModels(type, credential, models)}
-														</DropdownMenuSubContent>
-													</DropdownMenuPortal>
-												</DropdownMenuSub>
+												<Tooltip key={key}>
+													<TooltipTrigger asChild>
+														<div className="col-span-2 grid grid-cols-subgrid items-center">
+															{field}
+														</div>
+													</TooltipTrigger>
+													{prop.description && (
+														<TooltipContent side="left">
+															{prop.description}
+														</TooltipContent>
+													)}
+												</Tooltip>
 											);
 										})}
-							</DropdownMenuGroup>
-						);
-					})
-				)}
+									</div>
+								);
+							})()}
+						</DropdownMenuSubContent>
+					</DropdownMenuSub>
+				</>
+			)}
 
-				{selectedASRModel && selectedCard && (
-					<>
-						<DropdownMenuSeparator />
-						<DropdownMenuSub>
-							<DropdownMenuSubTrigger>
-								{t('model-parameters.asrParameters')}
-							</DropdownMenuSubTrigger>
-							<DropdownMenuSubContent className="w-80 max-h-96 overflow-y-auto p-3">
-								<p className="mb-3 text-xs text-muted-foreground">
-									{t('model-parameters.asrParametersDescription')}
-								</p>
-								{(() => {
-									const schema = selectedCard.parameter_schema as
-										| ParameterSchema
-										| undefined;
-									const entries = Object.entries(schema?.properties ?? {});
-									if (entries.length === 0) {
-										return (
-											<p className="text-xs text-muted-foreground">
-												{t('model-parameters.empty')}
-											</p>
-										);
-									}
-									const required = schema?.required ?? [];
-									const values = selectedASRModel.parameters ?? {};
-									return (
-										<div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3">
-											{entries.map(([key, prop]) => {
-												const fieldProps: FieldProps = {
-													id: `asr-${selectedCard.name}-${key}`,
-													label: prop.title ?? key,
-													required: required.includes(key),
-													prop,
-													value: values[key],
-													onChange: (value) => {
-														const parameters = {
-															...values,
-															[key]: value,
-														};
-														if (value === '' || value === undefined)
-															delete parameters[key];
-														onASRChange({
-															...selectedASRModel,
-															parameters,
-														});
-													},
-												};
-												const { type, enumValues } = resolveType(prop);
-												let field: React.ReactNode;
-												if (type === 'boolean')
-													field = <BooleanField {...fieldProps} />;
-												else if (enumValues)
-													field = <EnumField {...fieldProps} />;
-												else if (type === 'number' || type === 'integer')
-													field = <NumberField {...fieldProps} />;
-												else if (type === 'array' || type === 'object')
-													field = <JsonField {...fieldProps} />;
-												else field = <StringField {...fieldProps} />;
-												return (
-													<Tooltip key={key}>
-														<TooltipTrigger asChild>
-															<div className="col-span-2 grid grid-cols-subgrid items-center">
-																{field}
-															</div>
-														</TooltipTrigger>
-														{prop.description && (
-															<TooltipContent side="left">
-																{prop.description}
-															</TooltipContent>
-														)}
-													</Tooltip>
-												);
-											})}
-										</div>
-									);
-								})()}
-							</DropdownMenuSubContent>
-						</DropdownMenuSub>
-					</>
-				)}
-
-				<DropdownMenuSeparator />
-				<DropdownMenuCheckboxItem
-					checked={!selectedASRModel}
-					onSelect={(event) => event.preventDefault()}
-					onCheckedChange={(checked) => {
-						if (checked) onASRChange(null);
-					}}
-				>
-					{t('model-parameters.noAsr')}
-				</DropdownMenuCheckboxItem>
-			</DropdownMenuSubContent>
-		</DropdownMenuSub>
+			<DropdownMenuSeparator />
+			<DropdownMenuCheckboxItem
+				checked={!selectedASRModel}
+				onSelect={(event) => {
+					if (!standalone) event.preventDefault();
+				}}
+				onCheckedChange={(checked) => {
+					if (checked) onASRChange(null);
+				}}
+			>
+				{t('model-parameters.noAsr')}
+			</DropdownMenuCheckboxItem>
+		</SpeechMenu>
 	);
 }
 
@@ -634,10 +1037,7 @@ export function ModelParametersPopover({
 	const [values, setValues] = useState<Record<string, unknown>>({});
 	const { t } = useTranslation();
 	const { groups } = useAvailableModels();
-	const { groups: ttsGroups } = useAvailableTTSModels();
 	const { groups: asrGroups } = useAvailableASRModels();
-	const { profiles: voiceProfiles } = useVoiceProfiles();
-	const { engineDetails } = useVoiceEngines(selectedTTSModel !== undefined);
 
 	const schema = modelCard?.parameter_schema as ParameterSchema | undefined;
 	const properties = schema?.properties ?? {};
@@ -689,29 +1089,6 @@ export function ModelParametersPopover({
 	// `models` array; drop them so they don't render empty submenus
 	const fallbackGroups = Object.entries(groups)
 		.map(([type, items]) => [type, items.filter((i) => i.models.length > 0)] as const)
-		.filter(([, usable]) => usable.length > 0);
-	const ttsGroupEntries = Object.entries(ttsGroups)
-		.map(
-			([type, items]) =>
-				[
-					type,
-					items
-						.map((item) => ({
-							...item,
-							models: item.models.filter((model) => {
-								// Hide models with no preset voices from manual selection.
-								const schema = model.parameter_schema as
-									| ParameterSchema
-									| undefined;
-								const voice = schema?.properties?.voice;
-								if (!voice) return true;
-								const { enumValues } = resolveType(voice);
-								return enumValues !== null && enumValues.length > 0;
-							}),
-						}))
-						.filter((item) => item.models.length > 0),
-				] as const,
-		)
 		.filter(([, usable]) => usable.length > 0);
 	const hasFallbackOptions = fallbackGroups.length > 0;
 	const parametersOnly = onFallbackChange === undefined && onTTSChange === undefined;
@@ -935,331 +1312,11 @@ export function ModelParametersPopover({
 					</DropdownMenuSub>
 				)}
 
-				{/* ----- TTS ----- */}
 				{onTTSChange !== undefined && (
-					<DropdownMenuSub>
-						<DropdownMenuSubTrigger>
-							<span className="truncate">{t('model-parameters.ttsLabel')}</span>
-						</DropdownMenuSubTrigger>
-						<DropdownMenuSubContent className="max-h-96 overflow-y-auto">
-							{/* Voice Profiles section */}
-							{voiceProfiles.length > 0 && (
-								<>
-									<DropdownMenuLabel>
-										{t('model-parameters.voiceProfiles')}
-									</DropdownMenuLabel>
-									{voiceProfiles.map((vp) => {
-										const isProfileActive =
-											selectedTTSModel != null &&
-											selectedTTSModel.voice_profile_id === vp.id;
-										const binding = resolveVoiceProfileBinding(
-											vp,
-											engineDetails,
-										);
-										const unavailable = binding === null;
-										const item = (
-											<DropdownMenuCheckboxItem
-												key={vp.id}
-												checked={isProfileActive}
-												disabled={unavailable}
-												onSelect={(e) => e.preventDefault()}
-												onCheckedChange={(checked) => {
-													if (!checked || !binding) return;
-
-													const params: Record<string, unknown> = {};
-													if (binding.schema?.properties) {
-														for (const [k, p] of Object.entries(
-															binding.schema.properties,
-														)) {
-															if (p.default !== undefined) {
-																params[k] = p.default;
-															}
-														}
-													}
-													if (vp.data.voice) {
-														params.voice = vp.data.voice;
-													}
-
-													onTTSChange({
-														type: binding.type,
-														credential_id: binding.credentialId,
-														model: binding.modelName,
-														voice_profile_id: vp.id,
-														parameters: params,
-													});
-												}}
-											>
-												<span className="truncate">{vp.data.name}</span>
-												{vp.data.engine && (
-													<Badge
-														variant="secondary"
-														className="ml-1.5 text-[10px] px-1 py-0"
-													>
-														{vp.data.engine}
-													</Badge>
-												)}
-											</DropdownMenuCheckboxItem>
-										);
-
-										if (!unavailable) {
-											return item;
-										}
-
-										return (
-											<Tooltip key={vp.id}>
-												<TooltipTrigger asChild>
-													<div className="cursor-not-allowed">{item}</div>
-												</TooltipTrigger>
-												<TooltipContent side="left">
-													{t('model-parameters.voiceProfileUnavailable')}
-												</TooltipContent>
-											</Tooltip>
-										);
-									})}
-									<DropdownMenuSeparator />
-								</>
-							)}
-
-							{ttsGroupEntries.length === 0 && voiceProfiles.length === 0 ? (
-								<div className="px-2 py-3 text-center text-sm text-muted-foreground">
-									<p>{t('model-parameters.ttsEmpty')}</p>
-								</div>
-							) : (
-								ttsGroupEntries.map(([type, usable], idx) => {
-									const isSingle = usable.length === 1;
-
-									const renderTTSItems = (
-										credential: CredentialView,
-										models: TTSModelCard[],
-									) =>
-										models.map((m) => {
-											const isSelected =
-												!selectedTTSModel?.voice_profile_id &&
-												selectedTTSModel?.credential_id === credential.id &&
-												selectedTTSModel?.model === m.name;
-											return (
-												<DropdownMenuCheckboxItem
-													key={`${credential.id}-${m.name}`}
-													checked={isSelected}
-													onSelect={(e) => e.preventDefault()}
-													onCheckedChange={(checked) => {
-														if (!checked) return;
-														onTTSChange({
-															type,
-															credential_id: credential.id,
-															model: m.name,
-															parameters: extractDefaults(
-																m.parameter_schema as
-																	| ParameterSchema
-																	| undefined,
-															),
-														});
-													}}
-												>
-													{m.label}
-													{m.realtime && (
-														<Badge
-															variant="outline"
-															className="ml-1.5 text-[10px] px-1 py-0"
-														>
-															Realtime
-														</Badge>
-													)}
-												</DropdownMenuCheckboxItem>
-											);
-										});
-
-									return (
-										<DropdownMenuGroup key={type}>
-											{idx > 0 && <DropdownMenuSeparator />}
-											<DropdownMenuLabel>
-												{type.replace(/_credential$/, '')}
-											</DropdownMenuLabel>
-											{isSingle
-												? renderTTSItems(
-														usable[0].credential,
-														usable[0].models,
-													)
-												: usable.map(({ credential, models }) => {
-														const hasSelected = models.some(
-															(m) =>
-																!selectedTTSModel?.voice_profile_id &&
-																selectedTTSModel?.credential_id ===
-																	credential.id &&
-																selectedTTSModel?.model === m.name,
-														);
-														return (
-															<DropdownMenuSub key={credential.id}>
-																<DropdownMenuSubTrigger>
-																	<Check
-																		className={cn(
-																			'size-4 mr-1.5 shrink-0',
-																			!hasSelected &&
-																				'invisible',
-																		)}
-																	/>
-																	{credentialLabel(credential)}
-																</DropdownMenuSubTrigger>
-																<DropdownMenuPortal>
-																	<DropdownMenuSubContent className="max-h-60 overflow-y-auto">
-																		{renderTTSItems(
-																			credential,
-																			models,
-																		)}
-																	</DropdownMenuSubContent>
-																</DropdownMenuPortal>
-															</DropdownMenuSub>
-														);
-													})}
-										</DropdownMenuGroup>
-									);
-								})
-							)}
-
-							{/* TTS parameters sub-panel (hover to expand right) */}
-							{selectedTTSModel && !selectedTTSModel.voice_profile_id && (
-								<>
-									<DropdownMenuSeparator />
-									<DropdownMenuSub>
-										<DropdownMenuSubTrigger>
-											{t('model-parameters.ttsParameters')}
-										</DropdownMenuSubTrigger>
-										<DropdownMenuSubContent className="w-72 max-h-96 overflow-y-auto p-3">
-											<div className="mb-3">
-												<p className="text-sm font-medium">
-													{t('model-parameters.title')}
-												</p>
-												<p className="text-muted-foreground text-xs">
-													{t('model-parameters.ttsParametersDescription')}
-												</p>
-											</div>
-											{(() => {
-												if (!selectedTTSModel) return null;
-												const selType = selectedTTSModel.type;
-												const selItems = ttsGroups[selType];
-												if (!selItems) return null;
-												let selModel: TTSModelCard | undefined;
-												for (const { credential, models } of selItems) {
-													if (
-														credential.id !==
-														selectedTTSModel.credential_id
-													)
-														continue;
-													selModel = models.find(
-														(m) => m.name === selectedTTSModel.model,
-													);
-													if (selModel) break;
-												}
-												if (!selModel) return null;
-												const mSchema = selModel.parameter_schema as
-													| ParameterSchema
-													| undefined;
-												const mProps = mSchema?.properties ?? {};
-												const mRequired = mSchema?.required ?? [];
-												const mEntries = Object.entries(mProps);
-												if (mEntries.length === 0) {
-													return (
-														<p className="text-muted-foreground text-xs">
-															{t('model-parameters.empty')}
-														</p>
-													);
-												}
-												const curParams = selectedTTSModel.parameters ?? {};
-
-												return (
-													<div
-														className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3"
-														onPointerDown={(e) => e.stopPropagation()}
-														onKeyDown={(e) => e.stopPropagation()}
-													>
-														{mEntries.map(([key, prop]) => {
-															const {
-																type: effectiveType,
-																enumValues,
-															} = resolveType(prop);
-															const label = prop.title ?? key;
-															const isReq = mRequired.includes(key);
-															const fieldProps: FieldProps = {
-																id: `tts-${selModel!.name}-${key}`,
-																label,
-																required: isReq,
-																prop,
-																value: curParams[key],
-																onChange: (v) => {
-																	const next = {
-																		...curParams,
-																		[key]: v,
-																	};
-																	if (
-																		v === '' ||
-																		v === undefined
-																	) {
-																		delete next[key];
-																	}
-																	onTTSChange({
-																		...selectedTTSModel,
-																		parameters: next,
-																	});
-																},
-															};
-
-															let field: React.ReactNode;
-															if (effectiveType === 'boolean') {
-																field = (
-																	<BooleanField {...fieldProps} />
-																);
-															} else if (enumValues) {
-																field = (
-																	<EnumField {...fieldProps} />
-																);
-															} else if (
-																effectiveType === 'number' ||
-																effectiveType === 'integer'
-															) {
-																field = (
-																	<NumberField {...fieldProps} />
-																);
-															} else {
-																field = (
-																	<StringField {...fieldProps} />
-																);
-															}
-
-															return (
-																<Tooltip key={key}>
-																	<TooltipTrigger asChild>
-																		<div className="col-span-2 grid grid-cols-subgrid items-center">
-																			{field}
-																		</div>
-																	</TooltipTrigger>
-																	{prop.description && (
-																		<TooltipContent side="left">
-																			{prop.description}
-																		</TooltipContent>
-																	)}
-																</Tooltip>
-															);
-														})}
-													</div>
-												);
-											})()}
-										</DropdownMenuSubContent>
-									</DropdownMenuSub>
-								</>
-							)}
-
-							<DropdownMenuSeparator />
-							<DropdownMenuCheckboxItem
-								checked={!selectedTTSModel}
-								onSelect={(e) => e.preventDefault()}
-								onCheckedChange={(checked) => {
-									if (checked) onTTSChange(null);
-								}}
-							>
-								{t('model-parameters.noTts')}
-							</DropdownMenuCheckboxItem>
-						</DropdownMenuSubContent>
-					</DropdownMenuSub>
+					<TTSModelMenu
+						selectedTTSModel={selectedTTSModel ?? null}
+						onTTSChange={onTTSChange}
+					/>
 				)}
 
 				{/* ----- ASR ----- */}
