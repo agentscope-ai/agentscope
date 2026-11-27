@@ -6,7 +6,7 @@ from ..tool import ToolBase
 
 if TYPE_CHECKING:
     from ..agent import Agent
-    from ..model import ChatResponse
+    from ..model import ChatResponse, ChatUsage
     from ..permission import PermissionDecision
 
 
@@ -242,8 +242,8 @@ class MiddlewareBase:  # pylint: disable=unused-argument
         self,
         agent: "Agent",
         input_kwargs: dict,
-        next_handler: Callable[..., Awaitable[None]],
-    ) -> None:
+        next_handler: Callable[..., Awaitable["ChatUsage | None"]],
+    ) -> "ChatUsage | None":
         """Onion hook for `compress_context` function in `Agent` class
 
         Args:
@@ -253,9 +253,15 @@ class MiddlewareBase:  # pylint: disable=unused-argument
                 Dictionary containing:
                 - context_config: ContextConfig | None
                 - instructions: HintBlock | None
-            next_handler (`Callable[..., Awaitable[None]]`):
+            next_handler (`Callable[..., Awaitable[ChatUsage | None]]`):
                 Callable that executes the next middleware or
                 original method
+
+        Returns:
+            `ChatUsage | None`:
+                The usage observed by the compression model call. Returning
+                the downstream value preserves the ModelCallEndEvent; a
+                middleware may return ``None`` to intentionally drop it.
         """
         raise RuntimeError(
             f"{type(self).__name__} does not implement on_compress_context",
