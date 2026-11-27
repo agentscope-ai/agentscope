@@ -260,6 +260,20 @@ class _RecordingWorker:
             raise RuntimeError(f"boom for {document_id}")
 
 
+class _UnsubscribableBus(_FakeBus):
+    """A bus whose channels cannot be subscribed to, e.g. a dead Redis."""
+
+    async def subscribe(
+        self,
+        key: str,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        if key:
+            raise ConnectionError("redis is unavailable")
+        yield {}
+
+
 async def _yield_a_few_times(ticks: int = 8) -> None:
     """Yield the event loop a few times so spawned tasks make progress."""
     for _ in range(ticks):
@@ -397,6 +411,16 @@ class TestIndexTaskConsumerDispatch(IsolatedAsyncioTestCase):
 
 class TestIndexTaskConsumerLifecycle(IsolatedAsyncioTestCase):
     """Tests covering the ``__aenter__`` / ``__aexit__`` ACM behaviour."""
+
+    async def test_unsubscribable_signal_fails_startup(self) -> None:
+        """A signal channel that cannot be subscribed to must fail
+        startup instead of leaving the queue undrained forever."""
+        bus = _UnsubscribableBus()
+        worker = _RecordingWorker()
+
+        with self.assertRaisesRegex(RuntimeError, "index-task"):
+            async with IndexTaskConsumer(message_bus=bus, worker=worker):
+                pass
 
     async def test_exit_cancels_loop_cleanly(self) -> None:
         """``__aexit__`` cancels the consumer's loop task and returns
