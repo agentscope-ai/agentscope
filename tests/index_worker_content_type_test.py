@@ -10,6 +10,7 @@ from pypdf import PdfWriter
 
 from rag_parser_test import (
     _PNG_PIXEL,
+    _dump_pdf_text,
     _make_pdf,
     _make_pptx_rich,
     _make_pptx_with_image,
@@ -368,7 +369,7 @@ class IndexWorkerSearchableContentTest(IsolatedAsyncioTestCase):
                         {
                             "content": {
                                 "type": "text",
-                                "text": "Cell structure\n",
+                                "text": "Cell structure",
                                 "id": AnyString(),
                                 "created_at": AnyString(),
                                 "finished_at": None,
@@ -404,7 +405,7 @@ class IndexWorkerSearchableContentTest(IsolatedAsyncioTestCase):
                     {
                         "statuses": storage.statuses,
                         "chunks": [
-                            chunk.model_dump()
+                            _dump_pdf_text(chunk)
                             for chunk in manager.knowledge.inserted_chunks
                         ],
                     },
