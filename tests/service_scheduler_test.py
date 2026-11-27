@@ -40,10 +40,12 @@ from agentscope.app.storage import (
     ScheduleData,
     ScheduleRecord,
     ScheduleOrigin,
+    SessionConfig,
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.permission import PermissionMode
 from agentscope.message import ToolResultState
+from agentscope.workspace import WorkspaceBase
 
 
 def _make_storage(
@@ -533,6 +535,45 @@ class TestSchedulerOwnership(_SchedulerOwnershipTestBase):
             self.assertListEqual(self.job_ids(owner), [record.id])
 
 
+class _RecordingWorkspaceManager(FakeWorkspaceManager):
+    """A workspace manager that records the sessions it purged.
+
+    ``get_workspace`` hands back a stub whose ``purge_session`` appends
+    the call, so a test can assert the cascade reached the workspace.
+    """
+
+    def __init__(self) -> None:
+        """Start with an empty purge log."""
+        self.purged: list[tuple[str, str]] = []
+
+    async def get_workspace(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        workspace_id: str | None = None,
+    ) -> WorkspaceBase:
+        """Return a stub workspace recording ``purge_session`` calls."""
+        recorder = self
+
+        class _RecordingWorkspace:
+            """Records the session purge it is asked to perform."""
+
+            def __init__(self) -> None:
+                """Bind the manager the purges are recorded on."""
+                self._recorder = recorder
+
+            async def purge_session(
+                self,
+                agent_id: str,
+                session_id: str,
+            ) -> None:
+                """Record one purged session."""
+                self._recorder.purged.append((agent_id, session_id))
+
+        return _RecordingWorkspace()  # type: ignore[return-value]
+
+
 class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
     """Agent-facing deletes notify the node that owns the timers."""
 
@@ -572,6 +613,40 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
                     break
                 await asyncio.sleep(0.02)
             self.assertListEqual(self.job_ids(), [])
+
+    async def test_delete_purges_spawned_session_workspace(self) -> None:
+        """Deleting through the agent tool purges each spawned session's
+        workspace, as ``DELETE /schedules`` does."""
+        workspace_manager = _RecordingWorkspaceManager()
+        writer = SchedulerManager(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=workspace_manager,
+            enabled=False,
+        )
+        delete_tool = next(
+            tool
+            for tool in await writer.list_tools(
+                user_id="u",
+                agent_id="a",
+                chat_model_config=_make_record().data.chat_model_config,
+            )
+            if tool.name == "ScheduleDelete"
+        )
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+        session = await self.storage.upsert_session(
+            "u",
+            "a",
+            SessionConfig(workspace_id="w-1"),
+            origin=ScheduleOrigin(schedule_id=record.id),
+        )
+
+        async with writer, self.manager:
+            result = await delete_tool(schedule_id=record.id)
+
+        self.assertEqual(result.state, ToolResultState.SUCCESS)
+        self.assertListEqual(workspace_manager.purged, [("a", session.id)])
 
     async def test_missing_delete_does_not_notify(self) -> None:
         """A missing record returns an error without a lifecycle event."""

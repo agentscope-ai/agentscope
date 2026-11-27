@@ -655,6 +655,7 @@ class SchedulerManager:
                 storage=self._storage,
                 message_bus=self._message_bus,
                 scheduler_manager=self,
+                workspace_manager=self._workspace_manager,
             ),
             ScheduleList(
                 user_id=user_id,
