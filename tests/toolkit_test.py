@@ -3,21 +3,29 @@
 """Toolkit test case."""
 import base64
 import json
+import operator
+from collections import Counter
+from functools import partial
 from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 
 from pydantic import BaseModel, Field
-from utils import AnyString
+from utils import AnyString, MockModel
 
+from agentscope.agent import Agent
+from agentscope.event import ToolResultStartEvent
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.state import AgentState
 from agentscope.message import (
+    AssistantMsg,
     TextBlock,
     ToolCallBlock,
     DataBlock,
     Base64Source,
+    URLSource,
 )
 from agentscope.tool import (
     Toolkit,
@@ -137,6 +145,48 @@ class Tool2(ToolBase):
                 ),
             ],
         )
+
+
+class NamedMCPTool(ToolBase):
+    """A mock MCP tool with a configurable name."""
+
+    description: str = "A tool listed by an MCP server."
+    input_schema: dict = {
+        "type": "object",
+        "properties": {},
+    }
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+    is_mcp: bool = True
+
+    def __init__(self, name: str) -> None:
+        """Initialize the tool with the given name.
+
+        Args:
+            name (`str`):
+                The tool name presented to the agent.
+        """
+        self.name = name
+
+    async def check_permissions(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> PermissionDecision:
+        """Check permissions for the tool."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="The MCP tool is allowed.",
+        )
+
+    async def call(self, **kwargs: Any) -> ToolChunk:
+        """Run the tool."""
+        return ToolChunk(content=[TextBlock(text=self.name)])
+
+
+def _tool_names(schemas: list[dict]) -> list[str]:
+    """Extract tool names in schema order."""
+    return [schema["function"]["name"] for schema in schemas]
 
 
 class ToolkitTest(IsolatedAsyncioTestCase):
@@ -449,9 +499,59 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_tool_error_text(self) -> None:
+        """Test error text for bare, ordinary, and grouped exceptions."""
+
+        def raise_bare_timeout() -> None:
+            """Raise an exception without a message."""
+            raise TimeoutError()
+
+        def raise_with_message() -> None:
+            """Raise an exception with a message."""
+            raise ValueError("boom")
+
+        def raise_group() -> None:
+            """Raise an exception group with a leaf cause."""
+            raise ExceptionGroup("unhandled errors", [KeyError("missing")])
+
+        for func, expected_text in (
+            (raise_bare_timeout, "TimeoutError"),
+            (raise_with_message, "boom"),
+            (raise_group, "'missing'"),
+        ):
+            with self.subTest(tool=func.__name__):
+                toolkit = Toolkit(tools=[FunctionTool(func)])
+                responses = [
+                    chunk.model_dump()
+                    async for chunk in toolkit.call_tool(
+                        ToolCallBlock(id="1", name=func.__name__, input="{}"),
+                        AgentState(),
+                    )
+                    if isinstance(chunk, ToolResponse)
+                ]
+                self.assertEqual(
+                    responses,
+                    [
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                    "id": AnyString(),
+                                    "text": expected_text,
+                                },
+                            ],
+                            "state": "error",
+                            "metadata": {},
+                            "id": "1",
+                        },
+                    ],
+                )
+
     async def test_tool_response_merges_base64_chunks_by_bytes(self) -> None:
         """Base64 chunks with padding should merge as bytes, not strings."""
-        response = ToolResponse()
+        response = ToolResponse(id="tool")
         first = base64.b64encode(b"hello").decode("ascii")
         second = base64.b64encode(b"world").decode("ascii")
 
@@ -482,17 +582,138 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertEqual(len(response.content), 1)
-        merged = response.content[0]
-        self.assertIsInstance(merged, DataBlock)
         self.assertEqual(
-            base64.b64decode(merged.source.data),
-            b"helloworld",
+            response.model_dump(),
+            {
+                "id": "tool",
+                "state": "success",
+                "metadata": {},
+                "content": [
+                    {
+                        "type": "data",
+                        "id": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": base64.b64encode(b"helloworld").decode(),
+                        },
+                        "name": None,
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+            },
         )
+
+    async def test_tool_response_groups_streamed_blocks(self) -> None:
+        """The response and event replay preserve interleaved tool output."""
+
+        class CustomDataBlock(DataBlock):
+            """A tool-provided data block subclass."""
+
+        text = TextBlock(id="s", text="progress")
+        before = TextBlock(id="s", text="before")
+        after = TextBlock(id="s", text="after")
+        first = CustomDataBlock(
+            id="s",
+            source=Base64Source(data="YQ==", media_type="audio/wav"),
+        )
+        second = DataBlock(
+            id="s",
+            source=Base64Source(data="Yg==", media_type="audio/wav"),
+        )
+        urls = [
+            DataBlock(
+                id="s",
+                source=URLSource(url=url, media_type="image/png"),
+            )
+            for url in ("https://example.org/one", "https://example.org/two")
+        ]
+        blocks = [text, urls[0], first, before, urls[1], second, after]
+        expected: dict[str, Any] = {
+            "id": "tool",
+            "state": "success",
+            "metadata": {},
+            "content": [
+                text.model_dump(),
+                urls[0].model_dump(),
+                {
+                    **first.model_dump(),
+                    "source": {
+                        "type": "base64",
+                        "data": "YWI=",
+                        "media_type": "audio/wav",
+                    },
+                },
+                before.model_dump(),
+                urls[1].model_dump(),
+                after.model_dump(),
+            ],
+        }
+
+        agent = Agent(name="agent", system_prompt="", model=MockModel())
+        for chunks in ([blocks], [[block] for block in blocks]):
+            with self.subTest(chunk_count=len(chunks)):
+                response = ToolResponse(id="tool")
+                message = AssistantMsg(
+                    name=agent.name,
+                    id=agent.state.reply_id,
+                    content=[],
+                )
+                message.append_event(
+                    ToolResultStartEvent(
+                        reply_id=message.id,
+                        tool_call_id=response.id,
+                        tool_call_name="stream",
+                    ),
+                )
+                for content in chunks:
+                    response.append_chunk(ToolChunk(content=content))
+                    # pylint: disable-next=protected-access
+                    async for event in agent._convert_tool_chunk_to_event(
+                        response.id,
+                        content,
+                    ):
+                        message.append_event(event)
+                self.assertEqual(response.model_dump(), expected)
+                self.assertEqual(
+                    message.content[0].model_dump()["output"],
+                    [
+                        {
+                            **block,
+                            "created_at": AnyString(),
+                            "id": AnyString()
+                            if block["type"] == "text"
+                            else block["id"],
+                        }
+                        for block in expected["content"]
+                    ],
+                )
 
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):
     """Test registering different functions in the toolkit."""
+
+    def test_callable_object_default_name(self) -> None:
+        """Infer callable names while preserving explicit names."""
+
+        class Echo:
+            """Echo a value asynchronously."""
+
+            async def __call__(self, value: str) -> str:
+                return value
+
+        renamed = partial(Echo())
+        renamed.__name__ = "renamed_echo"
+        for func, name, expected in (
+            (Echo(), None, "Echo"),
+            (partial(Echo()), None, "Echo"),
+            (renamed, None, "renamed_echo"),
+            (Echo(), "custom_echo", "custom_echo"),
+        ):
+            with self.subTest(expected=expected):
+                tool = FunctionTool(func, name=name)
+                self.assertEqual(tool.name, expected)
 
     async def test_sync_function_returning_awaitable(self) -> None:
         """Await the coroutine returned by a sync function."""
@@ -1276,6 +1497,175 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_positional_only_parameters(self) -> None:
+        """Positional-only parameters are exposed by name in the schema, so
+        their named arguments must be passed by position."""
+
+        def describe(
+            a: int,
+            b: int = 2,
+            c: int = 3,
+            /,
+            d: int = 4,
+            *,
+            e: int = 5,
+        ) -> str:
+            """Describe the arguments.
+
+            Args:
+                a: The first value.
+                b: The second value.
+                c: The third value.
+                d: The fourth value.
+                e: The fifth value.
+            """
+            return f"{a} {b} {c} {d} {e}"
+
+        toolkit = Toolkit(
+            tools=[
+                FunctionTool(describe),
+                # A builtin whose parameters are all positional-only
+                FunctionTool(operator.mul, name="mul"),
+                FunctionTool(
+                    Counter,
+                    name="count",
+                    input_schema={
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": {"type": "integer"},
+                    },
+                ),
+            ],
+        )
+        self.assertEqual(
+            toolkit.tool_groups[0].tools[0].input_schema,
+            {
+                "type": "object",
+                "required": ["a"],
+                "properties": {
+                    "a": {
+                        "type": "integer",
+                        "description": "The first value.",
+                    },
+                    "b": {
+                        "type": "integer",
+                        "description": "The second value.",
+                        "default": 2,
+                    },
+                    "c": {
+                        "type": "integer",
+                        "description": "The third value.",
+                        "default": 3,
+                    },
+                    "d": {
+                        "type": "integer",
+                        "description": "The fourth value.",
+                        "default": 4,
+                    },
+                    "e": {
+                        "type": "integer",
+                        "description": "The fifth value.",
+                        "default": 5,
+                    },
+                },
+            },
+        )
+
+        for name, arguments, expected in [
+            (
+                "describe",
+                {"a": 1, "b": 6, "c": 7, "d": 8, "e": 9},
+                "1 6 7 8 9",
+            ),
+            ("describe", {"a": 1}, "1 2 3 4 5"),
+            # The omitted ``b`` still takes its default before ``c``
+            ("describe", {"a": 1, "c": 7, "e": 9}, "1 2 7 4 9"),
+            ("mul", {"a": 6, "b": 7}, "42"),
+            # "iterable" is a counter key accepted through **kwds.
+            (
+                "count",
+                {"iterable": 2, "apple": 1},
+                json.dumps({"iterable": 2, "apple": 1}),
+            ),
+        ]:
+            response = None
+            async for result in toolkit.call_tool(
+                ToolCallBlock(
+                    id="test_positional_only",
+                    name=name,
+                    input=json.dumps(arguments),
+                ),
+                AgentState(),
+            ):
+                if isinstance(result, ToolResponse):
+                    response = result
+
+            self.assertEqual(
+                response.model_dump() if response is not None else None,
+                {
+                    "id": "test_positional_only",
+                    "state": "success",
+                    "metadata": {},
+                    "content": [
+                        {
+                            "type": "text",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "text": expected,
+                        },
+                    ],
+                },
+            )
+
+    async def test_extra_keyword_before_positional_input(self) -> None:
+        """An extra key leaves the matching positional slot at its default."""
+
+        def collect(
+            label: str = "default",
+            value: int = 0,
+            _agent_state: AgentState | None = None,
+            /,
+            **fields: str,
+        ) -> list:
+            assert _agent_state is not None
+            return [label, value, _agent_state.session_id, fields]
+
+        tool = FunctionTool(
+            collect,
+            input_schema={
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+                "additionalProperties": {"type": "string"},
+            },
+            is_state_injected=True,
+        )
+        chunk = await tool.call(
+            label="extra",
+            value=7,
+            _agent_state=AgentState(session_id="session"),
+        )
+        self.assertEqual(
+            chunk.model_dump(),
+            {
+                "id": AnyString(),
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "text": json.dumps(
+                            ["default", 7, "session", {"label": "extra"}],
+                        ),
+                    },
+                ],
+            },
+        )
+
     async def test_custom_input_schema(self) -> None:
         """Test overriding the auto-extracted schema with a custom one."""
 
@@ -1692,6 +2082,81 @@ The tool instructions are a collection of suggestions, rules and notifications a
         )
 
         self.assertEqual(await toolkit.get_tool_schemas(), [])
+
+    async def test_mcp_tool_order_is_deterministic(self) -> None:
+        """Reordered MCP listings produce identical tool schemas."""
+        listings = iter(
+            [
+                ["gamma", "alpha", "beta"],
+                ["beta", "gamma", "alpha"],
+            ],
+        )
+
+        async def _list_tools(_: MCPClient) -> list[ToolBase]:
+            """Return the next listing of the server."""
+            return [NamedMCPTool(name) for name in next(listings)]
+
+        toolkit = Toolkit(
+            tools=[Tool1()],
+            mcps=[
+                MCPClient(
+                    name="server",
+                    is_stateful=False,
+                    mcp_config=HttpMCPConfig(url="http://127.0.0.1:1/mcp"),
+                ),
+            ],
+        )
+
+        with patch.object(
+            MCPClient,
+            "list_tools",
+            autospec=True,
+            side_effect=_list_tools,
+        ):
+            first = await toolkit.get_tool_schemas()
+            second = await toolkit.get_tool_schemas()
+
+        self.assertEqual(second, first)
+        self.assertListEqual(
+            _tool_names(first),
+            ["tool_1", "alpha", "beta", "gamma"],
+        )
+
+    async def test_mcp_tool_sorting_preserves_client_order(self) -> None:
+        """Sorting preserves MCP client and Python tool order."""
+        listings = {
+            "server_b": ["zeta", "eta"],
+            "server_a": ["delta", "beta"],
+        }
+
+        async def _list_tools(client: MCPClient) -> list[ToolBase]:
+            """Return the listing of the given server."""
+            return [NamedMCPTool(name) for name in listings[client.name]]
+
+        toolkit = Toolkit(
+            tools=[Tool2(), Tool1()],
+            mcps=[
+                MCPClient(
+                    name=name,
+                    is_stateful=False,
+                    mcp_config=HttpMCPConfig(url="http://127.0.0.1:1/mcp"),
+                )
+                for name in listings
+            ],
+        )
+
+        with patch.object(
+            MCPClient,
+            "list_tools",
+            autospec=True,
+            side_effect=_list_tools,
+        ):
+            names = _tool_names(await toolkit.get_tool_schemas())
+
+        self.assertListEqual(
+            names,
+            ["tool_2", "tool_1", "eta", "zeta", "beta", "delta"],
+        )
 
     async def test_check_tool_available_distinguishes_inactive_group(
         self,

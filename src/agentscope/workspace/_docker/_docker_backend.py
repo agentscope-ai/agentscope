@@ -19,6 +19,7 @@ import posixpath
 import tarfile
 from typing import Any
 
+from .._overwrite import overwrite_command
 from ...tool import BackendBase, ExecResult
 
 
@@ -191,3 +192,18 @@ class DockerBackend(BackendBase):
             info.size = len(data)
             tf.addfile(info, io.BytesIO(data))
         await self._container.put_archive(parent, buf.getvalue())
+
+    async def overwrite_file(self, path: str, data: bytes) -> None:
+        """Write the draft on stdin without replacing inode metadata."""
+        process = await self._container.exec(
+            cmd=overwrite_command(path, len(data)),
+            stdin=True,
+            workdir=self._workdir,
+        )
+        async with process.start() as stream:
+            if data:
+                await stream.write_in(data)
+            while await stream.read_out() is not None:
+                pass
+        if (await process.inspect()).get("ExitCode") != 0:
+            raise OSError(f"Could not overwrite {path!r} in the container.")

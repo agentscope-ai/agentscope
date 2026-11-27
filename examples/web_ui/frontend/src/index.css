@@ -29,6 +29,15 @@ svg.lucide {
 	stroke-width: 1.7;
 }
 
+@media (hover: hover) {
+	[data-slot='message']:hover:not(:has([data-slot='steering-message']:hover))
+		[data-slot='message-footer']
+		> time,
+	[data-slot='steering-message']:hover > [role='status'] > time {
+		visibility: visible;
+	}
+}
+
 @custom-variant dark (&:is(.dark *));
 
 :root {

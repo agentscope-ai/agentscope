@@ -136,8 +136,8 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 persisted ``dimensions`` inside ``parameters``.
             parameters (`DashScopeEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                Provider-specific non-dimensional parameters.  Currently
-                empty for DashScope.
+                Provider-specific non-dimensional text parameters, such as
+                ``text_type``. Per-call keyword arguments take precedence.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -228,11 +228,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 self._limits.max_videos,
             )
 
-        results: list[EmbeddingResponse] = await asyncio.gather(
-            *(self._call_with_retry(batch, **kwargs) for batch in batches),
-        )
-
-        return self._merge_responses(results)
+        return await self._call_batches(batches, **kwargs)
 
     def _split_multimodal_batches(
         self,
@@ -353,6 +349,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             "model": self.model,
             "api_key": self.api_key,
             "dimension": self.dimensions,
+            **self.parameters.model_dump(exclude_none=True),
             **kwargs,
         }
 

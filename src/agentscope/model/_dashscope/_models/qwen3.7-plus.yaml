@@ -1,6 +1,8 @@
 name: qwen3.7-plus
 label: Qwen3.7-Plus
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2026-06-01
 
 input_types:
   - text/plain

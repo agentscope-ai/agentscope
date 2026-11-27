@@ -323,6 +323,45 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         """Remove the temporary workspace after each test."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
+    async def test_discovery_caps_metadata_after_parsing(self) -> None:
+        """Recover complete fields before sharing the manifest byte budget."""
+        euro = "\u20ac"
+        mixed = f"{euro}a"
+        cases = [
+            (256, "user", "x" * 2000, "user", "x" * 1020),
+            (4, "user", euro * 1000, "user", euro * 4),
+            (5, "user", euro * 1000, "user", euro * 5),
+            (4, "user", mixed * 1000, "user", mixed * 3),
+            (4, "user", euro * 3 + "abcde", "user", euro * 3 + "abc"),
+            (4, "user", "Tea", "user", "Tea"),
+            (4, "", "x" * 2000, None, "x" * 16),
+            (1, "user", "x" * 2000, "user", None),
+            (0, "user", "x" * 2000, None, None),
+            (4, "x" * 2000, "Tea", "x" * 16, None),
+        ]
+        for cap, kind, desc, expected_kind, expected_desc in cases:
+            with self.subTest(cap=cap, kind=kind[:10], desc=desc[:10]):
+                middleware = AgenticMemoryMiddleware(
+                    workdir=self.temp_dir,
+                    parameters=AgenticMemoryMiddleware.Parameters(
+                        retrieval_max_tokens_per_frontmatter=cap,
+                    ),
+                )
+                memory_dir = os.path.join(self.temp_dir, "Memory")
+                _write_memory_file(memory_dir, "tea.md", desc, kind, "Body")
+                # pylint: disable-next=protected-access
+                headers = await middleware._list_md_files()
+                self.assertEqual(
+                    [(h.filename, h.description, h.type) for h in headers],
+                    [("tea.md", expected_desc, expected_kind)],
+                )
+                headers[0].mtime = None
+                tag = f"[{expected_kind}] " if expected_kind else ""
+                detail = f": {expected_desc}" if expected_desc else ""
+                # pylint: disable-next=protected-access
+                manifest = middleware._format_manifest(headers)
+                self.assertEqual(manifest, f"- {tag}tea.md (unknown){detail}")
+
     async def test_retrieval_input_skips_messages_without_text_blocks(
         self,
     ) -> None:
@@ -890,6 +929,76 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
 class FrontmatterParseTest(TestCase):
     """Parsing of memory-file frontmatter."""
 
+    def test_overlong_frontmatter_with_leading_whitespace(self) -> None:
+        """Find the closing fence after the actual opening fence."""
+        description = "Tea " * 400
+        for prefix in ("", "\n", "\n\n", "\r\n", " \n"):
+            for newline in ("\n", "\r\n"):
+                for ending in ("", newline):
+                    with self.subTest(
+                        prefix=prefix,
+                        newline=newline,
+                        ending=ending,
+                    ):
+                        content = (
+                            prefix
+                            + newline.join(
+                                [
+                                    "---",
+                                    f"description: {description}",
+                                    "type: user",
+                                    "---",
+                                ],
+                            )
+                            + ending
+                        )
+                        # pylint: disable-next=protected-access
+                        snippet = AgenticMemoryMiddleware._frontmatter_snippet(
+                            content.encode(),
+                            1024,
+                        )
+                        fields = (
+                            # pylint: disable-next=protected-access
+                            AgenticMemoryMiddleware._parse_frontmatter_fields(
+                                snippet,
+                            )
+                        )
+                        self.assertEqual(
+                            fields,
+                            {
+                                "description": description.strip(),
+                                "type": "user",
+                            },
+                        )
+
+    def test_fence_prefix_is_not_a_closing_fence(self) -> None:
+        """Skip lines that only start with the fence marker."""
+        raw = (
+            b"---\n---not-a-fence\ndescription: "
+            + b"x" * 2000
+            + b"\ntype: user\n---\n"
+        )
+        # pylint: disable-next=protected-access
+        snippet = AgenticMemoryMiddleware._frontmatter_snippet(raw, 1024)
+        # pylint: disable-next=protected-access
+        fields = AgenticMemoryMiddleware._parse_frontmatter_fields(snippet)
+        self.assertEqual(fields, {"description": "x" * 2000, "type": "user"})
+
+    def test_non_frontmatter_fences_keep_capped_prefix(self) -> None:
+        """Do not extend for body fences or incomplete frontmatter."""
+        cases = [
+            b"# Body\n" + b"x" * 2000 + b"\n---\n",
+            b"---\ndescription: " + b"x" * 2000 + b"\n---invalid\n",
+        ]
+        for raw in cases:
+            with self.subTest(start=raw[:20]):
+                # pylint: disable-next=protected-access
+                snippet = AgenticMemoryMiddleware._frontmatter_snippet(
+                    raw,
+                    1024,
+                )
+                self.assertEqual(snippet, raw[:1024].decode())
+
     def test_closing_fence_at_end_of_text_keeps_fields(self) -> None:
         """Keep fields when the closing fence is the last line.
 
@@ -916,3 +1025,39 @@ class FrontmatterParseTest(TestCase):
             parse(ending_on_fence + "\n\nThey drink tea daily.\n"),
             fields,
         )
+
+    def test_overlong_frontmatter_extends_read_to_closing_fence(self) -> None:
+        """Recover fields when the frontmatter outgrows the byte cap and
+        the closing fence sits beyond it."""
+        description = "Cumulative notes about the billing migration. " * 40
+        raw = (
+            "---\n"
+            f"description: {description}\n"
+            "type: procedure\n"
+            "---\n"
+            "\n# Body\n\nirrelevant"
+        ).encode()
+        cap = 256 * 4  # default retrieval_max_tokens_per_frontmatter
+        # pylint: disable-next=protected-access
+        snippet = AgenticMemoryMiddleware._frontmatter_snippet(raw, cap)
+        self.assertIn("\n---", snippet)
+        # pylint: disable-next=protected-access
+        fields = AgenticMemoryMiddleware._parse_frontmatter_fields(snippet)
+        self.assertEqual(
+            fields,
+            {"description": description.strip(), "type": "procedure"},
+        )
+
+    def test_unclosed_frontmatter_keeps_capped_prefix(self) -> None:
+        """A file without a closing fence keeps today's capped prefix."""
+        raw = b"---\ndescription: " + b"x" * 2000
+        # pylint: disable-next=protected-access
+        snippet = AgenticMemoryMiddleware._frontmatter_snippet(raw, 1024)
+        self.assertEqual(snippet, raw[:1024].decode("utf-8", errors="replace"))
+
+    def test_short_frontmatter_unchanged(self) -> None:
+        """A frontmatter inside the cap is passed through verbatim."""
+        raw = b"---\nname: tea.md\ntype: user\n---\n\n# Body\n"
+        # pylint: disable-next=protected-access
+        snippet = AgenticMemoryMiddleware._frontmatter_snippet(raw, 1024)
+        self.assertEqual(snippet, raw.decode())

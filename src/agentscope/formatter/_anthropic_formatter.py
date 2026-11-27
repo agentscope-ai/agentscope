@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 """The Anthropic formatter module."""
 import base64
-import fnmatch
 from abc import ABC
 from typing import Any
-from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import FormatterBase, file_url_to_path
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..message import (
@@ -20,6 +18,7 @@ from ..message import (
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
+    ToolResultState,
     URLSource,
     Base64Source,
 )
@@ -244,13 +243,14 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                             {"type": "text", "text": "(empty tool output)"},
                         )
 
-                    content_blocks.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": tool_result_content,
-                        },
-                    )
+                    tool_result: dict[str, Any] = {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": tool_result_content,
+                    }
+                    if block.state == ToolResultState.ERROR:
+                        tool_result["is_error"] = True
+                    content_blocks.append(tool_result)
                     # Anthropic requires tool_result to be in a "user" message.
                     has_tool_result = True
 
@@ -285,28 +285,36 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
 
         Returns:
             `dict[str, Any] | None`:
-                The formatted data block, or None if the media type is not
+                The formatted data block with extra fields placed beside
+                ``type`` and ``source``, or None if the media type is not
                 supported.
         """
+        # Normalize the MIME type (lowercase, matched case-insensitively)
+        # before deciding what the block is.
+        supported = self._get_supported_tool_result_block(block)
+        if supported is None:
+            logger.warning(
+                "Media type %s is not supported, skipped.",
+                block.source.media_type,
+            )
+            return None
+        block = supported
         source = block.source
         media_type = source.media_type
 
-        # Check if media type is supported
-        if not any(
-            fnmatch.fnmatch(media_type, pattern)
-            for pattern in self.supported_input_media_types
-        ):
-            logger.warning(
-                "Media type %s is not supported, skipped.",
-                media_type,
-            )
-            return None
-
         # Anthropic supports images and PDF documents
         if media_type.startswith("image/"):
-            return self._format_source(source, "image")
+            return self._format_source(
+                source,
+                "image",
+                block.model_extra,
+            )
         if media_type == "application/pdf":
-            return self._format_source(source, "document")
+            return self._format_source(
+                source,
+                "document",
+                block.model_extra,
+            )
 
         logger.warning(
             "Anthropic only supports image and PDF data, got %s, skipped.",
@@ -318,9 +326,14 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
     def _format_source(
         source: URLSource | Base64Source,
         block_type: str,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Format an image or document source into an Anthropic base64
         content block.
+
+        Extra fields are merged into the content block itself, at the same
+        level as ``type`` and ``source`` (for example provider-specific cache
+        controls).
 
         Args:
             source (`URLSource | Base64Source`):
@@ -328,6 +341,9 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                 disk and remote URLs are downloaded.
             block_type (`str`):
                 The Anthropic block type, ``"image"`` or ``"document"``.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific parameters to merge into the content block,
+                at the same level as ``type`` and ``source``.
 
         Returns:
             `dict[str, Any]`:
@@ -339,7 +355,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
             url = str(source.url)
             if url.startswith("file://"):
                 with open(
-                    url2pathname(url.removeprefix("file://")),
+                    file_url_to_path(url),
                     "rb",
                 ) as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
@@ -350,7 +366,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
         else:
             raise ValueError(f"Unsupported source type: {type(source)}")
 
-        return {
+        result = {
             "type": block_type,
             "source": {
                 "type": "base64",
@@ -358,6 +374,9 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                 "data": data,
             },
         }
+        if extra:
+            result.update(extra)
+        return result
 
 
 class AnthropicChatFormatter(_AnthropicFormatterBase):
@@ -427,9 +446,11 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
         formatted_msgs = []
         start_index = 0
         if len(msgs) > 0 and msgs[0].role == "system":
-            formatted_msgs.append(
-                await self._format_system_message(msgs[0]),
-            )
+            system_msg = await self._format_system_message(msgs[0])
+            # Anthropic rejects empty text blocks with a 400, so drop an
+            # empty system prompt as the chat formatter does.
+            if system_msg["content"][0]["text"]:
+                formatted_msgs.append(system_msg)
             start_index = 1
 
         is_first_agent_message = True
@@ -440,15 +461,37 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
                         await self._format_messages(group),
                     )
                 case "agent_message":
-                    formatted_group = await self._format_agent_message(
+                    (
+                        formatted_group,
+                        has_history,
+                    ) = await self._format_agent_message_with_hints(
                         group,
                         is_first_agent_message,
+                        self._format_agent_message,
                     )
                     formatted_msgs.extend(formatted_group)
-                    if formatted_group:
+                    if has_history:
                         is_first_agent_message = False
 
         return formatted_msgs
+
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the Anthropic chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The Anthropic user-message representation.
+        """
+        return await AnthropicChatFormatter(
+            input_types=self.input_types,
+        ).format(msgs)
 
     async def _format_agent_message(
         self,
@@ -469,6 +512,14 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
                 elif isinstance(block, DataBlock):
                     formatted_block = self._format_anthropic_data_block(block)
                     if formatted_block:
+                        # Commit this message's pending text first, so a
+                        # media part never precedes the caption that
+                        # introduces it within the same message.
+                        if agent_text_parts:
+                            accumulated_text.append(
+                                f"{agent_name}: {' '.join(agent_text_parts)}",
+                            )
+                            agent_text_parts = []
                         if accumulated_text:
                             conversation_blocks.append(
                                 {
@@ -491,20 +542,18 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
                 },
             )
 
-        if conversation_blocks and is_first:
+        if conversation_blocks:
+            prompt = self.conversation_history_prompt if is_first else ""
             if conversation_blocks[0].get("text"):
                 conversation_blocks[0]["text"] = (
-                    self.conversation_history_prompt
-                    + "<history>\n"
-                    + conversation_blocks[0]["text"]
+                    prompt + "<history>\n" + conversation_blocks[0]["text"]
                 )
             else:
                 conversation_blocks.insert(
                     0,
                     {
                         "type": "text",
-                        "text": self.conversation_history_prompt
-                        + "<history>\n",
+                        "text": prompt + "<history>\n",
                     },
                 )
 
@@ -515,7 +564,6 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
                     {"type": "text", "text": "</history>"},
                 )
 
-        if conversation_blocks:
             return [
                 {
                     "role": "user",

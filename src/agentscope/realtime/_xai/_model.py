@@ -104,6 +104,10 @@ class XAIRealtimeModel(RealtimeModelBase):
         await self.close()
         while not self._queue.empty():
             self._queue.get_nowait()
+        # A response of the closed session cannot be cancelled or
+        # completed in the new one.
+        self._response_id = ""
+        self._tool_args.clear()
 
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(
@@ -297,13 +301,23 @@ class XAIRealtimeModel(RealtimeModelBase):
             case "response.done":
                 response = data.get("response", {})
                 usage = response.get("usage") or {}
-                event = me.ResponseDoneEvent(
+                done = me.ResponseDoneEvent(
                     item_id=response.get("id") or self._response_id,
-                    input_tokens=usage.get("input_tokens", 0),
-                    output_tokens=usage.get("output_tokens", 0),
+                    input_tokens=usage.get("input_tokens") or 0,
+                    output_tokens=usage.get("output_tokens") or 0,
                 )
-                self._response_id = ""
-                return event
+                if done.item_id == self._response_id:
+                    self._response_id = ""
+                if response.get("status") == "failed":
+                    err = (response.get("status_details") or {}).get(
+                        "error",
+                    ) or {}
+                    return me.ModelErrorEvent(
+                        response=done,
+                        code=err.get("code") or "response_failed",
+                        message=err.get("message") or "",
+                    )
+                return done
 
             case "response.output_audio.delta":
                 delta = data.get("delta")

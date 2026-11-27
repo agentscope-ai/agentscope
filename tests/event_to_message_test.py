@@ -134,6 +134,7 @@ def _db_url(
     block_id: str,
     url: str,
     media_type: str,
+    name: str,
     finished_at: Any = None,
 ) -> dict:
     """DataBlock (URL source) dict."""
@@ -141,7 +142,7 @@ def _db_url(
         "type": "data",
         "id": block_id,
         "source": {"type": "url", "url": url, "media_type": media_type},
-        "name": None,
+        "name": name,
         "created_at": AnyString(),
         "finished_at": finished_at,
     }
@@ -738,6 +739,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             block_id=_RES_URL_B,
             media_type="image/jpeg",
             url="https://example.com/img.jpg",
+            name="preview.jpg",
         )
         gt_res_img_url = _base(
             _s7b_prefix
@@ -751,6 +753,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                             _RES_URL_B,
                             "https://example.com/img.jpg",
                             "image/jpeg",
+                            "preview.jpg",
                         ),
                     ],
                     "running",
@@ -779,6 +782,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                             _RES_URL_B,
                             "https://example.com/img.jpg",
                             "image/jpeg",
+                            "preview.jpg",
                         ),
                     ],
                     "error",
@@ -801,6 +805,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                         _RES_URL_B,
                         "https://example.com/img.jpg",
                         "image/jpeg",
+                        "preview.jpg",
                     ),
                 ],
                 "error",
@@ -1089,7 +1094,7 @@ class ToolResultDataDeltaMergeTest(TestCase):
     """Msg.append_event groups same-id Base64 deltas into one DataBlock."""
 
     def test_same_block_id_deltas_merge_into_one_block(self) -> None:
-        """Same-id deltas merge; the payload decodes to concatenated bytes."""
+        """Same-ID deltas concatenate bytes and keep the latest name."""
         msg = AssistantMsg(name="assistant", content=[])
         msg.append_event(
             ToolResultStartEvent(
@@ -1098,15 +1103,26 @@ class ToolResultDataDeltaMergeTest(TestCase):
                 tool_call_name="audio",
             ),
         )
-        for payload in (b"hello", b"world"):
-            msg.append_event(
-                ToolResultDataDeltaEvent(
-                    reply_id=msg.id,
-                    tool_call_id="tc-1",
-                    block_id="audio-1",
-                    media_type="audio/wav",
-                    data=base64.b64encode(payload).decode("ascii"),
-                ),
+        for payload, name in (
+            (b"hello", "draft.wav"),
+            (b"wor", "final.wav"),
+            (b"ld", None),
+        ):
+            event = ToolResultDataDeltaEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                block_id="audio-1",
+                media_type="audio/wav",
+                data=base64.b64encode(payload).decode("ascii"),
+                name=name,
+            )
+            wire = event.model_dump(exclude_none=True)
+            if name is None:
+                self.assertNotIn("name", wire)
+            msg.append_event(ToolResultDataDeltaEvent.model_validate(wire))
+            self.assertEqual(
+                msg.content[0].output[0].name,
+                name or "final.wav",
             )
         msg.append_event(
             ToolResultEndEvent(
@@ -1130,7 +1146,7 @@ class ToolResultDataDeltaMergeTest(TestCase):
                         "data": "aGVsbG93b3JsZA==",
                         "media_type": "audio/wav",
                     },
-                    "name": None,
+                    "name": "final.wav",
                     "created_at": AnyString(),
                     "finished_at": None,
                 },

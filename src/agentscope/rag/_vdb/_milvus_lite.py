@@ -16,6 +16,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _reject_none_metadata_values,
 )
 from .._document import Chunk
 
@@ -65,8 +66,14 @@ class MilvusLiteStore(VectorStoreBase):
                 Extra keyword arguments forwarded to
                 :class:`pymilvus.MilvusClient`.
             batch_size (`int`, defaults to ``256``):
-                Batch size used by inserts and document listing.
+                Positive batch size used by inserts and document listing.
+
+        Raises:
+            ValueError: If ``batch_size`` is not positive.
         """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
+
         self._uri = uri
         self._metric_type = metric_type
         self._index_type = index_type
@@ -186,6 +193,31 @@ class MilvusLiteStore(VectorStoreBase):
         return await asyncio.to_thread(
             self.get_client().has_collection,
             collection_name=name,
+        )
+
+    async def _ensure_loaded(
+        self,
+        client: "MilvusClient",
+        collection: str,
+    ) -> None:
+        """Make sure a collection is loaded before reading from it.
+
+        Milvus may leave a collection in the ``released`` state — for
+        example after the server (or, for Milvus Lite, the host process)
+        restarts. Searching or querying a released collection fails with
+        ``MilvusException: Collection ... is in state 'released'; call
+        load() before search/get/query``. ``load_collection`` is
+        idempotent, so calling it before every read is safe.
+
+        Args:
+            client (`MilvusClient`):
+                The client bound to this store.
+            collection (`str`):
+                The collection that is about to be read.
+        """
+        await asyncio.to_thread(
+            client.load_collection,
+            collection_name=collection,
         )
 
     # ------------------------------------------------------------------
@@ -315,13 +347,17 @@ class MilvusLiteStore(VectorStoreBase):
                 cosine / inner product metrics, or ascending distance
                 semantics for L2 as exposed by Milvus.
         """
+        filter_expr = self._build_metadata_filter(metadata_filter)
+        client = self.get_client()
+        await self._ensure_loaded(client, collection)
+
         response = await asyncio.to_thread(
-            self.get_client().search,
+            client.search,
             collection_name=collection,
             data=[query_vector],
             anns_field="vector",
             limit=top_k,
-            filter=self._build_metadata_filter(metadata_filter),
+            filter=filter_expr,
             output_fields=["document_id", "chunk"],
             search_params={"metric_type": self._metric_type},
         )
@@ -363,7 +399,9 @@ class MilvusLiteStore(VectorStoreBase):
             `list[DocumentSummary]`:
                 One summary per distinct ``document_id``.
         """
+        _reject_none_metadata_values("MilvusLiteStore", metadata_filter)
         client = self.get_client()
+        await self._ensure_loaded(client, collection)
         rows = await asyncio.to_thread(
             self._query_all_rows,
             client,
@@ -497,8 +535,10 @@ class MilvusLiteStore(VectorStoreBase):
         # deterministic entity IDs may hold duplicates from indexing
         # retries, and truncating at `limit` raw rows could then drop a
         # low index while returning a duplicate of a higher one.
+        client = self.get_client()
+        await self._ensure_loaded(client, collection)
         rows = await asyncio.to_thread(
-            self.get_client().query,
+            client.query,
             collection_name=collection,
             filter=" and ".join(clauses),
             output_fields=["chunk"],
@@ -519,9 +559,14 @@ class MilvusLiteStore(VectorStoreBase):
     def _build_metadata_filter(
         metadata_filter: dict[str, Any] | None,
     ) -> str:
-        """Translate a flat ``{key: value}`` filter into a Milvus expr."""
+        """Translate a flat ``{key: value}`` filter into a Milvus expr.
+
+        ``None`` values are rejected: Milvus cannot tell an explicitly
+        null JSON field from a missing key.
+        """
         if not metadata_filter:
             return ""
+        _reject_none_metadata_values("MilvusLiteStore", metadata_filter)
 
         return " and ".join(
             f"metadata[{json.dumps(key, ensure_ascii=False)}] == "

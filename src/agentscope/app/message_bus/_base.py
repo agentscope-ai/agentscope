@@ -40,14 +40,40 @@ should fan out at write time — push one entry per recipient inbox using
 Mode A. The bus stays simple; deduplication is the producer's
 responsibility.
 """
+import asyncio
+import json
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Self
 
 from typing_extensions import deprecated
 
 from ._keys import MessageBusKeys
+
+
+# Register a coroutine that waits for previously received broadcasts to be
+# yielded to this subscriber. Each subscription has one sequential caller.
+RegisterSubscriptionBarrier = Callable[[Callable[[], Awaitable[None]]], None]
+
+
+def session_event_payload(notification: dict) -> dict:
+    """Strip replay cursors before delivering a live event to a client."""
+    return {
+        k: v
+        for k, v in notification.items()
+        if k not in ("_entry_id", "_previous_entry_id")
+    }
+
+
+def _stream_cursor_precedes(left: str, right: str) -> bool | None:
+    """Compare native Redis-style stream IDs, if both use that format."""
+    try:
+        return tuple(map(int, left.split("-"))) < tuple(
+            map(int, right.split("-")),
+        )
+    except ValueError:
+        return None
 
 
 class MessageBus(ABC):  # pylint: disable=too-many-public-methods
@@ -116,9 +142,8 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 caller's responsibility.
             ttl_secs (`int | None`, optional):
                 If set, refresh the queue key's expiry to this many
-                seconds on every push (sliding TTL). When ``None``, the
-                key never expires and must be drained or deleted
-                explicitly.
+                seconds on every push (sliding TTL). ``None`` leaves an
+                existing expiry unchanged; a new key has no expiry.
 
         Returns:
             `str`:
@@ -154,6 +179,79 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``(entry_id, payload)`` pairs in arrival order. Empty
                 list when the queue is empty.
         """
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        """Read queue entries without removing them.
+
+        Entries are returned oldest first. Callers that need a consistent
+        read-modify-write cycle must hold an application-level lock shared
+        with every writer of that queue.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            max_count (`int`, defaults to ``100``):
+                Maximum number of entries to return.
+
+        Returns:
+            `list[tuple[str, dict]]`:
+                ``(entry_id, payload)`` pairs in queue order.
+        """
+        raise NotImplementedError("This bus does not support editable queues.")
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        """Atomically replace a queue's contents with ``payloads``.
+
+        The replacement preserves the supplied order and assigns fresh
+        transport-level entry ids. Business-level identities therefore
+        belong inside each payload rather than in the transport id.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            payloads (`list[dict]`):
+                Complete new queue contents in oldest-first order.
+
+        Returns:
+            `list[str]`:
+                Newly assigned transport-level entry ids.
+        """
+        raise NotImplementedError("This bus does not support editable queues.")
+
+    async def queue_remove_if(
+        self,
+        key: str,
+        matches: list[dict[str, str]],
+    ) -> bool:
+        """Atomically remove entries matching the supplied field values.
+
+        Each predicate must match exactly one distinct entry. Check all
+        predicates before deleting anything. Preserve other entries, their
+        transport IDs, order, and the queue's expiry. An empty list is a no-op.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            matches (`list[dict[str, str]]`):
+                Required top-level string field values for each target.
+
+        Returns:
+            `bool`:
+                True when all targets matched and were removed; False when
+                this execution made no change because a predicate failed.
+                Transport failures can leave the outcome unknown.
+        """
+        raise NotImplementedError(
+            "This bus cannot conditionally remove inputs.",
+        )
 
     @abstractmethod
     async def queue_delete(self, key: str) -> None:
@@ -209,6 +307,28 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Transport-level entry id, useful as a cursor for
                 subsequent :meth:`log_read` calls.
         """
+
+    async def log_append_with_previous(
+        self,
+        key: str,
+        payload: dict,
+        *,
+        max_len: int,
+    ) -> tuple[str, str | None]:
+        """Append and return (entry ID, immediate predecessor if known).
+
+        A predecessor must be established atomically with the append.
+        An empty string confirms the log was empty. None means unknown.
+        """
+        return await self.log_append(key, payload, max_len=max_len), None
+
+    @staticmethod
+    def log_cursor_precedes(left: str, right: str) -> bool | None:
+        """Order cursors when both log records may already be trimmed.
+
+        Return None for distinct cursors when only log_read exposes order.
+        """
+        return False if left == right else None
 
     @abstractmethod
     async def log_read(
@@ -286,6 +406,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         key: str,
         *,
         on_ready: Callable[[], None] | None = None,
+        on_barrier: RegisterSubscriptionBarrier | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Yield broadcast payloads for ``key`` until the consumer
         closes the generator.
@@ -306,6 +427,11 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``SessionTriggerListenerManager.start``) until the
                 subscription is live, so a publish-immediately-after
                 race is impossible.
+            on_barrier (optional):
+                Register a flush coroutine once the subscription is ready.
+                It must wait until this iterator has yielded all preceding
+                notifications. The caller may cancel a pending flush when
+                closing the subscription.
 
         Yields:
             `dict`:
@@ -354,6 +480,40 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         # @asynccontextmanager to work; subclasses override it.
         if False:  # pylint: disable=using-constant-test
             yield  # pylint: disable=unreachable
+
+    @asynccontextmanager
+    async def acquire_lock_bounded(
+        self,
+        key: str,
+        *,
+        ttl_secs: int = 600,
+        timeout_secs: float = 2.0,
+    ) -> AsyncGenerator[None, None]:
+        """Bound contention waiting without timing out the lock body.
+
+        Custom buses must make cancellation during ``acquire_lock`` safe:
+        resolve ambiguous acquisitions and release only their own lease.
+        Redis attempts cleanup within its own finite deadline, so cleanup
+        may outlast the contention deadline. If transport cleanup times out,
+        the lock TTL is the final fallback.
+
+        Args:
+            key (`str`): Lock identifier.
+            ttl_secs (`int`): Renewable lease duration.
+            timeout_secs (`float`): Maximum contention wait.
+
+        Yields:
+            `None`: While holding the lock.
+
+        Raises:
+            `TimeoutError`: The contention deadline expired.
+        """
+        async with AsyncExitStack() as stack:
+            async with asyncio.timeout(timeout_secs):
+                await stack.enter_async_context(
+                    self.acquire_lock(key, ttl_secs=ttl_secs),
+                )
+            yield
 
     @abstractmethod
     async def is_locked(self, key: str) -> bool:
@@ -432,7 +592,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Set ``field`` only while it still holds ``expected``.
@@ -449,9 +609,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Field name within the registry.
             value (`str`):
                 Serialized value to store.
-            expected (`str`):
+            expected (`str | None`):
                 The value the caller last read. The write is skipped
-                when the stored value differs.
+                when the stored value differs. ``None`` creates the field
+                only if it does not exist.
             ttl_secs (`int | None`, optional):
                 Refresh the namespace expiry when the write happens.
 
@@ -459,6 +620,29 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             `bool`:
                 ``True`` when the value was written.
         """
+
+    async def registry_del_if(  # pylint: disable=unused-argument
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Delete a field atomically only if its value still matches.
+
+        Backends may override this optional operation. The default leaves
+        data intact so existing adapters remain usable without an unsafe
+        read-then-delete fallback.
+
+        Args:
+            namespace (`str`): The registry key.
+            field (`str`): The field to remove.
+            expected (`str`): The previously observed value.
+
+        Returns:
+            `bool`: True if deleted; False if absent, changed, or unsupported.
+        """
+        return False
 
     @abstractmethod
     async def registry_pop(self, namespace: str, field: str) -> str | None:
@@ -507,6 +691,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``True`` if the field is present.
         """
 
+    async def registry_has_entries(self, namespace: str) -> bool:
+        """Return whether the registry contains at least one field."""
+        return bool(await self.registry_getall(namespace))
+
     @abstractmethod
     async def registry_getall(
         self,
@@ -543,6 +731,17 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             `str | None`:
                 The stored value, or ``None`` if missing.
         """
+
+    async def registry_get_many(
+        self,
+        namespace: str,
+        fields: list[str],
+    ) -> list[str | None]:
+        """Read selected fields in order, using None for missing values.
+
+        Custom buses may override this compatible fallback with a batch read.
+        """
+        return [await self.registry_get(namespace, field) for field in fields]
 
     @abstractmethod
     async def registry_drop(self, namespace: str) -> None:
@@ -646,7 +845,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
 
     @deprecated(
         "Use subscribe(MessageBusKeys.session_events(sid), ...) directly, "
-        "stripping _entry_id from each payload.",
+        "skipping SESSION_BARRIER_FIELD markers and stripping _entry_id.",
     )
     async def session_subscribe_events(
         self,
@@ -657,7 +856,8 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """Live-subscribe to session events, stripping _entry_id."""
         key = self._SESSION_EVENTS_KEY.format(sid=session_id)
         async for payload in self.subscribe(key, on_ready=on_ready):
-            yield {k: v for k, v in payload.items() if k != "_entry_id"}
+            if MessageBusKeys.SESSION_BARRIER_FIELD not in payload:
+                yield session_event_payload(payload)
 
     # Cross-process cancel ---------------------------------------------
 
@@ -700,6 +900,41 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """Delete all per-session bus state."""
         await self.log_trim(self._SESSION_EVENTS_KEY.format(sid=session_id))
         await self.queue_delete(self._INBOX_KEY.format(sid=session_id))
+        await self.queue_delete(MessageBusKeys.chat_inputs(session_id))
+        routing = await self.registry_get(
+            MessageBusKeys.chat_input_pending_registry(),
+            session_id,
+        )
+        if routing is not None:
+            user_id = json.loads(routing)["user_id"]
+            await self.registry_del(
+                MessageBusKeys.chat_input_user_sessions(user_id),
+                session_id,
+            )
+            await self.registry_del(
+                MessageBusKeys.chat_idle_receipt_counts(user_id),
+                session_id,
+            )
+        await self.registry_drop(
+            MessageBusKeys.chat_input_payloads(session_id),
+        )
+        await self.registry_drop(MessageBusKeys.chat_input_claim(session_id))
+        await self.registry_drop(MessageBusKeys.chat_submissions(session_id))
+        await self.registry_drop(
+            MessageBusKeys.chat_input_cancellations(session_id),
+        )
+        await self.registry_del(
+            MessageBusKeys.chat_input_pending_registry(),
+            session_id,
+        )
+        await self.registry_del(
+            MessageBusKeys.chat_input_inflight_registry(),
+            session_id,
+        )
+        await self.registry_del(
+            MessageBusKeys.chat_active_reply_registry(),
+            session_id,
+        )
         await self.registry_drop(self._BG_TASKS_KEY.format(sid=session_id))
 
     # Inbox -----------------------------------------------------------

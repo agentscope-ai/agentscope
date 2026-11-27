@@ -156,10 +156,11 @@ class ScheduleHttpEndTimeTest(TestCase):
         )
         self.client = self.enterContext(TestClient(app))
 
-    def test_end_time_round_trips_through_create_and_list(self) -> None:
-        """An offset-bearing end time survives JSON input and list output."""
+    def test_start_and_end_round_trip_through_create_and_list(self) -> None:
+        """Both absolute boundaries survive persistence and list output."""
         payload = {
             **_request("59 23 * * *", "Asia/Shanghai").model_dump(mode="json"),
+            "started_at": "2099-12-01T15:59:00Z",
             "ended_at": "2099-12-31T23:59:59.999+08:00",
         }
         created = self.client.post("/schedule/", json=payload)
@@ -174,7 +175,7 @@ class ScheduleHttpEndTimeTest(TestCase):
             "agent_id": "agent-1",
             "data": {
                 **{k: v for k, v in payload.items() if k != "agent_id"},
-                "started_at": record.data.started_at,
+                "started_at": datetime.fromisoformat(payload["started_at"]),
                 "ended_at": datetime.fromisoformat(payload["ended_at"]),
                 "permission_mode": PermissionMode(payload["permission_mode"]),
                 "source": "USER",
@@ -259,31 +260,320 @@ class ScheduleHttpEndTimeTest(TestCase):
                 self.assertListEqual(self.storage.upserted, [])
                 self.assertListEqual(self.scheduler.notified, [])
 
+    def test_ambiguous_start_keeps_first_occurrence_for_every_frequency(
+        self,
+    ) -> None:
+        """A UTC start at the first DST fold stays eligible after storage."""
+        for cron in (
+            "30 1 * * *",
+            "30 1 * * 0",
+            "30 1 1 * *",
+            "30 1 1 11 *",
+        ):
+            with self.subTest(cron=cron):
+                self.storage.upserted.clear()
+                self.scheduler.notified.clear()
+                response = self.client.post(
+                    "/schedule/",
+                    json={
+                        **_request(cron, "America/New_York").model_dump(
+                            mode="json",
+                        ),
+                        "started_at": "2026-11-01T05:30:00Z",
+                    },
+                )
+                self.assertEqual(response.status_code, 201, response.text)
+                restored = ScheduleRecord.model_validate_json(
+                    self.storage.upserted[0].model_dump_json(),
+                )
+                trigger = SchedulerManager.validate_schedule(restored)
+                first = trigger.get_next_fire_time(
+                    None,
+                    datetime.fromisoformat("2026-10-30T00:00:00Z"),
+                )
+                self.assertIsNotNone(first)
+                self.assertEqual(
+                    (first.isoformat(), first.fold),
+                    ("2026-11-01T01:30:00-04:00", 0),
+                )
+
+    def test_omitted_and_null_start_use_creation_time(self) -> None:
+        """Both compatible request forms save an aware creation instant."""
+        cases: list[dict[str, None]] = [{}, {"started_at": None}]
+        for extra in cases:
+            with self.subTest(extra=extra):
+                self.storage.upserted.clear()
+                self.scheduler.notified.clear()
+                payload = {
+                    **_request("0 * * * *").model_dump(
+                        mode="json",
+                        exclude={"started_at"},
+                    ),
+                    **extra,
+                }
+                before = datetime.now().astimezone()
+                response = self.client.post("/schedule/", json=payload)
+                after = datetime.now().astimezone()
+                self.assertEqual(response.status_code, 201, response.text)
+                record = self.storage.upserted[0]
+                self.assertEqual(
+                    response.json(),
+                    {"schedule_id": record.id},
+                )
+                self.assertEqual(self.scheduler.notified, [record.id])
+                self.assertIsNotNone(record.data.started_at.utcoffset())
+                self.assertLessEqual(before, record.data.started_at)
+                self.assertLessEqual(record.data.started_at, after)
+
+    def test_invalid_start_time_has_no_write_side_effects(self) -> None:
+        """Malformed/naive starts and invalid windows fail before mutation."""
+        cases = (
+            ("not-a-date", None, "datetime_from_date_parsing"),
+            ("2026-11-01T20:26:00", None, "timezone_aware"),
+            ("2026-02-30T20:26:00Z", None, "datetime_from_date_parsing"),
+            ("2026-11-01T25:26:00Z", None, "datetime_from_date_parsing"),
+            (
+                "2026-11-01T20:26:00+08:00",
+                "2026-11-01T12:26:00Z",
+                None,
+            ),
+            (
+                "2026-11-01T20:26:00+08:00",
+                "2026-11-01T12:25:59Z",
+                None,
+            ),
+        )
+        for start, end, error_type in cases:
+            with self.subTest(start=start, end=end):
+                response = self.client.post(
+                    "/schedule/",
+                    json={
+                        **_request("26 20 * * *").model_dump(mode="json"),
+                        "started_at": start,
+                        "ended_at": end,
+                    },
+                )
+                self.assertEqual(response.status_code, 422, response.text)
+                detail = response.json()["detail"]
+                if error_type:
+                    # Parser descriptions differ by the invalid component.
+                    self.assertEqual(
+                        [
+                            (item["type"], item["loc"], item["input"])
+                            for item in detail
+                        ],
+                        [(error_type, ["body", "started_at"], start)],
+                    )
+                else:
+                    self.assertEqual(
+                        response.json(),
+                        {"detail": "ended_at must be later than started_at"},
+                    )
+                self.assertEqual(
+                    (self.storage.upserted, self.scheduler.notified),
+                    ([], []),
+                )
+
+
+class ScheduleStartBoundaryTest(TestCase):
+    """Cron frequency rules and absolute activation boundaries."""
+
+    def test_start_time_frequency_boundaries(self) -> None:
+        """All frequencies retain their rules and inclusive start/end times."""
+        cases = (
+            ("daily", "26 20 * * *", "20:26", ("2026-11-01", "2026-11-02")),
+            ("midnight", "15 0 * * *", "00:15", ("2030-01-01", "2030-01-02")),
+            ("weekly", "26 20 * * 0", "20:26", ("2026-11-01", "2026-11-08")),
+            ("monthly", "26 20 1 * *", "20:26", ("2026-11-01", "2026-12-01")),
+            (
+                "month-end",
+                "15 0 31 * *",
+                "00:15",
+                ("2030-01-31", "2030-03-31"),
+            ),
+            ("once", "26 20 1 11 *", "20:26", ("2030-11-01",)),
+            ("once-leap-day", "26 20 29 2 *", "20:26", ("2032-02-29",)),
+        )
+        for frequency, cron, time, dates in cases:
+            expected_fires = [
+                datetime.fromisoformat(f"{day}T{time}:00+08:00")
+                for day in dates
+            ]
+            first = expected_fires[0]
+            utc_start = first.astimezone(ZoneInfo("UTC")).isoformat()
+            starts = (
+                first.isoformat(),
+                utc_start.replace("+00:00", "Z"),
+            )
+            for start in starts:
+                for bounded in (True, False):
+                    with self.subTest(
+                        frequency=frequency,
+                        start=start,
+                        bounded=bounded,
+                    ):
+                        end = expected_fires[-1] if bounded else None
+                        if end is not None and end == first:
+                            end += timedelta(days=1)
+                        record = _record()
+                        record.data.cron_expression = cron
+                        record.data.timezone = "Asia/Shanghai"
+                        record.data.started_at = datetime.fromisoformat(start)
+                        record.data.ended_at = end
+                        trigger = SchedulerManager.validate_schedule(record)
+                        self.assertEqual(
+                            [
+                                trigger.get_next_fire_time(None, reference)
+                                for reference in (
+                                    first - timedelta(days=2000),
+                                    first - timedelta(microseconds=1),
+                                    first,
+                                )
+                            ],
+                            [first] * 3,
+                        )
+                        actual_fires = []
+                        fire = first
+                        for _ in expected_fires:
+                            actual_fires.append(fire)
+                            fire = trigger.get_next_fire_time(
+                                fire,
+                                fire + timedelta(seconds=1),
+                            )
+                        self.assertEqual(actual_fires, expected_fires)
+                        if bounded:
+                            self.assertIsNone(fire)
+
 
 class ScheduleWeekdayTest(TestCase):
     """Standard cron weekdays are translated for APScheduler."""
 
     def test_standard_weekdays(self) -> None:
-        """Numeric weekdays count from Sunday; names pass through."""
+        """Numeric weekdays and names select complete two-week sequences."""
         record = _record()
-        actual = {}
-        for expression in ("1", "0", "7", "1-5", "0-7/3", "mon-fri"):
-            record.data.cron_expression = f"0 9 * * {expression}"
-            trigger = SchedulerManager.validate_schedule(record)
-            actual[expression] = str(trigger.fields[4])
-        self.assertDictEqual(
-            actual,
-            {
-                "1": "mon",
-                "0": "sun",
-                "7": "sun",
-                "1-5": "mon,tue,wed,thu,fri",
-                "0-7/3": "sun,wed,sat",
-                "mon-fri": "mon-fri",
-            },
-        )
+        tz = ZoneInfo("UTC")
+        record.data.ended_at = datetime(2026, 1, 14, 23, 59, tzinfo=tz)
+        expected_days = {
+            "1": [5, 12],
+            "0": [4, 11],
+            "7": [4, 11],
+            "1-5": [1, 2, 5, 6, 7, 8, 9, 12, 13, 14],
+            "0-7/3": [3, 4, 7, 10, 11, 14],
+            "mon-fri": [1, 2, 5, 6, 7, 8, 9, 12, 13, 14],
+        }
+        for expression, days in expected_days.items():
+            with self.subTest(expression=expression):
+                record.data.cron_expression = f"0 9 * * {expression}"
+                trigger = SchedulerManager.validate_schedule(record)
+                start = datetime(2026, 1, 1, tzinfo=tz)
+                previous = None
+                dates = []
+                for _ in range(15):
+                    fire = trigger.get_next_fire_time(previous, start)
+                    if fire is None:
+                        break
+                    dates.append(fire)
+                    previous = fire
+                    start = fire + timedelta(microseconds=1)
+                self.assertEqual(
+                    dates,
+                    [datetime(2026, 1, day, 9, tzinfo=tz) for day in days],
+                )
 
         record.data.cron_expression = "0 9 * * 8"
+        with self.assertRaises(ValueError):
+            SchedulerManager.validate_schedule(record)
+
+
+class ScheduleCalendarTest(TestCase):
+    """Standard cron combines restricted day fields with OR, not AND."""
+
+    @staticmethod
+    def _fires(record: ScheduleRecord, start: datetime, count: int) -> list:
+        """Enumerate actual trigger dates, including overlap and end bounds."""
+        trigger = SchedulerManager.validate_schedule(record)
+        previous = None
+        dates = []
+        for _ in range(count):
+            fire = trigger.get_next_fire_time(previous, start)
+            if fire is None:
+                break
+            dates.append(fire)
+            previous = fire
+            start = fire + timedelta(microseconds=1)
+        return dates
+
+    def test_month_day_and_weekday_are_alternatives(self) -> None:
+        """A monthly-plus-weekly task must not skip months of executions."""
+        record = _record()
+        record.data.cron_expression = "0 9 1 * 1"
+        tz = ZoneInfo("UTC")
+        dates = self._fires(record, datetime(2026, 10, 1, tzinfo=tz), 7)
+        self.assertEqual(
+            dates,
+            [
+                datetime(2026, month, day, 9, tzinfo=tz)
+                for month, day in (
+                    (10, 1),
+                    (10, 5),
+                    (10, 12),
+                    (10, 19),
+                    (10, 26),
+                    (11, 1),
+                    (11, 2),
+                )
+            ],
+        )
+
+    def test_overlapping_days_fire_once_within_activation_window(self) -> None:
+        """Honor timezone and bounds without duplicate runs."""
+        record = _record()
+        record.data.cron_expression = "0 9 1 * mon"
+        record.data.timezone = "Asia/Shanghai"
+        tz = ZoneInfo(record.data.timezone)
+        record.data.started_at = datetime(2026, 6, 1, 9, tzinfo=tz)
+        record.data.ended_at = datetime(2026, 6, 8, 9, tzinfo=tz)
+        self.assertEqual(
+            self._fires(record, datetime(2026, 5, 1, tzinfo=tz), 4),
+            [
+                datetime(2026, 6, 1, 9, tzinfo=tz),
+                datetime(2026, 6, 8, 9, tzinfo=tz),
+            ],
+        )
+
+    def test_wildcard_day_fields_keep_intersection_semantics(self) -> None:
+        """A wildcard, including a stepped one, does not add an OR branch."""
+        tz = ZoneInfo("UTC")
+        for expression, days in (
+            ("0 9 * * 1", [5, 12, 19, 26]),
+            ("0 9 1 * *", [1]),
+            ("0 9 */2 * 1", [5, 19]),
+            ("0 9 1-3 * */2", [1, 3]),
+        ):
+            with self.subTest(expression=expression):
+                record = _record()
+                record.data.cron_expression = expression
+                record.data.ended_at = datetime(2026, 10, 31, 23, tzinfo=tz)
+                self.assertEqual(
+                    self._fires(record, datetime(2026, 10, 1, tzinfo=tz), 6),
+                    [datetime(2026, 10, day, 9, tzinfo=tz) for day in days],
+                )
+
+    def test_weekday_branch_survives_an_impossible_month_day(self) -> None:
+        """February has no 31st, but the Mondays must still run."""
+        record = _record()
+        record.data.cron_expression = "0 9 31 2 1"
+        tz = ZoneInfo("UTC")
+        record.data.ended_at = datetime(2026, 2, 28, 23, tzinfo=tz)
+        self.assertEqual(
+            self._fires(record, datetime(2026, 2, 1, tzinfo=tz), 5),
+            [datetime(2026, 2, day, 9, tzinfo=tz) for day in (2, 9, 16, 23)],
+        )
+
+    def test_invalid_weekday_is_not_hidden_by_month_day_branch(self) -> None:
+        """A valid first branch must not admit an invalid schedule."""
+        record = _record()
+        record.data.cron_expression = "0 9 1 * notaday"
         with self.assertRaises(ValueError):
             SchedulerManager.validate_schedule(record)
 
@@ -566,6 +856,33 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
                 name="bad timezone",
                 cron_expression="0 9 * * *",
                 timezone="Mars/Olympus_Mons",
+            )
+
+        self.assertEqual(storage.upserted, [])
+
+    async def test_tool_invalid_permission_mode_does_not_persist(self) -> None:
+        """An unrecognized permission mode is rejected, not replaced.
+
+        The tool validates the cron expression, timezone and time window
+        before writing; silently switching to DONT_ASK (where every
+        approval request becomes a denial) hides the mistake from both
+        the model and the user.
+        """
+        storage = _Storage()
+        scheduler = _Scheduler()
+        tool = ScheduleCreate(
+            user_id="user-1",
+            agent_id="agent-1",
+            chat_model_config=_request("0 9 * * *").chat_model_config,
+            storage=storage,
+            scheduler_manager=scheduler,
+        )
+
+        with self.assertRaises(ValueError):
+            await tool(
+                name="bad permission",
+                cron_expression="0 9 * * *",
+                permission_mode="accpet_edits",
             )
 
         self.assertEqual(storage.upserted, [])

@@ -22,7 +22,9 @@ from ._model import (
     SOPRecord,
     SOPRunRecord,
     TeamRecord,
+    VoiceProfileRecord,
 )
+from ._model._session_list import SessionListItem
 from ...credential import CredentialBase
 from ...message import Msg
 from ...sop import SOPPhase, SOPRunState
@@ -466,6 +468,37 @@ class StorageBase(ABC):
         Returns:
             `list[SessionRecord]`: List of all sessions for the (user, agent).
         """
+
+    async def list_sessions_page(
+        self,
+        user_id: str,
+        agent_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[SessionListItem], int]:
+        """Return read-only summaries and the total matching count.
+
+        Omit ``limit`` to return every remaining session. Existing storage
+        backends inherit this fallback; SQL projects and pages in the DB.
+        Complete records remain available through ``list_sessions``.
+        """
+        if offset < 0 or (limit is not None and limit < 1):
+            raise ValueError("offset must be >= 0 and limit must be >= 1")
+        records = await self.list_sessions(user_id, agent_id)
+        records = sorted(
+            records,
+            key=lambda record: (record.created_at, record.id),
+            reverse=True,
+        )
+        end = None if limit is None else offset + limit
+        return (
+            [
+                SessionListItem.from_record(record)
+                for record in records[offset:end]
+            ],
+            len(records),
+        )
 
     @abstractmethod
     async def delete_session(
@@ -1444,4 +1477,81 @@ class StorageBase(ABC):
         Returns:
             `list[KnowledgeDocumentRecord]`:
                 Orphan ``pending`` documents to redispatch.
+        """
+
+    # ------------------------------------------------------------------
+    # Voice profile persistence
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def upsert_voice_profile(
+        self,
+        user_id: str,
+        record: VoiceProfileRecord,
+    ) -> str:
+        """Create or update a voice profile record.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            record (`VoiceProfileRecord`):
+                The voice profile record to persist.
+
+        Returns:
+            `str`:
+                The id of the stored voice profile.
+        """
+
+    @abstractmethod
+    async def get_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> VoiceProfileRecord | None:
+        """Fetch a single voice profile record by id.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            profile_id (`str`):
+                The voice profile id.
+
+        Returns:
+            `VoiceProfileRecord | None`:
+                The record, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def list_voice_profiles(
+        self,
+        user_id: str,
+    ) -> list[VoiceProfileRecord]:
+        """List all voice profiles for a given user.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+
+        Returns:
+            `list[VoiceProfileRecord]`:
+                All voice profile records for the user.
+        """
+
+    @abstractmethod
+    async def delete_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> bool:
+        """Delete a voice profile record.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            profile_id (`str`):
+                The voice profile id.
+
+        Returns:
+            `bool`:
+                ``True`` if deleted, ``False`` if not found.
         """

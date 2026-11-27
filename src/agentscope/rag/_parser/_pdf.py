@@ -64,7 +64,7 @@ class PDFParser(ParserBase):
 
         try:
             from pypdf import PdfReader
-            from pypdf.errors import PdfReadError
+            from pypdf.errors import PyPdfError
         except ImportError as e:
             raise ImportError(
                 "Please install pypdf to use the PDF parser. "
@@ -86,7 +86,7 @@ class PDFParser(ParserBase):
                         metadata={"page": page_idx},
                     ),
                 )
-        except PdfReadError as e:
+        except PyPdfError as e:
             raise ValueError(
                 f"Failed to parse {filename!r} as PDF: {e}",
             ) from e
