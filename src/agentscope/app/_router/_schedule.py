@@ -195,7 +195,20 @@ async def update_schedule(
             detail=str(exc),
         ) from exc
 
-    await storage.upsert_schedule(user_id, updated_record)
+    try:
+        await storage.upsert_schedule(
+            user_id,
+            updated_record,
+            create_if_missing=False,
+        )
+    except KeyError as exc:
+        # Deleted between the read above and this write: the DELETE
+        # already won, so report the schedule as gone rather than
+        # resurrecting it.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule '{schedule_id}' not found.",
+        ) from exc
     await scheduler.notify_changed(schedule_id)
 
     return updated_record

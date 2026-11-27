@@ -2325,3 +2325,113 @@ class VoiceProfileSQLTest(IsolatedAsyncioTestCase):
             "owner-a",
             "contested-profile",
         )
+
+
+class StrictUpdateSQLTest(IsolatedAsyncioTestCase):
+    """A strict update must never recreate a row a DELETE removed.
+
+    ``upsert_*`` also serves the PATCH write path. Its atomic upsert
+    always has an INSERT branch, so a write that lands after a
+    concurrent DELETE resurrects the row (issue #4111). With
+    ``create_if_missing=False`` the write is a plain UPDATE and a
+    missing row raises ``KeyError``.
+    """
+
+    async def asyncSetUp(self) -> None:
+        self._stack = AsyncExitStack()
+        self.storage = await self._stack.enter_async_context(
+            AsyncSQLAlchemyStorage(
+                "sqlite+aiosqlite:///:memory:",
+                create_tables=True,
+            ),
+        )
+
+    async def asyncTearDown(self) -> None:
+        await self._stack.aclose()
+
+    async def test_schedule_strict_update_after_delete_raises(self) -> None:
+        """A schedule deleted before the PATCH write is not recreated."""
+        schedule = _schedule_record("user-1", "agent-1")
+        await self.storage.upsert_schedule("user-1", schedule)
+        await self.storage.delete_schedule("user-1", schedule.id)
+
+        with self.assertRaises(KeyError):
+            await self.storage.upsert_schedule(
+                "user-1",
+                schedule,
+                create_if_missing=False,
+            )
+
+        self.assertIsNone(
+            await self.storage.get_schedule("user-1", schedule.id),
+        )
+        self.assertEqual(await self.storage.list_schedules("user-1"), [])
+
+    async def test_session_strict_update_after_delete_raises(self) -> None:
+        """A session deleted before the PATCH write is not recreated."""
+        session = await self.storage.upsert_session(
+            "user-1",
+            "agent-1",
+            SessionConfig(
+                workspace_id="ws-1",
+                chat_model_config=ChatModelConfig(
+                    type="openai",
+                    credential_id="cred-1",
+                    model="gpt-4",
+                    parameters={},
+                ),
+            ),
+        )
+        await self.storage.delete_session("user-1", "agent-1", session.id)
+
+        with self.assertRaises(KeyError):
+            await self.storage.upsert_session(
+                "user-1",
+                "agent-1",
+                session.config,
+                session_id=session.id,
+                create_if_missing=False,
+            )
+
+        self.assertEqual(
+            await self.storage.list_sessions("user-1", "agent-1"),
+            [],
+        )
+
+    async def test_channel_strict_update_after_delete_raises(self) -> None:
+        """A channel deleted before the PATCH write is not recreated."""
+        record = _channel_record("chan-strict")
+        await self.storage.upsert_channel(record, "bot-strict")
+        await self.storage.delete_channel(record.id, "bot-strict")
+
+        record.name = "renamed"
+        with self.assertRaises(KeyError):
+            await self.storage.upsert_channel(
+                record,
+                "bot-strict",
+                create_if_missing=False,
+            )
+
+        self.assertIsNone(await self.storage.get_channel(record.id))
+        self.assertEqual(await self.storage.list_all_channels(), [])
+        self.assertIsNone(
+            await self.storage.get_channel_id_by_platform_bot_id(
+                "bot-strict",
+            ),
+        )
+
+    async def test_strict_update_when_present_still_writes(self) -> None:
+        """The strict path is still a normal update when the row lives."""
+        schedule = _schedule_record("user-1", "agent-1")
+        await self.storage.upsert_schedule("user-1", schedule)
+
+        schedule.data.name = "renamed"
+        await self.storage.upsert_schedule(
+            "user-1",
+            schedule,
+            create_if_missing=False,
+        )
+
+        stored = await self.storage.get_schedule("user-1", schedule.id)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.data.name, "renamed")

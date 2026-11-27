@@ -4,7 +4,7 @@
 
 import warnings
 from datetime import datetime, timedelta
-from typing import Any, TYPE_CHECKING, Self
+from typing import Any, Callable, TYPE_CHECKING, Self
 
 from pydantic import BaseModel
 
@@ -213,6 +213,96 @@ class RedisStorage(StorageBase):
     async def _set_with_ttl(self, key: str, value: str) -> None:
         """SET a key with the sliding TTL in one command, if configured."""
         await self._client.set(key, value, ex=self.key_ttl)
+
+    async def _update_if_exists(
+        self,
+        key: str,
+        value: str,
+        extra_sets: "tuple[tuple[str, str], ...]" = (),
+        index_adds: "tuple[tuple[str, str], ...]" = (),
+    ) -> bool:
+        """Overwrite *key* only while it still exists, atomically.
+
+        A plain ``SET`` recreates a record a concurrent delete just
+        removed. WATCHing the record key makes the check and the write
+        one transaction: if the key is deleted (or otherwise changed)
+        between the existence check and ``EXEC``, the watched-key
+        version bumps, Redis aborts the transaction and we report the
+        record as gone. Index entries are written in the same
+        transaction, so they can never point at a record the delete
+        already removed.
+
+        Args:
+            key (`str`): Record key to overwrite.
+            value (`str`): Serialized record to store.
+            extra_sets (`tuple[tuple[str, str], ...]`, optional):
+                ``(key, value)`` pairs to write in the same transaction
+                (e.g. a lookup index). Defaults to none.
+            index_adds (`tuple[tuple[str, str], ...]`, optional):
+                ``(set_key, member)`` pairs to add once the write
+                succeeds. Defaults to none.
+
+        Returns:
+            `bool`: ``True`` if the record was updated, ``False`` if it
+            no longer existed.
+        """
+        from redis.exceptions import WatchError
+
+        async with self._client.pipeline(transaction=True) as pipe:
+            await pipe.watch(key)
+            if not await pipe.exists(key):
+                await pipe.unwatch()
+                return False
+            pipe.multi()
+            pipe.set(key, value, ex=self.key_ttl)
+            for extra_key, extra_value in extra_sets:
+                pipe.set(extra_key, extra_value, ex=self.key_ttl)
+            for set_key, member in index_adds:
+                pipe.sadd(set_key, member)
+            try:
+                await pipe.execute()
+            except WatchError:
+                # Deleted (or rewritten) by another client after the
+                # EXISTS above — treat it as vanished rather than
+                # recreating it.
+                return False
+        return True
+
+    async def _read_modify_write_if_exists(
+        self,
+        key: str,
+        mutate: "Callable[[str], str]",
+    ) -> str:
+        """Read *key*, transform it and write it back atomically.
+
+        Same guard as :meth:`_update_if_exists`, for callers whose new
+        value depends on what is stored. The read happens inside the
+        WATCH so any concurrent write or delete aborts the transaction
+        instead of being silently overwritten.
+
+        Raises:
+            `KeyError`: If the key no longer exists.
+        """
+        from redis.exceptions import WatchError
+
+        while True:
+            async with self._client.pipeline(transaction=True) as pipe:
+                await pipe.watch(key)
+                raw = await pipe.get(key)
+                if raw is None:
+                    await pipe.unwatch()
+                    raise KeyError(key)
+                pipe.multi()
+                new_value = mutate(raw)
+                pipe.set(key, new_value, ex=self.key_ttl)
+                try:
+                    await pipe.execute()
+                except WatchError:
+                    # Lost the race against a concurrent writer; re-read
+                    # so this update lands on top of theirs rather than
+                    # dropping it.
+                    continue
+            return new_value
 
     async def __aenter__(self) -> Self:
         """Create the connection pool and Redis client.
@@ -894,11 +984,18 @@ class RedisStorage(StorageBase):
         source_chat_id: str | None = None,
         source_chat_name: str | None = None,
         source_channel_id: str | None = None,
+        create_if_missing: bool = True,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
         When *session_id* is provided the existing session is updated.
         When *session_id* is ``None`` a new session is always created.
+
+        Set *create_if_missing* to ``False`` to make the call a strict
+        update: if the session is gone by the time the write lands, no
+        record is created and ``KeyError`` is raised. This closes the
+        window where a PATCH that read the session before a concurrent
+        DELETE recreated it after.
         """
         if session_id:
             key = self._key(
@@ -906,6 +1003,12 @@ class RedisStorage(StorageBase):
                 user_id=user_id,
                 session_id=session_id,
             )
+            if not create_if_missing:
+                return await self._update_existing_session(
+                    key,
+                    config=config,
+                    state=state,
+                )
             raw = await self._client.get(key)
             if raw:
                 record = SessionRecord.model_validate_json(raw)
@@ -965,6 +1068,31 @@ class RedisStorage(StorageBase):
             await self._client.sadd(channel_session_key, record.id)
 
         return record
+
+    async def _update_existing_session(
+        self,
+        key: str,
+        config: SessionConfig,
+        state: AgentState | None,
+    ) -> SessionRecord:
+        """Apply *config* / *state* to the session at *key*, never creating it.
+
+        Raises:
+            `KeyError`: If the session no longer exists.
+        """
+
+        def _mutate(raw: str) -> str:
+            record = SessionRecord.model_validate_json(raw)
+            record.config = config
+            if state is not None:
+                record.state = state
+            record.updated_at = datetime.now()
+            updated.append(record)
+            return record.model_dump_json()
+
+        updated: list[SessionRecord] = []
+        await self._read_modify_write_if_exists(key, _mutate)
+        return updated[-1]
 
     async def update_session_state(
         self,
@@ -1210,15 +1338,36 @@ class RedisStorage(StorageBase):
         self,
         user_id: str,
         record: ScheduleRecord,
+        create_if_missing: bool = True,
     ) -> str:
         """Persist a cron task record and register it in the user and global
-        indexes."""
+        indexes.
+
+        Set *create_if_missing* to ``False`` to make the call a strict
+        update: a schedule deleted before the write lands is not
+        recreated, and ``KeyError`` is raised instead.
+        """
         key = self._key(
             self.key_config.schedule,
             user_id=user_id,
             schedule_id=record.id,
         )
         index_key = self._key(self.key_config.schedule_index, user_id=user_id)
+        if not create_if_missing:
+            updated = await self._update_if_exists(
+                key,
+                record.model_dump_json(),
+                index_adds=(
+                    (index_key, record.id),
+                    (
+                        self.key_config.schedule_global_index,
+                        f"{user_id}:{record.id}",
+                    ),
+                ),
+            )
+            if not updated:
+                raise KeyError(f"Schedule {record.id!r} no longer exists.")
+            return record.id
         await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
         await self._client.sadd(
@@ -1339,8 +1488,14 @@ class RedisStorage(StorageBase):
         self,
         record: ChannelRecord,
         platform_bot_id: str,
+        create_if_missing: bool = True,
     ) -> str:
-        """Persist a channel record and refresh its indexes."""
+        """Persist a channel record and refresh its indexes.
+
+        Set *create_if_missing* to ``False`` to make the call a strict
+        update: a channel deleted before the write lands is not
+        recreated, and ``KeyError`` is raised instead.
+        """
         key = self._key(self.key_config.channel, channel_id=record.id)
         index_key = self._key(
             self.key_config.channel_index,
@@ -1350,6 +1505,19 @@ class RedisStorage(StorageBase):
             self.key_config.channel_botid_index,
             platform_bot_id=platform_bot_id,
         )
+        if not create_if_missing:
+            updated = await self._update_if_exists(
+                key,
+                record.model_dump_json(),
+                extra_sets=((botid_key, record.id),),
+                index_adds=(
+                    (index_key, record.id),
+                    (self.key_config.channel_all_index, record.id),
+                ),
+            )
+            if not updated:
+                raise KeyError(f"Channel {record.id!r} no longer exists.")
+            return record.id
         await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
         await self._client.sadd(self.key_config.channel_all_index, record.id)
