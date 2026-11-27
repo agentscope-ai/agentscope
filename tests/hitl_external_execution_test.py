@@ -1659,3 +1659,67 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
+
+
+    async def test_external_batch_validation_before_commit(self) -> None:
+        """A failing later result must not commit earlier results in the batch."""
+        from jsonschema import ValidationError
+
+        tool = MockExternalConcurrentTool()
+        tool.metadata_schema = {
+            "type": "object",
+            "required": ["answer"],
+        }
+        self.agent.toolkit = Toolkit(tools=[tool])
+
+        tool_calls = [
+            ToolCallBlock(
+                id=call_id,
+                name=self.concurrent_tool_name,
+                input=self.tool_input_1,
+            )
+            for call_id in (self.tool_call_id_1, self.tool_call_id_2)
+        ]
+        self.model.set_responses(
+            [
+                ChatResponse(content=tool_calls, is_last=True),
+                self.final_mock_responses,
+            ],
+        )
+        await self.agent.reply(
+            UserMsg(name="user", content=self.user_input_text),
+        )
+
+        valid = ToolResultBlock(
+            id=self.tool_call_id_1,
+            name=self.concurrent_tool_name,
+            output=[TextBlock(text="ok")],
+            state=ToolResultState.SUCCESS,
+            metadata={"answer": "yes"},
+        )
+        invalid = ToolResultBlock(
+            id=self.tool_call_id_2,
+            name=self.concurrent_tool_name,
+            output=[TextBlock(text="ok")],
+            state=ToolResultState.SUCCESS,
+            # missing required metadata
+        )
+        event = ExternalExecutionResultEvent(
+            reply_id=self.agent.state.reply_id,
+            execution_results=[valid, invalid],
+        )
+
+        with self.assertRaises(ValidationError):
+            await self.agent.reply(event)
+
+        # Both should still be pending
+        pending = [
+            call.id
+            for call in self.agent.state.get_awaiting_tool_calls(self.agent.name)
+        ]
+        self.assertCountEqual(pending, [self.tool_call_id_1, self.tool_call_id_2])
+
+        # Fix and resubmit
+        invalid.metadata = {"answer": "yes"}
+        result = await self.agent.reply(event)
+        self.assertEqual(result.finished_reason, "completed")

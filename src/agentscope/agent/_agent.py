@@ -2003,15 +2003,16 @@ class Agent:
                     confirmed_tool_calls.pop(tool_call.id)
 
         elif isinstance(event, ExternalExecutionResultEvent):
-            # Directly append the execution results into context
+            # Validate the entire batch before committing any result.
+            # A later failure must not leave earlier IDs finished, so the
+            # caller can correct the batch and resubmit it as a unit.
             for tool_result in event.execution_results:
-                # Whoever executed this promised a shape; a result that
-                # breaks it is their bug to fix, and the reply stays
-                # parked so they can send it again.
                 tool = await self.toolkit.get_tool(tool_result.name)
                 if tool is not None:
                     await tool.check_external_result(tool_result)
 
+            # All results are valid; now commit them.
+            for tool_result in event.execution_results:
                 # Correlate requested receipts after validating tool metadata.
                 if event.metadata.get(_EXTERNAL_REQUEST_ID) == event.id:
                     tool_result = tool_result.model_copy(
