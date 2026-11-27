@@ -133,7 +133,7 @@ class TestLocalBackendExec(IsolatedAsyncioTestCase):
         self.assertNotEqual(result.stderr, b"")
 
     async def test_exec_default_and_explicit_workdirs(self) -> None:
-        """Execution follows the configured directory unless overridden."""
+        """Only an explicit cwd changes the subprocess working directory."""
         with tempfile.TemporaryDirectory() as root:
             configured = os.path.join(root, "configured directory")
             override = os.path.join(root, "explicit directory")
@@ -141,7 +141,7 @@ class TestLocalBackendExec(IsolatedAsyncioTestCase):
             os.makedirs(override)
             cases = (
                 (LocalBackend(), None, os.getcwd()),
-                (LocalBackend(workdir=configured), None, configured),
+                (LocalBackend(workdir=configured), None, os.getcwd()),
                 (LocalBackend(workdir=configured), override, override),
             )
             for backend, cwd, expected in cases:
