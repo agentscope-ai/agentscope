@@ -411,6 +411,7 @@ class ChatService:
         client_builtin_tools: list[ClientBuiltinToolName] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
+        wakeup: bool = False,
         pipeline_tts_config: TTSModelConfig | None = None,
         pipeline_chat_config: ChatModelSnapshot | None = None,
         submission_id: str | None = None,
@@ -470,6 +471,11 @@ class ChatService:
                 Language models reserved for the initial pipeline input.
             input_persisted (`bool`, optional):
                 Internal queue caller already saved this initial input.
+            wakeup (`bool`, optional):
+                This run was spawned by a ``wake`` trigger, whose only
+                purpose is to drain the session inbox. A wake-up that
+                finds the inbox already empty (another wake-up run
+                drained it) returns without calling the model.
         """
         try:
             await self._run_impl(
@@ -481,6 +487,7 @@ class ChatService:
                 client_builtin_tools=client_builtin_tools,
                 sop_dispatch=sop_dispatch,
                 input_persisted=input_persisted,
+                wakeup=wakeup,
                 pipeline_tts_config=pipeline_tts_config,
                 pipeline_chat_config=pipeline_chat_config,
                 submission_id=submission_id,
@@ -1250,6 +1257,7 @@ class ChatService:
         sop_dispatch: str | None = None,
         client_builtin_tools: list[ClientBuiltinToolName] | None = None,
         input_persisted: bool = False,
+        wakeup: bool = False,
         pipeline_tts_config: TTSModelConfig | None = None,
         pipeline_chat_config: ChatModelSnapshot | None = None,
         submission_id: str | None = None,
@@ -1826,6 +1834,22 @@ class ChatService:
                 or pipeline_tts_config is not None
             )
             await register_inbox_consumer(self._message_bus, session_id)
+            # A wake-up trigger exists only to drain this session's inbox.
+            # When several offloaded tool results finish before the first
+            # wake-up run registers its consumer, each enqueues its own
+            # trigger, so the leftover runs arrive after the inbox was
+            # already drained. Running them anyway called
+            # ``reply_stream(inputs=None)`` for a full extra model call and
+            # persisted a duplicate assistant message (#3990). Nothing has
+            # been streamed or persisted yet here, so returning is the same
+            # as the duplicate run never having started. A direct ``None``
+            # continuation from the chat endpoint is not a wake-up and is
+            # deliberately still allowed to run with an empty inbox.
+            if wakeup and not await has_pending_inbox_or_release(
+                self._message_bus,
+                session_id,
+            ):
+                return
             try:
                 while True:
                     reply_msg = None

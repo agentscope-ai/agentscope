@@ -95,13 +95,18 @@ class _SeamBus(InMemoryMessageBus):
     def __init__(self) -> None:
         super().__init__()
         self._seam_published = False
+        self.replayed = asyncio.Event()
 
     async def log_read(self, key: str, **kwargs: object) -> list:
         """Slip one event into the window, then replay as usual."""
         if not self._seam_published:
             self._seam_published = True
             await _publish(self, "s-1", _start())
-        return await super().log_read(key, **kwargs)
+        rows = await super().log_read(key, **kwargs)
+        # The replayed rows are now fixed.  Anything published from here
+        # on arrives live, which is the half of the seam still untested.
+        self.replayed.set()
+        return rows
 
 
 class _BrokenSubscriptionBus(InMemoryMessageBus):
@@ -259,7 +264,10 @@ class EventStreamTest(IsolatedAsyncioTestCase):
         await _publish(bus, "s-1", _start())
 
         async def _finish() -> None:
-            await asyncio.sleep(0.02)
+            # Waiting for the replay snapshot keeps the end event out of
+            # it on a stalled runner, where a fixed sleep used to let
+            # the end land in the log and stop the replay early.
+            await bus.replayed.wait()
             await _publish(bus, "s-1", _end())
 
         drained, _ = await asyncio.gather(_drain(bus, "s-1"), _finish())

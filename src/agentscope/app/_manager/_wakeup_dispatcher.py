@@ -491,6 +491,7 @@ class WakeupDispatcher:
                     input_msg=input_msg,
                     client_external_tools=client_external_tools or None,
                     client_builtin_tools=client_builtin_tools or None,
+                    wakeup=kind == MessageBusKeys.WAKEUP_KIND_WAKE,
                 )
             )
             task = self._registry.spawn(
