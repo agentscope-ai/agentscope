@@ -3,7 +3,9 @@
 import base64
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
+from pydantic import ValidationError
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
@@ -904,6 +906,38 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
                     "cache_creation_input_tokens": 40,
                 },
             },
+        )
+
+    def test_negative_budgets_are_rejected(self) -> None:
+        """Both iteration and tool-result budgets must be non-negative."""
+        with self.assertRaises(ValidationError):
+            ReActConfig(max_iters=-1)
+        with self.assertRaises(ValidationError):
+            ContextConfig(tool_result_limit=-1)
+
+    async def test_zero_max_iters_runs_only_final_text_call(self) -> None:
+        """A zero regular budget goes straight to the final model call."""
+        self.agent.react_config = ReActConfig(max_iters=0)
+        self.model.set_responses(
+            [ChatResponse(content=[TextBlock(text="Done")], is_last=True)],
+        )
+
+        with patch.object(
+            self.model,
+            "_call_api",
+            wraps=self.model._call_api,  # pylint: disable=protected-access
+        ) as call:
+            msg = await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        call.assert_awaited_once()
+        self.assertEqual(call.await_args.kwargs["tool_choice"].mode, "none")
+        self.assertEqual(
+            msg.finished_reason,
+            ReplyFinishedReason.EXCEED_MAX_ITERS,
+        )
+        self.assertEqual(
+            [block.text for block in msg.get_content_blocks("text")],
+            ["Done"],
         )
 
     async def test_max_iters_counts_reasoning_acting_round_once(self) -> None:

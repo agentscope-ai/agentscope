@@ -146,7 +146,7 @@ class ContextConfig(BaseModel):
     tool_result_limit: int = Field(
         title="Tool Result Limit",
         default=50000,
-        ge=1,
+        ge=0,
         description=(
             "The maximum length of the tool results in tokens. "
             "If exceeded, the tool result will be truncated."
@@ -395,7 +395,7 @@ class ReActConfig(BaseModel):
     max_iters: int = Field(
         title="Max Iterations",
         default=50,
-        ge=1,
+        ge=0,
         description="The maximum number of reasoning-acting iterations in "
         "one reply",
     )
