@@ -635,6 +635,40 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         expected_content = "Tool execution successful!"
         self.assertEqual(content, expected_content)
 
+    async def test_offload_tool_result_id_stays_one_component(self) -> None:
+        """A traversal in the tool call id cannot leave the session dir.
+
+        The id is model output, so a result must stay at
+        ``sessions/<session_id>/tool_result-<id>.txt`` however the id
+        is spelled.
+        """
+        session_id = "test_session_tool_result_traversal"
+        tool_result = ToolResultBlock(
+            id="/../../../escaped",
+            name="test_tool",
+            output="payload",
+            state=ToolResultState.SUCCESS,
+        )
+
+        file_path = await self.workspace.offload_tool_result(
+            session_id,
+            tool_result,
+        )
+
+        session_dir = os.path.join(
+            self.temp_dir.name,
+            "sessions",
+            session_id,
+        )
+        self.assertEqual(os.path.dirname(file_path), session_dir)
+        self.assertEqual(
+            os.path.basename(file_path),
+            "tool_result-_.._.._.._escaped.txt",
+        )
+        self.assertFalse(
+            os.path.exists(os.path.join(self.temp_dir.name, "escaped.txt")),
+        )
+
     async def test_offload_tool_result_with_blocks(self) -> None:
         """Test offloading tool result with TextBlock and DataBlock output.
 

@@ -66,6 +66,7 @@ import io
 import json
 import mimetypes
 import os
+import re
 import tarfile
 import time
 from abc import abstractmethod
@@ -256,6 +257,26 @@ def _read_skill_frontmatter(raw: bytes, origin: str) -> tuple[str, str]:
     if not name or not description:
         raise ValueError(message)
     return str(name), str(description)
+
+
+def _path_component(value: str) -> str:
+    """Reduce model-supplied text to a single path component.
+
+    Tool call ids come from the model, so they may hold separators or
+    ``..``. Used verbatim in a file name they would let a tool result be
+    written outside the directory it was meant for, so everything except
+    ``[A-Za-z0-9._-]`` is replaced.
+
+    Args:
+        value (`str`):
+            The raw text, e.g. a tool call id.
+
+    Returns:
+        `str`:
+            *value* as one file-name-safe component; ``"_"`` when nothing
+            usable is left.
+    """
+    return re.sub(r"[^A-Za-z0-9._-]", "_", value) or "_"
 
 
 class WorkspaceBase:
@@ -1137,8 +1158,9 @@ class WorkspaceBase:
     ) -> str:
         """Persist a single tool result as a flat text file.
 
-        Writes ``${workdir}/sessions/<session_id>/tool_result-<id>.txt``.
-        Text blocks are concatenated verbatim; :class:`DataBlock` items
+        Writes ``${workdir}/sessions/<session_id>/tool_result-<id>.txt``;
+        the id is model output and is reduced to one file-name component
+        first. Text blocks are concatenated verbatim; :class:`DataBlock` items
         emit ``<data url='…' name='…' media_type='…'/>`` placeholders,
         with inline base64 payloads first offloaded to ``data/``.
 
@@ -1158,13 +1180,14 @@ class WorkspaceBase:
         """
         backend = self.get_backend()
         base = backend.join_path(self._sessions_dir, session_id)
-        path = backend.join_path(base, f"tool_result-{tool_result.id}.txt")
+        stem = _path_component(tool_result.id)
+        path = backend.join_path(base, f"tool_result-{stem}.txt")
 
         index = 1
         while await backend.file_exists(path):
             path = backend.join_path(
                 base,
-                f"tool_result-{tool_result.id}({index}).txt",
+                f"tool_result-{stem}({index}).txt",
             )
             index += 1
 
