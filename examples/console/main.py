@@ -58,7 +58,7 @@ async def main() -> None:
             system_prompt=(
                 "You are a helpful assistant named Friday. Use the "
                 "provided tools whenever they help answering the "
-                "question.\n\n" + await workspace.get_instructions()
+                "question."
             ),
             model=DashScopeChatModel(
                 credential=DashScopeCredential(api_key=api_key),
