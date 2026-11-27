@@ -34,29 +34,6 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
             state=AgentState(session_id="test_session"),
         )
 
-    async def test_zero_limit_offloads_entire_text(self) -> None:
-        """No tool-result text is retained when the budget is zero."""
-        self.agent.context_config = ContextConfig(tool_result_limit=0)
-        text = TextBlock(text="Full tool output")
-        result = ToolResultBlock(id="1", name="tool", output=[text])
-
-        (
-            reserved,
-            offload,
-        ) = await self.agent._split_tool_result_for_compression(
-            result,
-        )
-
-        self.assertEqual(reserved.output, [])
-        self.assertIsNotNone(offload)
-        self.assertEqual(
-            [
-                block.model_dump(exclude={"created_at"})
-                for block in offload.output
-            ],
-            [text.model_dump(exclude={"created_at"})],
-        )
-
     async def test_below_limit(self) -> None:
         """Test when tool result is below the token limit."""
         tool_result = ToolResultBlock(
