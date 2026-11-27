@@ -1665,6 +1665,21 @@ class TestOpenAIResponseFormatTools(unittest.TestCase):
         self.assertEqual(fmt_tools, _FT_TOOLS_RESPONSE)
         self.assertEqual(fmt_choice, "none")
 
+    def test_none_mode_with_tools(self) -> None:
+        """``tools`` must not wrap "none" in ``allowed_tools``.
+
+        The Responses API only accepts "auto" or "required" inside
+        ``allowed_tools``; a disabled tool set has to go out as the
+        plain "none" choice, with the full schema still listed so the
+        prompt-cache prefix does not change.
+        """
+        fmt_tools, fmt_choice = self.model._format_tools(
+            _FT_TOOLS,
+            ToolChoice(mode="none", tools=["get_weather"]),
+        )
+        self.assertListEqual(fmt_tools, _FT_TOOLS_RESPONSE)
+        self.assertEqual(fmt_choice, "none")
+
     def test_required_mode(self) -> None:
         """Required mode converts tools and sets choice to 'required'."""
         fmt_tools, fmt_choice = self.model._format_tools(
