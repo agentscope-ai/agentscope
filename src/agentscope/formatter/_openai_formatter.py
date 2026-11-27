@@ -40,9 +40,10 @@ def _format_message_name(name: str | None) -> dict[str, str]:
     """Build the ``name`` field of an OpenAI chat message.
 
     Agent and user names are free text (e.g. ``"Research Assistant"``),
-    while the API only accepts names without whitespace and ``<|\\/>``.
-    Each run of such characters is replaced with ``_``, and the field is
-    omitted for an empty name, which the API rejects as well.
+    while the API only accepts names without whitespace or ``<|\\/>``
+    and no longer than 64 characters. Each run of such characters is
+    replaced with ``_``, the result is truncated to the limit, and the
+    field is omitted for an empty name, which the API rejects as well.
 
     Args:
         name (`str | None`):
@@ -54,7 +55,7 @@ def _format_message_name(name: str | None) -> dict[str, str]:
     """
     if not name:
         return {}
-    return {"name": _INVALID_MESSAGE_NAME_CHARS.sub("_", name)}
+    return {"name": _INVALID_MESSAGE_NAME_CHARS.sub("_", name)[:64]}
 
 
 class _OpenAIFormatterBase(FormatterBase, ABC):

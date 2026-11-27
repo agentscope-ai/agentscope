@@ -984,6 +984,21 @@ class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
         res = await OpenAIMultiAgentFormatter().format(msgs[1:2])
         self.assertListEqual(gt[1:4], res)
 
+    async def test_chat_formatter_caps_message_name_at_api_limit(
+        self,
+    ) -> None:
+        """``messages[].name`` is capped at 64 characters by the API.
+
+        Participant names are free text, so a long one would otherwise
+        make every request fail with a 400 "string too long" error that
+        has nothing to do with the conversation content.
+        """
+        res = await OpenAIChatFormatter().format(
+            [UserMsg(name="A" * 80, content="hi")],
+        )
+
+        self.assertEqual(res[0]["name"], "A" * 64)
+
     async def test_chat_formatter_url_image_in_tool_result(
         self,
     ) -> None:
