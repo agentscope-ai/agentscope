@@ -5,7 +5,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
-from agentscope.message import TextBlock
+from agentscope.message import TextBlock, ThinkingBlock
 from agentscope.model import ChatResponse, FinishedReason, ChatUsage
 
 
@@ -422,6 +422,34 @@ class ChatResponseAppendTest(IsolatedAsyncioTestCase):
                         "type": "thinking",
                         "thinking": "foobar",
                         "id": "th1",
+                    },
+                ],
+            ),
+        )
+
+    async def test_append_chat_response_replaces_changed_block_type(
+        self,
+    ) -> None:
+        """A reused id with a different block type replaces, not corrupts."""
+        acc = ChatResponse(content=[], is_last=True)
+        acc.append_text("hello", block_id="shared-id")
+
+        delta = ChatResponse(
+            content=[
+                ThinkingBlock(id="shared-id", thinking="reason"),
+            ],
+            is_last=False,
+        )
+        acc.append_chat_response(delta)
+
+        self.assertDictEqual(
+            _dump(acc),
+            _expected(
+                content=[
+                    {
+                        "type": "thinking",
+                        "thinking": "reason",
+                        "id": "shared-id",
                     },
                 ],
             ),
