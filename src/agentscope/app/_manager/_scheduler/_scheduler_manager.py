@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The cron scheduler manager class."""
+
 import asyncio
 import json
 from collections.abc import Callable, Coroutine
@@ -131,10 +132,46 @@ class SchedulerManager:
             ),
             asyncio.create_task(self._periodic(), name="schedule-reconcile"),
         ]
-        await ready.wait()
-        await self.reconcile()
+        ready_task = asyncio.create_task(
+            ready.wait(),
+            name="schedule-lifecycle-ready",
+        )
+        listener = self._tasks[0]
+        try:
+            # Watch the listener as well as readiness: a subscription that
+            # fails before invoking ``on_ready`` otherwise leaves startup
+            # waiting forever while the listener retries in the background.
+            await asyncio.wait(
+                {ready_task, listener},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if listener.done():
+                error = listener.exception()
+                if error is None:
+                    raise RuntimeError(
+                        "Schedule lifecycle subscription ended during "
+                        "startup",
+                    )
+                raise error
+            await self.reconcile()
+        except BaseException:
+            ready_task.cancel()
+            await asyncio.gather(ready_task, return_exceptions=True)
+            await self._shutdown_after_failed_entry()
+            raise
+        ready_task.cancel()
+        await asyncio.gather(ready_task, return_exceptions=True)
         logger.info("SchedulerManager APScheduler started")
         return self
+
+    async def _shutdown_after_failed_entry(self) -> None:
+        """Release resources when startup fails before ``__aexit__`` runs."""
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+        if self._scheduler.running:
+            self._scheduler.shutdown()
 
     async def __aexit__(self, *exc: object) -> None:
         """Stop the loops and shut down APScheduler, if it was started."""
@@ -529,9 +566,18 @@ class SchedulerManager:
                 ):
                     backoff = 1.0
                     await self.reconcile()
+                if not ready.is_set():
+                    raise RuntimeError(
+                        "Schedule lifecycle subscription ended during "
+                        "startup",
+                    )
             except asyncio.CancelledError:  # pylint: disable=try-except-raise
                 raise
             except Exception:  # pylint: disable=broad-except
+                if not ready.is_set():
+                    # Startup is waiting on this first subscription; retrying
+                    # forever would turn the failure into a silent hang.
+                    raise
                 logger.warning("schedule lifecycle subscription lost")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
