@@ -553,6 +553,72 @@ class RAGMiddlewareTest(  # pylint: disable=too-many-public-methods
             with self.subTest(exit_mode=exit_mode, persist_hint=persist_hint):
                 await check_exit(exit_mode, persist_hint)
 
+    async def test_concurrent_agents_keep_their_own_inputs(self) -> None:
+        """One middleware instance shared by two agents must not mix
+        their replies.  ``ReplyBudgetControlMiddleware`` documents that
+        an instance may be shared; the static-mode scratchpad has to keep
+        the same promise, or a concurrent reply searches with the other
+        agent's message and loses its own search when that reply ends."""
+        middleware = self._middleware(mode="static", top_k=1)
+        alice = _make_agent()
+        bob = _make_agent()
+
+        async def reply_next(**_kwargs: Any) -> AsyncGenerator:
+            yield "reply-evt"
+
+        async def reasoning_next(**_kwargs: Any) -> AsyncGenerator:
+            yield "reasoning-evt"
+
+        alice_reply = middleware.on_reply(
+            agent=alice,
+            input_kwargs={
+                "inputs": UserMsg(name="alice", content="Where is Paris?"),
+            },
+            next_handler=reply_next,
+        )
+        bob_reply = middleware.on_reply(
+            agent=bob,
+            input_kwargs={
+                "inputs": UserMsg(name="bob", content="Are cats mammals?"),
+            },
+            next_handler=reply_next,
+        )
+
+        # Both replies stay in flight while each starts its reasoning.
+        await anext(alice_reply)
+        await anext(bob_reply)
+
+        self.embedding_model.calls.clear()
+        await _drain(
+            middleware.on_reasoning(
+                agent=alice,
+                input_kwargs={"tool_choice": None},
+                next_handler=reasoning_next,
+            ),
+        )
+        self.assertEqual(
+            [block.text for block in self.embedding_model.calls[-1]],
+            ["alice: Where is Paris?"],
+        )
+
+        # Alice's reply ends first; Bob's search must still happen.
+        with self.assertRaises(StopAsyncIteration):
+            await anext(alice_reply)
+
+        self.embedding_model.calls.clear()
+        await _drain(
+            middleware.on_reasoning(
+                agent=bob,
+                input_kwargs={"tool_choice": None},
+                next_handler=reasoning_next,
+            ),
+        )
+        self.assertEqual(
+            [block.text for block in self.embedding_model.calls[-1]],
+            ["bob: Are cats mammals?"],
+        )
+        await bob_reply.aclose()
+
     async def test_static_skips_event_inputs(self) -> None:
         """Non-message inputs (resumption events / ``None``) skip the
         search entirely."""
