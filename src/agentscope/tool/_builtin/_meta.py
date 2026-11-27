@@ -18,6 +18,41 @@ from ...message import TextBlock, ToolResultState
 from ...state import AgentState
 
 
+def _group_toggle_fields(
+    groups: List[ToolGroup],
+) -> dict[str, Any]:
+    """Build the pydantic fields that toggle the non-basic tool groups.
+
+    Tool group names are unrestricted, but pydantic rejects field names
+    with a leading underscore or one shadowing a ``BaseModel`` member. Each
+    field therefore gets a neutral name and the group name as its alias,
+    which is what the JSON schema (``by_alias`` by default) and the tool
+    call input use, so the group names the model sees are unchanged.
+
+    Args:
+        groups (`List[ToolGroup]`):
+            The tool groups to build fields for. The "basic" group is
+            always activated and gets no field.
+
+    Returns:
+        `dict[str, Any]`:
+            The field definitions keyed by a field name safe for pydantic.
+    """
+    fields: dict[str, Any] = {}
+    for index, group in enumerate(groups):
+        if group.name == "basic":
+            continue
+        fields[f"group_{index}"] = (
+            bool,
+            Field(
+                default=False,
+                alias=group.name,
+                description=group.description,
+            ),
+        )
+    return fields
+
+
 class ResetTools(ToolBase):
     """A meta tool allows agent to self-manage its equipped tools by
     activating or deactivating tool groups dynamically."""
@@ -60,19 +95,10 @@ class ResetTools(ToolBase):
     def input_schema(self) -> dict[str, Any]:  # type: ignore[override]
         """Dynamically generate the input schema based on the current
         available tool groups."""
-        fields = {}
-        for group in self.groups:
-            if group.name == "basic":
-                continue
-            fields[group.name] = (
-                bool,
-                Field(
-                    default=False,
-                    description=group.description,
-                ),
-            )
-
-        model = create_model("_DynamicModel", **fields)
+        model = create_model(
+            "_DynamicModel",
+            **_group_toggle_fields(self.groups),
+        )
         schema = model.model_json_schema()
         return schema
 
