@@ -112,3 +112,50 @@ class TestWorkspaceBaseSkillInstall(IsolatedAsyncioTestCase):
                 await workspace.add_skill_archive(stream(), "tar", "demo")
 
             self.assertEqual(await workspace.list_skills(), [])
+
+
+class TestWorkspaceBaseRemoveSkill(IsolatedAsyncioTestCase):
+    """``remove_skill`` finds skills outside the default partition."""
+
+    @staticmethod
+    def _write_skill(root: str) -> str:
+        """Write ``<root>/demo`` with complete front matter."""
+        path = os.path.join(root, "demo")
+        os.makedirs(path)
+        with open(os.path.join(path, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: demo\ndescription: d\n---\n\nBody.\n")
+        return path
+
+    async def test_remove_skill_searches_every_partition(self) -> None:
+        """A skill owned by an agent partition is removed by name alone.
+
+        ``remove_skill(agent_id=None)`` documents that it searches every
+        partition, but it only listed the default one, so a skill owned
+        by an agent was reported as missing.
+        """
+        with tempfile.TemporaryDirectory() as workdir:
+            with tempfile.TemporaryDirectory() as src:
+                workspace = _BareWorkspace(workdir)
+                await workspace.add_skill(
+                    self._write_skill(src),
+                    agent_id="agent-a",
+                )
+                self.assertEqual(
+                    len(await workspace.list_skills(agent_id="agent-a")),
+                    1,
+                )
+
+                await workspace.remove_skill("demo")
+
+                self.assertEqual(
+                    await workspace.list_skills(agent_id="agent-a"),
+                    [],
+                )
+
+    async def test_remove_skill_still_reports_unknown_names(self) -> None:
+        """An unknown name raises, as documented, after the sweep."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = _BareWorkspace(workdir)
+            await workspace.list_skills(agent_id="agent-a")
+            with self.assertRaisesRegex(KeyError, "not found"):
+                await workspace.remove_skill("demo")

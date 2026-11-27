@@ -1556,7 +1556,9 @@ class WorkspaceBase:
             name (`str`):
                 The agent-facing name of the skill to remove.
             agent_id (`str | None`, optional):
-                The agent asking. ``None`` searches every partition.
+                The agent asking. ``None`` searches every partition —
+                the default one first, then the others in name order —
+                and removes the first match.
 
         Raises:
             KeyError:
@@ -1564,6 +1566,22 @@ class WorkspaceBase:
         """
         backend = self.get_backend()
         skills = await self.list_skills(agent_id=agent_id)
+        if agent_id is None:
+            # ``list_skills`` reads only the default partition when no
+            # agent is named; the contract above is every partition, so
+            # sweep the ones already on disk as well. Dot entries are
+            # bookkeeping (``.seed``) and regular files are not
+            # partitions; ``list_dir`` yields base names.
+            for entry in sorted(await backend.list_dir(self._skills_dir)):
+                if entry.startswith(".") or entry == DEFAULT_SKILL_PARTITION:
+                    continue
+                path = backend.join_path(self._skills_dir, entry)
+                if not await backend.is_dir(path):
+                    continue
+                found = await self.list_skills(agent_id=entry)
+                skills.extend(found)
+                if any(s.name == name for s in found):
+                    break
         target_dir: str | None = None
         for s in skills:
             if s.name == name:
