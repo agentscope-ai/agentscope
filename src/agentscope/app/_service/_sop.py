@@ -570,6 +570,13 @@ class SOPService:
                 raise ValueError(
                     f"Step {step_index} is not waiting to be judged.",
                 )
+            if record.state.steps[step_index].submission is None:
+                # A parked executor can leave the step in AWAITING before
+                # it has handed anything over. A human verdict must not
+                # complete an attempt that has no deliverable.
+                raise ValueError(
+                    f"Step {step_index} has no submission to judge.",
+                )
 
             # The same tool an agent reviewer calls.
             await SubmitVerdict(
