@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Dict, Callable
 
 from docstring_parser import parse
-from pydantic import Field, create_model, ConfigDict
+from pydantic import BaseModel, Field, create_model, ConfigDict
 
 
 def _get_callable_name(tool_func: Callable) -> str:
@@ -219,6 +219,61 @@ def _build_param_field(description: str | None, default: Any) -> Any:
     if description is None:
         return Field(default=default)
     return Field(description=description, default=default)
+
+
+def _build_argument_validators(
+    tool_func: Callable,
+) -> dict[str, type[BaseModel]]:
+    """Build one validator model per annotated parameter of the tool
+    function, which converts the JSON value given by the model into the
+    annotated type, e.g. a dict into a pydantic model or a string into an
+    enum member.
+
+    Args:
+        tool_func (`Callable`):
+            The tool function whose input schema is extracted from its
+            signature.
+
+    Returns:
+        `dict[str, type[BaseModel]]`:
+            The parameter names and their single-field validator models.
+            Parameters without a resolvable annotation, annotated with
+            ``Any``, or variadic are not included.
+    """
+    try:
+        parameters = inspect.signature(tool_func).parameters
+    except (TypeError, ValueError):
+        return {}
+
+    type_hints = _resolve_type_hints(tool_func)
+
+    validators = {}
+    for name, param in parameters.items():
+        if name in ["self", "cls", "_agent_state"] or param.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            continue
+
+        annotation = type_hints.get(name, param.annotation)
+        # An unresolved string annotation cannot be validated
+        if annotation in (inspect.Parameter.empty, Any) or isinstance(
+            annotation,
+            str,
+        ):
+            continue
+
+        try:
+            validators[name] = create_model(
+                "_ArgumentValidator",
+                __config__=ConfigDict(arbitrary_types_allowed=True),
+                value=(annotation, ...),
+            )
+        except Exception:  # pylint: disable=broad-exception-caught
+            # Keep the raw value for an annotation pydantic cannot handle
+            continue
+
+    return validators
 
 
 def _extract_input_schema(

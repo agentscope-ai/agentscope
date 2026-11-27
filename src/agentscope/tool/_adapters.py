@@ -20,6 +20,7 @@ from ..permission import (
 )
 from ._response import ToolChunk
 from ._utils import (
+    _build_argument_validators,
     _extract_func_description,
     _extract_input_schema,
     _get_callable_docstring,
@@ -108,6 +109,13 @@ class FunctionTool(ToolBase):
             input_schema = _remove_title_field(
                 input_schema.model_json_schema(),
             )
+        # The schema generated from the signature advertises the annotated
+        # types, so the arguments are converted into them before the call.
+        # A custom schema may differ from the signature, so its arguments
+        # are passed as given.
+        self._argument_validators = (
+            {} if input_schema else _build_argument_validators(func)
+        )
         self.input_schema = input_schema or _extract_input_schema(func)
         self.is_concurrency_safe = is_concurrency_safe
         self.is_read_only = is_read_only
@@ -161,7 +169,17 @@ class FunctionTool(ToolBase):
         Returns:
             `ToolChunk` or `AsyncGenerator[ToolChunk, None]`:
                 The normalized result of the function execution.
+
+        Raises:
+            `ValidationError`:
+                If an argument cannot be converted into its annotated type.
         """
+        for name, validator in self._argument_validators.items():
+            if name in kwargs:
+                kwargs[name] = validator.model_validate(
+                    {"value": kwargs[name]},
+                ).value
+
         args: list[Any] = []
         # Defaults of omitted parameters, needed only if a later
         # positional-only argument is given.
