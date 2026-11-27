@@ -375,6 +375,33 @@ class GatedTransport(FakeTransport):
             yield frame
 
 
+class ResettingClearTransport(FakeTransport):
+    """Mimic the WebRTC transport: clearing ends the playout record."""
+
+    def __init__(
+        self,
+        frames: int,
+        until: asyncio.Event | None = None,
+    ) -> None:
+        super().__init__(frames, until)
+        self.first: float | None = 1.0
+
+    async def clear_audio(self) -> PlayoutPosition:
+        """Report the position, then forget it, as the browser's cut does."""
+        self.cleared += 1
+        position = self.playout()
+        self.item = ""
+        self.first = None
+        return position
+
+    def playout(self) -> PlayoutPosition:
+        """Report the current (possibly reset) playout record."""
+        return PlayoutPosition(
+            item_id=self.item,
+            first_played_at=self.first,
+        )
+
+
 class BlockingClearTransport(GatedTransport):
     """Hold ``clear_audio`` open while a response completion arrives."""
 
@@ -613,6 +640,34 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(agent.last_turn_metrics.first_audio_played_at, 1.0)
+
+    async def test_barge_in_keeps_playout_across_a_transport_reset(
+        self,
+    ) -> None:
+        """The interrupted turn still reports when its audio was heard.
+
+        The WebRTC transport resets its playout record when the cut is
+        acknowledged, so the position has to come from the value
+        ``clear_audio`` returns instead of a later ``playout()``.
+        """
+        script = REPLY_R1 + [
+            me.SpeechStartedEvent(item_id="u2"),
+            me.SpeechStartedEvent(item_id="u2"),
+        ]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = ResettingClearTransport(
+            frames=3,
+            until=model.played,
+        )
+
+        async with agent, transport:
+            async for _ in agent.reply_stream(transport):
+                pass
+
+        self.assertEqual(transport.cleared, 1)
+        self.assertEqual(agent.last_turn_metrics.first_audio_played_at, 1.0)
+        self.assertIsNotNone(agent.last_turn_metrics.transport_delay)
 
     async def test_barge_in_after_response_done_clears_playout(self) -> None:
         """A completed response remains interruptible while its queued

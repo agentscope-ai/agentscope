@@ -870,9 +870,20 @@ class RealtimeAgent:
     async def _barge_in_locked(self) -> None:
         """Body of :meth:`_barge_in`, run under the lock."""
         active_reply = self._reply
+        cleared = None
         if self._transport is not None and self._audio_pending:
-            await self._transport.clear_audio()
+            cleared = await self._transport.clear_audio()
             self._audio_pending = False
+        if (
+            cleared is not None
+            and cleared.first_played_at is not None
+            and active_reply is not None
+            and cleared.item_id == active_reply.item_id
+        ):
+            # Some transports reset their playout record on clear; the
+            # position the cut returned is the last word on when this
+            # reply's audio reached the speaker.
+            self._metrics.first_audio_played_at = cleared.first_played_at
 
         if self._connected and (
             active_reply is not None
