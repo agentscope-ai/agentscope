@@ -35,7 +35,15 @@ def _get_excel_column_name(col_index: int) -> str:
     Returns:
         `str`:
             The corresponding Excel column letter(s).
+
+    Raises:
+        `ValueError`:
+            If ``col_index`` is negative.
     """
+    if col_index < 0:
+        raise ValueError(
+            f"Column index must be non-negative, got {col_index}.",
+        )
     result = ""
     col_index += 1
     while col_index > 0:
@@ -69,7 +77,7 @@ def _extract_table_data(df: Any) -> list[list[str]]:
             if pd.isna(val):
                 cells.append("")
             else:
-                text = str(val).strip()
+                text = str(val)
                 text = text.replace("\r\n", "\n").replace("\r", "\n")
                 cells.append(text)
         rows.append(cells)
@@ -507,7 +515,7 @@ class ExcelParser(ParserBase):
         num_cols = len(table_data[0])
 
         def _fmt(cell: str, row_idx: int, col_idx: int) -> str:
-            escaped = _format_markdown_table_cell(cell)
+            escaped = _format_markdown_table_cell(cell.strip())
             if self.include_cell_coordinates:
                 coord = f"{_get_excel_column_name(col_idx)}{row_idx + 1}"
                 return f"[{coord}] {escaped}"

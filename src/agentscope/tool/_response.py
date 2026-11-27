@@ -75,62 +75,32 @@ class ToolResponse(BaseModel):
         """Append a tool chunk to the current tool response, accumulate the
         data blocks and update the state and metadata."""
 
-        # Update content blocks
-        current_ids_to_index = {
-            _.id: index for index, _ in enumerate(self.content)
+        # Only Base64 fragments can continue an earlier block by ID.
+        streams = {
+            block.id: block
+            for block in self.content
+            if block.type == "data" and block.source.type == "base64"
         }
-        for chunk_block in chunk.content:
-            if chunk_block.id in current_ids_to_index:
-                # Append to the existing block
-                target_block = self.content[
-                    current_ids_to_index[chunk_block.id]
-                ]
+        for block in chunk.content:
+            if block.type == "text" or block.source.type == "url":
+                self.content.append(block.model_copy(deep=True))
+                continue
 
-                if isinstance(target_block, TextBlock) and isinstance(
-                    chunk_block,
-                    TextBlock,
-                ):
-                    target_block.text += chunk_block.text
-                elif isinstance(target_block, DataBlock) and isinstance(
-                    chunk_block,
-                    DataBlock,
-                ):
-                    if isinstance(
-                        target_block.source,
-                        Base64Source,
-                    ) and isinstance(chunk_block.source, Base64Source):
-                        # Accumulate independently encoded base64 chunks.
-                        target_block.source.data = _merge_base64_chunks(
-                            target_block.source.data,
-                            chunk_block.source.data,
-                        )
-                        # Update the newest media type and name if provided
-                        target_block.name = (
-                            chunk_block.name or target_block.name
-                        )
-                        target_block.source.media_type = (
-                            chunk_block.source.media_type
-                            or target_block.source.media_type
-                        )
-                    else:
-                        raise ValueError(
-                            "Cannot append DataBlock with URL source or "
-                            f"different source types: {target_block.source} "
-                            f"vs {chunk_block.source}",
-                        )
-                else:
-                    # For different block types with the same ID, we just
-                    # append the new block with a new ID to avoid the conflict
-                    new_chunk_block = chunk_block.model_copy(deep=True)
-                    new_chunk_block.id = _generate_id()
-                    self.content.append(new_chunk_block)
-
+            target = streams.get(block.id)
+            if target is None:
+                target = block.model_copy(deep=True)
+                self.content.append(target)
+                streams[block.id] = target
             else:
-                # Append a copy to avoid modifying the original chunk
-                self.content.append(chunk_block.model_copy(deep=True))
-
-                # Update the index mapping for the new block
-                current_ids_to_index[chunk_block.id] = len(self.content) - 1
+                assert isinstance(target.source, Base64Source)
+                target.source.data = _merge_base64_chunks(
+                    target.source.data,
+                    block.source.data,
+                )
+                target.name = block.name or target.name
+                target.source.media_type = (
+                    block.source.media_type or target.source.media_type
+                )
 
         # Update id, state and metadata
         # Only reserve the failure state and keep the previous state if not

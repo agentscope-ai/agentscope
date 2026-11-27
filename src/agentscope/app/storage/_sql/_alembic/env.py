@@ -32,7 +32,11 @@ config = context.config
 
 url_from_env = os.getenv("AGENTSCOPE_SQL_URL")
 if url_from_env and not config.get_main_option("sqlalchemy.url"):
-    config.set_main_option("sqlalchemy.url", url_from_env)
+    # ConfigParser requires literal percent signs to be escaped.
+    config.set_main_option(
+        "sqlalchemy.url",
+        url_from_env.replace("%", "%%"),
+    )
 
 target_metadata = _Base.metadata
 

@@ -363,7 +363,7 @@ class Toolkit:
                 content=[
                     TextBlock(
                         type="text",
-                        text=str(e),
+                        text=_describe_exception(e),
                     ),
                 ],
                 state=ToolResultState.ERROR,
@@ -479,6 +479,9 @@ class Toolkit:
         included. When at least one tool group is registered, the built-in
         meta tool is also included.
 
+        .. note:: Each MCP client's tools are sorted by name. Tool group,
+         Python tool and MCP client order is preserved.
+
         Args:
             groups (`list[str]`):
                 The list of currently activated tool group names.
@@ -522,7 +525,13 @@ class Toolkit:
             # MCP tools
             for client in group.mcps:
                 try:
-                    cache_tools.extend(await client.list_tools())
+                    # Stabilize tool order for provider-side prompt caching.
+                    cache_tools.extend(
+                        sorted(
+                            await client.list_tools(),
+                            key=lambda tool: tool.name,
+                        ),
+                    )
                 except Exception as e:
                     # One unreachable MCP must not take the reply down
                     # with it: an expired token or a server that is

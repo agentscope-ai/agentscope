@@ -141,7 +141,13 @@ class AppleContainerWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The container may already be running, but this workspace
+            # never entered the cache, so nothing else would remove it.
+            await self._dispose_uninitialized(ws)
+            raise
         return ws
 
     # ── public API ────────────────────────────────────────────────

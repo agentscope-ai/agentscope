@@ -313,7 +313,21 @@ class QdrantStore(VectorStoreBase):
             `list[VectorSearchResult]`:
                 Results ordered by descending similarity score.
         """
-        response = await self.get_client().query_points(
+        from qdrant_client import models
+
+        client = self.get_client()
+        collection_info = await client.get_collection(collection)
+        vectors = collection_info.config.params.vectors
+        if isinstance(vectors, dict):
+            vectors = vectors.get("")
+        if not isinstance(vectors, models.VectorParams):
+            raise ValueError(
+                "QdrantStore.search requires an unnamed dense vector.",
+            )
+        # The constructor's metric only applies to newly created collections.
+        # Read the actual schema, including after an external recreation.
+        distance = vectors.distance
+        response = await client.query_points(
             collection_name=collection,
             query=query_vector,
             limit=top_k,
@@ -322,7 +336,11 @@ class QdrantStore(VectorStoreBase):
         )
         # ``Euclid`` / ``Manhattan`` are distances, so negate them to
         # keep ``score`` higher-is-better like ``Cosine`` / ``Dot``.
-        sign = -1 if self._distance in ("Euclid", "Manhattan") else 1
+        sign = (
+            -1
+            if distance in (models.Distance.EUCLID, models.Distance.MANHATTAN)
+            else 1
+        )
         return [
             VectorSearchResult(
                 score=sign * point.score,
@@ -484,6 +502,7 @@ class QdrantStore(VectorStoreBase):
         ``chunk.metadata.<key>`` written by :meth:`insert`.  Returns
         ``None`` when ``metadata_filter`` is empty so that callers
         skip the filter argument entirely.
+        A ``None`` value matches an explicitly null field, not a missing key.
 
         Args:
             metadata_filter (`dict[str, Any] | None`):
@@ -501,6 +520,13 @@ class QdrantStore(VectorStoreBase):
         conditions = []
         for key, value in metadata_filter.items():
             field = f"chunk.metadata.{key}"
+            if value is None:
+                conditions.append(
+                    models.IsNullCondition(
+                        is_null=models.PayloadField(key=field),
+                    ),
+                )
+                continue
             if isinstance(value, float):
                 if not math.isfinite(value):
                     raise ValueError(

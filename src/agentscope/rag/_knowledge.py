@@ -219,7 +219,7 @@ class KnowledgeBase:
                 therefore pass a mixed list without per-KB filtering.
             top_k (`int`, defaults to ``5``):
                 Maximum number of results returned across all queries
-                (after dedup).
+                (after dedup).  Must be at least ``1``.
             score_threshold (`float | None`, optional):
                 Minimum :attr:`VectorSearchResult.score` for a hit to
                 be retained.  The scale depends on the store's metric —
@@ -232,7 +232,14 @@ class KnowledgeBase:
                 At most ``top_k`` deduplicated hits ordered by
                 descending similarity score.  Empty when there are no
                 queries the bound embedding model can consume.
+
+        Raises:
+            `ValueError`:
+                If ``top_k`` is not positive.
         """
+        if top_k < 1:
+            raise ValueError("top_k must be positive.")
+
         if not queries:
             return []
 
@@ -244,21 +251,42 @@ class KnowledgeBase:
         await self.ensure_collection()
         response = await self._embedding_model(queries)
 
-        results_per_query = await asyncio.gather(
-            *(
-                self._vector_store.search(
-                    collection=self._collection,
-                    query_vector=vector,
-                    top_k=top_k,
-                    metadata_filter=self._metadata_filter,
-                )
-                for vector in response.embeddings
-            ),
-        )
+        async def search_vector(
+            vector: list[float],
+        ) -> list[VectorSearchResult]:
+            return await self._vector_store.search(
+                collection=self._collection,
+                query_vector=vector,
+                top_k=top_k,
+                metadata_filter=self._metadata_filter,
+            )
+
+        tasks = [
+            asyncio.create_task(search_vector(vector))
+            for vector in response.embeddings
+        ]
+        try:
+            for completed in asyncio.as_completed(tasks):
+                await completed
+        except BaseException as search_error:
+            for task in tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            cleanup = asyncio.gather(*tasks, return_exceptions=True)
+            cancellation = None
+            # A caller may cancel again while a store is releasing resources.
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError as exc:
+                    cancellation = exc
+            if cancellation is not None:
+                raise cancellation from search_error
+            raise
 
         best: dict[tuple[str, int], VectorSearchResult] = {}
-        for results in results_per_query:
-            for result in results:
+        for task in tasks:
+            for result in task.result():
                 if (
                     score_threshold is not None
                     and result.score < score_threshold

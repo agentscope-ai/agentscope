@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 """The Ollama formatter module."""
 import base64
-import fnmatch
 from abc import ABC
 from typing import Any
-from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import FormatterBase, file_url_to_path
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..message import (
@@ -44,19 +42,17 @@ class _OllamaFormatterBase(FormatterBase, ABC):
                 Base64 encoded data as a string, or None if the media type
                 is not supported.
         """
-        source = block.source
-        media_type = source.media_type
-
-        # Check if media type is supported
-        if not any(
-            fnmatch.fnmatch(media_type, pattern)
-            for pattern in self.supported_input_media_types
-        ):
+        # Normalize the MIME type (lowercase, matched case-insensitively)
+        # before deciding whether the block is an image.
+        supported = self._get_supported_tool_result_block(block)
+        if supported is None:
             logger.warning(
                 "Media type %s is not supported, skipped.",
-                media_type,
+                block.source.media_type,
             )
             return None
+        source = supported.source
+        media_type = source.media_type
 
         # Ollama only supports images
         if not media_type.startswith("image/"):
@@ -86,7 +82,7 @@ class _OllamaFormatterBase(FormatterBase, ABC):
             url = str(source.url)
             if url.startswith("file://"):
                 # Local file - read and convert to base64
-                file_path = url2pathname(url.removeprefix("file://"))
+                file_path = file_url_to_path(url)
                 with open(file_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
                 return data
@@ -137,6 +133,9 @@ class OllamaChatFormatter(_OllamaFormatterBase):
             images = []
             # Hold the promoted media until this turn's tool messages are out.
             pending_media: list[dict] = []
+            # The message carrying this turn's tool calls, which later
+            # parallel tool calls join.
+            tool_call_msg: dict[str, Any] | None = None
 
             for block in msg.get_content_blocks():
                 if pending_media and not isinstance(block, ToolResultBlock):
@@ -194,14 +193,26 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                     pass
 
                 elif isinstance(block, ToolCallBlock):
-                    messages.append(
-                        self._format_tool_call_message(
-                            msg.role,
-                            content_parts,
-                            images,
-                            block,
-                        ),
+                    formatted_call = self._format_tool_call_message(
+                        msg.role,
+                        content_parts,
+                        images,
+                        block,
                     )
+                    if (
+                        tool_call_msg is not None
+                        and messages[-1] is tool_call_msg
+                    ):
+                        # A parallel tool call. Ollama would merge a second
+                        # assistant message into this one by appending only
+                        # its content, dropping the call, so it joins here.
+                        self._merge_tool_call_message(
+                            tool_call_msg,
+                            formatted_call,
+                        )
+                    else:
+                        tool_call_msg = formatted_call
+                        messages.append(tool_call_msg)
                     content_parts = []
                     images = []
 
@@ -338,6 +349,37 @@ class OllamaChatFormatter(_OllamaFormatterBase):
             tool_call_msg["images"] = images
         return tool_call_msg
 
+    @staticmethod
+    def _merge_tool_call_message(
+        tool_call_msg: dict[str, Any],
+        formatted_call: dict[str, Any],
+    ) -> None:
+        """Merge the message of a parallel tool call into the message that
+        carries the earlier tool calls of the same turn.
+
+        Args:
+            tool_call_msg (`dict[str, Any]`):
+                The tool call message to extend in place.
+            formatted_call (`dict[str, Any]`):
+                The message built by :meth:`_format_tool_call_message` for
+                the next tool call, with the text and images that came
+                between the two calls.
+        """
+        if formatted_call["content"]:
+            tool_call_msg["content"] = "\n".join(
+                part
+                for part in (
+                    tool_call_msg["content"],
+                    formatted_call["content"],
+                )
+                if part
+            )
+        if formatted_call.get("images"):
+            tool_call_msg.setdefault("images", []).extend(
+                formatted_call["images"],
+            )
+        tool_call_msg["tool_calls"].extend(formatted_call["tool_calls"])
+
 
 class OllamaMultiAgentFormatter(_OllamaFormatterBase):
     """
@@ -383,13 +425,22 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    formatted_group = await self._format_agent_message(
-                        group,
-                        is_first_agent_message,
-                    )
-                    formatted_msgs.extend(formatted_group)
-                    if formatted_group:
-                        is_first_agent_message = False
+                    segments = self._split_agent_messages_at_hints(group)
+                    for is_hint, segment in segments:
+                        if is_hint:
+                            formatted_msgs.extend(
+                                await self._format_hint_message(segment),
+                            )
+                            continue
+
+                        formatted_group = await self._format_agent_message(
+                            segment,
+                            is_first_agent_message,
+                        )
+                        formatted_msgs.extend(formatted_group)
+                        # Image-only history does not emit the prompt.
+                        if any(msg["content"] for msg in formatted_group):
+                            is_first_agent_message = False
 
         return formatted_msgs
 
@@ -401,6 +452,22 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
         return await OllamaChatFormatter(
             input_types=self.input_types,
         ).format(msgs)
+
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the Ollama chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The Ollama user-message representation.
+        """
+        return await self._format_tool_sequence(msgs)
 
     async def _format_agent_message(
         self,
@@ -440,20 +507,18 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                 {"text": "\n".join(accumulated_text)},
             )
 
-        if conversation_blocks and is_first:
+        if conversation_blocks:
+            prompt = self.conversation_history_prompt if is_first else ""
             if conversation_blocks[0].get("text"):
                 conversation_blocks[0]["text"] = (
-                    self.conversation_history_prompt
-                    + "<history>\n"
-                    + conversation_blocks[0]["text"]
+                    prompt + "<history>\n" + conversation_blocks[0]["text"]
                 )
 
             else:
                 conversation_blocks.insert(
                     0,
                     {
-                        "text": self.conversation_history_prompt
-                        + "<history>\n",
+                        "text": prompt + "<history>\n",
                     },
                 )
 
@@ -476,7 +541,7 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
             user_message["images"] = images
 
         formatted_msgs = []
-        if conversation_blocks:
+        if conversation_blocks or images:
             formatted_msgs.append(user_message)
 
         return formatted_msgs

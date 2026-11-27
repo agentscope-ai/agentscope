@@ -27,6 +27,7 @@ from ._model import (
     SessionNaming,
     SessionKnowledgeConfig,
     SessionRecord,
+    SessionListItem,
     SessionOrigin,
     SessionSource,
     UserOrigin,
@@ -45,6 +46,9 @@ from ._model import (
     SOPWorkspaceGrain,
     SkillRecord,
     ChatModelConfig,
+    ASRModelConfig,
+    PipelineVoiceConfig,
+    ChatModelSnapshot,
     RealtimeModelConfig,
     TTSModelConfig,
     EmbeddingModelConfig,
@@ -54,6 +58,8 @@ from ._model import (
     TeamMember,
     AgentChatConfig,
     InviteConfig,
+    VoiceProfileData,
+    VoiceProfileRecord,
 )
 
 if TYPE_CHECKING:
@@ -109,6 +115,7 @@ __all__ = [
     "SessionNaming",
     "SessionKnowledgeConfig",
     "SessionRecord",
+    "SessionListItem",
     "SessionOrigin",
     "SessionSource",
     "UserOrigin",
@@ -127,6 +134,9 @@ __all__ = [
     "SOPWorkspaceGrain",
     "SkillRecord",
     "ChatModelConfig",
+    "ASRModelConfig",
+    "PipelineVoiceConfig",
+    "ChatModelSnapshot",
     "RealtimeModelConfig",
     "TTSModelConfig",
     "EmbeddingModelConfig",
@@ -137,4 +147,6 @@ __all__ = [
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
+    "VoiceProfileData",
+    "VoiceProfileRecord",
 ]

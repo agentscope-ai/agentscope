@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access,unused-argument
 """Unit tests for DashScopeEmbeddingModel."""
+import asyncio
 import tempfile
 from dataclasses import asdict
-from threading import get_ident
+from tempfile import TemporaryDirectory
+from threading import Event, get_ident
 from types import SimpleNamespace
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
@@ -171,6 +173,126 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
     """Test DashScope text embedding API calls."""
 
     @patch("dashscope.embeddings.TextEmbedding.call")
+    async def test_configured_text_parameters(self, mock_api: Any) -> None:
+        """Configured options reach every batch; per-call options win."""
+        mock_api.side_effect = lambda **kw: _text_resp(
+            [[0.1]] * len(kw["input"]),
+        )
+        parameters = DashScopeEmbeddingModel.Parameters(
+            text_type="query",
+            instruct="Find relevant documents",
+            output_type=None,
+        )
+        model = DashScopeEmbeddingModel(
+            credential=_cred(),
+            model="text-embedding-v4",
+            dimensions=1,
+            parameters=parameters,
+        )
+        texts = [str(i) for i in range(11)]
+        result = await model(texts)
+        self.assertDictEqual(
+            asdict(result),
+            {
+                "embeddings": [[0.1]] * 11,
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {"tokens": 20, "time": A, "type": "embedding"},
+                "source": "api",
+            },
+        )
+        self.assertEqual(mock_api.call_count, 2)
+        self.assertCountEqual(
+            [request.kwargs for request in mock_api.call_args_list],
+            [
+                {
+                    "api_key": "k",
+                    "input": batch,
+                    "model": "text-embedding-v4",
+                    "dimension": 1,
+                    "text_type": "query",
+                    "instruct": "Find relevant documents",
+                }
+                for batch in [texts[:10], texts[10:]]
+            ],
+        )
+        result = await model(["override"], text_type="document")
+        self.assertDictEqual(
+            asdict(result),
+            {
+                "embeddings": [[0.1]],
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {"tokens": 10, "time": A, "type": "embedding"},
+                "source": "api",
+            },
+        )
+        self.assertDictEqual(
+            mock_api.call_args.kwargs,
+            {
+                "api_key": "k",
+                "input": ["override"],
+                "model": "text-embedding-v4",
+                "dimension": 1,
+                "text_type": "document",
+                "instruct": "Find relevant documents",
+            },
+        )
+        self.assertDictEqual(
+            parameters.model_dump(),
+            {
+                "text_type": "query",
+                "instruct": "Find relevant documents",
+                "output_type": None,
+            },
+        )
+
+    @patch("dashscope.embeddings.TextEmbedding.call")
+    async def test_configured_text_parameters_cache(
+        self,
+        mock_api: Any,
+    ) -> None:
+        """A real file cache separates roles and reuses equivalent options."""
+        with TemporaryDirectory() as directory:
+            cache = FileEmbeddingCache(cache_dir=directory)
+            for configured, overrides, vector, source in [
+                ("query", {}, [0.1], "api"),
+                ("document", {}, [0.2], "api"),
+                ("query", {"text_type": "document"}, [0.2], "cache"),
+                ("query", {}, [0.1], "cache"),
+            ]:
+                with self.subTest(configured=configured, overrides=overrides):
+                    model = DashScopeEmbeddingModel(
+                        credential=_cred(),
+                        model="text-embedding-v4",
+                        dimensions=1,
+                        parameters=DashScopeEmbeddingModel.Parameters(
+                            text_type=configured,
+                        ),
+                        embedding_cache=cache,
+                    )
+                    mock_api.return_value = _text_resp([vector])
+                    result = await model(["same input"], **overrides)
+                    self.assertDictEqual(
+                        asdict(result),
+                        {
+                            "embeddings": [vector],
+                            "id": A,
+                            "created_at": A,
+                            "type": "embedding",
+                            "usage": {
+                                "tokens": 10 if source == "api" else 0,
+                                "time": A if source == "api" else 0,
+                                "type": "embedding",
+                            },
+                            "source": source,
+                        },
+                    )
+            self.assertEqual(mock_api.call_count, 2)
+
+    @patch("dashscope.embeddings.TextEmbedding.call")
     async def test_text_call(self, mock_api: Any) -> None:
         """Text mode returns correct embeddings."""
         mock_api.return_value = _text_resp([[0.1, 0.2], [0.3, 0.4]], 12)
@@ -311,15 +433,23 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
             ),
         )
 
-    async def test_multimodal_text_and_image(self) -> None:
-        """Multimodal call with text + image."""
+    @patch("dashscope.MultiModalEmbedding.call")
+    async def test_multimodal_text_and_image(self, sdk: Any) -> None:
+        """Restore input order for indexed text and image embeddings."""
         model = DashScopeEmbeddingModel(
             credential=_cred(),
             model="qwen3-vl-embedding",
             dimensions=2,
         )
-        model._call_multimodal = AsyncMock(
-            return_value=_mock_resp([[0.1, 0.2], [0.3, 0.4]]),
+        sdk.return_value = SimpleNamespace(
+            status_code=200,
+            output={
+                "embeddings": [
+                    {"index": 1, "embedding": [0.3, 0.4]},
+                    {"index": 0, "embedding": [0.1, 0.2]},
+                ],
+            },
+            usage={"input_tokens": 2},
         )
         result = await model(["describe this", _img()])
         self.assertDictEqual(
@@ -329,7 +459,7 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
                 "id": A,
                 "created_at": A,
                 "type": "embedding",
-                "usage": {"tokens": 2, "time": 0.01, "type": "embedding"},
+                "usage": {"tokens": 2, "time": A, "type": "embedding"},
                 "source": "api",
             },
         )
@@ -513,3 +643,217 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
                     ],
                 )
                 self._assert_response(response, 512, "api")
+
+
+class DashScopeMultimodalCancellationTest(IsolatedAsyncioTestCase):
+    """Test failed multimodal batches cancel and join their siblings."""
+
+    async def test_batch_failure_awaits_sibling_cleanup(self) -> None:
+        """Retry either failing batch, then await sibling cleanup."""
+
+        async def check_failure(failed_size: int) -> None:
+            """Keep each failure position in its own callback scope."""
+            slow_started = asyncio.Event()
+            cleanup_started = asyncio.Event()
+            cleanup_released = asyncio.Event()
+            cleanup_finished = asyncio.Event()
+            slow_task: asyncio.Task[Any] | None = None
+            failure = RuntimeError("multimodal batch failed")
+            batch_sizes: list[int] = []
+
+            async def request(
+                inputs: list[str | DataBlock],
+                **kwargs: Any,
+            ) -> EmbeddingResponse:
+                """Fail only after the sibling is awaiting its result."""
+                nonlocal slow_task
+                batch_sizes.append(len(inputs))
+                if len(inputs) == failed_size:
+                    await slow_started.wait()
+                    raise failure
+                slow_task = asyncio.current_task()
+                slow_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cleanup_started.set()
+                    await cleanup_released.wait()
+                    cleanup_finished.set()
+                return _mock_resp([[0.1]] * len(inputs))
+
+            model = DashScopeEmbeddingModel(
+                credential=_cred(),
+                model="qwen3-vl-embedding",
+                dimensions=1,
+                max_retries=1,
+                retry_delay=0,
+            )
+            with patch.object(model, "_call_multimodal", request):
+                pending = asyncio.create_task(
+                    model([str(i) for i in range(21)]),
+                )
+                try:
+                    await asyncio.wait_for(cleanup_started.wait(), 1)
+                    self.assertFalse(pending.done())
+                    cleanup_released.set()
+                    with self.assertRaises(RuntimeError) as raised:
+                        await asyncio.wait_for(pending, 1)
+                    self.assertIs(raised.exception, failure)
+                    self.assertTrue(cleanup_finished.is_set())
+                    self.assertListEqual(
+                        batch_sizes,
+                        [20, 1, failed_size],
+                    )
+                finally:
+                    cleanup_released.set()
+                    pending.cancel()
+                    if slow_task is not None:
+                        slow_task.cancel()
+                        await asyncio.gather(
+                            slow_task,
+                            return_exceptions=True,
+                        )
+                    await asyncio.gather(pending, return_exceptions=True)
+
+        for failed_size in (20, 1):
+            with self.subTest(failed_size=failed_size):
+                await check_failure(failed_size)
+
+    @patch("dashscope.MultiModalEmbedding.call")
+    async def test_failed_batch_prevents_sibling_cache_store(
+        self,
+        sdk: Any,
+    ) -> None:
+        """A cancelled SDK await cannot store its worker's later result."""
+        slow_started = Event()
+        worker_released = Event()
+        worker_finished = Event()
+        slow_task: asyncio.Task[Any] | None = None
+        failure = RuntimeError("multimodal batch failed")
+
+        async def retrieve(identifier: dict[str, Any]) -> None:
+            """Remember the real multimodal request awaiting the worker."""
+            nonlocal slow_task
+            if len(identifier["input"]) == 1:
+                slow_task = asyncio.current_task()
+
+        def request(**kwargs: Any) -> SimpleNamespace:
+            """Block the successful worker until the failing batch returns."""
+            if len(kwargs["input"]) == 20:
+                if not slow_started.wait(10):
+                    raise TimeoutError("Sibling SDK worker did not start")
+                raise failure
+            slow_started.set()
+            try:
+                if not worker_released.wait(10):
+                    raise TimeoutError("Sibling SDK worker was not released")
+                return _multimodal_resp(**kwargs)
+            finally:
+                worker_finished.set()
+
+        cache = MagicMock()
+        cache.retrieve = AsyncMock(side_effect=retrieve)
+        cache.store = AsyncMock()
+        sdk.side_effect = request
+        model = DashScopeEmbeddingModel(
+            credential=_cred(),
+            model="qwen3-vl-embedding",
+            dimensions=1,
+            embedding_cache=cache,
+            max_retries=1,
+            retry_delay=0,
+        )
+        try:
+            with self.assertRaises(RuntimeError) as raised:
+                await asyncio.wait_for(model([str(i) for i in range(21)]), 10)
+            self.assertIs(raised.exception, failure)
+            self.assertEqual(sdk.call_count, 3)
+        finally:
+            worker_released.set()
+            self.assertTrue(await asyncio.to_thread(worker_finished.wait, 10))
+            if slow_task is not None:
+                await asyncio.gather(slow_task, return_exceptions=True)
+        cache.store.assert_not_awaited()
+
+
+class DashScopeEmbeddingOrderTest(IsolatedAsyncioTestCase):
+    """Test response ordering across SDK batches and file-cache hits."""
+
+    async def test_indexed_order_across_batches_and_cache(self) -> None:
+        """Restore batch-local indices before merging or caching vectors."""
+        for model_name, sdk_path, index_key, batch_count in (
+            (
+                "text-embedding-v4",
+                "dashscope.embeddings.TextEmbedding.call",
+                "text_index",
+                3,
+            ),
+            (
+                "qwen3-vl-embedding",
+                "dashscope.MultiModalEmbedding.call",
+                "index",
+                2,
+            ),
+        ):
+            with self.subTest(model=model_name):
+
+                def respond(
+                    *,
+                    current_index_key: str = index_key,
+                    **kwargs: Any,
+                ) -> SimpleNamespace:
+                    """Return distinct vectors in reversed batch order."""
+                    inputs = kwargs["input"]
+                    return SimpleNamespace(
+                        status_code=200,
+                        output={
+                            "embeddings": [
+                                {
+                                    current_index_key: i,
+                                    "embedding": [
+                                        float(
+                                            item["text"]
+                                            if isinstance(item, dict)
+                                            else item,
+                                        ),
+                                    ],
+                                }
+                                for i, item in reversed(
+                                    list(enumerate(inputs)),
+                                )
+                            ],
+                        },
+                        usage={
+                            "total_tokens": len(inputs),
+                            "input_tokens": len(inputs),
+                        },
+                    )
+
+                with tempfile.TemporaryDirectory() as directory:
+                    model = DashScopeEmbeddingModel(
+                        credential=_cred(),
+                        model=model_name,
+                        dimensions=1,
+                        embedding_cache=FileEmbeddingCache(directory),
+                    )
+                    with patch(sdk_path, side_effect=respond) as sdk:
+                        for source in ("api", "cache"):
+                            result = await model([str(i) for i in range(21)])
+                            self.assertEqual(
+                                asdict(result),
+                                {
+                                    "embeddings": [
+                                        [float(i)] for i in range(21)
+                                    ],
+                                    "id": A,
+                                    "created_at": A,
+                                    "type": "embedding",
+                                    "usage": {
+                                        "tokens": 21 if source == "api" else 0,
+                                        "time": A if source == "api" else 0,
+                                        "type": "embedding",
+                                    },
+                                    "source": source,
+                                },
+                            )
+                            self.assertEqual(sdk.call_count, batch_count)

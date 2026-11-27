@@ -61,4 +61,5 @@ class HttpMCPConfig(BaseModel):
         title="Timeout",
         description="The HTTP request timeout in seconds.",
         default=30.0,
+        gt=0,
     )

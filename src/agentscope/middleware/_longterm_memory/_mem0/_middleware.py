@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from typing import (
     Any,
     AsyncGenerator,
@@ -25,6 +26,7 @@ from ..._base import MiddlewareBase
 from ...._logging import logger
 from ....event import ReplyStartEvent
 from ....message import AssistantMsg, HintBlock, Msg
+from ....types import ReplyFinishedReason
 from ._tools import _build_memory_tools
 from ._utils import (
     _extract_memory_texts,
@@ -47,6 +49,19 @@ if TYPE_CHECKING:
     # mypy 1.7+ refuses to use ``Mem0AsyncClient`` in annotation
     # positions ("Variable is not valid as a type").
     Mem0AsyncClient: TypeAlias = AsyncMemory | AsyncMemoryClient
+
+
+def _writeback_text(msg: Msg) -> str | None:
+    """Encode a structured answer or use the ordinary reply text."""
+    if msg.structured_output is None:
+        return msg.get_text_content()
+
+    try:
+        payload = msg.model_dump(mode="json", include={"structured_output"})
+        return json.dumps(payload["structured_output"], ensure_ascii=False)
+    except (TypeError, ValueError) as exc:
+        logger.warning("Skipping mem0 write for unencodable reply: %s", exc)
+        return None
 
 
 def _looks_async(method: Any) -> bool:
@@ -275,6 +290,9 @@ class Mem0Middleware(MiddlewareBase):
         self._threshold = threshold
         self._scope_search_by_agent = scope_search_by_agent
         self._await_write = await_write
+        # The event loop only keeps a weak reference to a task, so write
+        # tasks are anchored here until they finish.
+        self._background_writes: set[asyncio.Task[None]] = set()
         self._memory_section_header = memory_section_header
         self._memory_section_intro = memory_section_intro
         self._tool_instructions = tool_instructions
@@ -361,8 +379,16 @@ class Mem0Middleware(MiddlewareBase):
                     final_msg = item
                 yield item
         finally:
-            if query_text and final_msg is not None:
-                assistant_text = final_msg.get_text_content()
+            # An interrupted reply ends with the agent's canned
+            # interruption message, not an answer to the query, so the
+            # exchange is not written back.
+            if (
+                query_text
+                and final_msg is not None
+                and final_msg.finished_reason
+                != ReplyFinishedReason.INTERRUPTED
+            ):
+                assistant_text = _writeback_text(final_msg)
                 if assistant_text:
                     await self._dispatch_write(
                         [
@@ -738,4 +764,6 @@ class Mem0Middleware(MiddlewareBase):
                         e,
                     )
 
-            asyncio.create_task(_bg())
+            task = asyncio.create_task(_bg())
+            self._background_writes.add(task)
+            task.add_done_callback(self._background_writes.discard)

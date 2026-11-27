@@ -1,6 +1,9 @@
 name: cosyvoice-v3-plus
 label: CosyVoice-v3-Plus
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2025-09-03
+voice_cloning: true
 
 input_types:
   - text/plain

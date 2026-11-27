@@ -5,6 +5,7 @@ import base64
 import io
 import os
 from typing import Any, AsyncGenerator, Literal, TYPE_CHECKING
+from urllib.parse import urlsplit
 import wave
 
 from pydantic import BaseModel, Field
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 from .._tts_base import TTSModelBase
 from .._tts_model_card import TTSModelCard
 from .._tts_response import TTSResponse
+from ._endpoints import _dashscope_url
 from ._cosyvoice_utils import (
     _BITS_PER_SAMPLE,
     _CHANNELS,
@@ -28,7 +30,14 @@ if TYPE_CHECKING:
 
 
 class DashScopeCosyVoiceTTSModel(TTSModelBase):
-    """DashScope CosyVoice TTS model using the WebSocket SpeechSynthesizer."""
+    """DashScope CosyVoice TTS model using the WebSocket SpeechSynthesizer.
+
+    ``credential.websocket_url`` takes precedence. Non-default official
+    endpoints and gateways with an API suffix derive the WebSocket route
+    from ``base_url``. The default base URL and other gateway layouts keep
+    the SDK's environment/global WebSocket configuration. For gateways with
+    separate HTTP and WebSocket routes, set both credential URLs explicitly.
+    """
 
     class Parameters(BaseModel):
         """Frontend-exposed parameters for DashScope CosyVoice TTS models."""
@@ -80,7 +89,8 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                 Minimum word count before the first realtime text chunk is
                 sent.
             max_retries (`int`, defaults to `3`):
-                Max retry attempts on realtime synthesis failure.
+                Maximum number of retries after the initial realtime
+                synthesis attempt. The default allows four attempts in total.
             retry_delay (`float`, defaults to `5.0`):
                 Initial retry delay in seconds (exponential backoff).
         """
@@ -101,6 +111,10 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         self._connected = False
         self._cold_start_buffer: str = ""
         self._cold_start_done: bool = False
+        # Set by ``synthesize()``: it completes the SDK synthesizer, which
+        # cannot be started again, so the next utterance has to create a new
+        # one first.
+        self._needs_reconnect = False
         self._accumulated_text: str = ""
 
     @classmethod
@@ -176,11 +190,34 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             callback_cls = _make_cosyvoice_callback_class()
             callback_instance = callback_cls()
 
+        url = self.credential.websocket_url
+        if url is None:
+            base_url = self.credential.base_url.rstrip("/")
+            parsed = urlsplit(base_url)
+            default_url = DashScopeCredential.model_fields["base_url"].default
+            official = parsed.hostname in {
+                "dashscope.aliyuncs.com",
+                "dashscope-intl.aliyuncs.com",
+                "dashscope-us.aliyuncs.com",
+            } or (parsed.hostname or "").endswith(".maas.aliyuncs.com")
+            standard_path = parsed.path.rstrip("/").endswith(
+                ("/compatible-mode/v1", "/api/v1"),
+            )
+            if base_url != default_url and (official or standard_path):
+                url = _dashscope_url(
+                    base_url,
+                    "/api-ws/v1/inference",
+                    websocket=True,
+                )
+        # Omitting url preserves SDK environment/global overrides for legacy
+        # defaults and gateways whose WebSocket route cannot be inferred.
+        endpoint = {"url": url} if url is not None else {}
         synthesizer = SpeechSynthesizer(
             model=self.model,
             voice=self.parameters.voice,
             format=AudioFormat.PCM_24000HZ_MONO_16BIT,
             callback=callback_instance,
+            **endpoint,
         )
         return synthesizer, callback_instance
 
@@ -192,6 +229,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             callback=True,
         )
         self._connected = True
+        self._needs_reconnect = False
 
     async def close(self) -> None:
         """Close the realtime SpeechSynthesizer."""
@@ -234,6 +272,10 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         if not text:
             return TTSResponse(content=None)
 
+        if self._needs_reconnect:
+            await self._reconnect()
+
+        previous_text = self._accumulated_text
         self._accumulated_text += text
 
         if self._cold_start_done:
@@ -254,9 +296,14 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         try:
             self._synthesizer.streaming_call(text_to_send)
         except Exception:
-            # Send failed: keep the cold-start buffer and flag intact so
-            # the next push retries it, mirroring the realtime model.
-            return TTSResponse(content=None)
+            if not self._cold_start_done:
+                # Cold-start flush failed: keep the buffer and flag intact
+                # so the next push retries the whole buffered text.
+                return TTSResponse(content=None)
+            # This delta is not buffered. Restore the accumulated text
+            # before raising so a caller retry counts the delta only once.
+            self._accumulated_text = previous_text
+            raise
 
         if not self._cold_start_done:
             # The cold-start flush succeeded; only now clear the buffer
@@ -286,6 +333,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
 
         full_text = self._accumulated_text
         delay = self.retry_delay
+        max_attempts = max(1, self.max_retries + 1)
 
         try:
             if not full_text and not unsent:
@@ -300,8 +348,15 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                     return _empty_gen()
                 return TTSResponse(content=None)
 
-            for attempt in range(self.max_retries):
+            if self._needs_reconnect:
+                await self._reconnect()
+
+            for attempt in range(max_attempts):
                 try:
+                    # The synthesizer cannot be reused after
+                    # ``streaming_complete()``, nor after a failed attempt.
+                    self._needs_reconnect = True
+
                     if unsent:
                         self._synthesizer.streaming_call(unsent)
 
@@ -317,7 +372,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                             "CosyVoice TTS: timed out waiting for synthesis "
                             "completion (30s)",
                         )
-                        if attempt < self.max_retries - 1:
+                        if attempt < max_attempts - 1:
                             await asyncio.sleep(delay)
                             await self._reconnect()
                             unsent = full_text
@@ -328,12 +383,12 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                         )
 
                     if full_text and not self._callback.has_audio_data():
-                        if attempt < self.max_retries - 1:
+                        if attempt < max_attempts - 1:
                             logger.warning(
                                 "CosyVoice TTS: no audio received, retrying "
                                 "(%d/%d) in %.1fs...",
                                 attempt + 1,
-                                self.max_retries,
+                                max_attempts,
                                 delay,
                             )
                             await asyncio.sleep(delay)
@@ -343,19 +398,19 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                             continue
                         raise RuntimeError(
                             f"CosyVoice TTS synthesis failed: no audio after "
-                            f"{self.max_retries} attempts",
+                            f"{max_attempts} attempts",
                         )
                     break
 
                 except RuntimeError:
                     raise
                 except Exception as e:
-                    if attempt < self.max_retries - 1:
+                    if attempt < max_attempts - 1:
                         logger.warning(
                             "CosyVoice TTS error, retrying (%d/%d) in "
                             "%.1fs: %s",
                             attempt + 1,
-                            self.max_retries,
+                            max_attempts,
                             delay,
                             e,
                         )
