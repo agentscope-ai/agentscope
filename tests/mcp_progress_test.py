@@ -543,6 +543,7 @@ class MCPProgressTest(unittest.IsolatedAsyncioTestCase):
                                 "type": "TOOL_RESULT_TEXT_DELTA",
                                 "reply_id": reply_id,
                                 "tool_call_id": "call-1",
+                                "block_id": AnyString(),
                                 "delta": "done",
                             },
                             {
