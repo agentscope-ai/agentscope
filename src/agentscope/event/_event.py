@@ -574,6 +574,11 @@ class CustomEvent(EventBase):
             - ``"mcp_progress"`` — transient MCP tool progress, with
               ``reply_id``, ``tool_call_id``, ``progress``, ``total`` and
               ``message`` in ``value``. Not part of the final tool result.
+            - ``"workspace_changed"`` — a run on the session finished
+              (success, failure, or interruption) and may have written
+              files to the session workspace. ``value`` contains
+              ``session_id``. Session UIs refetch their workspace file
+              listing on receipt instead of polling for it.
 
         value (`dict`):
             Arbitrary JSON-serializable payload whose schema depends
