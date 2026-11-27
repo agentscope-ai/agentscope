@@ -824,7 +824,7 @@ class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
         )
         self.assertIn("audio/ogg", logs.output[0])
 
-    @patch("agentscope.formatter._openai_formatter.requests.get")
+    @patch("agentscope.formatter._formatter_base.requests.get")
     async def test_chat_formatter_unsupported_audio_not_fetched(
         self,
         mock_get: Mock,
@@ -855,7 +855,7 @@ class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
         )
         mock_get.assert_not_called()
 
-    @patch("agentscope.formatter._openai_formatter.requests.get")
+    @patch("agentscope.formatter._formatter_base.requests.get")
     async def test_chat_formatter_extensionless_url_audio(
         self,
         mock_get: Mock,

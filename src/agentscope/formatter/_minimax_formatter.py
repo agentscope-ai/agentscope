@@ -22,7 +22,7 @@ class MiniMaxChatFormatter(AnthropicChatFormatter):
         ),
     )
 
-    def _format_anthropic_data_block(
+    async def _format_anthropic_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -31,12 +31,12 @@ class MiniMaxChatFormatter(AnthropicChatFormatter):
         if supported is not None and supported.source.media_type.startswith(
             "video/",
         ):
-            return self._format_source(
+            return await self._format_source(
                 supported.source,
                 "video",
                 supported.model_extra,
             )
-        return super()._format_anthropic_data_block(block)
+        return await super()._format_anthropic_data_block(block)
 
 
 class MiniMaxMultiAgentFormatter(AnthropicMultiAgentFormatter):
@@ -68,7 +68,7 @@ class MiniMaxMultiAgentFormatter(AnthropicMultiAgentFormatter):
             input_types=self.input_types,
         ).format(msgs)
 
-    def _format_anthropic_data_block(
+    async def _format_anthropic_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -77,9 +77,9 @@ class MiniMaxMultiAgentFormatter(AnthropicMultiAgentFormatter):
         if supported is not None and supported.source.media_type.startswith(
             "video/",
         ):
-            return self._format_source(
+            return await self._format_source(
                 supported.source,
                 "video",
                 supported.model_extra,
             )
-        return super()._format_anthropic_data_block(block)
+        return await super()._format_anthropic_data_block(block)
