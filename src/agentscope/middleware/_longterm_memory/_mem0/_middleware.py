@@ -51,6 +51,19 @@ if TYPE_CHECKING:
     Mem0AsyncClient: TypeAlias = AsyncMemory | AsyncMemoryClient
 
 
+def _writeback_text(msg: Msg) -> str | None:
+    """Encode a structured answer or use the ordinary reply text."""
+    if msg.structured_output is None:
+        return msg.get_text_content()
+
+    try:
+        payload = msg.model_dump(mode="json", include={"structured_output"})
+        return json.dumps(payload["structured_output"], ensure_ascii=False)
+    except (TypeError, ValueError) as exc:
+        logger.warning("Skipping mem0 write for unencodable reply: %s", exc)
+        return None
+
+
 def _looks_async(method: Any) -> bool:
     """Detect "async-callable" methods, including ones wrapped by a
     sync ``@functools.wraps`` decorator that returns the underlying
@@ -375,16 +388,7 @@ class Mem0Middleware(MiddlewareBase):
                 and final_msg.finished_reason
                 != ReplyFinishedReason.INTERRUPTED
             ):
-                structured_output = getattr(
-                    final_msg,
-                    "structured_output",
-                    None,
-                )
-                assistant_text = (
-                    json.dumps(structured_output, ensure_ascii=False)
-                    if structured_output is not None
-                    else final_msg.get_text_content()
-                )
+                assistant_text = _writeback_text(final_msg)
                 if assistant_text:
                     await self._dispatch_write(
                         [

@@ -16,8 +16,10 @@ inspect what the public API just did.
 """
 import asyncio
 import gc
+from collections.abc import AsyncIterator
+from datetime import date
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Any
 
 from pydantic import BaseModel
@@ -30,6 +32,7 @@ from agentscope.event import (
     UserConfirmResultEvent,
 )
 from agentscope.message import (
+    AssistantMsg,
     HintBlock,
     Msg,
     TextBlock,
@@ -434,6 +437,52 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
             fake.add_calls[0]["messages"][1]["content"],
             '{"seats_available": 13}',
         )
+
+    async def test_custom_structured_reply_writeback(self) -> None:
+        """Return the original reply even when Mem0 cannot encode it."""
+
+        async def cached_reply(message: Msg) -> AsyncIterator[Msg]:
+            yield message
+
+        question = UserMsg("user", "When is the meeting?")
+        for value, expected in (
+            (date(2026, 4, 3), '{"day": "2026-04-03"}'),
+            (object(), None),
+        ):
+            with self.subTest(value=value):
+                cached = AssistantMsg(
+                    "calendar",
+                    "Meeting scheduled.",
+                    structured_output={"day": value},
+                )
+
+                fake = _FakeAsyncMem0Client()
+                agent = self._agent(Mem0Middleware(client=fake, user_id="u"))
+                with patch.object(
+                    agent,
+                    "_reply_impl",
+                    return_value=cached_reply(cached),
+                ):
+                    reply = await agent.reply(question)
+
+                self.assertIs(reply, cached)
+                self.assertEqual(
+                    fake.add_calls,
+                    [
+                        {
+                            "user_id": "u",
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": "When is the meeting?",
+                                },
+                                {"role": "assistant", "content": expected},
+                            ],
+                        },
+                    ]
+                    if expected is not None
+                    else [],
+                )
 
     async def test_memory_message_lands_after_user_message(self) -> None:
         """Mirroring AgentScope 1.x's ReActAgent placement: the memory
