@@ -194,6 +194,45 @@ def _normalize_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _detect_line_ending(text: str) -> str:
+    """Return the line ending a file is written with.
+
+    ``\\r\\n`` wins over a lone ``\\r``, so a file that already mixes the two
+    keeps its Windows endings — the case that matters on a real checkout.
+
+    Args:
+        text (`str`):
+            Decoded file contents.
+
+    Returns:
+        `str`:
+            ``"\\r\\n"``, ``"\\r"`` or ``"\\n"``.
+    """
+    if "\r\n" in text:
+        return "\r\n"
+    if "\r" in text:
+        return "\r"
+    return "\n"
+
+
+def _apply_line_ending(text: str, ending: str) -> str:
+    """Give LF-normalized text the line ending a file itself uses.
+
+    Args:
+        text (`str`):
+            Text whose line endings are all ``\\n``.
+        ending (`str`):
+            The ending to write, as returned by `_detect_line_ending`.
+
+    Returns:
+        `str`:
+            The text with every ``\\n`` replaced by ``ending``.
+    """
+    if ending == "\n":
+        return text
+    return text.replace("\n", ending)
+
+
 # ── base class ─────────────────────────────────────────────────────────
 
 
