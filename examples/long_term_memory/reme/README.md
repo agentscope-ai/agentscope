@@ -10,9 +10,10 @@ call / write-back) inline so you can see when each path fires.
 ReMe is the AgentScope team's own file-based memory toolkit. Unlike
 mem0, it is **embedded in-process** — there is no separate service to
 run — and it records memory by **listening to the conversation**:
-after every reply the new exchange is written back automatically via
+the middleware submits eligible conversation content automatically via
 ReMe's `auto_memory` job. The agent never saves memory itself; there
-is no add tool. The demo drives ReMe with AgentScope's own DashScope
+is no add tool. See [pause and resume](#pause-and-resume) for write-back
+conditions. The demo drives ReMe with AgentScope's own DashScope
 chat model (LLM-backed `auto_memory` write-back) and DashScope
 embedding model (vector search), both injected into the embedded app.
 
@@ -80,9 +81,9 @@ well-defined even when one middleware instance is shared across agents.
 
 ## How the middleware controls memory
 
-ReMe **always** writes the new exchange back through `auto_memory`
-after each reply, in every mode — `mode` only selects how the agent
-*retrieves*:
+Automatic write-back through `auto_memory` runs in every mode, subject
+to the [write-back conditions below](#pause-and-resume). The `mode`
+parameter only selects how the agent *retrieves*:
 
 ### `static_control`
 The middleware does the retrieval, the agent is unaware:
@@ -97,8 +98,8 @@ The middleware does the retrieval, the agent is unaware:
    the hint lands on a later step or is skipped for that turn — the same
    trade-off as `AgenticMemoryMiddleware`. Turns with a tool call (two or
    more reasoning steps) inject reliably.
-3. **`on_reply` (post)** writes the new `(user, assistant)` exchange
-   back via `auto_memory`.
+3. **`on_reply` (post)** submits eligible user, assistant and tool content
+   via `auto_memory`.
 
 The injected memory message **persists** in the agent's context across
 turns. If long sessions accumulate too many, post-process with
@@ -128,13 +129,45 @@ appended to the agent's context as an assistant note, AND the
 `memory_search` tool (with its system-prompt hint) is exposed for
 explicit on-demand search.
 
+### Pause and resume
+
+For a reply initiated by nonempty user text, a tool confirmation or
+external-execution pause and its resumes belong to the original logical
+exchange. Automatic retrieval uses the original user input; resume events
+do not start it again. Explicit calls to the `memory_search` tool remain
+available in agent-control modes.
+
+The original invocation retains its partial-write and interruption
+behavior. If ReMe has acknowledged a prefix, normal completion submits
+only unseen tool results, new content blocks and appended text, including
+growth on the same message ID. It does not repeat the original user input
+or prefix. If no prefix was acknowledged, normal completion submits the
+full exchange. Resumes that pause again or are interrupted do not submit
+another prefix. Resume events rejected by the agent do not trigger
+automatic retrieval or write-back. Existing event validation, tool
+rejection and permission policies are unchanged.
+
+Write-back requires an original input with nonempty user text, a session
+ID, a nonempty increment and nonempty assistant text somewhere in the
+logical exchange. An acknowledged text prefix therefore permits a
+completed increment containing only tool results. An entirely textless
+exchange is still skipped. Backend or preparation failures are logged
+without failing the reply, and a failed write is not acknowledged. No
+automatic retry or backend exactly-once guarantee is added.
+
+Pending write-back checkpoints live in the current agent and middleware
+instances. Rebuilding either instance, even with the same `session_id`,
+does not restore a pending exchange. This demo shows cross-session recall;
+it does not exercise pause/resume.
+
 ## Memory scoping (`session_id`)
 
 ReMe scopes write-back by **`session_id`**, read live from
-`agent.state.session_id` at hook time — never stored on the
-middleware. Search runs **workspace-wide** (across every session),
+`agent.state.session_id` and captured for the pending logical reply.
+A resumed write requires the captured agent/session/reply scope to match
+the live agent. Search runs **workspace-wide** (across every session),
 which is what lets a later session recall an earlier one's memories
-even with a different `session_id`. To pin a resumable session, set
+even with a different `session_id`. To name a session, set
 the id on the agent:
 
 ```python
@@ -149,9 +182,9 @@ shared workspace.
 
 ## Sharing one middleware across agents
 
-Because the `session_id` is read per call (not stored) and the chat
-model is fixed at construction (tied to the embedded app's single
-LLM), **one** `ReMeMiddleware` can be safely shared across many agents
+Because pending reply state is isolated by live agent, session and reply
+ID, and the chat model is fixed at construction (tied to the embedded
+app's single LLM), **one** `ReMeMiddleware` can be shared across agents
 and sessions — build it once and pass it to each agent:
 
 ```python
