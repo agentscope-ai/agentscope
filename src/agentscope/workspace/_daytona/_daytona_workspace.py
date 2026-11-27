@@ -166,6 +166,7 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         # ── runtime state (Daytona-only) ────────────────────────
         self._daytona: Any = None
         self._sandbox: Any = None
+        self._sandbox_created = False
         self._backend: DaytonaBackend | None = None
 
     # ── lifecycle hooks ─────────────────────────────────────────
@@ -272,6 +273,8 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         created from the constructor config captured during
         ``__init__``.
         """
+        # Only resources created by this attempt may be deleted on failure.
+        self._sandbox_created = False
         existing = await self._find_existing_sandbox()
         client = await self._get_daytona_client()
 
@@ -284,6 +287,7 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
             self._create_params(),
             timeout=self.timeout_seconds,
         )
+        self._sandbox_created = True
 
     async def _find_existing_sandbox(self) -> Any:
         """Find the most recent usable Daytona sandbox for this workspace.

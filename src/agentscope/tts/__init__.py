@@ -4,13 +4,17 @@
 from ._tts_base import TTSModelBase
 from ._tts_model_card import TTSModelCard
 from ._tts_response import TTSResponse, TTSUsage
+from ._voice_utils import VoiceCloningError
+from ._voice_cloning_client_base import VoiceCloningClientBase
 from ._dashscope import (
     DashScopeCosyVoiceTTSModel,
     DashScopeTTSModel,
     DashScopeRealtimeTTSModel,
+    DashScopeVoiceCloningClient,
 )
 from ._gemini import GeminiTTSModel
-from ._openai import OpenAITTSModel
+from ._minimax import MiniMaxTTSModel, MiniMaxVoiceCloningClient
+from ._openai import OpenAITTSModel, OpenAIVoiceCloningClient
 
 __all__ = [
     "TTSModelBase",
@@ -21,5 +25,11 @@ __all__ = [
     "DashScopeTTSModel",
     "DashScopeRealtimeTTSModel",
     "GeminiTTSModel",
+    "MiniMaxTTSModel",
+    "MiniMaxVoiceCloningClient",
     "OpenAITTSModel",
+    "OpenAIVoiceCloningClient",
+    "DashScopeVoiceCloningClient",
+    "VoiceCloningError",
+    "VoiceCloningClientBase",
 ]

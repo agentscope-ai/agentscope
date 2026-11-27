@@ -277,7 +277,10 @@ async def delete_channel(
 ) -> None:
     """Delete a channel."""
     await _owned(channel_id, user_id, storage)
-    await service.delete(channel_id)
+    try:
+        await service.delete(channel_id)
+    except ChannelError as e:
+        raise HTTPException(e.status_code, str(e)) from e
 
 
 @channel_router.post("/{channel_id}/enable")
@@ -289,7 +292,10 @@ async def enable_channel(
 ) -> ChannelActionResponse:
     """Enable a channel."""
     await _owned(channel_id, user_id, storage)
-    await service.set_enabled(channel_id, True)
+    try:
+        await service.set_enabled(channel_id, True)
+    except ChannelError as e:
+        raise HTTPException(e.status_code, str(e)) from e
     return ChannelActionResponse(status="enabled")
 
 
@@ -302,7 +308,10 @@ async def disable_channel(
 ) -> ChannelActionResponse:
     """Disable a channel."""
     await _owned(channel_id, user_id, storage)
-    await service.set_enabled(channel_id, False)
+    try:
+        await service.set_enabled(channel_id, False)
+    except ChannelError as e:
+        raise HTTPException(e.status_code, str(e)) from e
     return ChannelActionResponse(status="disabled")
 
 

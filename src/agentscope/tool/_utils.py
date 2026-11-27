@@ -20,7 +20,7 @@ def _get_callable_name(tool_func: Callable) -> str:
 
         named_func = named_func.func
 
-    return named_func.__name__
+    return getattr(named_func, "__name__", type(named_func).__name__)
 
 
 def _get_callable_docstring(tool_func: Callable) -> str:
@@ -37,6 +37,23 @@ def _get_callable_docstring(tool_func: Callable) -> str:
             return documented_func.__doc__ or ""
 
         documented_func = documented_func.func
+
+    if not (
+        inspect.isroutine(documented_func) or inspect.isclass(documented_func)
+    ):
+        # Prefer instance docs, then __call__ docs, then class docs.
+        own_attrs = getattr(documented_func, "__dict__", None) or {}
+        if "__doc__" not in own_attrs:
+            call_doc = getattr(
+                type(documented_func).__call__,
+                "__doc__",
+                None,
+            )
+            if inspect.ismemberdescriptor(type(documented_func).__doc__):
+                # An unset slot falls back; an explicitly stored None wins.
+                return getattr(documented_func, "__doc__", call_doc) or ""
+            if call_doc:
+                return call_doc
 
     return documented_func.__doc__ or ""
 
@@ -100,18 +117,31 @@ def _resolve_type_hints(tool_func: Callable) -> dict[str, Any]:
         partial_funcs.append(annotated_func)
         annotated_func = annotated_func.func
 
+    annotation_sources = [annotated_func]
+    if not (
+        inspect.isroutine(annotated_func) or inspect.isclass(annotated_func)
+    ):
+        # Use call hints as defaults, preserving explicit instance hints
+        # such as those copied by functools.update_wrapper.
+        annotated_func = getattr(annotated_func, "__call__", annotated_func)
+        annotation_sources.insert(0, annotated_func)
+
     globalns = getattr(annotated_func, "__globals__", None)
 
-    try:
-        type_hints = typing.get_type_hints(
-            annotated_func,
-            include_extras=True,
-        )
-    except Exception:
-        # One unresolvable annotation (e.g. a `TYPE_CHECKING`-only import
-        # used by `_agent_state` or the return type) must not discard the
-        # hints of every other parameter.
-        type_hints = _resolve_partial_type_hints(annotated_func, globalns)
+    type_hints = {}
+    for source in annotation_sources:
+        try:
+            hints = typing.get_type_hints(source, include_extras=True)
+        except Exception:
+            # An unresolved hint must not discard other valid hints or
+            # override hints already resolved from the call method.
+            source_globals = getattr(
+                inspect.unwrap(source),
+                "__globals__",
+                globalns,
+            )
+            hints = _resolve_partial_type_hints(source, source_globals)
+        type_hints.update(hints)
 
     for partial_func in reversed(partial_funcs):
         type_hints.update(

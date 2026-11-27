@@ -2,19 +2,101 @@
 """The formatter module."""
 import base64
 import mimetypes
+import os
 import tempfile
 from abc import abstractmethod
-from fnmatch import fnmatch
-from typing import Any, List, AsyncGenerator
+from fnmatch import fnmatchcase
+from typing import Any, AsyncGenerator, Awaitable, Callable, List
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from pydantic import BaseModel, Field
 
 from ..message import (
     Msg,
     DataBlock,
+    HintBlock,
     TextBlock,
     URLSource,
 )
+
+
+# Pin audio extensions because host MIME tables vary.
+_MEDIA_TYPE_EXTENSIONS = {
+    "audio/aac": ".aac",
+    "audio/flac": ".flac",
+    "audio/l16": ".l16",
+    "audio/mp4": ".m4a",
+    "audio/mpeg": ".mp3",
+    "audio/opus": ".opus",
+    "audio/pcm": ".pcm",
+    "audio/wav": ".wav",
+}
+
+# Used when neither the table above nor the host can name an extension.
+_DEFAULT_MEDIA_EXTENSION = ".bin"
+
+
+def _normalize_media_type(media_type: str) -> str:
+    """Lowercase the MIME type and subtype, preserving parameter values."""
+    mime, separator, parameters = media_type.partition(";")
+    return mime.lower() + separator + parameters
+
+
+def _media_type_extension(media_type: str) -> str:
+    """Return a file extension for a media type, deterministically.
+
+    Parameters are dropped first, so ``audio/l16;rate=24000`` resolves like
+    ``audio/l16``. Types this framework emits are pinned by
+    :data:`_MEDIA_TYPE_EXTENSIONS`; anything else is left to the host MIME
+    tables and finally to a generic extension.
+
+    Args:
+        media_type (`str`):
+            The media type carried by a data block's source.
+
+    Returns:
+        `str`:
+            A dotted extension, e.g. ``".wav"``.
+    """
+    base = media_type.partition(";")[0].strip().lower()
+    pinned = _MEDIA_TYPE_EXTENSIONS.get(base)
+    if pinned is not None:
+        return pinned
+    return mimetypes.guess_extension(base) or _DEFAULT_MEDIA_EXTENSION
+
+
+def file_url_to_path(url: str) -> str:
+    """Resolve a ``file://`` URL to a local filesystem path.
+
+    Local URLs and ``localhost`` authorities resolve on every platform.
+    Other authorities resolve to UNC paths on Windows and are rejected on
+    other platforms to avoid reading an unrelated local file.
+
+    Args:
+        url (`str`):
+            A ``file://`` URL, e.g. ``file:///tmp/x.png`` or
+            ``file://server/share/x.png``.
+
+    Returns:
+        `str`:
+            The platform filesystem path for the URL, suitable for
+            ``open()``.
+
+    Raises:
+        ValueError:
+            If a remote authority is used on a non-Windows platform.
+    """
+    parsed = urlsplit(url)
+    path = parsed.path
+    if parsed.netloc and parsed.netloc.lower() != "localhost":
+        if os.name != "nt":
+            raise ValueError(
+                "Remote file URLs are not supported on this platform. "
+                "Mount the share and use a local file URL instead.",
+            )
+        path = "//" + parsed.netloc + path
+    return url2pathname(path)
 
 
 class FormatterBase(BaseModel):
@@ -37,9 +119,10 @@ class FormatterBase(BaseModel):
     def supported_input_media_types(self) -> list[str]:
         """Derive the accepted media-type patterns from :attr:`input_types` by
         excluding ``text/plain`` and ``application/x-thinking``."""
+        media_types = map(_normalize_media_type, self.input_types)
         return [
             t
-            for t in self.input_types
+            for t in media_types
             if t not in ("text/plain", "application/x-thinking")
         ]
 
@@ -64,6 +147,22 @@ class FormatterBase(BaseModel):
                 raise TypeError(
                     f"Expected Msg object, got {type(msg)} instead.",
                 )
+
+    def _get_supported_tool_result_block(
+        self,
+        block: DataBlock,
+    ) -> DataBlock | None:
+        """Return a supported block with a normalized MIME type for output."""
+        media_type = _normalize_media_type(block.source.media_type)
+        if not any(
+            fnmatchcase(media_type, pattern)
+            for pattern in self.supported_input_media_types
+        ):
+            return None
+        if media_type == block.source.media_type:
+            return block
+        source = block.source.model_copy(update={"media_type": media_type})
+        return block.model_copy(update={"source": source})
 
     @staticmethod
     def _convert_unsupported_data_block_to_string(block: DataBlock) -> str:
@@ -90,7 +189,7 @@ class FormatterBase(BaseModel):
                 f"</system-reminder>"
             )
 
-        extension = mimetypes.guess_extension(block.source.media_type)
+        extension = _media_type_extension(block.source.media_type)
         with tempfile.NamedTemporaryFile(
             suffix=extension,
             delete=False,
@@ -136,19 +235,15 @@ class FormatterBase(BaseModel):
                 textual_output.append(block.text)
 
             elif isinstance(block, DataBlock):
-                main_type = block.source.media_type.split("/")[0]
-
-                if any(
-                    fnmatch(block.source.media_type, _)
-                    for _ in self.supported_input_media_types
-                ):
-                    # If supported, promote the block
+                supported = self._get_supported_tool_result_block(block)
+                if supported is not None:
+                    main_type = supported.source.media_type.split("/", 1)[0]
 
                     # Reuse the block's own stable id as the identifier so
                     # repeated formatting of the same unchanged Msg history
                     # (e.g. on every LLM call) produces the same text, rather
                     # than a fresh random id each time.
-                    identifier = block.id
+                    identifier = supported.id
 
                     textual_output.append(
                         f"<system-reminder>A(n) {main_type} file is returned "
@@ -160,7 +255,7 @@ class FormatterBase(BaseModel):
                             TextBlock(
                                 text=f"- {identifier} ({main_type} file): ",
                             ),
-                            block,
+                            supported,
                         ],
                     )
 
@@ -229,3 +324,131 @@ class FormatterBase(BaseModel):
 
         if group_type:
             yield group_type, group
+
+    @staticmethod
+    def _split_agent_messages_at_hints(
+        msgs: list[Msg],
+    ) -> list[tuple[bool, list[Msg]]]:
+        """Split agent messages around hints while preserving message order.
+
+        Args:
+            msgs (`list[Msg]`):
+                The non-tool messages in one agent-message group.
+
+        Returns:
+            `list[tuple[bool, list[Msg]]]`:
+                Ordered segments. The boolean is ``True`` for a segment that
+                contains a single ``HintBlock`` and ``False`` for history
+                segments. Messages without hints are returned unchanged as a
+                single history segment.
+        """
+        if not any(
+            isinstance(block, HintBlock)
+            for msg in msgs
+            for block in msg.get_content_blocks()
+        ):
+            return [(False, msgs)] if msgs else []
+
+        segments: list[tuple[bool, list[Msg]]] = []
+        history_messages: list[Msg] = []
+
+        for msg in msgs:
+            history_blocks = []
+            for block in msg.get_content_blocks():
+                if isinstance(block, HintBlock):
+                    if history_blocks:
+                        history_messages.append(
+                            msg.model_copy(update={"content": history_blocks}),
+                        )
+                        history_blocks = []
+
+                    if history_messages:
+                        segments.append((False, history_messages))
+                        history_messages = []
+
+                    segments.append(
+                        (
+                            True,
+                            [msg.model_copy(update={"content": [block]})],
+                        ),
+                    )
+                else:
+                    history_blocks.append(block)
+
+            if history_blocks:
+                history_messages.append(
+                    msg.model_copy(update={"content": history_blocks}),
+                )
+
+        if history_messages:
+            segments.append((False, history_messages))
+
+        return segments
+
+    async def _format_agent_message_with_hints(
+        self,
+        msgs: list[Msg],
+        is_first: bool,
+        format_agent_message: Callable[
+            [list[Msg], bool],
+            Awaitable[list[Any]],
+        ],
+        *,
+        prompt_requires_text: bool = False,
+    ) -> tuple[list[Any], bool]:
+        """Format history and route each hint through its chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                The non-tool messages in one agent-message group.
+            is_first (`bool`):
+                Whether the first history segment should include its prompt.
+            format_agent_message (`Callable`):
+                The provider-specific history formatter.
+            prompt_requires_text (`bool`):
+                Whether media-only history omits the history prompt.
+
+        Returns:
+            `tuple[list[Any], bool]`:
+                The formatted messages and whether a history segment was
+                eligible for the prompt.
+        """
+        formatted_messages: list[Any] = []
+        has_prompt_segment = False
+
+        for is_hint, segment in self._split_agent_messages_at_hints(msgs):
+            if is_hint:
+                formatted_messages.extend(
+                    await self._format_hint_message(segment),
+                )
+                continue
+
+            formatted_history = await format_agent_message(segment, is_first)
+            formatted_messages.extend(formatted_history)
+            if formatted_history and (
+                not prompt_requires_text
+                or any(msg.has_content_blocks("text") for msg in segment)
+            ):
+                is_first = False
+                has_prompt_segment = True
+
+        return formatted_messages, has_prompt_segment
+
+    async def _format_hint_message(self, msgs: list[Msg]) -> list[Any]:
+        """Format a HintBlock message through the provider's chat formatter.
+
+        Multi-agent formatters that delegate tool sequences to a chat
+        formatter can reuse that path. Providers with a different delegation
+        override this method.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[Any]`:
+                The provider-specific user-message representation.
+        """
+        raise RuntimeError(
+            "A provider chat formatter is required for HintBlock messages.",
+        )

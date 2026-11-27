@@ -246,6 +246,9 @@ class GoalPipeline:
                 # The executor parked, so there is nothing to verify yet.
                 break
 
+            # Each report gets its own retry budget.
+            self._executor_retries = 0
+
             # Verifier
             final_msg = None
             instruction = verifier_inputs or UserMsg(
@@ -335,6 +338,7 @@ class GoalPipeline:
                     "pass",
                     "impossible",
                 ):
+                    self._verifier_retries = 0
                     if final_msg.structured_output["result"] == "impossible":
                         logger.info(
                             "The verifier judged the goal impossible: %s",
@@ -343,6 +347,7 @@ class GoalPipeline:
                     # Settled either way, so the loop ends here.
                     break_loop = True
                 else:
+                    self._verifier_retries = 0
                     self._iters += 1
                     if self.verifier_reset_context:
                         # Only the conversation, tool/task state stays

@@ -4,7 +4,10 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
 from agentscope.credential import MiniMaxCredential
-from agentscope.formatter import MiniMaxChatFormatter
+from agentscope.formatter import (
+    MiniMaxChatFormatter,
+    MiniMaxMultiAgentFormatter,
+)
 from agentscope.message import (
     Base64Source,
     DataBlock,
@@ -17,6 +20,42 @@ from agentscope.model import MiniMaxChatModel
 
 class MiniMaxTest(IsolatedAsyncioTestCase):
     """Tests for the MiniMax-specific behavior."""
+
+    async def test_thinking_enable_nullable(self) -> None:
+        """Null omits thinking, while booleans send explicit modes."""
+        self.assertIsNone(MiniMaxChatModel.Parameters().thinking_enable)
+        model = MiniMaxChatModel(
+            credential=MiniMaxCredential(api_key="test"),
+            model="MiniMax-M3",
+            stream=False,
+        )
+        response = MagicMock(id="msg-1", content=[])
+        response.usage = MagicMock(input_tokens=1, output_tokens=1)
+        model.client = MagicMock()
+        mock_create = AsyncMock(return_value=response)
+        model.client.messages.create = mock_create
+
+        for params in (
+            {},
+            {"thinking_enable": None},
+            {"thinking_enable": False},
+            {"thinking_enable": True},
+        ):
+            with self.subTest(params=params):
+                model.parameters = MiniMaxChatModel.Parameters(**params)
+                await model([])
+
+                expected = {
+                    "model": "MiniMax-M3",
+                    "messages": [],
+                    "stream": False,
+                    "max_tokens": 8192,
+                }
+                if params.get("thinking_enable") is False:
+                    expected["thinking"] = {"type": "disabled"}
+                elif params.get("thinking_enable"):
+                    expected["thinking"] = {"type": "adaptive"}
+                self.assertEqual(mock_create.call_args.kwargs, expected)
 
     async def test_request_kwargs(self) -> None:
         """Thinking is sent as adaptive without budget or output config."""
@@ -122,6 +161,92 @@ class MiniMaxTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_format_video_extra_params(self) -> None:
+        """DataBlock extra params are forwarded to video blocks, like the
+        image and PDF blocks inherited from the Anthropic formatter."""
+        formatter = MiniMaxChatFormatter()
+        msgs = [
+            Msg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="AAAA",
+                            media_type="video/mp4",
+                        ),
+                        cache_control={"type": "ephemeral"},
+                    ),
+                ],
+                role="user",
+            ),
+        ]
+
+        self.assertListEqual(
+            await formatter.format(msgs),
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "video",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "video/mp4",
+                                "data": "AAAA",
+                            },
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                    ],
+                },
+            ],
+        )
+
+        multi_agent_res = await MiniMaxMultiAgentFormatter().format(msgs)
+        self.assertIn(
+            {
+                "type": "video",
+                "source": {
+                    "type": "base64",
+                    "media_type": "video/mp4",
+                    "data": "AAAA",
+                },
+                "cache_control": {"type": "ephemeral"},
+            },
+            multi_agent_res[0]["content"],
+        )
+
+    async def test_format_uppercase_video_media_type(self) -> None:
+        """Both MiniMax formatters match uppercase video MIME types."""
+        msgs = [
+            Msg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="AAAA",
+                            media_type="VIDEO/MP4",
+                        ),
+                    ),
+                ],
+                role="user",
+            ),
+        ]
+        expected_block = {
+            "type": "video",
+            "source": {
+                "type": "base64",
+                "media_type": "video/mp4",
+                "data": "AAAA",
+            },
+        }
+        for formatter in (
+            MiniMaxChatFormatter(),
+            MiniMaxMultiAgentFormatter(),
+        ):
+            with self.subTest(formatter=type(formatter).__name__):
+                res = await formatter.format(msgs)
+                self.assertIn(expected_block, res[0]["content"])
 
     def test_model_cards(self) -> None:
         """The MiniMax model cards carry the documented limits."""

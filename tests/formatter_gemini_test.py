@@ -31,7 +31,9 @@ from agentscope.message import (
 _FIXED_ID = "TESTID1234567"
 
 
-class TestGeminiFormatter(IsolatedAsyncioTestCase):
+class TestGeminiFormatter(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Comprehensive tests for Gemini Chat and MultiAgent formatters."""
 
     async def asyncSetUp(self) -> None:
@@ -548,6 +550,42 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                     "role": "model",
                     "parts": [
                         {"text": "Here is the map of Tokyo."},
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_uppercase_base64_image_media_type(
+        self,
+    ) -> None:
+        """A mixed-case MIME type is matched case-insensitively."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="IMAGE/PNG",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "inline_data": {
+                                "data": self.image_b64,
+                                "mime_type": "image/png",
+                            },
+                        },
                     ],
                 },
             ],
@@ -1160,6 +1198,44 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_media_extra_params(self) -> None:
+        """DataBlock extra params are forwarded beside inline_data."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this video."),
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="video/mp4",
+                        ),
+                        video_metadata={"fps": 2},
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Summarize this video."},
+                        {
+                            "inline_data": {
+                                "data": self.image_b64,
+                                "mime_type": "video/mp4",
+                            },
+                            "video_metadata": {"fps": 2},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_tool_call_with_incomplete_input_does_not_crash(
         self,
     ) -> None:
@@ -1193,6 +1269,89 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             if "function_call" in part
         ][0]["function_call"]
         self.assertIsInstance(function_call["args"], dict)
+
+    async def test_chat_formatter_failed_tool_result_uses_error_key(
+        self,
+    ) -> None:
+        """A failed tool call reaches Gemini under the ``error`` key of the
+        function response, a successful one under ``output``."""
+        res = await GeminiChatFormatter().format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="get_weather",
+                            input='{"city": "Paris"}',
+                        ),
+                        ToolCallBlock(
+                            id="call_2",
+                            name="get_weather",
+                            input='{"city": "Atlantis"}',
+                        ),
+                        ToolResultBlock(
+                            id="call_1",
+                            name="get_weather",
+                            output=[TextBlock(text="sunny")],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                        ToolResultBlock(
+                            id="call_2",
+                            name="get_weather",
+                            output=[TextBlock(text="Unknown city: Atlantis")],
+                            state=ToolResultState.ERROR,
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            res,
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "function_call": {
+                                "id": "call_1",
+                                "name": "get_weather",
+                                "args": {"city": "Paris"},
+                            },
+                        },
+                        {
+                            "function_call": {
+                                "id": "call_2",
+                                "name": "get_weather",
+                                "args": {"city": "Atlantis"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "function_response": {
+                                "id": "call_1",
+                                "name": "get_weather",
+                                "response": {"output": "sunny"},
+                            },
+                        },
+                        {
+                            "function_response": {
+                                "id": "call_2",
+                                "name": "get_weather",
+                                "response": {
+                                    "error": "Unknown city: Atlantis",
+                                },
+                            },
+                        },
+                    ],
+                },
+            ],
+        )
 
 
 class GeminiMultiAgentSystemMessageTest(IsolatedAsyncioTestCase):

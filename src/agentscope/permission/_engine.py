@@ -763,14 +763,20 @@ class PermissionEngine:
                 ALLOW decision if a rule matches, None otherwise
         """
         rules = self.context.allow_rules.get(tool.name, [])
-        for rule in rules:
-            if await self._rule_matches(tool, rule, input_data):
-                return PermissionDecision(
-                    behavior=PermissionBehavior.ALLOW,
-                    message=f"Permission granted for {tool.name}",
-                    updated_input=input_data,
-                )
-        return None
+        inputs = tool.get_permission_inputs(input_data)
+        if not inputs:
+            return None
+        for operation in inputs:
+            for rule in rules:
+                if await self._rule_matches(tool, rule, operation):
+                    break
+            else:
+                return None
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message=f"Permission granted for {tool.name}",
+            updated_input=input_data,
+        )
 
     async def _rule_matches(
         self,
@@ -794,6 +800,10 @@ class PermissionEngine:
         Returns:
             `bool`:
                 True if the rule matches, False otherwise
+
+        Raises:
+            `TypeError`:
+                If ``match_rule`` does not return a bool.
         """
         # Empty rule_content matches everything
         if not rule.rule_content:
@@ -802,12 +812,31 @@ class PermissionEngine:
         # Try to use tool's match_rule method if available.
         # ``_execute_async_or_sync_func`` keeps backward compatibility
         # with third-party tools that still override match_rule with a
-        # sync ``def`` (the framework's signature is now ``async def``).
-        return await _execute_async_or_sync_func(
-            tool.match_rule,
-            rule.rule_content,
-            input_data,
+        # sync ``def`` (the framework's signature is now ``async def``),
+        # and awaits a coroutine returned through a sync wrapper.
+        # Restrictions apply to any operation, while allow coverage is
+        # aggregated across all operations by _check_allow_rules.
+        inputs = (
+            tool.get_permission_inputs(input_data)
+            if rule.behavior != PermissionBehavior.ALLOW
+            else [input_data]
         )
+        for operation in inputs:
+            matched = await _execute_async_or_sync_func(
+                tool.match_rule,
+                rule.rule_content,
+                operation,
+            )
+            # A truthy non-bool (for example a coroutine that was not
+            # awaited) would match every input and fail open.
+            if not isinstance(matched, bool):
+                raise TypeError(
+                    f"{type(tool).__name__}.match_rule() must return bool, "
+                    f"got {type(matched).__name__}",
+                )
+            if matched:
+                return True
+        return False
 
     async def _generate_suggestions(
         self,
