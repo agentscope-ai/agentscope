@@ -16,6 +16,7 @@ from ..message import (
     ToolCallBlock,
     ToolCallState,
     ToolResultBlock,
+    ToolResultState,
     HintBlock,
 )
 from ..permission import PermissionContext
@@ -363,7 +364,7 @@ class AgentState(BaseModel):
         """Whether the current reply written by ``name`` has
         any tool call still awaiting an outside response — an
         ``ASKING`` user confirmation or a ``SUBMITTED`` external
-        execution with no matching tool result yet.
+        execution with no matching completed tool result yet.
 
         Args:
             name (`str | None`):
@@ -381,7 +382,7 @@ class AgentState(BaseModel):
     ) -> list[ToolCallBlock]:
         """Get the current reply's tool calls still awaiting an
         outside response — an ``ASKING`` user confirmation or a
-        ``SUBMITTED`` external execution with no matching tool result yet.
+        ``SUBMITTED`` external execution with no matching completed tool result yet.
 
         Args:
             name (`str | None`):
@@ -394,7 +395,11 @@ class AgentState(BaseModel):
         last_msg = self.get_reply_message(name)
         if last_msg is None:
             return []
-        result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
+        result_ids = {
+            b.id
+            for b in last_msg.get_content_blocks("tool_result")
+            if b.state != ToolResultState.RUNNING
+        }
         return [
             tc
             for tc in last_msg.get_content_blocks("tool_call")
@@ -405,8 +410,8 @@ class AgentState(BaseModel):
         ]
 
     def get_unfinished_tool_calls(self, name: str) -> list[ToolCallBlock]:
-        """Get the current reply's tool calls with no matching tool result
-        yet, whatever their state. A reply accumulates into a single message,
+        """Get the current reply's tool calls with no matching completed
+        tool result yet, whatever their state. A reply accumulates into a single message,
         so the calls of the finished reasoning-acting rounds are excluded
         while the ones of the ongoing round are returned.
 
@@ -422,7 +427,11 @@ class AgentState(BaseModel):
         last_msg = self.get_reply_message(name)
         if last_msg is None:
             return []
-        result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
+        result_ids = {
+            b.id
+            for b in last_msg.get_content_blocks("tool_result")
+            if b.state != ToolResultState.RUNNING
+        }
         return [
             tc
             for tc in last_msg.get_content_blocks("tool_call")
