@@ -51,6 +51,16 @@ _GENERIC_MEDIA_TYPE = "application/octet-stream"
 _LEGACY_EXCEL_MEDIA_TYPE = "application/vnd.ms-excel"
 _CSV_MEDIA_TYPE = "text/csv"
 
+# Some platform MIME tables lack YAML, and parsers that handle several
+# media types (e.g. ``TextParser``) never reach the single-declaration
+# extension fallback.  These standard extensions map to the standard
+# type during filename inference — before any broader fallback and
+# only while a parser is registered for the mapped type.
+_EXTENSION_MEDIA_TYPES = {
+    ".yaml": "application/yaml",
+    ".yml": "application/yaml",
+}
+
 
 def _filename_extension(filename: str) -> str:
     """Return the lower-cased extension of ``filename``, ``""`` if none."""
@@ -414,10 +424,14 @@ class IndexWorker:
             self._parsers_by_media_type.get(media_type) if media_type else None
         )
         if parser is None and media_type in (None, _GENERIC_MEDIA_TYPE):
-            guessed_type = self._csv_media_type(
-                mimetypes.guess_type(data.filename)[0],
-                data.filename,
-            )
+            guessed_type = mimetypes.guess_type(data.filename)[0]
+            if guessed_type is None:
+                mapped = _EXTENSION_MEDIA_TYPES.get(
+                    _filename_extension(data.filename),
+                )
+                if mapped and mapped in self._parsers_by_media_type:
+                    guessed_type = mapped
+            guessed_type = self._csv_media_type(guessed_type, data.filename)
             parser = (
                 self._parsers_by_media_type.get(guessed_type)
                 if guessed_type
