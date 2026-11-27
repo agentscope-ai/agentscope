@@ -500,6 +500,40 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(executor.asked), 1)
         self.assertEqual(len(verifier.asked), 2)
 
+    async def test_a_verifier_resumed_with_a_message_still_sees_the_work(
+        self,
+    ) -> None:
+        """A parked verifier handed a plain message judges the submission,
+        not the message."""
+        executor = _Scripted("ex", [[_finished("ex", {"handover": "did A"})]])
+        verifier = _Scripted(
+            "ve",
+            [[_park()], [_finished("ve", {"passed": True})]],
+        )
+        sop = SOP(
+            name="demo",
+            description="d",
+            steps=[SOPStep("A", "do a", executor, verifier)],
+        )
+        engine = SOPEngine(sop)
+
+        await self._drive(engine, UserMsg(name="user", content="go"))
+        self.assertEqual(engine.phase, SOPPhase.AWAITING)
+
+        await self._drive(
+            engine,
+            UserMsg(name="user", content="looks fine to me"),
+        )
+
+        self.assertEqual(engine.phase, SOPPhase.COMPLETED)
+        asked = str(verifier.asked[1])
+        self.assertIn("Judge the work below", asked)
+        self.assertIn("<submission>", asked)
+        self.assertIn("did A", asked)
+        # The message that resumed the run is still the context it was
+        # dispatched with.
+        self.assertIn("looks fine to me", asked)
+
     async def test_the_verifier_sees_what_the_step_was_given(self) -> None:
         """Judging a submission means seeing what was asked for, too."""
         executor = _Scripted(
