@@ -291,7 +291,9 @@ class ResourceAccessService:
         ]
         seen = {(record.user_id, record.id) for record in own}
 
-        for ref in await self._list_refs(viewer_id, resource_kind):
+        for ref in self._strongest_refs(
+            await self._list_refs(viewer_id, resource_kind),
+        ).values():
             key = (ref.owner_id, ref.resource_id)
             if key in seen:
                 continue
@@ -384,7 +386,9 @@ class ResourceAccessService:
             # "team"`` agents, and we want a single call site.
             return self._build_view(own, viewer_id, True)
 
-        for ref in await self._list_refs(viewer_id, resource_kind):
+        for ref in self._strongest_refs(
+            await self._list_refs(viewer_id, resource_kind),
+        ).values():
             if ref.resource_id != resource_id:
                 continue
             record = await self._get_owned(
@@ -539,7 +543,10 @@ class ResourceAccessService:
         if own is not None:
             return viewer_id, own
 
-        for ref in await self._list_refs(viewer_id, kind):
+        visible = False
+        for ref in self._strongest_refs(
+            await self._list_refs(viewer_id, kind),
+        ).values():
             if ref.resource_id != resource_id:
                 continue
             record = await self._get_owned(
@@ -551,15 +558,17 @@ class ResourceAccessService:
                 continue
             if isinstance(record, AgentRecord) and record.source == "team":
                 continue
-            if ref.permission != ResourcePermission.EDIT:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=(
-                        f"{kind.value.replace('_', ' ').title()} "
-                        f"'{resource_id}' is read-only for this viewer."
-                    ),
-                )
-            return ref.owner_id, record
+            if ref.permission == ResourcePermission.EDIT:
+                return ref.owner_id, record
+            visible = True
+        if visible:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"{kind.value.replace('_', ' ').title()} "
+                    f"'{resource_id}' is read-only for this viewer."
+                ),
+            )
         raise self._not_found(kind, resource_id)
 
     # ------------------------------------------------------------------
@@ -621,6 +630,29 @@ class ResourceAccessService:
             self._storage,
         )
         return [ref for ref in refs if ref.kind == kind]
+
+    @staticmethod
+    def _strongest_refs(
+        refs: list[ResourceRef],
+    ) -> dict[tuple[str, str], ResourceRef]:
+        """Fold the refs of one resource into its strongest grant.
+
+        A policy may reach the same resource twice — say a group
+        grant at ``READ`` and a direct grant at ``EDIT`` — and
+        :meth:`ResourceAccessPolicyBase.can_edit` already treats
+        the resource as editable in that case. Folding first keeps
+        every reader of these refs on the same answer.
+        """
+        strongest: dict[tuple[str, str], ResourceRef] = {}
+        for ref in refs:
+            key = (ref.owner_id, ref.resource_id)
+            kept = strongest.get(key)
+            if kept is None or (
+                kept.permission != ResourcePermission.EDIT
+                and ref.permission == ResourcePermission.EDIT
+            ):
+                strongest[key] = ref
+        return strongest
 
     @staticmethod
     def _not_found(kind: ResourceKind, resource_id: str) -> HTTPException:
