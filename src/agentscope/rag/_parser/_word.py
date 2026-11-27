@@ -39,6 +39,147 @@ _MC_ALTERNATE_CONTENT = (
     "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
     "AlternateContent"
 )
+# An equation is an ``m:oMath``; a display equation wraps its equations in
+# an ``m:oMathPara``.
+_MATH_TAGS = frozenset((_MATH_NS + "oMath", _MATH_NS + "oMathPara"))
+_MATH_BRACKETS = {"(": ")", "[": "]", "{": "}"}
+
+
+def _math_group(text: str) -> str:
+    """Parenthesize a fraction, script or limit operand of several symbols.
+
+    A single symbol, a number, and an operand that is already one bracketed
+    group are left as they are.
+    """
+    if len(text) <= 1 or text.replace(".", "", 1).isdigit():
+        return text
+    closing = _MATH_BRACKETS.get(text[0])
+    if closing is not None and text[-1] == closing:
+        depth = 0
+        for index, char in enumerate(text):
+            if char == text[0]:
+                depth += 1
+            elif char == closing:
+                depth -= 1
+                if depth == 0:
+                    if index == len(text) - 1:
+                        return text
+                    break
+    return f"({text})"
+
+
+def _math_text(element: Any) -> str:
+    """Render a Word equation (OMML) as plain text.
+
+    The equation's characters are kept in reading order, and the structures
+    that plain characters cannot show are written out: ``^`` before a
+    superscript, ``_`` before a subscript or a lower limit, ``/`` between
+    the numerator and denominator of a fraction (``¦`` for a stack without
+    a bar), ``√``, ``∛`` or ``∜`` before a radicand, and the delimiters and
+    n-ary operators Word draws instead of storing as text. Operands of
+    several symbols are parenthesized. ``E=mc^2``, ``v=d/t`` and
+    ``∑_(i=1)^n x_i`` are examples. Each equation of a display equation,
+    and each row of an equation array, is on its own line. Tracked
+    deletions and moved-away text are skipped.
+
+    Args:
+        element (`Any`):
+            An ``m:oMathPara`` or ``m:oMath`` element, or any element inside
+            one.
+
+    Returns:
+        `str`:
+            The equation as plain text.
+    """
+    from docx.oxml.ns import qn
+
+    removed_tags = {qn("w:del"), qn("w:moveFrom")}
+    text_tags = {_MATH_NS + "t", qn("w:t")}
+
+    def tag(name: str) -> str:
+        return _MATH_NS + name
+
+    def part(node: Any, name: str) -> str:
+        child = node.find(tag(name))
+        return render(child) if child is not None else ""
+
+    def prop(node: Any, properties: str, name: str, default: str) -> str:
+        child = node.find(f"{tag(properties)}/{tag(name)}")
+        if child is None:
+            return default
+        return child.get(tag("val"), default)
+
+    def scripts(node: Any) -> str:
+        sub, sup = part(node, "sub"), part(node, "sup")
+        return (f"_{_math_group(sub)}" if sub else "") + (
+            f"^{_math_group(sup)}" if sup else ""
+        )
+
+    # One return per structure.
+    # pylint: disable-next=too-many-return-statements
+    def render(node: Any) -> str:
+        name = node.tag
+        if name in removed_tags:
+            return ""
+        if name in text_tags:
+            return node.text or ""
+        if name == tag("oMathPara"):
+            return "\n".join(
+                render(child) for child in node.iterchildren(tag("oMath"))
+            )
+        if name == tag("f"):
+            # A fraction without a bar is a stack, as in a binomial.
+            stacked = prop(node, "fPr", "type", "bar") == "noBar"
+            divider = "¦" if stacked else "/"
+            numerator = _math_group(part(node, "num"))
+            return f"{numerator}{divider}{_math_group(part(node, 'den'))}"
+        if name in (tag("sSup"), tag("sSub"), tag("sSubSup")):
+            return part(node, "e") + scripts(node)
+        if name == tag("sPre"):
+            return scripts(node) + part(node, "e")
+        if name == tag("limLow"):
+            return f"{part(node, 'e')}_{_math_group(part(node, 'lim'))}"
+        if name == tag("limUpp"):
+            return f"{part(node, 'e')}^{_math_group(part(node, 'lim'))}"
+        if name == tag("nary"):
+            operator = prop(node, "naryPr", "chr", "∫") + scripts(node)
+            return f"{operator} {part(node, 'e')}"
+        if name == tag("rad"):
+            degree = part(node, "deg")
+            radicand = _math_group(part(node, "e"))
+            root = {"": "√", "3": "∛", "4": "∜"}.get(degree)
+            if root is None:
+                return f"√({degree}&{part(node, 'e')})"
+            return root + radicand
+        if name == tag("d"):
+            separator = prop(node, "dPr", "sepChr", "|")
+            items = separator.join(
+                render(child) for child in node.iterchildren(tag("e"))
+            )
+            return (
+                prop(node, "dPr", "begChr", "(")
+                + items
+                + prop(node, "dPr", "endChr", ")")
+            )
+        if name == tag("func"):
+            argument = part(node, "e")
+            if not argument.startswith(tuple(_MATH_BRACKETS)):
+                argument = f" {argument}"
+            return part(node, "fName") + argument
+        if name == tag("acc"):
+            return part(node, "e") + prop(node, "accPr", "chr", "\u0302")
+        if name == tag("eqArr"):
+            return "\n".join(
+                render(child) for child in node.iterchildren(tag("e"))
+            )
+        if name == tag("m"):
+            return "; ".join(
+                ", ".join(render(cell) for cell in row.iterchildren(tag("e")))
+                for row in node.iterchildren(tag("mr"))
+            )
+        return "".join(render(child) for child in node)
+
+    return render(element)
 
 
 def _extract_text_from_paragraph(para: DocxParagraph) -> str:
@@ -52,8 +193,9 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     with readable Word text, retaining the fallback when its choices cannot
     supply any text. Every ``w:tab``, ``w:cr``, ``w:br`` and
     ``w:noBreakHyphen`` run child is preserved as its rendered character in
-    both the paragraph and its text boxes. Paragraph boundaries within each
-    text box are retained.
+    both the paragraph and its text boxes, and each equation as the plain
+    text ``_math_text`` writes. Paragraph boundaries within each text box
+    are retained.
 
     Args:
         para (`DocxParagraph`):
@@ -81,10 +223,15 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
         if element.tag in removed_tags:
             # Deleted and moved-away runs do not belong to the current text.
             return
-        if element.tag in (text_tag, no_break_hyphen_tag) or (
-            element.tag in separator_tags
-            and element.getparent().tag == run_tag
+        if (
+            element.tag in (text_tag, no_break_hyphen_tag)
+            or element.tag in _MATH_TAGS
+            or (
+                element.tag in separator_tags
+                and element.getparent().tag == run_tag
+            )
         ):
+            # An equation is read as a whole, by ``_math_text``.
             yield element
         elif (
             element.tag == _MC_ALTERNATE_CONTENT
@@ -95,7 +242,8 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
                 texts = list(iter_text(branch))
                 # Separators alone must not hide a readable fallback.
                 if any(
-                    text.tag == text_tag and text.text and text.text.strip()
+                    (text.tag == text_tag and text.text and text.text.strip())
+                    or (text.tag in _MATH_TAGS and _math_text(text).strip())
                     for text in texts
                 ):
                     break
@@ -109,6 +257,8 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     for element in iter_text(root):
         if element.tag == text_tag:
             value = element.text or ""
+        elif element.tag in _MATH_TAGS:
+            value = _math_text(element)
         elif element.tag == no_break_hyphen_tag:
             # Word renders the non-breaking hyphen as "-", as does
             # python-docx's ``Paragraph.text``.
@@ -208,8 +358,8 @@ def _is_blank_paragraph(para: DocxParagraph) -> bool:
 
 
 def _extract_table_data(table: DocxTable) -> list[list[str]]:
-    """Extract table data from a python-docx Table, preserving line breaks
-    and run-level tabs within cells.
+    """Extract table data from a python-docx Table, preserving line breaks,
+    run-level tabs and equations within cells.
 
     Horizontal merges (``w:gridSpan``) are expanded with empty strings so
     that every row has the same number of columns. Omitted leading and
@@ -249,10 +399,18 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
                 for element in p_elem.iter():
                     if any(
                         ancestor.tag == move_source_tag
+                        or ancestor.tag in _MATH_TAGS
                         for ancestor in element.iterancestors()
                     ):
+                        # An equation is read as a whole, below.
                         continue
-                    if (
+                    if element.tag in _MATH_TAGS:
+                        if not any(
+                            ancestor.tag == deleted_tag
+                            for ancestor in element.iterancestors()
+                        ):
+                            text_parts.append(_math_text(element))
+                    elif (
                         element.tag == text_tag
                         and element.text
                         and not any(

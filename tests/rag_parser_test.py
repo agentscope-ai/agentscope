@@ -883,6 +883,52 @@ def _make_docx_table_content_control(wrapped: str | None) -> bytes:
     return buffer.getvalue()
 
 
+_M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+_WORD_MATH_NS = f'xmlns:w="{_W_NS}" xmlns:m="{_M_NS}"'
+
+
+def _math_run(text: str) -> str:
+    """Return an equation run (``m:r``) holding *text*."""
+    return f"<m:r><m:t>{text}</m:t></m:r>"
+
+
+def _word_run(text: str) -> str:
+    """Return a text run (``w:r``) holding *text*."""
+    return f'<w:r><w:t xml:space="preserve">{text}</w:t></w:r>'
+
+
+# How Word stores E=mc^2: the exponent is an m:sSup, not a character.
+_EQUATION_E_MC2 = (
+    f"<m:oMath>{_math_run('E=m')}<m:sSup><m:e>{_math_run('c')}</m:e>"
+    f"<m:sup>{_math_run('2')}</m:sup></m:sSup></m:oMath>"
+)
+_EQUATION_C = f"<m:oMath>{_math_run('c')}</m:oMath>"
+# A display equation, on a line of its own.
+_EQUATION_V = (
+    f"<m:oMathPara><m:oMath>{_math_run('v=')}<m:f>"
+    f"<m:num>{_math_run('d')}</m:num><m:den>{_math_run('t')}</m:den>"
+    "</m:f></m:oMath></m:oMathPara>"
+)
+_EQUATION_SENTENCE = (
+    f"{_word_run('The energy is ')}{_EQUATION_E_MC2}{_word_run(', where ')}"
+    f"{_EQUATION_C}{_word_run(' is the speed of light.')}"
+)
+
+
+def _make_docx_with_equations(*paragraphs: str) -> bytes:
+    """Build a DOCX whose body paragraphs hold the given w/m markup."""
+    from docx import Document as DocxDocument
+    from docx.oxml import parse_xml
+
+    doc = DocxDocument()
+    section_properties = doc.element.body[-1]
+    for content in paragraphs:
+        section_properties.addprevious(
+            parse_xml(f"<w:p {_WORD_MATH_NS}>{content}</w:p>"),
+        )
+    return _document_bytes(doc)
+
+
 def _make_xlsx_simple(
     sheets: dict[str, list[list[str]]],
 ) -> bytes:
@@ -4460,6 +4506,230 @@ class WordParserContentControlTest(IsolatedAsyncioTestCase):
             [(s.content.text, s.source, s.metadata) for s in wrapped],
             [(s.content.text, s.source, s.metadata) for s in plain],
         )
+
+
+class WordParserEquationTest(IsolatedAsyncioTestCase):
+    """Read Word equations (OMML) as text instead of dropping them."""
+
+    async def test_inline_and_display_equations(self) -> None:
+        """Inline equations stay in their sentence; a display one is a line."""
+        data = _make_docx_with_equations(
+            _EQUATION_SENTENCE,
+            _EQUATION_V,
+            _word_run("After"),
+        )
+
+        sections = await WordParser().parse(data, "demo.docx")
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_sections(
+                "The energy is E=mc^2, where c is the speed of light.\n"
+                "v=d/t\nAfter",
+            ),
+        )
+
+    async def test_table_cell_equations(self) -> None:
+        """Markdown and JSON tables keep equations in their cells."""
+        from docx import Document
+        from docx.oxml import parse_xml
+
+        document = Document()
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 0).text = "Quantity"
+        table.cell(0, 1).text = "Formula"
+        table.cell(1, 0).text = "Speed"
+        cell = table.cell(1, 1)._tc  # pylint: disable=protected-access
+        cell.remove(cell.p_lst[0])
+        cell.append(parse_xml(f"<w:p {_WORD_MATH_NS}>{_EQUATION_V}</w:p>"))
+        expected = {
+            "markdown": "| Quantity | Formula |\n| --- | --- |\n"
+            "| Speed | v=d/t |\n",
+            "json": "<system-info>A table loaded as a JSON array:"
+            '</system-info>\n[["Quantity", "Formula"], ["Speed", "v=d/t"]]',
+        }
+        for table_format, text in expected.items():
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    separate_table=True,
+                    table_format=table_format,
+                ).parse(_document_bytes(document), "demo.docx")
+
+                self.assertEqual(
+                    [section.content.text for section in sections],
+                    [text],
+                )
+
+    async def test_deleted_equation_is_skipped(self) -> None:
+        """A tracked deletion removes a whole equation, as it removes text."""
+        from docx import Document
+        from docx.oxml import parse_xml
+
+        content = (
+            f"{_word_run('Speed ')}<w:del w:id='1' w:author='A'>"
+            f"{_EQUATION_C}</w:del>{_word_run('unknown')}"
+        )
+        document = Document()
+        document.add_paragraph("Before")
+        document.element.body[-1].addprevious(
+            parse_xml(f"<w:p {_WORD_MATH_NS}>{content}</w:p>"),
+        )
+        table = document.add_table(rows=1, cols=1)
+        cell = table.cell(0, 0)._tc  # pylint: disable=protected-access
+        cell.remove(cell.p_lst[0])
+        cell.append(parse_xml(f"<w:p {_WORD_MATH_NS}>{content}</w:p>"))
+
+        sections = await WordParser(include_image=False).parse(
+            _document_bytes(document),
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            [section.content.text for section in sections],
+            ["Before\nSpeed unknown\n| Speed unknown |\n| --- |\n"],
+        )
+
+    async def test_text_box_equation_without_text_fallback(self) -> None:
+        """A text box holding only an equation is read from its choice.
+
+        The equation counts as readable text, so a fallback without it
+        is not chosen instead.
+        """
+        text_box = (
+            f"<w:r {_DOCX_TEXT_BOX_NS}><mc:AlternateContent>"
+            '<mc:Choice Requires="wps"><w:drawing>'
+            '<wp:inline distT="0" distB="0" distL="0" distR="0">'
+            '<wp:extent cx="2743200" cy="914400"/>'
+            '<wp:docPr id="1" name="Text Box 1"/>'
+            "<a:graphic><a:graphicData uri="
+            '"http://schemas.microsoft.com/office/word/2010/'
+            'wordprocessingShape">'
+            f"<wps:wsp><wps:txbx><w:txbxContent><w:p>{_EQUATION_C}</w:p>"
+            "</w:txbxContent></wps:txbx></wps:wsp>"
+            "</a:graphicData></a:graphic></wp:inline></w:drawing>"
+            "</mc:Choice><mc:Fallback><w:pict/></mc:Fallback>"
+            "</mc:AlternateContent></w:r>"
+        )
+        data = _make_docx_with_equations(_word_run("Outside") + text_box)
+
+        sections = await WordParser(include_image=False).parse(
+            data,
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            [section.content.text for section in sections],
+            ["Outside\nc"],
+        )
+
+    def test_equation_structures(self) -> None:
+        """Structures Word draws instead of storing are written out."""
+        from docx.oxml import parse_xml
+
+        from agentscope.rag._parser._word import _math_text
+
+        cases = {
+            "sum": (
+                "<m:nary><m:naryPr><m:chr m:val='∑'/></m:naryPr>"
+                f"<m:sub>{_math_run('i=1')}</m:sub>"
+                f"<m:sup>{_math_run('n')}</m:sup><m:e><m:sSub>"
+                f"<m:e>{_math_run('x')}</m:e><m:sub>{_math_run('i')}"
+                "</m:sub></m:sSub></m:e></m:nary>",
+                "∑_(i=1)^n x_i",
+            ),
+            "integral without limits": (
+                "<m:nary><m:naryPr><m:subHide m:val='1'/>"
+                "<m:supHide m:val='1'/></m:naryPr><m:sub/><m:sup/>"
+                f"<m:e>{_math_run('f(x)dx')}</m:e></m:nary>",
+                "∫ f(x)dx",
+            ),
+            "quadratic formula": (
+                f"{_math_run('x=')}<m:f><m:num>{_math_run('−b±')}<m:rad>"
+                "<m:radPr><m:degHide m:val='1'/></m:radPr><m:deg/><m:e>"
+                f"<m:sSup><m:e>{_math_run('b')}</m:e><m:sup>"
+                f"{_math_run('2')}</m:sup></m:sSup>{_math_run('−4ac')}"
+                f"</m:e></m:rad></m:num><m:den>{_math_run('2a')}</m:den>"
+                "</m:f>",
+                "x=(−b±√(b^2−4ac))/(2a)",
+            ),
+            "bracketed numerator": (
+                f"<m:f><m:num><m:d><m:e>{_math_run('a+b')}</m:e></m:d>"
+                f"</m:num><m:den>{_math_run('c')}</m:den></m:f>",
+                "(a+b)/c",
+            ),
+            "binomial": (
+                "<m:d><m:e><m:f><m:fPr><m:type m:val='noBar'/></m:fPr>"
+                f"<m:num>{_math_run('n')}</m:num><m:den>{_math_run('k')}"
+                "</m:den></m:f></m:e></m:d>",
+                "(n¦k)",
+            ),
+            "limit": (
+                f"<m:func><m:fName><m:limLow><m:e>{_math_run('lim')}"
+                f"</m:e><m:lim>{_math_run('n→∞')}</m:lim></m:limLow>"
+                f"</m:fName><m:e><m:sSub><m:e>{_math_run('a')}</m:e>"
+                f"<m:sub>{_math_run('n')}</m:sub></m:sSub></m:e></m:func>",
+                "lim_(n→∞) a_n",
+            ),
+            "function": (
+                f"<m:func><m:fName>{_math_run('sin')}</m:fName>"
+                f"<m:e>{_math_run('θ')}</m:e></m:func>",
+                "sin θ",
+            ),
+            "absolute value": (
+                "<m:d><m:dPr><m:begChr m:val='|'/><m:endChr m:val='|'/>"
+                f"</m:dPr><m:e>{_math_run('x')}</m:e></m:d>",
+                "|x|",
+            ),
+            "matrix": (
+                "<m:d><m:dPr><m:begChr m:val='['/><m:endChr m:val=']'/>"
+                "</m:dPr><m:e><m:m>"
+                f"<m:mr><m:e>{_math_run('1')}</m:e><m:e>{_math_run('0')}"
+                f"</m:e></m:mr><m:mr><m:e>{_math_run('0')}</m:e>"
+                f"<m:e>{_math_run('1')}</m:e></m:mr>"
+                "</m:m></m:e></m:d>",
+                "[1, 0; 0, 1]",
+            ),
+            "cube root": (
+                f"<m:rad><m:deg>{_math_run('3')}</m:deg>"
+                f"<m:e>{_math_run('x')}</m:e></m:rad>",
+                "∛x",
+            ),
+            "fifth root": (
+                f"<m:rad><m:deg>{_math_run('5')}</m:deg>"
+                f"<m:e>{_math_run('x+1')}</m:e></m:rad>",
+                "√(5&x+1)",
+            ),
+            "accent": (
+                "<m:acc><m:accPr><m:chr m:val='\u0305'/></m:accPr>"
+                f"<m:e>{_math_run('x')}</m:e></m:acc>",
+                "x\u0305",
+            ),
+            "equation array": (
+                f"<m:eqArr><m:e>{_math_run('x+y=1')}</m:e>"
+                f"<m:e>{_math_run('x−y=0')}</m:e></m:eqArr>",
+                "x+y=1\nx−y=0",
+            ),
+            "tracked changes": (
+                f"{_math_run('a+')}<w:del w:id='1' w:author='A'>"
+                f"{_math_run('b')}</w:del><w:ins w:id='2' w:author='A'>"
+                f"{_math_run('c')}</w:ins>",
+                "a+c",
+            ),
+        }
+        for name, (markup, expected) in cases.items():
+            with self.subTest(name=name):
+                equation = parse_xml(
+                    f"<m:oMath {_WORD_MATH_NS}>{markup}</m:oMath>",
+                )
+                self.assertEqual(_math_text(equation), expected)
+
+        with self.subTest(name="display equation with two equations"):
+            display = parse_xml(
+                f"<m:oMathPara {_WORD_MATH_NS}>"
+                f"<m:oMath>{_math_run('a=1')}</m:oMath>"
+                f"<m:oMath>{_math_run('b=2')}</m:oMath></m:oMathPara>",
+            )
+            self.assertEqual(_math_text(display), "a=1\nb=2")
 
 
 class GuessImageMediaTypeTest(IsolatedAsyncioTestCase):
