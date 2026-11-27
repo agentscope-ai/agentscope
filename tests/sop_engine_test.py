@@ -112,6 +112,18 @@ class _Abandoning(SOPStepBase):
         state.phase = SOPPhase.FAILED
 
 
+class _Silent(SOPStepBase):
+    """A step that ends without parking and without filing a verdict."""
+
+    async def reply_stream(  # pylint: disable=invalid-overridden-method
+        self,
+        inputs: Any,
+        state: Any,
+    ) -> AsyncGenerator[Any, None]:
+        """Do nothing at all."""
+        yield CustomEvent(name="noop", value={})
+
+
 class _Scripted:
     """An ``AgentLike`` that replays one scripted reply per call."""
 
@@ -439,6 +451,39 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(executor.asked), 1)
         self.assertEqual(len(verifier.asked), 1)
+
+    async def test_a_step_that_files_no_verdict_settles_failed(self) -> None:
+        """An attempt that neither parks nor files a verdict ends the run.
+
+        The retry budget is spent refusals, so a step filing none would
+        otherwise be dispatched again forever.
+        """
+        engine = SOPEngine(
+            SOP(
+                name="demo",
+                description="d",
+                steps=[_Silent("A", "do a", max_attempts=2)],
+            ),
+        )
+
+        events = await self._drive(engine, UserMsg(name="user", content="go"))
+
+        starts = [
+            _
+            for _ in events
+            if isinstance(_, CustomEvent) and _.name == "SOP_STEP_STARTED"
+        ]
+        self.assertEqual(len(starts), 1)
+        self.assertIs(engine.phase, SOPPhase.FAILED)
+        self.assertIs(engine.state.steps[0].phase, SOPPhase.FAILED)
+        self.assertListEqual(
+            [
+                (_.name, _.value)
+                for _ in events
+                if isinstance(_, CustomEvent) and _.name == "SOP_STEP_ENDED"
+            ],
+            [("SOP_STEP_ENDED", {"step": "A", "phase": "failed"})],
+        )
 
     async def test_parking_in_the_executor_ends_the_stream(self) -> None:
         """A parked run lets go, and picks up where it stopped."""

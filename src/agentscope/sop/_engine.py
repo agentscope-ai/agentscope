@@ -118,11 +118,12 @@ class SOPEngine:
                 # attempt gets what the run knows so far.
                 if not resuming:
                     record.given = self._handover(index)
+                settled = len(record.verifications)
                 yield CustomEvent(
                     name="SOP_STEP_STARTED",
                     value={
                         "step": step.subject,
-                        "attempt": len(record.verifications) + 1,
+                        "attempt": settled + 1,
                     },
                 )
                 async for event in step.reply_stream(
@@ -133,9 +134,16 @@ class SOPEngine:
                 if (
                     not interrupting
                     and record.phase in (SOPPhase.PENDING, SOPPhase.RUNNING)
-                    and len(record.verifications) >= step.max_attempts
+                    and (
+                        len(record.verifications) >= step.max_attempts
+                        or len(record.verifications) == settled
+                    )
                 ):
                     # Settle the attempt before consumers can checkpoint it.
+                    # The budget is spent refusals, so a step that ends
+                    # without filing one has not moved it at all: retrying
+                    # could never reach the limit. Its contract is to park
+                    # or to file a verdict, and it did neither.
                     record.phase = SOPPhase.FAILED
                 yield CustomEvent(
                     name="SOP_STEP_ENDED",
