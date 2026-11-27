@@ -795,11 +795,18 @@ class Agent:
             )
 
         apply_task = asyncio.create_task(_apply_change())
-        try:
-            await asyncio.shield(apply_task)
-        except asyncio.CancelledError:
-            await apply_task
-            raise
+        cancellation: asyncio.CancelledError | None = None
+        while True:
+            try:
+                await asyncio.shield(apply_task)
+                break
+            except asyncio.CancelledError as error:
+                if apply_task.cancelled():
+                    raise
+                # A later interrupt must not cancel post-offload cleanup.
+                cancellation = error
+        if cancellation is not None:
+            raise cancellation
 
     async def _limit_context_images(self, cfg: ContextConfig) -> None:
         """Limit the number of images in the context according to
