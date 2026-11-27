@@ -1178,37 +1178,106 @@ class TestBackgroundTaskRegistryHelpers(IsolatedAsyncioTestCase):
 
 
 class TestExternalConnectionPool(IsolatedAsyncioTestCase):
-    """An externally supplied pool must decode responses.
+    """External byte and text pools expose the same bus API."""
 
-    Every read path in :class:`RedisMessageBus` indexes stream field
-    maps and pub/sub frames by ``str`` keys and compares lock tokens
-    as text. A pool left at the redis default
-    (``decode_responses=False``) makes each of those lookups miss —
-    and ``queue_drain`` removes an entry in the same script that reads
-    it, so the entry is deleted before it can be decoded.
-    """
+    async def asyncSetUp(self) -> None:
+        self.buses = {}
+        for decode in (True, False):
+            client = await self.enterAsyncContext(
+                fakeredis.aioredis.FakeRedis(decode_responses=decode),
+            )
+            self.buses[decode] = await self.enterAsyncContext(
+                RedisMessageBus(connection_pool=client.connection_pool),
+            )
 
-    async def test_rejects_pool_that_returns_bytes(self) -> None:
-        """A bytes pool would silently drop drained entries."""
-        fr = fakeredis.aioredis.FakeRedis(decode_responses=False)
+    async def test_queue_round_trip(self) -> None:
+        """Peek and drain return the original payload and a usable ID."""
+        payload = {"text": "café"}
+        for decode, bus in self.buses.items():
+            with self.subTest(decode=decode):
+                entry_id = await bus.queue_push("q", payload)
+                self.assertRegex(entry_id, r"^\d+-\d+$")
+                expected = [(entry_id, payload)]
+                self.assertEqual(await bus.queue_read("q"), expected)
+                self.assertEqual(await bus.queue_drain("q"), expected)
+                self.assertEqual(await bus.queue_drain("q"), [])
+                ids = await bus.queue_replace("q", [payload])
+                self.assertEqual(
+                    await bus.queue_read("q"),
+                    [(ids[0], payload)],
+                )
+
+    async def test_log_cursors(self) -> None:
+        """Both append methods return text IDs that resume a replay."""
+        for decode, bus in self.buses.items():
+            with self.subTest(decode=decode):
+                first, previous = await bus.log_append_with_previous(
+                    "log",
+                    {"n": 1},
+                    max_len=10,
+                )
+                self.assertEqual(previous, "")
+                second = await bus.log_append("log", {"n": 2})
+                third, previous = await bus.log_append_with_previous(
+                    "log",
+                    {"n": 3},
+                    max_len=10,
+                )
+                self.assertEqual(previous, second)
+                self.assertRegex(third, r"^\d+-\d+$")
+                self.assertEqual(
+                    await bus.log_read("log", since=first),
+                    [(second, {"n": 2}), (third, {"n": 3})],
+                )
+
+    async def test_registry_text_and_missing_values(self) -> None:
+        """Hash reads preserve Unicode, empty strings and absent fields."""
+        for decode, bus in self.buses.items():
+            with self.subTest(decode=decode):
+                await bus.registry_set("reg", "clé", "été")
+                await bus.registry_set("reg", "empty", "")
+                value = await bus.registry_get("reg", "clé")
+                self.assertEqual(value, "été")
+                self.assertIsNone(await bus.registry_get("reg", "absent"))
+                self.assertEqual(
+                    await bus.registry_get_many("reg", ["empty", "x", "clé"]),
+                    ["", None, "été"],
+                )
+                self.assertEqual(
+                    await bus.registry_getall("reg"),
+                    {"clé": "été", "empty": ""},
+                )
+                value = await bus.registry_pop("reg", "clé")
+                self.assertEqual(value, "été")
+                self.assertIsNone(await bus.registry_pop("reg", "clé"))
+
+    async def test_reads_use_external_pool_encoding(self) -> None:
+        """Decode JSON bytes written in the external pool's encoding."""
+        client = await self.enterAsyncContext(
+            fakeredis.aioredis.FakeRedis(
+                decode_responses=False,
+                encoding="latin-1",
+            ),
+        )
+        bus = await self.enterAsyncContext(
+            RedisMessageBus(connection_pool=client.connection_pool),
+        )
+        raw_id = await client.xadd("q", {"payload": '{"text":"café"}'})
+        self.assertEqual(
+            await bus.queue_read("q"),
+            [(raw_id.decode("ascii"), {"text": "café"})],
+        )
+        ready = asyncio.Event()
+        events = bus.subscribe("channel", on_ready=ready.set)
         try:
-            bus = RedisMessageBus(connection_pool=fr.connection_pool)
-            with self.assertRaisesRegex(ValueError, "decode_responses"):
-                async with bus:
-                    pass
+            async with asyncio.timeout(2):
+                async with asyncio.TaskGroup() as group:
+                    event = group.create_task(anext(events))
+                    await ready.wait()
+                    await bus.publish("channel", {"text": "café"})
+                self.assertEqual(event.result(), {"text": "café"})
         finally:
-            await fr.aclose()
-
-    async def test_accepts_pool_that_decodes_responses(self) -> None:
-        """A decoding pool still enters and yields a client."""
-        fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
-        try:
-            async with RedisMessageBus(
-                connection_pool=fr.connection_pool,
-            ) as bus:
-                self.assertIsNotNone(bus.get_client())
-        finally:
-            await fr.aclose()
+            await events.aclose()
 
 
 class TestBaseClassIsAbstract(IsolatedAsyncioTestCase):
