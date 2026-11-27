@@ -387,9 +387,10 @@ class Toolkit:
             yield chunk
             tool_response.append_chunk(chunk)
 
-        finally:
-            # Finally, yield the complete tool response
-            yield tool_response
+        # Finally, yield the complete tool response. Outside the try/finally
+        # so that closing the stream early does not yield while handling
+        # GeneratorExit, which raises "async generator ignored GeneratorExit".
+        yield tool_response
 
     async def _get_available_skills(
         self,
