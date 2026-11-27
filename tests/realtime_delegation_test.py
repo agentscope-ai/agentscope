@@ -472,7 +472,7 @@ class RealtimeDelegationErrorTest(IsolatedAsyncioTestCase):
         )
 
     async def test_invalid_results_can_retry_close_or_expire(self) -> None:
-        """Rejected answers retain routing, timeout, and partial results."""
+        """A rejected batch retains every unanswered tool and its route."""
         for action in ("retry", "close", "expire"):
             for partial in (False, True):
                 with self.subTest(action=action, partial=partial):
@@ -522,9 +522,9 @@ class RealtimeDelegationErrorTest(IsolatedAsyncioTestCase):
                         {
                             "active": "task",
                             "routes": dict.fromkeys(call_ids, "task"),
-                            "pending": ["last"],
+                            "pending": call_ids,
                             "timeout_rearmed": True,
-                            "ends": [("first", "success")] if partial else [],
+                            "ends": [],
                             "reported": 0,
                             "notifications": [
                                 (
@@ -532,7 +532,7 @@ class RealtimeDelegationErrorTest(IsolatedAsyncioTestCase):
                                     {
                                         "request_id": submission.id,
                                         "reply_id": submission.reply_id,
-                                        "tool_call_ids": ["last"],
+                                        "tool_call_ids": call_ids,
                                         "message": (
                                             "The submitted result was "
                                             "rejected. Please check your "
@@ -547,7 +547,10 @@ class RealtimeDelegationErrorTest(IsolatedAsyncioTestCase):
                         await live.send(
                             ExternalExecutionResultEvent(
                                 reply_id=live.state.reply_id,
-                                execution_results=[self._result("last", True)],
+                                execution_results=[
+                                    self._result(call_id, True)
+                                    for call_id in call_ids
+                                ],
                             ),
                         )
                         await asyncio.gather(*list(live._tasks))
@@ -599,16 +602,14 @@ class RealtimeDelegationErrorTest(IsolatedAsyncioTestCase):
                             "delegations": {},
                             "routes": {},
                             "pending": [],
-                            "results": (
-                                [("first", "success")] if partial else []
-                            )
-                            + [
+                            "results": [
                                 (
-                                    "last",
+                                    call_id,
                                     "success"
                                     if action == "retry"
                                     else "interrupted",
-                                ),
+                                )
+                                for call_id in call_ids
                             ],
                         },
                     )

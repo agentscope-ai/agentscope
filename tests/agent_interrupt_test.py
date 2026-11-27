@@ -15,10 +15,13 @@ import asyncio
 from typing import Any, AsyncGenerator, Callable
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from jsonschema import ValidationError
+
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, InjectionConfig, ReActConfig
 from agentscope.event import (
+    ExternalExecutionResultEvent,
     ReplyEndEvent,
     ToolResultStartEvent,
     UserInterruptEvent,
@@ -26,6 +29,8 @@ from agentscope.event import (
 from agentscope.message import (
     TextBlock,
     ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
     UserMsg,
 )
 from agentscope.model import ChatResponse
@@ -901,6 +906,58 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
             injection_config=InjectionConfig(inject_runtime_state=False),
         )
         return agent, model
+
+    async def test_invalid_external_result_batch_can_be_retried(self) -> None:
+        """Reject a later invalid result before committing earlier ones."""
+        tool = _ExternalConcurrentTool()
+        tool.metadata_schema = {"type": "object", "required": ["answer"]}
+        agent, model = self._make_agent([tool])
+        await self._park_with(
+            agent,
+            model,
+            [
+                ToolCallBlock(id=call_id, name=tool.name, input="{}")
+                for call_id in ("a", "b")
+            ],
+        )
+        model.set_responses(
+            [ChatResponse(content=[TextBlock(text="Done")], is_last=True)],
+        )
+        before = agent.state.model_copy(deep=True)
+        results = [
+            ToolResultBlock(
+                id=call_id,
+                name=tool.name,
+                output="ok",
+                state=ToolResultState.SUCCESS,
+                metadata={"answer": "yes"} if call_id == "a" else {},
+            )
+            for call_id in ("a", "b")
+        ]
+        event = ExternalExecutionResultEvent(
+            reply_id=agent.state.reply_id,
+            execution_results=results,
+        )
+        emitted = []
+        with self.assertRaisesRegex(ValidationError, "required property"):
+            async for chunk in agent.reply_stream(event):
+                emitted.append(chunk)
+        self.assertEqual(emitted, [])
+        self.assertEqual(agent.state, before)
+
+        event.execution_results[1].metadata = {"answer": "yes"}
+        reply = await agent.reply(event)
+        self.assertEqual(reply.get_text_content(), "Done")
+        self.assertEqual(agent.state.get_awaiting_tool_calls(agent.name), [])
+        self.assertEqual(
+            [
+                block.id
+                for message in agent.state.context
+                for block in message.content
+                if isinstance(block, ToolResultBlock)
+            ],
+            ["a", "b"],
+        )
 
     async def _park_with(
         self,
