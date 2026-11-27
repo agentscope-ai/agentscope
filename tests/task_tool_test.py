@@ -999,6 +999,48 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         }
         self.assertDictEqual(result_dump, expected_result)
 
+    async def test_reopening_completed_task_reblocks_dependents(self) -> None:
+        """Test reopening a completed task restores dependent relations."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Second task",
+            _agent_state=self.agent_state,
+        )
+        task1_id = self.agent_state.tasks_context.tasks[0].id
+        task2_id = self.agent_state.tasks_context.tasks[1].id
+
+        await self.task_update(
+            task_id=task1_id,
+            add_blocks=[task2_id],
+            _agent_state=self.agent_state,
+        )
+        await self.task_update(
+            task_id=task1_id,
+            status="completed",
+            _agent_state=self.agent_state,
+        )
+        self.assertEqual(
+            self.agent_state.tasks_context.tasks[1].blocked_by,
+            [],
+        )
+
+        await self.task_update(
+            task_id=task1_id,
+            status="in_progress",
+            _agent_state=self.agent_state,
+        )
+
+        task1 = self.agent_state.tasks_context.tasks[0]
+        task2 = self.agent_state.tasks_context.tasks[1]
+        self.assertEqual(task1.state, "in_progress")
+        self.assertEqual(task1.blocks, [task2_id])
+        self.assertEqual(task2.blocked_by, [task1_id])
+
     async def test_update_delete_task(self) -> None:
         """Test deleting a task and removing it from blocks/blocked_by."""
         # Create three tasks with dependencies

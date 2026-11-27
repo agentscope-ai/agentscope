@@ -233,13 +233,24 @@ Set up task dependencies:
                     ],
                 )
             # Update the status
+            previous_status = _agent_state.tasks_context.tasks[index].state
             updated_fields.append("status")
             _agent_state.tasks_context.tasks[index].state = status
-            # A completed task no longer blocks its dependents
             if status == "completed":
+                # A completed task no longer blocks its dependents.
                 for task in _agent_state.tasks_context.tasks:
                     if task_id in task.blocked_by:
                         task.blocked_by.remove(task_id)
+            elif previous_status == "completed":
+                # Reopening restores the dependency edges removed above.
+                for blocked_task_id in _agent_state.tasks_context.tasks[
+                    index
+                ].blocks:
+                    self._update_block_relation(
+                        task_id,
+                        blocked_task_id,
+                        _agent_state,
+                    )
 
         if owner is not None:
             updated_fields.append("owner")
