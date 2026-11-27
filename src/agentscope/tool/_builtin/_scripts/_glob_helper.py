@@ -25,6 +25,28 @@ import sys
 
 # ── glob matching (mirrors the logic from Glob tool) ──────────────
 
+# Version control metadata a recursive walk must not descend into.
+#
+# ``Grep`` already keeps ripgrep out of these directories, but a glob
+# that walks them spends its result budget on an object store instead:
+# in a checkout every file, including ``.git``'s, shares one mtime, so
+# ``**/*`` with the default ``head_limit`` can come back as hundreds of
+# loose objects and none of the project's own files. A pattern that
+# names one of these segments is left alone, so ``**/.git/config`` still
+# finds what it asks for.
+#
+# Repeated here rather than imported from ``_grep`` because this script
+# has to run without agentscope installed; ``builtin_glob_test`` pins
+# the two lists together.
+VCS_DIRECTORIES = (
+    ".git",
+    ".svn",
+    ".hg",
+    ".bzr",
+    ".jj",
+    ".sl",
+)
+
 
 def _glob_part_to_regex(part: str) -> re.Pattern[str]:
     """Convert a single glob pattern segment to a compiled regex.
@@ -53,7 +75,11 @@ def _glob_part_to_regex(part: str) -> re.Pattern[str]:
     return re.compile(f"^{regex_str}$")
 
 
-def _collect_all(current_dir: str, results: list[str]) -> None:
+def _collect_all(
+    current_dir: str,
+    results: list[str],
+    skip: frozenset[str],
+) -> None:
     """Recursively collect all file paths under *current_dir*.
 
     Uses :func:`os.walk` to traverse the directory tree.
@@ -64,10 +90,14 @@ def _collect_all(current_dir: str, results: list[str]) -> None:
         current_dir: Root directory to walk.
         results: Accumulator list; matched file paths are appended
             in-place.
+        skip: Entry names not to walk into or report.
     """
     try:
-        for root, _dirs, files in os.walk(current_dir):
+        for root, dirs, files in os.walk(current_dir):
+            dirs[:] = [d for d in dirs if d not in skip]
             for fname in files:
+                if fname in skip:
+                    continue
                 results.append(os.path.join(root, fname))
     except (PermissionError, OSError):
         pass
@@ -78,6 +108,7 @@ def _match_parts(
     part_index: int,
     current_dir: str,
     results: list[str],
+    skip: frozenset[str],
 ) -> None:
     """Recursively match glob pattern *parts* against directory entries.
 
@@ -96,6 +127,9 @@ def _match_parts(
         current_dir: The directory currently being scanned.
         results: Accumulator list; matched file paths are appended
             in-place.
+        skip: Entry names not to walk into or report, so a broad
+            pattern does not spend its budget on version control
+            metadata.
     """
     if part_index >= len(parts):
         return
@@ -105,30 +139,35 @@ def _match_parts(
 
     if part == "**":
         if is_last:
-            _collect_all(current_dir, results)
+            _collect_all(current_dir, results, skip)
         else:
-            _match_parts(parts, part_index + 1, current_dir, results)
+            _match_parts(parts, part_index + 1, current_dir, results, skip)
             try:
                 with os.scandir(current_dir) as entries:
                     for entry in entries:
+                        if entry.name in skip:
+                            continue
                         if entry.is_dir(follow_symlinks=False):
                             _match_parts(
                                 parts,
                                 part_index,
                                 entry.path,
                                 results,
+                                skip,
                             )
             except (PermissionError, OSError):
                 pass
     elif part == "..":
         # Let the filesystem resolve symlinks before '..', including at root.
         parent = os.path.join(current_dir, os.pardir)
-        _match_parts(parts, part_index + 1, parent, results)
+        _match_parts(parts, part_index + 1, parent, results, skip)
     else:
         regex = _glob_part_to_regex(part)
         try:
             with os.scandir(current_dir) as entries:
                 for entry in entries:
+                    if entry.name in skip:
+                        continue
                     if regex.match(entry.name):
                         full_path = entry.path
                         if is_last:
@@ -140,6 +179,7 @@ def _match_parts(
                                 part_index + 1,
                                 full_path,
                                 results,
+                                skip,
                             )
         except (PermissionError, OSError):
             pass
@@ -154,6 +194,8 @@ def glob_match(pattern: str, base_dir: str) -> list[str]:
     and resolving ``..`` segments to the parent directory.
     Supports ``*`` (any characters within a segment),
     ``?`` (single character), and ``**`` (zero or more directories).
+    Version control metadata directories are left out of the walk
+    unless the pattern names one of them itself.
 
     Args:
         pattern: Glob pattern such as ``"**/*.py"`` or
@@ -167,7 +209,8 @@ def glob_match(pattern: str, base_dir: str) -> list[str]:
     """
     results: list[str] = []
     parts = [p for p in re.split(r"[\\/]+", pattern) if p and p != "."]
-    _match_parts(parts, 0, base_dir, results)
+    skip = frozenset(VCS_DIRECTORIES) - set(parts)
+    _match_parts(parts, 0, base_dir, results, skip)
     return results
 
 
