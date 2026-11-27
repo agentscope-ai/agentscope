@@ -1655,6 +1655,44 @@ class TestGeminiFormatTools(unittest.TestCase):
         self.assertEqual(fmt_tools, _FT_TOOLS_GEMINI)
         self.assertIsNone(fmt_choice)
 
+    def test_ref_bounds_fit_the_gemini_function_declaration(self) -> None:
+        """Compatible reference bounds fit in one SDK parameter schema."""
+        ref = {"$ref": "#/$defs/Text"}
+        parameters = {
+            "$defs": {
+                "Text": {"type": "string", "minLength": 1},
+                "Label": {"type": "string", "minLength": 1, "maxLength": 8},
+            },
+            "type": "object",
+            "properties": {
+                "x": {**ref, "maxLength": 10},
+                "label": {
+                    "$ref": "#/$defs/Label",
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 10,
+                },
+            },
+        }
+        tools = [{"function": {"name": "search", "parameters": parameters}}]
+        formatted, _ = self.model._format_tools(tools, None)
+        declaration = formatted[0]["function_declarations"][0]
+        FunctionDeclaration(**declaration)
+        self.assertEqual(
+            declaration["parameters"],
+            {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "string", "minLength": 1, "maxLength": 10},
+                    "label": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 8,
+                    },
+                },
+            },
+        )
+
     def test_schema_keyword_removed_from_parameters(self) -> None:
         """The unsupported `$schema` keyword is removed before the call."""
         tools = [
@@ -2505,6 +2543,19 @@ class TestGeminiSchemaUtils(unittest.TestCase):
 class TestGeminiSchemaUtilsNestedDefs(unittest.TestCase):
     """Local pointers that reach into a nested ``$defs`` block."""
 
+    def test_flatten_keeps_scope_sensitive_siblings_separate(self) -> None:
+        """Sibling properties must not reopen a closed referenced object."""
+        closed = {"type": "object", "additionalProperties": False}
+        schema = {
+            "$defs": {"Closed": closed},
+            "$ref": "#/$defs/Closed",
+            "properties": {"x": {"type": "string"}},
+        }
+        self.assertEqual(
+            _flatten_json_schema(schema),
+            {"properties": schema["properties"], "allOf": [closed]},
+        )
+
     def test_flatten_resolves_pointer_into_a_nested_defs_block(self) -> None:
         """A `$ref` below a property is inlined instead of left dangling.
 
@@ -2560,7 +2611,7 @@ class TestGeminiSchemaUtilsNestedDefs(unittest.TestCase):
             {
                 "properties": {
                     "conf": {"type": "object"},
-                    "e": {"minimum": 0, "allOf": [{"minimum": 10}]},
+                    "e": {"minimum": 10},
                 },
             },
         )

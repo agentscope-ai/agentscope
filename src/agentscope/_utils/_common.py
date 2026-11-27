@@ -25,6 +25,28 @@ _NAMED_SCHEMA_MAPS = _SCHEMA_MAP_KEYWORDS | {"$defs", "definitions"}
 _INSTANCE_VALUE_KEYWORDS = frozenset(
     {"default", "const", "enum", "examples"},
 )
+_TIGHTER_BOUND = {
+    "minimum": max,
+    "exclusiveMinimum": max,
+    "minItems": max,
+    "minLength": max,
+    "minProperties": max,
+    "maximum": min,
+    "exclusiveMaximum": min,
+    "maxItems": min,
+    "maxLength": min,
+    "maxProperties": min,
+}
+_INDEPENDENT_ASSERTIONS = {
+    "const",
+    "enum",
+    "format",
+    "multipleOf",
+    "pattern",
+    "required",
+    "type",
+    "uniqueItems",
+}
 
 _id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
 _timestamp_factory: Callable[[], str] = lambda: datetime.now().isoformat()
@@ -524,11 +546,25 @@ def _flatten_json_schema(schema: dict) -> dict:
         annotations = {"title", "description", "default", "examples"}
         target_keys = resolved.keys() - annotations
         sibling_keys = siblings.keys() - annotations
-        if target_keys & sibling_keys or (
-            target_keys - {"type", "$ref"} and sibling_keys - {"type"}
+        bounds = _TIGHTER_BOUND
+        # Draft 4 boolean exclusivity modifies the adjacent numeric bound.
+        if any(
+            isinstance(side.get(key), bool)
+            for side in (resolved, siblings)
+            for key in ("exclusiveMinimum", "exclusiveMaximum")
+        ):
+            bounds = {}
+        independent = _INDEPENDENT_ASSERTIONS | bounds.keys()
+        shared = target_keys & sibling_keys
+        if resolved.get("type") == siblings.get("type"):
+            shared.discard("type")
+        if shared - bounds.keys() or (
+            target_keys - independent - {"$ref"} and sibling_keys - independent
         ):
             siblings["allOf"] = [*siblings.get("allOf", []), resolved]
             return siblings
+        for key in shared:
+            siblings[key] = bounds[key](resolved[key], siblings[key])
         return {**resolved, **siblings}
 
     return _resolve_ref(schema)
