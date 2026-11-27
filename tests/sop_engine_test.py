@@ -378,7 +378,10 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
     ) -> None:
         """An ending-event checkpoint cannot restart an exhausted step."""
         executor = _Scripted("ex", [[_finished("ex", {"handover": "draft"})]])
-        verifier = _Scripted("ve", [[_finished("ve", {"passed": False})]])
+        verifier = _Scripted(
+            "ve",
+            [[_finished("ve", {"passed": False, "message": "amount wrong"})]],
+        )
         sop = SOP(
             name="demo",
             steps=[
@@ -387,7 +390,8 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         )
         engine = SOPEngine(sop)
         checkpoint = ""
-        stream = engine.reply_stream(UserMsg(name="user", content="go"))
+        request = UserMsg(name="user", content="go")
+        stream = engine.reply_stream(request)
         try:
             async for event in stream:
                 if (
@@ -407,8 +411,32 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         self.assertTrue(checkpoint)
         restored = SOPEngine(sop, SOPRunState.model_validate_json(checkpoint))
         self.assertListEqual(await self._drive(restored), [])
-        self.assertEqual(restored.phase, SOPPhase.FAILED)
-        self.assertEqual(len(restored.state.steps[0].verifications), 1)
+        inputs = [request.model_dump(mode="json")]
+        verdict = engine.state.steps[0].verifications[0]
+        self.assertEqual(
+            restored.state.model_dump(mode="json"),
+            {
+                "id": engine.state.id,
+                "created_at": engine.state.created_at,
+                "phase": "failed",
+                "inputs": inputs,
+                "steps": [
+                    {
+                        "phase": "failed",
+                        "given": inputs,
+                        "submission": None,
+                        "verifications": [
+                            {
+                                "passed": False,
+                                "message": "amount wrong",
+                                "verifier": "ve",
+                                "created_at": verdict.created_at,
+                            },
+                        ],
+                    },
+                ],
+            },
+        )
         self.assertEqual(len(executor.asked), 1)
         self.assertEqual(len(verifier.asked), 1)
 
