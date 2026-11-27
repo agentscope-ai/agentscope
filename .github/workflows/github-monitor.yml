@@ -35,12 +35,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout storage repo (notification scripts)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: DavdGao/agentscope-monitor
           token: ${{ secrets.STORAGE_REPO_TOKEN }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: pip
