@@ -461,7 +461,10 @@ class MoonshotChatModel(ChatModelBase):
             if blocked_error is not None:
                 raise blocked_error
             reasoning = getattr(choice.message, "reasoning_content", None)
-            if reasoning:
+            # Only a string is thinking text; an OpenAI-compatible gateway
+            # may answer with a structured value, which must not fail the
+            # whole reply in ThinkingBlock's validation.
+            if isinstance(reasoning, str) and reasoning:
                 content_blocks.append(ThinkingBlock(thinking=reasoning))
 
             if choice.message.content:
