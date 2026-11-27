@@ -155,7 +155,9 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                             {"role": "user", "content": hint_parts},
                         )
 
-                elif isinstance(block, DataBlock):
+                elif isinstance(block, DataBlock) and self._accepts_media(
+                    msg.role,
+                ):
                     formatted_block = self._format_anthropic_data_block(block)
                     if formatted_block:
                         content_blocks.append(formatted_block)

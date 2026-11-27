@@ -12,6 +12,7 @@ from urllib.request import url2pathname
 
 from pydantic import BaseModel, Field
 
+from .._logging import logger
 from ..message import (
     Msg,
     DataBlock,
@@ -163,6 +164,32 @@ class FormatterBase(BaseModel):
             return block
         source = block.source.model_copy(update={"media_type": media_type})
         return block.model_copy(update={"source": source})
+
+    def _accepts_media(self, role: str) -> bool:
+        """Whether a media block may be emitted for a message of ``role``.
+
+        The chat endpoints accept media in user messages only and reject it
+        in assistant messages. A ``DataBlock`` carried by an assistant
+        message is skipped, with a warning, rather than promoted into a user
+        message: that would change the role of the media and add a
+        conversation turn (#3965).
+
+        Args:
+            role (`str`):
+                The role of the message that carries the media block.
+
+        Returns:
+            `bool`:
+                Whether the block may be emitted.
+        """
+        if role != "assistant":
+            return True
+        logger.warning(
+            "Skipping a media block in an assistant message: %s only "
+            "accepts media in user messages.",
+            type(self).__name__,
+        )
+        return False
 
     @staticmethod
     def _convert_unsupported_data_block_to_string(block: DataBlock) -> str:

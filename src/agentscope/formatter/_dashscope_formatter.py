@@ -297,7 +297,9 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                 if isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
 
-                elif isinstance(block, DataBlock):
+                elif isinstance(block, DataBlock) and self._accepts_media(
+                    msg.role,
+                ):
                     formatted_block = self._format_dashscope_data_block(
                         block,
                     )

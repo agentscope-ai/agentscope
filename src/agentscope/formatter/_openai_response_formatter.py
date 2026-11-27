@@ -213,7 +213,9 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         {"type": text_type, "text": block.text},
                     )
 
-                elif isinstance(block, DataBlock):
+                elif isinstance(block, DataBlock) and self._accepts_media(
+                    msg.role,
+                ):
                     formatted = self._format_response_data_block(block)
                     if formatted is not None:
                         content_parts.append(formatted)

@@ -341,7 +341,9 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                 if isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
 
-                elif isinstance(block, DataBlock):
+                elif isinstance(block, DataBlock) and self._accepts_media(
+                    msg.role,
+                ):
                     formatted = self._format_openai_data_block(
                         block,
                     )
