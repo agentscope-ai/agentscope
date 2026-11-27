@@ -178,6 +178,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             custom_agent_cls=app.state.custom_agent_cls,
             tool_offload_timeout_secs=app.state.tool_offload_timeout_secs,
             channel_clients=channel_clients,
+            chat_run_registry=chat_run_registry,
         )
         app.state.chat_service = chat_service
 

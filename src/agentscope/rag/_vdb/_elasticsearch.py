@@ -208,24 +208,30 @@ class ElasticsearchStore(VectorStoreBase):
             metadata_filter (`dict[str, Any] | None`, optional):
                 Restrict deletion to records matching every metadata pair
                 in addition to the document ID. ``None`` disables filtering.
+
+        Raises:
+            RuntimeError: If Elasticsearch reports an incomplete deletion.
         """
         query: dict[str, Any] = {"term": {"document_id": document_id}}
         if metadata_filter:
             filters = [query, *self._metadata_filters(metadata_filter)]
             query = {"bool": {"filter": filters}}
-        result = await self.get_client().delete_by_query(
+        response = await self.get_client().delete_by_query(
             index=collection,
             query=query,
             conflicts="proceed",
             refresh=self._refresh is not False,
         )
-        if (
-            result.get("timed_out")
-            or result.get("version_conflicts")
-            or result.get("failures")
-        ):
+        # A successful HTTP response can still report skipped deletions.
+        timed_out = response.get("timed_out", False)
+        version_conflicts = response.get("version_conflicts", 0)
+        failures = len(response.get("failures", []))
+        if timed_out or version_conflicts or failures:
             raise RuntimeError(
-                f"Incomplete Elasticsearch delete on index {collection!r}.",
+                "Elasticsearch document deletion was incomplete "
+                f"(timed_out={timed_out}, "
+                f"version_conflicts={version_conflicts}, "
+                f"failures={failures}).",
             )
 
     async def search(

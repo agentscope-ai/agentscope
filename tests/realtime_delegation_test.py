@@ -369,9 +369,13 @@ class RealtimeDelegationErrorTest(IsolatedAsyncioTestCase):
         assert backend is not None
         backend.model.set_responses([RuntimeError("Model failed.")])
         result = self._result("last", True)
+        receipt = {"_agentscope_external_request_id": "answer-A"}
+        expected_metadata = {**result.metadata, **receipt}
         with self.assertLogs("as", level="ERROR"):
             await live.send(
                 ExternalExecutionResultEvent(
+                    id="answer-A",
+                    metadata=receipt,
                     reply_id=backend.state.reply_id,
                     execution_results=[result],
                 ),
@@ -379,17 +383,17 @@ class RealtimeDelegationErrorTest(IsolatedAsyncioTestCase):
             await asyncio.gather(*list(live._tasks))
         self.assertEqual(
             [
-                (event.tool_call_id, event.state)
+                (event.tool_call_id, event.state, event.metadata)
                 for event in live.drain_events()
                 if isinstance(event, ToolResultEndEvent)
             ],
-            [("last", "success")],
+            [("last", "success", expected_metadata)],
         )
         reply = live.state.get_reply_message("Friday")
         assert reply is not None
         self.assertEqual(
             reply.get_content_blocks("tool_result"),
-            [result],
+            [result.model_copy(update={"metadata": expected_metadata})],
         )
         self.assertEqual(live._delegations, {})
         live.model.send_delegation_result.assert_awaited_once_with(

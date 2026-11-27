@@ -793,14 +793,41 @@ class RealtimeAgent:
             await self.model.push_audio(pcm)
 
     async def _on_control(self, frame: ControlFrame) -> None:
-        """Translate one upstream control frame into :meth:`send`."""
+        """Translate one upstream control frame into :meth:`send`.
+
+        The transport is an untrusted input boundary, so a malformed
+        remote frame is dropped with a warning rather than allowed to
+        fail the uplink and end the voice session with it.
+        """
         match frame.type:
             case ControlFrameType.TEXT:
-                await self.send(frame.data.get("text", ""))
+                text = frame.data.get("text")
+                if not isinstance(text, str) or not text:
+                    logger.warning(
+                        "RealtimeAgent: ignored a text frame with no text.",
+                    )
+                    return
+                await self.send(text)
             case ControlFrameType.USER_CONFIRM:
-                await self.send(UserConfirmResultEvent(**frame.data))
+                try:
+                    event = UserConfirmResultEvent(**frame.data)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "RealtimeAgent: ignored a malformed confirmation "
+                        "frame.",
+                    )
+                    return
+                await self.send(event)
             case ControlFrameType.EXTERNAL_EXECUTION_RESULT:
-                await self.send(ExternalExecutionResultEvent(**frame.data))
+                try:
+                    event = ExternalExecutionResultEvent(**frame.data)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "RealtimeAgent: ignored a malformed external "
+                        "result frame.",
+                    )
+                    return
+                await self.send(event)
             case ControlFrameType.INTERRUPT:
                 await self.send(UserInterruptEvent(reply_id=self._reply_id))
             case _:

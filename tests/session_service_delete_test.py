@@ -1,11 +1,17 @@
 # -*- coding: utf-8 -*-
 """Session deletion preserves unowned state and cleans up owned state."""
 
-from contextlib import AsyncExitStack
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+from fastapi import HTTPException
 
 from agentscope.agent import ContextConfig, ReActConfig
+from agentscope.app._router._schema import UpdateSessionRequest
+from agentscope.app._router._session import update_session
 from agentscope.app._service import SessionService
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.storage import (
@@ -70,6 +76,76 @@ class SessionDeleteTest(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Close both in-memory backends."""
         await self._stack.aclose()
+
+    async def _race_patch_and_delete(self, patch_first: bool) -> None:
+        """Pause the first SQLite write until its competitor reaches it."""
+        sid = self.session.id
+        config_key = MessageBusKeys.session_config_lock(sid)
+        writing = asyncio.Event()
+        resume = asyncio.Event()
+        acquire = self.bus.acquire_lock
+
+        @asynccontextmanager
+        async def observe_lock(
+            key: str,
+            **kwargs: int,
+        ) -> AsyncIterator[None]:
+            if key == config_key and writing.is_set():
+                resume.set()
+            async with acquire(key, **kwargs):
+                yield
+
+        method = "upsert_session" if patch_first else "delete_session"
+        write = getattr(self.storage, method)
+
+        async def paused_write(*args: object, **kwargs: object) -> object:
+            writing.set()
+            await resume.wait()
+            return await write(*args, **kwargs)
+
+        rename = update_session(
+            sid,
+            UpdateSessionRequest(name="renamed"),
+            self.agent_id,
+            self.user_id,
+            self.storage,
+            MagicMock(),
+            self.bus,
+        )
+        delete = self.service.delete_session(self.user_id, self.agent_id, sid)
+        with (
+            patch.object(self.storage, method, side_effect=paused_write),
+            patch.object(self.bus, "acquire_lock", observe_lock),
+        ):
+            async with asyncio.timeout(5):
+                first = asyncio.create_task(rename if patch_first else delete)
+                await writing.wait()
+                second = asyncio.create_task(delete if patch_first else rename)
+                # A missing lock lets the competitor finish the race early.
+                second.add_done_callback(lambda _: resume.set())
+                results = await asyncio.gather(
+                    first,
+                    second,
+                    return_exceptions=True,
+                )
+        updated, deleted = results if patch_first else reversed(results)
+        self.assertIs(deleted, True)
+        self.assertIsNone(
+            await self.storage.get_session(self.user_id, self.agent_id, sid),
+        )
+        if patch_first:
+            self.assertEqual(updated.config.name, "renamed")
+        else:
+            self.assertIsInstance(updated, HTTPException)
+            self.assertEqual(updated.status_code, 404)
+
+    async def test_patch_before_delete(self) -> None:
+        """A PATCH already writing cannot resurrect a deleted session."""
+        await self._race_patch_and_delete(patch_first=True)
+
+    async def test_delete_before_patch(self) -> None:
+        """A pending PATCH sees 404 after the deletion commits."""
+        await self._race_patch_and_delete(patch_first=False)
 
     async def test_unowned_delete_preserves_run_and_inbox(self) -> None:
         """A 404-equivalent result must have no cross-user side effects."""

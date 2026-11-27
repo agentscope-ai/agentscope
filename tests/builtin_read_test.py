@@ -13,6 +13,7 @@ from agentscope.tool import ToolChunk, Read, LocalBackend
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
+    PermissionEngine,
     PermissionRule,
 )
 from agentscope.message import TextBlock
@@ -399,11 +400,90 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         suggestion_contents = [s.rule_content for s in suggestions]
         self.assertIn("/tmp/project/src/**", suggestion_contents)
 
-        # Test suggestion for file in root
-        suggestions = await self.read_tool.generate_suggestions(
-            {"file_path": "/test.py"},
-        )
-        self.assertGreater(len(suggestions), 0)
+        # A file with no parent directory must not suggest a catch-all:
+        # ``**`` and ``/**`` both match every path on the machine.
+        for file_path in ("/test.py", "result.md"):
+            with self.subTest(file_path=file_path):
+                suggestions = await self.read_tool.generate_suggestions(
+                    {"file_path": file_path},
+                )
+                self.assertEqual(
+                    [s.rule_content for s in suggestions],
+                    [file_path],
+                )
+                self.assertTrue(
+                    await self.read_tool.match_rule(
+                        file_path,
+                        {"file_path": file_path},
+                    ),
+                )
+                self.assertFalse(
+                    await self.read_tool.match_rule(
+                        file_path,
+                        {"file_path": "/repo/main.py"},
+                    ),
+                )
+
+    async def test_permission_suggestions_escape_parent(self) -> None:
+        """Test approved suggestions cover only the literal parent.
+
+        Read is auto-allowed as a read-only invocation, so a suggestion is
+        only ever shown when an ask rule matched first. That is the path
+        exercised here.
+        """
+        for parent, escaped, sibling in (
+            ("reports", "reports", "reports-other"),
+            ("reports [2024]", "reports [[]2024]", "reports 2"),
+            ("reports ?", "reports [?]", "reports x"),
+            ("reports *", "reports [*]", "reports other"),
+        ):
+            with self.subTest(parent=parent):
+                tool_input = {"file_path": f"/tmp/probe/{parent}/in.csv"}
+                context = PermissionContext()
+                context.ask_rules["Read"] = [
+                    PermissionRule(
+                        tool_name="Read",
+                        rule_content="*",
+                        behavior=PermissionBehavior.ASK,
+                        source="user",
+                    ),
+                ]
+                engine = PermissionEngine(context)
+                first = await engine.check_permission(
+                    self.read_tool,
+                    tool_input,
+                )
+                self.assertEqual(first.behavior, PermissionBehavior.ASK)
+                self.assertEqual(
+                    first.suggested_rules,
+                    [
+                        PermissionRule(
+                            tool_name="Read",
+                            rule_content=f"/tmp/probe/{escaped}/**",
+                            behavior=PermissionBehavior.ALLOW,
+                            source="suggested",
+                        ),
+                    ],
+                )
+
+                # The rule the user is about to approve must cover the file
+                # they asked for and nothing next door.
+                rule_content = first.suggested_rules[0].rule_content
+                self.assertTrue(
+                    await self.read_tool.match_rule(
+                        rule_content,
+                        tool_input,
+                    ),
+                )
+                self.assertFalse(
+                    await self.read_tool.match_rule(
+                        rule_content,
+                        {
+                            **tool_input,
+                            "file_path": f"/tmp/probe/{sibling}/in.csv",
+                        },
+                    ),
+                )
 
     async def test_read_image_file_returns_data_block(self) -> None:
         """Test reading an image file returns a base64 DataBlock."""

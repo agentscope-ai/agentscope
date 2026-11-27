@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for Content-Type dispatch and PDF indexing status."""
+"""Regression tests for Content-Type dispatch and indexing status."""
 from io import BytesIO
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
@@ -10,6 +10,7 @@ from pypdf import PdfWriter
 
 from rag_parser_test import (
     _PNG_PIXEL,
+    _dump_pdf_text,
     _make_pdf,
     _make_pptx_rich,
     _make_pptx_with_image,
@@ -316,8 +317,43 @@ def _worker(
     return worker, manager
 
 
-class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
-    """Distinguish a scan from a mixed PDF with searchable pages."""
+class IndexWorkerSearchableContentTest(IsolatedAsyncioTestCase):
+    """Documents with no searchable chunks must report an error."""
+
+    async def test_empty_text_document_reports_error(self) -> None:
+        """Empty and whitespace-only text fail before vector indexing."""
+        for payload in (b"", b" \t\n"):
+            with self.subTest(payload=payload):
+                storage = _Storage("text/plain", filename="empty.txt")
+                update = AsyncMock(
+                    wraps=storage.update_knowledge_document_status,
+                )
+                storage.update_knowledge_document_status = update
+                worker, manager = _worker(storage, [TextParser()])
+                worker.blob_content = payload
+
+                with (
+                    patch.multiple(
+                        storage,
+                        acquire_knowledge_document_lease=AsyncMock(
+                            return_value=True,
+                        ),
+                        release_knowledge_document_lease=AsyncMock(),
+                        create=True,
+                    ),
+                    patch.object(manager, "get_write_knowledge") as get_writer,
+                ):
+                    await worker.process("user-1", "kb-1", "doc-1")
+
+                self.assertEqual(
+                    storage.statuses,
+                    ["parsing", "chunking", "error"],
+                )
+                self.assertIn(
+                    "no indexable content",
+                    update.await_args.kwargs["error"],
+                )
+                get_writer.assert_not_awaited()
 
     async def test_index_status_reflects_searchable_pdf_content(self) -> None:
         """A scan needs OCR, while a mixed file indexes its text page."""
@@ -347,7 +383,7 @@ class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
                         {
                             "content": {
                                 "type": "text",
-                                "text": "Cell structure\n",
+                                "text": "Cell structure",
                                 "id": AnyString(),
                                 "created_at": AnyString(),
                                 "finished_at": None,
@@ -383,7 +419,7 @@ class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
                     {
                         "statuses": storage.statuses,
                         "chunks": [
-                            chunk.model_dump()
+                            _dump_pdf_text(chunk)
                             for chunk in manager.knowledge.inserted_chunks
                         ],
                     },
@@ -391,7 +427,10 @@ class IndexWorkerPdfContentTest(IsolatedAsyncioTestCase):
                 )
                 if status == "error":
                     update = storage.update_knowledge_document_status
-                    self.assertTrue(update.await_args.kwargs["error"])
+                    self.assertIn(
+                        "apply OCR before uploading it.",
+                        update.await_args.kwargs["error"],
+                    )
 
 
 class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):

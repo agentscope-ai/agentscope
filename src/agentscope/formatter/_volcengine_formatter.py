@@ -2,7 +2,6 @@
 """The Volcengine Ark formatter module."""
 
 import base64
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -51,10 +50,10 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
             `dict[str, Any] | None`:
                 The formatted content block, or ``None`` when unsupported.
         """
-        if not any(
-            fnmatch(block.source.media_type, pattern)
-            for pattern in self.supported_input_media_types
-        ):
+        # Normalize the MIME type (lowercase, matched case-insensitively)
+        # before the checks below and the payload built from it.
+        supported = self._get_supported_tool_result_block(block)
+        if supported is None:
             logger.warning(
                 "Unsupported media type %s for Volcengine Ark API. "
                 "Supported types: %s. This block will be skipped.",
@@ -62,6 +61,7 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
                 ", ".join(self.supported_input_media_types),
             )
             return None
+        block = supported
 
         main_type = block.source.media_type.split("/")[0]
         if main_type == "image":
