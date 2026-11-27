@@ -8,6 +8,13 @@ from typing import Any, Dict, Callable
 from docstring_parser import parse
 from pydantic import Field, create_model, ConfigDict
 
+try:
+    from annotationlib import Format as _AnnotationFormat
+    from annotationlib import get_annotations as _get_annotations
+except ImportError:  # Python < 3.14 (PEP 749)
+    _AnnotationFormat = None
+    _get_annotations = None
+
 
 def _get_callable_name(tool_func: Callable) -> str:
     """Get the effective name of a callable."""
@@ -77,6 +84,25 @@ def _resolve_annotation(
     )["value"]
 
 
+def _resolve_annotation_items(
+    raw_annotations: dict,
+    globalns: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Resolve each raw annotation independently, skipping the ones that
+    cannot be resolved."""
+    type_hints = {}
+    for name, annotation in raw_annotations.items():
+        try:
+            type_hints[name] = _resolve_annotation(
+                annotation,
+                globalns,
+            )
+        except Exception:
+            continue
+
+    return type_hints
+
+
 def _resolve_partial_type_hints(
     partial_func: Callable,
     globalns: dict[str, Any] | None,
@@ -91,17 +117,7 @@ def _resolve_partial_type_hints(
     if not isinstance(raw_annotations, dict):
         return {}
 
-    type_hints = {}
-    for name, annotation in raw_annotations.items():
-        try:
-            type_hints[name] = _resolve_annotation(
-                annotation,
-                globalns,
-            )
-        except Exception:
-            continue
-
-    return type_hints
+    return _resolve_annotation_items(raw_annotations, globalns)
 
 
 def _resolve_type_hints(tool_func: Callable) -> dict[str, Any]:
@@ -118,11 +134,13 @@ def _resolve_type_hints(tool_func: Callable) -> dict[str, Any]:
         annotated_func = annotated_func.func
 
     annotation_sources = [annotated_func]
+    instance_source: Callable | None = None
     if not (
         inspect.isroutine(annotated_func) or inspect.isclass(annotated_func)
     ):
         # Use call hints as defaults, preserving explicit instance hints
         # such as those copied by functools.update_wrapper.
+        instance_source = annotated_func
         annotated_func = getattr(annotated_func, "__call__", annotated_func)
         annotation_sources.insert(0, annotated_func)
 
@@ -130,17 +148,51 @@ def _resolve_type_hints(tool_func: Callable) -> dict[str, Any]:
 
     type_hints = {}
     for source in annotation_sources:
-        try:
-            hints = typing.get_type_hints(source, include_extras=True)
-        except Exception:
-            # An unresolved hint must not discard other valid hints or
-            # override hints already resolved from the call method.
+        if source is instance_source:
+            # Python 3.14 (PEP 749) turns ``__annotations__`` into a
+            # descriptor, so entries copied onto an instance — e.g. by
+            # ``functools.update_wrapper`` — are not visible to
+            # ``get_type_hints`` through the attribute read. Read the
+            # annotations via ``annotationlib`` there (falling back to the
+            # plain attribute below 3.14) and resolve them against the
+            # wrapped callable's module globals (#4147).
+            raw_annotations: dict | None = None
+            if _get_annotations is not None:
+                try:
+                    raw_annotations = _get_annotations(
+                        source,
+                        format=_AnnotationFormat.STRING,
+                    )
+                except Exception:
+                    raw_annotations = None
+            if not isinstance(raw_annotations, dict):
+                own_annotations = getattr(source, "__annotations__", {})
+                raw_annotations = (
+                    own_annotations
+                    if isinstance(own_annotations, dict)
+                    else {}
+                )
             source_globals = getattr(
                 inspect.unwrap(source),
                 "__globals__",
                 globalns,
             )
-            hints = _resolve_partial_type_hints(source, source_globals)
+            hints = _resolve_annotation_items(
+                raw_annotations,
+                source_globals,
+            )
+        else:
+            try:
+                hints = typing.get_type_hints(source, include_extras=True)
+            except Exception:
+                # An unresolved hint must not discard other valid hints or
+                # override hints already resolved from the call method.
+                source_globals = getattr(
+                    inspect.unwrap(source),
+                    "__globals__",
+                    globalns,
+                )
+                hints = _resolve_partial_type_hints(source, source_globals)
         type_hints.update(hints)
 
     for partial_func in reversed(partial_funcs):
