@@ -276,7 +276,11 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
                             for ancestor in element.iterancestors()
                         ):
                             text_parts.append("-")
-                    elif element.tag in break_tags:
+                    elif element.tag in break_tags and (
+                        element.tag == qn("w:cr")
+                        or element.get(qn("w:type"), "textWrapping")
+                        == "textWrapping"
+                    ):
                         if not any(
                             ancestor.tag == deleted_tag
                             for ancestor in element.iterancestors()
