@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The chat endpoint schema."""
 
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal, Self, TypeAlias
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -166,6 +166,25 @@ class UpdateChatQueueItemRequest(BaseModel):
     input: Msg | NonEmptyMsgList = Field(
         description="Replacement message or non-empty message list.",
     )
+
+    @model_validator(mode="after")
+    def validate_user_role(self) -> Self:
+        """Keep the queue edit path as user-only as the send path.
+
+        A pending turn can be replaced through this endpoint, and the
+        queue pump hands the stored payload to ``ChatService.run``
+        unchanged. Accepting ``assistant`` here would let a client forge
+        model-authored context; ``system`` would fail later, inside the
+        run, after the queue had already been mutated.
+        """
+        messages = [self.input] if isinstance(self.input, Msg) else self.input
+        for message in messages:
+            if message.role != "user":
+                raise ValueError(
+                    "The chat API only accepts client messages with "
+                    "role='user'.",
+                )
+        return self
 
 
 class SteerChatQueueItemRequest(BaseModel):
