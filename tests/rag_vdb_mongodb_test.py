@@ -192,6 +192,9 @@ class _FakeMongoCollection:
 
     async def create_search_index(self, model: Any) -> None:
         del model
+        if self._database.fail_next_index_creation:
+            self._database.fail_next_index_creation = False
+            raise RuntimeError("simulated createSearchIndexes failure")
         self._index_queryable = True
 
     async def list_search_indexes(self, name: str) -> _FakeAsyncIterator:
@@ -309,6 +312,7 @@ class _FakeMongoDatabase:
 
     def __init__(self) -> None:
         self._collections: dict[str, _FakeMongoCollection] = {}
+        self.fail_next_index_creation = False
 
     async def list_collection_names(self) -> list[str]:
         return list(self._collections.keys())
@@ -375,6 +379,26 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
 
         await self.store.delete_collection("kb-1")
         self.assertEqual(await self.store.has_collection("kb-1"), False)
+
+    async def test_failed_index_creation_rolls_back_collection(self) -> None:
+        """A failed index creation must not leave a collection behind."""
+        database = self._fake_client["test-db"]
+        database.fail_next_index_creation = True
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "simulated createSearchIndexes failure",
+        ):
+            await self.store.create_collection("kb-1", dimensions=3)
+        self.assertFalse(await self.store.has_collection("kb-1"))
+
+        # A retry starts from the clean state and creates a usable index.
+        await self.store.create_collection("kb-1", dimensions=3)
+        self.assertTrue(await self.store.has_collection("kb-1"))
+        self.assertEqual(
+            await self.store.search("kb-1", query_vector=[1.0, 0.0, 0.0]),
+            [],
+        )
 
     async def test_insert_and_search(self) -> None:
         """Inserted records are searchable, ordered by similarity."""
