@@ -824,7 +824,7 @@ class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
         )
         self.assertIn("audio/ogg", logs.output[0])
 
-    @patch("agentscope.formatter._openai_formatter.requests.get")
+    @patch("agentscope.formatter._openai_formatter._download_media")
     async def test_chat_formatter_unsupported_audio_not_fetched(
         self,
         mock_get: Mock,
@@ -855,13 +855,13 @@ class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
         )
         mock_get.assert_not_called()
 
-    @patch("agentscope.formatter._openai_formatter.requests.get")
+    @patch("agentscope.formatter._openai_formatter._download_media")
     async def test_chat_formatter_extensionless_url_audio(
         self,
         mock_get: Mock,
     ) -> None:
         """Declared media type controls extensionless URL audio format."""
-        mock_get.return_value.content = b"wav data"
+        mock_get.return_value = b"wav data"
         fmt = OpenAIChatFormatter()
 
         res = await fmt.format(
@@ -880,10 +880,26 @@ class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
             ],
         )
 
-        self.assertEqual(res[0]["content"][0]["input_audio"]["format"], "wav")
+        self.assertEqual(
+            res,
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "d2F2IGRhdGE=",
+                                "format": "wav",
+                            },
+                        },
+                    ],
+                },
+            ],
+        )
         mock_get.assert_called_once_with(
             "https://example.com/download?token=abc",
-            timeout=30,
         )
 
     async def test_chat_formatter_thinking_dropped(self) -> None:

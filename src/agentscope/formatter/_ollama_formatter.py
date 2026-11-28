@@ -4,9 +4,9 @@ import base64
 from abc import ABC
 from typing import Any
 
-import requests
 from pydantic import Field
 
+from ._download import _download_media
 from ._formatter_base import FormatterBase, file_url_to_path
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
@@ -88,9 +88,9 @@ class _OllamaFormatterBase(FormatterBase, ABC):
                 return data
             else:
                 # Remote URL - download and convert to base64
-                response = requests.get(url, timeout=30)
-                response.raise_for_status()
-                data = base64.b64encode(response.content).decode("utf-8")
+                data = base64.b64encode(_download_media(url)).decode(
+                    "utf-8",
+                )
                 return data
         else:
             raise ValueError(f"Unsupported source type: {type(source)}")

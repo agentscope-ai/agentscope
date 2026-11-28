@@ -7,7 +7,7 @@ import base64
 import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from agentscope.formatter import (
     MoonshotChatFormatter,
@@ -45,21 +45,18 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
 
         # The Moonshot formatter downloads remote image URLs and inlines
         # them as base64 data URIs (the Moonshot vision API rejects raw
-        # HTTPS URLs). Patch `requests.get` so tests don't hit the network
+        # HTTPS URLs). Patch the downloader so tests don't hit the network
         # and produce a deterministic payload that matches `image_b64`.
         self.image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
         self.image_bytes = base64.b64decode(self.image_b64)
         self.image_data_uri = f"data:image/png;base64,{self.image_b64}"
 
-        mock_response = MagicMock()
-        mock_response.content = self.image_bytes
-        mock_response.raise_for_status = MagicMock()
-        self._requests_get_patcher = patch(
-            "agentscope.formatter._moonshot_formatter.requests.get",
-            return_value=mock_response,
+        self._download_patcher = patch(
+            "agentscope.formatter._moonshot_formatter._download_media",
+            return_value=self.image_bytes,
         )
-        self._requests_get_patcher.start()
-        self.addCleanup(self._requests_get_patcher.stop)
+        self._download_patcher.start()
+        self.addCleanup(self._download_patcher.stop)
 
         # ---------------------------------------------------------------
         # Message fixtures (no audio to avoid downloads)

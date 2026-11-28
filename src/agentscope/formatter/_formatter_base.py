@@ -100,7 +100,15 @@ def file_url_to_path(url: str) -> str:
 
 
 class FormatterBase(BaseModel):
-    """The base class for formatters."""
+    """The base class for formatters.
+
+    Remote media downloaded by a formatter must use public HTTP(S) URLs.
+    Private network destinations, URL credentials and redirects to nonpublic
+    addresses are rejected. These downloads bypass environment proxies to
+    keep DNS checks tied to the actual connection. For private media, load
+    the bytes in trusted application code and provide a ``Base64Source``.
+    This policy does not change URLs passed directly to a model provider.
+    """
 
     input_types: list[str] = Field(
         default_factory=lambda: ["text/plain"],

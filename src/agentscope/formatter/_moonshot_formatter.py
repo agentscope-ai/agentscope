@@ -4,9 +4,9 @@
 import base64
 from typing import Any
 
-import requests
 from pydantic import Field
 
+from ._download import _download_media
 from ._formatter_base import file_url_to_path
 from ._openai_formatter import (
     _OPENAI_AUDIO_FORMATS,
@@ -63,9 +63,9 @@ def _moonshot_format_media_source(
                 encoded = base64.b64encode(f.read()).decode("utf-8")
             url = f"data:{source.media_type};base64,{encoded}"
         else:
-            response = requests.get(url_str, timeout=30)
-            response.raise_for_status()
-            encoded = base64.b64encode(response.content).decode("utf-8")
+            encoded = base64.b64encode(_download_media(url_str)).decode(
+                "utf-8",
+            )
             url = f"data:{source.media_type};base64,{encoded}"
 
     else:
