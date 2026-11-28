@@ -279,11 +279,21 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
             return
 
         self._create_client()
-        self._tts_client.connect()
-        self._tts_client.update_session(
-            voice=self.parameters.voice,
-            mode="server_commit",
-        )
+        try:
+            self._tts_client.connect()
+            self._tts_client.update_session(
+                voice=self.parameters.voice,
+                mode="server_commit",
+            )
+        except BaseException:
+            # __aexit__ is not called when __aenter__ fails. Close a
+            # partially initialized client before a retry replaces it.
+            try:
+                self._tts_client.close()
+            except Exception:  # pylint: disable=broad-except
+                pass
+            self._tts_client = None
+            raise
         self._connected = True
         self._needs_reconnect = False
 
