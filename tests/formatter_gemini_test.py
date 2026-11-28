@@ -1270,6 +1270,44 @@ class TestGeminiFormatter(  # pylint: disable=too-many-public-methods
         ][0]["function_call"]
         self.assertIsInstance(function_call["args"], dict)
 
+    async def test_malformed_thought_signature_keeps_tool_call(
+        self,
+    ) -> None:
+        """An invalid encoded signature does not discard the tool call."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="gemini_ts:not-valid-base64!",
+                        name="get_weather",
+                        input='{"city": "Tokyo"}',
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertEqual(
+            res,
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "function_call": {
+                                "id": "gemini_ts:not-valid-base64!",
+                                "name": "get_weather",
+                                "args": {"city": "Tokyo"},
+                            },
+                        },
+                    ],
+                },
+            ],
+        )
+
     async def test_chat_formatter_failed_tool_result_uses_error_key(
         self,
     ) -> None:

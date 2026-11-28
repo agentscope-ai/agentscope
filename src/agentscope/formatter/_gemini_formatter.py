@@ -60,6 +60,24 @@ class _GeminiFormatterBase(FormatterBase, ABC):
         )
 
     @staticmethod
+    def _decode_thought_signature(
+        call_id: str,
+        part: dict[str, Any],
+    ) -> None:
+        """Attach a signed tool-call signature when its ID is decodable."""
+        try:
+            part["thought_signature"] = base64.b64decode(
+                call_id.removeprefix("gemini_ts:"),
+            )
+        except ValueError:
+            # A truncated or edited ID cannot carry a valid signature.
+            # Keep the function call so history remains usable.
+            logger.warning(
+                "Ignoring malformed Gemini thought signature in tool call %r.",
+                call_id,
+            )
+
+    @staticmethod
     def _format_media_source(
         source: URLSource | Base64Source,
         extra: dict[str, Any] | None = None,
@@ -259,10 +277,9 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     # Ordinary IDs may also be valid Base64. Only decode
                     # IDs explicitly marked by the Gemini model parser.
                     if block.id.startswith("gemini_ts:"):
-                        function_call_part[
-                            "thought_signature"
-                        ] = base64.b64decode(
-                            block.id.removeprefix("gemini_ts:"),
+                        self._decode_thought_signature(
+                            block.id,
+                            function_call_part,
                         )
                     parts.append(function_call_part)
 
