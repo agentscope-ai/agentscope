@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """Test the agent-level structured output."""
-from typing import Any
+from typing import Any, Literal
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, InjectionConfig, ReActConfig
+from agentscope.agent._structured_output_tool import _GenerateStructuredOutput
 from agentscope.model import ChatResponse, ChatUsage
 from agentscope.state import AgentState
 from agentscope.tool import ToolBase, Toolkit, ToolChunk
@@ -31,6 +32,34 @@ class WeatherReportWithUnit(BaseModel):
 
     city: str
     unit: str = "celsius"
+
+
+class FileResult(BaseModel):
+    """A file result with a branch-specific default."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["file"]
+    content: str = "empty"
+
+
+class LinkResult(BaseModel):
+    """A link result with a different branch-specific default."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["link"]
+    url: str = "https://example.com"
+
+
+class SearchResult(BaseModel):
+    """A result whose alternatives must not share inserted defaults."""
+
+    result: FileResult | LinkResult
+
+
+class DiscriminatedSearchResult(BaseModel):
+    """A result selected by its kind field."""
+
+    result: FileResult | LinkResult = Field(discriminator="kind")
 
 
 class MockConfirmTool(ToolBase):
@@ -605,6 +634,129 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
         self.assertDictEqual(
             res.structured_output,
             {"city": "Hangzhou", "note": "sunny", "unit": "celsius"},
+        )
+
+    async def test_union_defaults_survive_state_serialization(self) -> None:
+        """A resumed reply fills only the selected union branch's defaults."""
+        for model in (SearchResult, DiscriminatedSearchResult):
+            for kind in ("file", "link"):
+                with self.subTest(model=model.__name__, kind=kind):
+                    self.agent.state.reply_context.structured_schema = model
+                    restored_state = AgentState.model_validate_json(
+                        self.agent.state.model_dump_json(),
+                    )
+                    tool = _GenerateStructuredOutput(
+                        schema=restored_state.reply_context.structured_schema,
+                    )
+                    chunk = await tool(
+                        _agent_state=restored_state,
+                        result={"kind": kind},
+                    )
+                    self.assertEqual(chunk.state, "success", chunk.content)
+                    self.assertDictEqual(
+                        restored_state.reply_context.structured_output,
+                        model.model_validate(
+                            {"result": {"kind": kind}},
+                        ).model_dump(mode="json"),
+                    )
+
+    async def test_invalid_union_does_not_record_output(self) -> None:
+        """An invalid alternative is still rejected after a state reload."""
+        for model in (SearchResult, DiscriminatedSearchResult):
+            with self.subTest(model=model.__name__):
+                self.agent.state.reply_context.structured_schema = model
+                restored_state = AgentState.model_validate_json(
+                    self.agent.state.model_dump_json(),
+                )
+                tool = _GenerateStructuredOutput(
+                    schema=restored_state.reply_context.structured_schema,
+                )
+                chunk = await tool(
+                    _agent_state=restored_state,
+                    result={"kind": "unknown"},
+                )
+                self.assertEqual(chunk.state, "error")
+                self.assertIsNone(
+                    restored_state.reply_context.structured_output,
+                )
+
+    async def test_ambiguous_one_of_is_rejected(self) -> None:
+        """Defaults must not hide an ambiguous match between alternatives."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "result": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {name: {"default": value}},
+                            "additionalProperties": False,
+                        }
+                        for name, value in (("content", "empty"), ("url", ""))
+                    ],
+                },
+            },
+        }
+        self.agent.state.reply_context.structured_schema = schema
+        tool = _GenerateStructuredOutput(schema=schema)
+        chunk = await tool(_agent_state=self.agent.state, result={})
+        self.assertEqual(chunk.state, "error")
+        self.assertIsNone(self.agent.state.reply_context.structured_output)
+
+    async def test_union_reply_after_confirmation_reload(self) -> None:
+        """A parked union reply completes after confirmation and reload."""
+        self.agent.toolkit = Toolkit(tools=[MockConfirmTool()])
+        confirm_call = ToolCallBlock(
+            id="confirm_union",
+            name="mock_confirm_tool",
+            input='{"input": "search"}',
+        )
+        self.model.set_responses(
+            [ChatResponse(content=[confirm_call], is_last=True)],
+        )
+        parked = await self.agent.reply(
+            UserMsg(name="user", content="Find a link"),
+            structured_schema=SearchResult,
+        )
+        self.assertIsNone(parked.finished_reason)
+        restored_state = AgentState.model_validate_json(
+            self.agent.state.model_dump_json(),
+        )
+        model = MockModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="structured_union",
+                            name="GenerateStructuredOutput",
+                            input='{"result": {"kind": "link"}}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            toolkit=Toolkit(tools=[MockConfirmTool()]),
+            state=restored_state,
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        result = await agent.reply(
+            UserConfirmResultEvent(
+                reply_id=restored_state.reply_id,
+                confirm_results=[
+                    ConfirmResult(confirmed=True, tool_call=confirm_call),
+                ],
+            ),
+        )
+        self.assertEqual(result.finished_reason, "completed")
+        self.assertDictEqual(
+            result.structured_output,
+            {"result": {"kind": "link", "url": "https://example.com"}},
         )
 
     async def test_schema_ignored_on_resume(self) -> None:

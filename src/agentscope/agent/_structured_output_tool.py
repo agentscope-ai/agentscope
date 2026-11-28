@@ -3,7 +3,11 @@
 from copy import deepcopy
 from typing import Any, Generator, List, Type
 
-from jsonschema import Draft202012Validator, validators
+from jsonschema import (
+    Draft202012Validator,
+    ValidationError as SchemaValidationError,
+    validators,
+)
 from pydantic import BaseModel, ValidationError
 
 from ..permission._context import PermissionContext
@@ -33,7 +37,52 @@ def _extend_with_default(validator_class: Any) -> Any:
                 instance.setdefault(prop, deepcopy(subschema["default"]))
         yield from validate_properties(validator, properties, instance, schema)
 
-    return validators.extend(validator_class, {"properties": set_defaults})
+    def alternative_defaults(keyword: str) -> Any:
+        """Keep defaults from unsuccessful alternatives out of the instance."""
+
+        def validate(
+            validator: Any,
+            alternatives: list,
+            instance: Any,
+            _schema: dict,
+        ) -> Generator[Any, None, None]:
+            candidates = []
+            errors = []
+            for index, subschema in enumerate(alternatives):
+                candidate = deepcopy(instance)
+                branch_errors = list(
+                    validator.descend(candidate, subschema, schema_path=index),
+                )
+                if branch_errors:
+                    errors.extend(branch_errors)
+                else:
+                    candidates.append(candidate)
+                    if keyword == "anyOf":
+                        break
+
+            if len(candidates) == 1:
+                candidate = candidates[0]
+                if isinstance(instance, dict):
+                    instance.clear()
+                    instance.update(candidate)
+                elif isinstance(instance, list):
+                    instance[:] = candidate
+            else:
+                yield SchemaValidationError(
+                    f"{instance!r} does not satisfy {keyword}",
+                    context=errors if not candidates else [],
+                )
+
+        return validate
+
+    return validators.extend(
+        validator_class,
+        {
+            "properties": set_defaults,
+            "anyOf": alternative_defaults("anyOf"),
+            "oneOf": alternative_defaults("oneOf"),
+        },
+    )
 
 
 _DefaultFillingValidator = _extend_with_default(Draft202012Validator)
