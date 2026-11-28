@@ -23,6 +23,22 @@ from agentscope.app.message_bus import (
     MessageBusKeys,
     RedisMessageBus,
 )
+from agentscope.app.message_bus._redis_message_bus import _LOCK_RENEW_LUA
+
+
+async def _kick_heartbeat(name: str) -> None:
+    """Cancel a heartbeat that already swallowed one cancellation.
+
+    On Python 3.11 ``Task.cancel`` is not sticky: a request consumed by
+    an in-flight renew does not cancel the next sleep. One more
+    ``cancel`` after the task reaches that sleep lets the test fail
+    fast instead of hanging teardown.
+    """
+    for _ in range(4):
+        for task in list(asyncio.all_tasks()):
+            if task.get_name() == name and not task.done():
+                task.cancel()
+        await asyncio.sleep(0)
 
 
 def _make_bus(
@@ -766,6 +782,145 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             await asyncio.sleep(1.05)
             self.assertGreater(await self.fr.ttl("ownership"), 10)
         self.assertEqual(await self.fr.get("ownership"), "replacement")
+
+    async def test_heartbeat_survives_transient_renew_error(self) -> None:
+        """One Redis error on renew must not stop the next renewal."""
+        renewals = 0
+        failed_once = asyncio.Event()
+        renewed_again = asyncio.Event()
+        original = self.fr.eval
+
+        async def flaky_eval(*args: Any, **kwargs: Any) -> Any:
+            nonlocal renewals
+            if args and args[0] == _LOCK_RENEW_LUA:
+                renewals += 1
+                if renewals == 1:
+                    failed_once.set()
+                    raise ConnectionError("transient Redis failure")
+                renewed_again.set()
+            return await original(*args, **kwargs)
+
+        async def _hold() -> None:
+            async with self.bus.acquire_lock("resilient", ttl_secs=2):
+                await asyncio.wait_for(failed_once.wait(), timeout=3)
+                await asyncio.sleep(0)
+                heartbeat = [
+                    task
+                    for task in asyncio.all_tasks()
+                    if task.get_name() == "lock-heartbeat:resilient"
+                ]
+                self.assertEqual(
+                    len(heartbeat),
+                    1,
+                    "heartbeat task died after a transient renew error",
+                )
+                self.assertFalse(heartbeat[0].done())
+                await asyncio.wait_for(renewed_again.wait(), timeout=3)
+
+        with self.assertLogs("as", level="WARNING") as captured:
+            with patch.object(self.fr, "eval", flaky_eval):
+                holder = asyncio.create_task(_hold())
+                done, _pending = await asyncio.wait({holder}, timeout=5)
+                if not done:
+                    alive = [
+                        task
+                        for task in asyncio.all_tasks()
+                        if task.get_name() == "lock-heartbeat:resilient"
+                        and not task.done()
+                    ]
+                    await _kick_heartbeat("lock-heartbeat:resilient")
+                    holder.cancel()
+                    await asyncio.wait({holder}, timeout=2)
+                    self.assertNotEqual(
+                        alive,
+                        [],
+                        "lock exit hung without a live heartbeat task",
+                    )
+                    self.fail(
+                        "lock exit hung after a transient renew error",
+                    )
+                holder.result()
+        self.assertGreaterEqual(renewals, 2)
+        self.assertIn(
+            "transient Redis failure",
+            "\n".join(captured.output),
+        )
+
+    async def test_lock_exit_stops_heartbeat_if_renew_ignores_cancel(
+        self,
+    ) -> None:
+        """An in-flight renew that survives cancel must not block exit.
+
+        A client can finish the renew after ``Task.cancel`` (Python 3.11
+        then leaves ``cancelling() > 0`` without interrupting the next
+        sleep). Lock exit has to stop the heartbeat anyway.
+        """
+        renew_started = asyncio.Event()
+        finish_renew = asyncio.Event()
+        original = self.fr.eval
+
+        async def stubborn_eval(*args: Any, **kwargs: Any) -> Any:
+            if args and args[0] == _LOCK_RENEW_LUA:
+                renew_started.set()
+                while not finish_renew.is_set():
+                    try:
+                        await finish_renew.wait()
+                    except asyncio.CancelledError:
+                        continue
+            return await original(*args, **kwargs)
+
+        async def _hold() -> None:
+            async with self.bus.acquire_lock("resilient", ttl_secs=2):
+                await renew_started.wait()
+
+        with patch.object(self.fr, "eval", stubborn_eval):
+            holder = asyncio.create_task(_hold())
+            await asyncio.wait_for(renew_started.wait(), timeout=3)
+            saw_cancel = False
+            for _ in range(10):
+                await asyncio.sleep(0)
+                pending = [
+                    task
+                    for task in asyncio.all_tasks()
+                    if task.get_name() == "lock-heartbeat:resilient"
+                    and not task.done()
+                ]
+                if pending and pending[0].cancelling():
+                    saw_cancel = True
+                    break
+            if not saw_cancel:
+                await _kick_heartbeat("lock-heartbeat:resilient")
+                holder.cancel()
+                await asyncio.wait({holder}, timeout=2)
+                self.fail("shutdown did not cancel the in-flight renew")
+            finish_renew.set()
+            done, _pending = await asyncio.wait({holder}, timeout=1)
+            if not done:
+                alive = [
+                    task
+                    for task in asyncio.all_tasks()
+                    if task.get_name() == "lock-heartbeat:resilient"
+                    and not task.done()
+                ]
+                await _kick_heartbeat("lock-heartbeat:resilient")
+                await asyncio.wait({holder}, timeout=2)
+                self.assertNotEqual(
+                    alive,
+                    [],
+                    "lock exit hung without a live heartbeat task",
+                )
+                self.fail(
+                    "heartbeat kept running after an in-flight renew "
+                    "ignored cancellation",
+                )
+            holder.result()
+            self.assertFalse(
+                any(
+                    task.get_name() == "lock-heartbeat:resilient"
+                    and not task.done()
+                    for task in asyncio.all_tasks()
+                ),
+            )
 
 
 class TestSessionRunAutoTrimsLog(IsolatedAsyncioTestCase):
