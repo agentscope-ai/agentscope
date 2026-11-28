@@ -442,6 +442,23 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         with self.assertRaises(ValidationError):
             InjectionConfig(template="<system-reminder></system-reminder>")
 
+    async def test_time_format_without_date_is_rejected(self) -> None:
+        """A time-only format parses the date as 1900 and must be rejected."""
+        with self.assertRaisesRegex(ValidationError, "must include the year"):
+            InjectionConfig(time_format="%H:%M:%S")
+        with self.assertRaisesRegex(ValidationError, "must include the year"):
+            InjectionConfig(time_format="%Y-%m-%d")
+        with self.assertRaisesRegex(ValidationError, "Invalid time format"):
+            InjectionConfig(time_format="%Q")
+
+        for time_format in (
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M",
+        ):
+            with self.subTest(time_format=time_format):
+                config = InjectionConfig(time_format=time_format)
+                self.assertEqual(config.time_format, time_format)
+
     async def test_template_with_curly_braces_is_kept(self) -> None:
         """The curly braces other than the placeholder should survive."""
         self.agent.injection_config = InjectionConfig(
