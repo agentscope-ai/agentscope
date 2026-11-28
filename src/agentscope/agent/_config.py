@@ -266,17 +266,22 @@ class InjectionConfig(BaseModel):
     @field_validator("time_format")
     @classmethod
     def _check_time_format(cls, value: str) -> str:
-        """Require a format that preserves the date when parsed back."""
-        probe = datetime(2001, 2, 3, 4, 5, 6)
+        """Require a format that preserves the date and clock when parsed."""
+        probe = datetime(2001, 2, 3, 4, 5)
         try:
             parsed = datetime.strptime(probe.strftime(value), value)
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 f"Invalid time format {value!r}: {exc}",
             ) from exc
-        if parsed.date() != probe.date():
+        if (
+            parsed.date() != probe.date()
+            or parsed.hour != probe.hour
+            or parsed.minute != probe.minute
+        ):
             raise ValueError(
-                "The time format must include the year, month and day so "
+                "The time format must include the year, month, day, hour and "
+                "minute so "
                 f"the injected timestamp round-trips, got {value!r}.",
             )
         return value

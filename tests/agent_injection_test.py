@@ -446,6 +446,8 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         """A time-only format parses the date as 1900 and must be rejected."""
         with self.assertRaisesRegex(ValidationError, "must include the year"):
             InjectionConfig(time_format="%H:%M:%S")
+        with self.assertRaisesRegex(ValidationError, "must include the year"):
+            InjectionConfig(time_format="%Y-%m-%d")
         with self.assertRaisesRegex(ValidationError, "Invalid time format"):
             InjectionConfig(time_format="%Q")
 
