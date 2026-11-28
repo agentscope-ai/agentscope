@@ -495,9 +495,61 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
                 [False, False, True],
             )
             response = model._drain_latest_response()
+            self.assertIs(response, responses[-1]())
             self.assertIsNotNone(response.content)
             self.assertEqual(response.content.text, "First. Partial")
             self.assertIsNone(model._drain_latest_response().content)
+
+    async def test_partial_text_is_assembled_only_when_read(self) -> None:
+        """Join only the consumed snapshot and retain empty-update behavior."""
+        # pylint: disable=protected-access
+        model = DashScopeRealtimeASRModel(
+            credential=DashScopeCredential(api_key="test-key"),
+        )
+
+        def feed(text: str, *, sentence_end: bool = False) -> None:
+            model._handle_result(
+                {
+                    "payload": {
+                        "output": {
+                            "sentence": {
+                                "text": text,
+                                "sentence_end": sentence_end,
+                            },
+                        },
+                    },
+                },
+            )
+
+        with patch.object(
+            model,
+            "_complete_text",
+            wraps=model._complete_text,
+        ) as assemble:
+            feed("Uncommitted")
+            feed("")
+            assemble.assert_not_called()
+            self.assertEqual(
+                model._drain_latest_response().content.text,
+                "Uncommitted",
+            )
+
+            assemble.reset_mock()
+            feed("First. ", sentence_end=True)
+            feed("old")
+            feed("new")
+            assemble.assert_not_called()
+            self.assertEqual(
+                model._drain_latest_response().content.text,
+                "First. new",
+            )
+            self.assertEqual(assemble.call_count, 1)
+
+            feed("")
+            self.assertEqual(
+                model._drain_latest_response().content.text,
+                "First. ",
+            )
 
     async def test_streams_pcm_and_returns_partial_and_final_text(
         self,
