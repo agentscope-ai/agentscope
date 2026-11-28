@@ -65,6 +65,29 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                 side_effect=lambda: self.now,
             ),
         )
+        # The recovery sweep is bounded by real-world latency budgets that
+        # assume production Redis round-trips. Every bus backend used below
+        # is in-memory/fakeredis and driven by the controlled clock, but a
+        # loaded CI runner can still lag the event loop past these budgets
+        # before the deterministic sweep finishes; the sweep then exits via
+        # the swallowed TimeoutError path and skips collection, failing the
+        # fake-clock assertions (observed on macos-26 runners). Pin the two
+        # budgets so assertions depend only on the controlled clock. The
+        # tests that exercise timeout behavior themselves read the constants
+        # and reschedule their own timeouts, so they stay value-agnostic.
+        # CHAT_INPUT_RECOVERY_LOCK_TIMEOUT_SECS keeps its real value on
+        # purpose: the busy-lock test relies on it yielding quickly.
+        for _budget in (
+            "CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS",
+            "CHAT_RECEIPT_QUERY_TIMEOUT_SECS",
+        ):
+            self.enterContext(
+                patch.object(
+                    MessageBusKeys,
+                    _budget,
+                    60.0,
+                ),
+            )
         redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
         self.addAsyncCleanup(redis.aclose)
         self.backends = [InMemoryMessageBus(), _make_bus(redis)]
