@@ -348,7 +348,9 @@ class TestCheckoutWheelBuild(unittest.TestCase):
                 )
                 self.addCleanup(support.shutil.rmtree, context)
                 tags.append(tag)
-                dockerfile = (context / "Dockerfile").read_text()
+                dockerfile = (context / "Dockerfile").read_text(
+                    encoding="utf-8",
+                )
                 self.assertEqual(payloads[wheel.name], data)
                 self.assertEqual((context / wheel.name).read_bytes(), data)
                 self.assertIn(
