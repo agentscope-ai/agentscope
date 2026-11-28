@@ -428,6 +428,48 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             self.assertFalse(await self.bus.is_locked("k"))
             self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
 
+    async def test_acquire_waits_for_try_lock_release(self) -> None:
+        """Both lock APIs exclude each other for the same key."""
+        self.assertTrue(await self.bus.try_lock("k"))
+        entered = asyncio.Event()
+
+        async def wait_for_lock() -> None:
+            async with self.bus.acquire_lock("k"):
+                entered.set()
+                self.assertFalse(await self.bus.try_lock("k"))
+
+        task = asyncio.create_task(wait_for_lock())
+        await asyncio.sleep(0.01)
+        self.assertFalse(entered.is_set())
+        self.assertTrue(await self.bus.is_locked("k"))
+        await self.bus.unlock("k")
+        await asyncio.wait_for(task, 1)
+        self.assertTrue(entered.is_set())
+        self.assertFalse(await self.bus.is_locked("k"))
+
+    async def test_acquire_waits_for_try_lock_expiry(self) -> None:
+        """A crashed non-blocking holder does not block forever."""
+        self.assertTrue(await self.bus.try_lock("k", ttl_secs=1))
+        async with asyncio.timeout(2):
+            async with self.bus.acquire_lock("k"):
+                self.assertTrue(await self.bus.is_locked("k"))
+
+    async def test_cancel_waiter_preserves_try_lock(self) -> None:
+        """Cancelling a waiter cannot release the existing lease."""
+        self.assertTrue(await self.bus.try_lock("k"))
+
+        async def wait_for_lock() -> None:
+            async with self.bus.acquire_lock("k"):
+                pass
+
+        task = asyncio.create_task(wait_for_lock())
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(await self.bus.is_locked("k"))
+        await self.bus.unlock("k")
+
     async def test_acquire_lock_ignores_ttl_secs(self) -> None:
         """``acquire_lock`` documents that it holds until the body ends."""
         with patch.object(_bus.time, "monotonic") as monotonic:
