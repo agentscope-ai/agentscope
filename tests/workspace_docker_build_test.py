@@ -42,8 +42,10 @@ class DockerGatewayInstallTest(unittest.TestCase):
                 sorted(copy_files),
                 ["_glob_helper.py", "_mcp_gateway_app.py", "requirements.txt"],
             )
-            requirements = (ctx_dir / "requirements.txt").read_text()
-            dockerfile = (ctx_dir / "Dockerfile").read_text()
+            requirements = (ctx_dir / "requirements.txt").read_text(
+                encoding="utf-8",
+            )
+            dockerfile = (ctx_dir / "Dockerfile").read_text(encoding="utf-8")
             self.assertIn("certifi>=2026.10.19\n", requirements)
             self.assertIn(
                 f"https://astral.sh/uv/{UV_VERSION}/install.sh",
@@ -69,7 +71,7 @@ class DockerGatewayInstallTest(unittest.TestCase):
         self.assertNotEqual(original_tag, updated_tag)
         self.assertIn(
             "https://astral.sh/uv/0.13.5/install.sh",
-            (updated_dir / "Dockerfile").read_text(),
+            (updated_dir / "Dockerfile").read_text(encoding="utf-8"),
         )
 
 
