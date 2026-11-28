@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field, field_validator
 
 from ..model import ChatModelBase
@@ -260,6 +262,24 @@ class InjectionConfig(BaseModel):
     )
     """The format to inject and parse the time information, which must carry
     the date part to round-trip a full timestamp."""
+
+    @field_validator("time_format")
+    @classmethod
+    def _check_time_format(cls, value: str) -> str:
+        """Require a format that preserves the date when parsed back."""
+        probe = datetime(2001, 2, 3, 4, 5, 6)
+        try:
+            parsed = datetime.strptime(probe.strftime(value), value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid time format {value!r}: {exc}",
+            ) from exc
+        if parsed.date() != probe.date():
+            raise ValueError(
+                "The time format must include the year, month and day so "
+                f"the injected timestamp round-trips, got {value!r}.",
+            )
+        return value
 
     time_interval: float = Field(
         title="Time Interval",
