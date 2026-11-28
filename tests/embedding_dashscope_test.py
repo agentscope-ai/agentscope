@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access,unused-argument
 """Unit tests for DashScopeEmbeddingModel."""
+import asyncio
 import tempfile
 from dataclasses import asdict
 from tempfile import TemporaryDirectory
-from threading import get_ident
+from threading import Event, get_ident
 from types import SimpleNamespace
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
@@ -397,6 +398,42 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
     """Test multimodal batching, SDK requests, and embedding caches."""
 
     @patch("dashscope.MultiModalEmbedding.call")
+    async def test_qwen25_fusion_keeps_one_vector_per_input(
+        self,
+        sdk: Any,
+    ) -> None:
+        """A fused-only provider response must not collapse multiple inputs."""
+
+        def _fused_response(**kwargs: Any) -> SimpleNamespace:
+            first = kwargs["input"][0]
+            value = (
+                1.0
+                if "text" in first and first["text"] == "first"
+                else 2.0
+                if "image" in first
+                else 3.0
+            )
+            return SimpleNamespace(
+                status_code=200,
+                output={"embeddings": [{"embedding": [value]}]},
+                usage={"input_tokens": 1, "image_tokens": 0},
+            )
+
+        sdk.side_effect = _fused_response
+        model = _multimodal_model(1, name="qwen2.5-vl-embedding")
+
+        result = await model(["first", _img(), "last"])
+
+        self.assertEqual(result.embeddings, [[1.0], [2.0], [3.0]])
+        self.assertEqual(sdk.call_count, 3)
+        self.assertTrue(
+            all(
+                len(invocation.kwargs["input"]) == 1
+                for invocation in sdk.call_args_list
+            ),
+        )
+
+    @patch("dashscope.MultiModalEmbedding.call")
     async def test_multimodal_text_and_image(self, sdk: Any) -> None:
         """Restore input order for indexed text and image embeddings."""
         model = DashScopeEmbeddingModel(
@@ -606,6 +643,137 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
                     ],
                 )
                 self._assert_response(response, 512, "api")
+
+
+class DashScopeMultimodalCancellationTest(IsolatedAsyncioTestCase):
+    """Test failed multimodal batches cancel and join their siblings."""
+
+    async def test_batch_failure_awaits_sibling_cleanup(self) -> None:
+        """Retry either failing batch, then await sibling cleanup."""
+
+        async def check_failure(failed_size: int) -> None:
+            """Keep each failure position in its own callback scope."""
+            slow_started = asyncio.Event()
+            cleanup_started = asyncio.Event()
+            cleanup_released = asyncio.Event()
+            cleanup_finished = asyncio.Event()
+            slow_task: asyncio.Task[Any] | None = None
+            failure = RuntimeError("multimodal batch failed")
+            batch_sizes: list[int] = []
+
+            async def request(
+                inputs: list[str | DataBlock],
+                **kwargs: Any,
+            ) -> EmbeddingResponse:
+                """Fail only after the sibling is awaiting its result."""
+                nonlocal slow_task
+                batch_sizes.append(len(inputs))
+                if len(inputs) == failed_size:
+                    await slow_started.wait()
+                    raise failure
+                slow_task = asyncio.current_task()
+                slow_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cleanup_started.set()
+                    await cleanup_released.wait()
+                    cleanup_finished.set()
+                return _mock_resp([[0.1]] * len(inputs))
+
+            model = DashScopeEmbeddingModel(
+                credential=_cred(),
+                model="qwen3-vl-embedding",
+                dimensions=1,
+                max_retries=1,
+                retry_delay=0,
+            )
+            with patch.object(model, "_call_multimodal", request):
+                pending = asyncio.create_task(
+                    model([str(i) for i in range(21)]),
+                )
+                try:
+                    await asyncio.wait_for(cleanup_started.wait(), 1)
+                    self.assertFalse(pending.done())
+                    cleanup_released.set()
+                    with self.assertRaises(RuntimeError) as raised:
+                        await asyncio.wait_for(pending, 1)
+                    self.assertIs(raised.exception, failure)
+                    self.assertTrue(cleanup_finished.is_set())
+                    self.assertListEqual(
+                        batch_sizes,
+                        [20, 1, failed_size],
+                    )
+                finally:
+                    cleanup_released.set()
+                    pending.cancel()
+                    if slow_task is not None:
+                        slow_task.cancel()
+                        await asyncio.gather(
+                            slow_task,
+                            return_exceptions=True,
+                        )
+                    await asyncio.gather(pending, return_exceptions=True)
+
+        for failed_size in (20, 1):
+            with self.subTest(failed_size=failed_size):
+                await check_failure(failed_size)
+
+    @patch("dashscope.MultiModalEmbedding.call")
+    async def test_failed_batch_prevents_sibling_cache_store(
+        self,
+        sdk: Any,
+    ) -> None:
+        """A cancelled SDK await cannot store its worker's later result."""
+        slow_started = Event()
+        worker_released = Event()
+        worker_finished = Event()
+        slow_task: asyncio.Task[Any] | None = None
+        failure = RuntimeError("multimodal batch failed")
+
+        async def retrieve(identifier: dict[str, Any]) -> None:
+            """Remember the real multimodal request awaiting the worker."""
+            nonlocal slow_task
+            if len(identifier["input"]) == 1:
+                slow_task = asyncio.current_task()
+
+        def request(**kwargs: Any) -> SimpleNamespace:
+            """Block the successful worker until the failing batch returns."""
+            if len(kwargs["input"]) == 20:
+                if not slow_started.wait(10):
+                    raise TimeoutError("Sibling SDK worker did not start")
+                raise failure
+            slow_started.set()
+            try:
+                if not worker_released.wait(10):
+                    raise TimeoutError("Sibling SDK worker was not released")
+                return _multimodal_resp(**kwargs)
+            finally:
+                worker_finished.set()
+
+        cache = MagicMock()
+        cache.retrieve = AsyncMock(side_effect=retrieve)
+        cache.store = AsyncMock()
+        sdk.side_effect = request
+        model = DashScopeEmbeddingModel(
+            credential=_cred(),
+            model="qwen3-vl-embedding",
+            dimensions=1,
+            embedding_cache=cache,
+            max_retries=1,
+            retry_delay=0,
+        )
+        try:
+            with self.assertRaises(RuntimeError) as raised:
+                await asyncio.wait_for(model([str(i) for i in range(21)]), 10)
+            self.assertIs(raised.exception, failure)
+            self.assertEqual(sdk.call_count, 3)
+        finally:
+            worker_released.set()
+            self.assertTrue(await asyncio.to_thread(worker_finished.wait, 10))
+            if slow_task is not None:
+                await asyncio.gather(slow_task, return_exceptions=True)
+        cache.store.assert_not_awaited()
 
 
 class DashScopeEmbeddingOrderTest(IsolatedAsyncioTestCase):

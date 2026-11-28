@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 """The common utilities for agentscope library."""
-import asyncio
 import base64
 import copy
-import functools
 import inspect
 import json
 import os
-import types
 import uuid
 from datetime import datetime
 from typing import Any, Callable
@@ -90,6 +87,26 @@ def _generate_timestamp() -> str:
 def _normalize_local_path(path: str) -> str:
     """Expand user-home shorthand and return an absolute local path."""
     return os.path.abspath(os.path.expanduser(path))
+
+
+def _has_dropped_keys(original: Any, repaired: Any) -> bool:
+    """Whether any dict in ``repaired`` lost a key it has in ``original``."""
+    if isinstance(original, dict) and isinstance(repaired, dict):
+        return bool(original.keys() - repaired.keys()) or any(
+            _has_dropped_keys(original[key], value)
+            for key, value in repaired.items()
+            if key in original
+        )
+    if isinstance(original, list) and isinstance(repaired, list):
+        # ``zip`` below stops at the shorter list, so a truncated repair
+        # would otherwise hide the trailing elements it dropped.
+        if len(repaired) < len(original):
+            return True
+        return any(
+            _has_dropped_keys(item, fixed)
+            for item, fixed in zip(original, repaired)
+        )
+    return False
 
 
 def _json_loads_with_repair(
@@ -175,7 +192,7 @@ def _json_loads_with_repair(
             res = parsed
 
         if isinstance(res, dict):
-            if isinstance(parsed, dict) and parsed.keys() - res.keys():
+            if isinstance(parsed, dict) and _has_dropped_keys(parsed, res):
                 # Dropping arguments, e.g. under `additionalProperties:
                 # false`, is a rewrite rather than a type repair.
                 res = parsed
@@ -234,28 +251,24 @@ def _get_timestamp(add_random_suffix: bool = False) -> str:
     return timestamp
 
 
-async def _is_async_func(func: Callable) -> bool:
-    """Check if the given function is an async function, including
-    coroutine functions, async generators, and coroutine objects.
-    """
-
-    return (
-        inspect.iscoroutinefunction(func)
-        or inspect.isasyncgenfunction(func)
-        or isinstance(func, types.CoroutineType)
-        or isinstance(func, types.GeneratorType)
-        and asyncio.iscoroutine(func)
-        or isinstance(func, functools.partial)
-        and await _is_async_func(func.func)
-    )
-
-
 async def _execute_async_or_sync_func(
     func: Callable,
     *args: Any,
     **kwargs: Any,
 ) -> Any:
-    """Execute an async or sync function based on its type.
+    """Execute an async or sync callable and return its result.
+
+    The callable is invoked first. If that call returns an awaitable,
+    the awaitable is awaited before the result is returned. Sync
+    callables that return a plain value are unchanged.
+
+    Deciding from the callable alone, with
+    ``inspect.iscoroutinefunction``, misses sync wrappers around
+    ``async def``: a ``functools.wraps`` decorator, ``functools.partial``
+    on older Python versions, and a callable object whose ``__call__``
+    is async. Those wrappers return a coroutine, and a coroutine object
+    is truthy, so a permission hook would match every input if the
+    coroutine were left un-awaited.
 
     Args:
         func (`Callable`):
@@ -270,10 +283,10 @@ async def _execute_async_or_sync_func(
             The result of the function execution.
     """
 
-    if await _is_async_func(func):
-        return await func(*args, **kwargs)
-
-    return func(*args, **kwargs)
+    result = func(*args, **kwargs)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
 
 
 def _get_bytes_from_web_url(
@@ -355,22 +368,34 @@ def _flatten_json_schema(schema: dict) -> dict:
         `dict`:
             A flattened JSON schema with all references resolved inline.
     """
-    has_defs = isinstance(schema.get("$defs"), dict) or isinstance(
-        schema.get("definitions"),
-        dict,
-    )
-    if not has_defs:
+    definition_blocks = {
+        key: schema[key]
+        for key in ("$defs", "definitions")
+        if isinstance(schema.get(key), dict)
+    }
+    if not definition_blocks:
         return schema
 
     schema = copy.deepcopy(schema)
     defs: dict[str, Any] = {}
-    if isinstance(schema.get("$defs"), dict):
-        defs.update(schema.pop("$defs"))
-    if isinstance(schema.get("definitions"), dict):
-        defs.update(schema.pop("definitions"))
+    for key in definition_blocks:
+        defs.update(schema.pop(key))
 
     if not defs:
         return schema
+
+    def _decode_token(token: str) -> str:
+        """Decode a JSON Pointer token in RFC 6901 order."""
+        return token.replace("~1", "/").replace("~0", "~")
+
+    def _targets_removed_definition(ref: Any) -> bool:
+        if not isinstance(ref, str):
+            return False
+        match ref.split("/", 3):
+            case ["#", keyword, token]:
+                block = definition_blocks.get(keyword, {})
+                return _decode_token(token) in block
+        return False
 
     def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
         if isinstance(obj, list):
@@ -386,9 +411,7 @@ def _flatten_json_schema(schema: dict) -> dict:
             ):
                 return obj
 
-            def_name = ref_path.split("/")[-1]
-            # JSON Pointer tokens decode ~1 before ~0 (RFC 6901).
-            def_name = def_name.replace("~1", "/").replace("~0", "~")
+            def_name = _decode_token(ref_path.rsplit("/", 1)[-1])
             if def_name in visited:
                 logger.warning(
                     "Circular reference detected for '%s' in tool schema",
@@ -403,6 +426,11 @@ def _flatten_json_schema(schema: dict) -> dict:
 
             visited = visited | {def_name}
             resolved = _resolve_ref(defs[def_name], visited)
+            if resolved is True:
+                # True adds no constraints; preserve the reference's siblings.
+                resolved = {}
+            elif not isinstance(resolved, dict):
+                return resolved
 
         for key, value in obj.items():
             if key in ("$ref", "$defs", "definitions"):
@@ -412,9 +440,7 @@ def _flatten_json_schema(schema: dict) -> dict:
             elif key == "discriminator" and isinstance(value, dict):
                 mapping = value.get("mapping")
                 if isinstance(mapping, dict) and any(
-                    isinstance(ref, str)
-                    and ref.startswith(("#/$defs/", "#/definitions/"))
-                    and ref.rsplit("/", 1)[-1] in defs
+                    _targets_removed_definition(ref)
                     for ref in mapping.values()
                 ):
                     continue

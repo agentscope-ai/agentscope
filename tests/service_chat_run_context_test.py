@@ -5,12 +5,14 @@
 from types import SimpleNamespace
 from typing import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._service import ChatService
 from agentscope.app._bus_ops import enqueue_chat_input
+from agentscope.app._chat_input_store import INPUT_EXECUTION
 from agentscope.app._manager._chat_input_queue import ChatInputQueue
+from agentscope.app.middleware._chat_tts_middleware import ChatTTSMiddleware
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.storage import (
     AgentData,
@@ -22,7 +24,6 @@ from agentscope.app.storage import (
     TeamRecord,
     TTSModelConfig,
 )
-from agentscope.middleware import TTSMiddleware
 from agentscope.message import UserMsg
 from agentscope.state import AgentState
 
@@ -73,6 +74,9 @@ class _Storage:
 
     async def upsert_message(self, *_: object, **__: object) -> None:
         """Accept synthesized failure messages (none expected)."""
+
+    async def get_message(self, *_: object) -> None:
+        """No prior reply exists in these assembly-only scenarios."""
 
 
 class _WorkspaceManager:
@@ -184,15 +188,29 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 equipped.append(middlewares)
                 self.state = state
                 self.name = name
+                self.speech = next(
+                    mw
+                    for mw in middlewares
+                    if isinstance(mw, ChatTTSMiddleware)
+                )
 
             async def reply_stream(
                 self,
                 inputs: object,
             ) -> AsyncGenerator[object, None]:
-                """Yield nothing."""
+                """Execute speech setup around an empty reply."""
                 replies.append(inputs)
-                if False:
-                    yield object()
+
+                async def reply(**_: object) -> AsyncGenerator:
+                    if False:
+                        yield object()
+
+                async for event in self.speech.on_reply(
+                    self,
+                    {"inputs": inputs},
+                    reply,
+                ):
+                    yield event
 
         toolkit_kwargs: dict = {}
 
@@ -227,9 +245,9 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
             ),
             patch("agentscope.app._service._chat.get_model", new=_get_model),
             patch(
-                "agentscope.app._service._chat.get_tts_model",
+                "agentscope.app._service._chat.build_reply_tts_model",
                 autospec=True,
-            ) as get_tts_model,
+            ) as build_tts,
             patch(
                 "agentscope.app._service._chat.publish_session_event",
                 new_callable=AsyncMock,
@@ -240,8 +258,10 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 wraps=storage.upsert_message,
             ) as save,
         ):
-            if not tts_available:
-                get_tts_model.return_value = None
+            build_tts.return_value = (
+                config.tts_model_config,
+                MagicMock(realtime=False) if tts_available else None,
+            )
             if queued:
                 queue = ChatInputQueue(service._message_bus, storage, service)
                 self.addAsyncCleanup(queue.close)
@@ -251,6 +271,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                     worker_session.id,
                     worker_agent.id,
                     message,
+                    client_builtin_tools=["AskUser"],
                 )
                 self.assertTrue(
                     await queue.drain_chat_inputs(
@@ -265,12 +286,25 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                     worker_session.id,
                     worker_agent.id,
                     message,
+                    client_builtin_tools=["AskUser"],
                 )
             if message is not None:
+                expected_message = message
+                if queued:
+                    expected_message = message.model_copy(
+                        update={
+                            "metadata": {
+                                INPUT_EXECUTION: {
+                                    "reply_id": None,
+                                    "finished": False,
+                                },
+                            },
+                        },
+                    )
                 save.assert_awaited_once_with(
                     user_id,
                     worker_session.id,
-                    message,
+                    expected_message,
                 )
 
         failures = [
@@ -288,32 +322,33 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
             else [
                 {
                     "name": "tts_error",
-                    "value": {"stage": "configuration"},
+                    "value": {
+                        "stage": "configuration",
+                        "reply_id": None,
+                        "message_ids": [],
+                    },
                 },
             ],
         )
-        for middlewares in equipped:
-            for middleware in middlewares:
-                if isinstance(middleware, TTSMiddleware):
-                    self.assertTrue(middleware.continue_on_error)
-
-        get_tts_model.assert_awaited_once_with(
+        build_tts.assert_awaited_once_with(
             user_id,
             config.tts_model_config,
             service._access,
             storage,
+            use_snapshot=False,
         )
         self.assertDictEqual(
             {
                 "get_team_calls": storage.get_team_calls,
                 "team_role": toolkit_kwargs["team_role"],
                 "channel_tools": toolkit_kwargs["channel_tools"],
+                "client_builtin_tools": toolkit_kwargs["client_builtin_tools"],
                 "replies": replies,
-                "tts_models": [
-                    mw.tts
+                "tts_configs": [
+                    mw._default_config
                     for mws in equipped
                     for mw in mws
-                    if isinstance(mw, TTSMiddleware)
+                    if isinstance(mw, ChatTTSMiddleware)
                 ],
                 "leader_names": [
                     mw._leader_name
@@ -326,10 +361,9 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 "get_team_calls": 1,
                 "team_role": "worker",
                 "channel_tools": [],
+                "client_builtin_tools": ["AskUser"],
                 "replies": [message],
-                "tts_models": (
-                    [get_tts_model.return_value] if tts_available else []
-                ),
+                "tts_configs": [config.tts_model_config],
                 "leader_names": ["Leader"],
             },
         )

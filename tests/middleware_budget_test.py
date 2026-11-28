@@ -2,12 +2,19 @@
 """Unit tests for BudgetControlMiddleware."""
 from typing import Any, AsyncGenerator, Callable
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import MagicMock
 
 from pydantic import BaseModel
 
-from utils import MockModel
+from utils import AnyString, MockModel
 from agentscope.agent import Agent, ReActConfig
-from agentscope.message import UserMsg, TextBlock, ToolCallBlock, HintBlock
+from agentscope.message import (
+    UserMsg,
+    TextBlock,
+    ToolCallBlock,
+    HintBlock,
+    Msg,
+)
 from agentscope.middleware import MiddlewareBase, ReplyBudgetControlMiddleware
 from agentscope.model import ChatResponse, ChatUsage
 from agentscope.permission import (
@@ -17,6 +24,7 @@ from agentscope.permission import (
 )
 from agentscope.event import (
     ConfirmResult,
+    ModelCallEndEvent,
     ReplyEndEvent,
     UserConfirmResultEvent,
 )
@@ -208,6 +216,80 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         ]
         self.assertGreater(len(hint_msgs), 0)
 
+    async def test_hint_does_not_join_the_previous_reply_message(
+        self,
+    ) -> None:
+        """A wrap-up hint belongs to the current reply message."""
+        middleware = ReplyBudgetControlMiddleware(token_budget=0)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=MockModel(),
+            toolkit=self.toolkit,
+            middlewares=[middleware],
+        )
+        middleware_key = await middleware.get_middleware_key()
+        old_reply = Msg(
+            id="previous-reply",
+            role="assistant",
+            name=agent.name,
+            content=[TextBlock(text="Earlier answer")],
+        )
+        old_reply_before = old_reply.model_dump()
+        agent.state.context.append(old_reply)
+        agent.state.middle_context[middleware_key] = {
+            agent.state.reply_id: 100,
+        }
+
+        async def next_handler(**_: Any) -> AsyncGenerator:
+            """Yield a sentinel and finish normally.
+
+            Args:
+                **_ (`Any`):
+                    Unused reasoning arguments.
+
+            Yields:
+                `None`:
+                    A sentinel forwarded by the middleware.
+            """
+            yield None
+
+        chain = middleware.on_reasoning(
+            agent=agent,
+            input_kwargs={},
+            next_handler=next_handler,
+        )
+        self.assertEqual([event async for event in chain], [None])
+        self.assertEqual(
+            [message.model_dump() for message in agent.state.context],
+            [
+                old_reply_before,
+                {
+                    "id": agent.state.reply_id,
+                    "name": agent.name,
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "hint",
+                            "hint": middleware.hint_message,
+                            "id": AnyString(),
+                            "source": '{"label": "System", "sublabel": '
+                            '"Reply Budget Exhausted"}',
+                            "created_at": AnyString(),
+                            "finished_at": AnyString(),
+                        },
+                    ],
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "usage": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                },
+            ],
+        )
+
     async def test_budget_exceeded_forces_tool_choice_none(self) -> None:
         """When budget is exceeded, tool_choice forwarded to model is none.
 
@@ -379,6 +461,27 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
             if _has_hint_block(m, middleware.hint_message)
         ]
         self.assertGreater(len(hint_msgs), 0)
+
+    async def test_model_call_end_for_unknown_reply(self) -> None:
+        """An untracked reply starts at zero and replaces stale counters."""
+        middleware = ReplyBudgetControlMiddleware(token_budget=1000)
+        key = await middleware.get_middleware_key()
+        agent = MagicMock()
+        event = ModelCallEndEvent(
+            reply_id="resumed-reply",
+            input_tokens=10,
+            output_tokens=5,
+        )
+
+        async def handler() -> AsyncGenerator:
+            yield event
+
+        for state in ({}, {key: {"old-reply": 28}}):
+            with self.subTest(state=state):
+                agent.state.middle_context = state
+                stream = middleware.on_reply(agent, {}, handler)
+                self.assertEqual([item async for item in stream], [event])
+                self.assertEqual(state, {key: {"resumed-reply": 15}})
 
     async def test_state_reset_on_next_reply(self) -> None:
         """middle_context only keeps the counter of the latest reply."""

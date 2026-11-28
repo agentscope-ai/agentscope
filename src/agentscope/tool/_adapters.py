@@ -72,7 +72,8 @@ class FunctionTool(ToolBase):
             func (`Callable`):
                 The Python function to wrap.
             name (`str | None`, optional):
-                Custom tool name. If None, uses the function name.
+                Custom tool name. If None, uses the function name or the
+                callable object's class name when it has no function name.
             description (`str | None`, optional):
                 Custom tool description. If None, extracts from docstring.
             input_schema (`dict | type[BaseModel] | None`, optional):
@@ -116,6 +117,20 @@ class FunctionTool(ToolBase):
         self._func = func
         self._permission = permission
 
+        # Track positional-only parameters since the model uses named inputs.
+        try:
+            parameters = inspect.signature(func).parameters.values()
+        except (TypeError, ValueError):
+            parameters = []
+        self._positional_only_params = [
+            param
+            for param in parameters
+            if param.kind == inspect.Parameter.POSITIONAL_ONLY
+        ]
+        self._accepts_extra_keywords = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters
+        )
+
     async def check_permissions(
         self,
         *_args: Any,
@@ -147,7 +162,31 @@ class FunctionTool(ToolBase):
             `ToolChunk` or `AsyncGenerator[ToolChunk, None]`:
                 The normalized result of the function execution.
         """
-        result = self._func(**kwargs)
+        args: list[Any] = []
+        # Defaults of omitted parameters, needed only if a later
+        # positional-only argument is given.
+        skipped_defaults: list[Any] = []
+        for param in self._positional_only_params:
+            is_injected_state = (
+                self.is_state_injected and param.name == "_agent_state"
+            )
+            # An undeclared key can match an optional positional-only
+            # parameter and still belong in **kwargs (e.g. Counter).
+            if param.name in kwargs and (
+                not self._accepts_extra_keywords
+                or param.default is inspect.Parameter.empty
+                or param.name in self.input_schema.get("properties", {})
+                or is_injected_state
+            ):
+                args.extend(skipped_defaults)
+                skipped_defaults = []
+                args.append(kwargs.pop(param.name))
+            elif param.default is not inspect.Parameter.empty:
+                skipped_defaults.append(param.default)
+            else:
+                break
+
+        result = self._func(*args, **kwargs)
         if inspect.isawaitable(result):
             result = await result
 
@@ -217,6 +256,7 @@ class MCPTool(ToolBase):
         timeout: float | None = None,
         middlewares: list[ToolMiddlewareBase] | None = None,
         stream_progress: bool = False,
+        trust_annotations: bool = True,
     ) -> None:
         """Initialize the MCPTool.
 
@@ -241,6 +281,10 @@ class MCPTool(ToolBase):
                 Tool middlewares wrapping the tool execution.
             stream_progress (`bool`, defaults to `False`):
                 Return a progress/result stream instead of the final chunk.
+            trust_annotations (`bool`, defaults to `True`):
+                Whether to trust the tool annotations reported by the MCP
+                server. If `False`, the ``readOnlyHint`` annotation is
+                ignored and the tool is never treated as read-only.
         """
         super().__init__(middlewares=middlewares)
         self.mcp_name = mcp_name
@@ -277,10 +321,21 @@ class MCPTool(ToolBase):
         self.is_concurrency_safe = False
         self.is_external_tool = False
 
-        # Extract is_read_only from MCP tool annotations
+        # Extract is_read_only from MCP tool annotations. The annotations are
+        # self-reported by the server, and a read-only tool is auto-allowed
+        # by the permission engine in every mode, so the hint is only
+        # honored for trusted servers.
         self.is_read_only = False
-        if tool.annotations:
-            self.is_read_only = tool.annotations.read_only_hint or False
+        if tool.annotations and tool.annotations.read_only_hint:
+            if trust_annotations:
+                self.is_read_only = True
+            else:
+                logger.debug(
+                    "Ignored the read-only hint of MCP tool '%s' as the "
+                    "annotations of MCP '%s' are not trusted.",
+                    tool.name,
+                    mcp_name,
+                )
 
         # Store MCP tool and connection info
         self._tool = tool

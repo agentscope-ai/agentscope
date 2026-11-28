@@ -343,6 +343,44 @@ class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
+    async def test_chat_formatter_uppercase_base64_image_media_type(
+        self,
+    ) -> None:
+        """A mixed-case MIME type is matched case-insensitively."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="IMAGE/PNG",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": self.image_b64,
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_percent_encoded_local_image(self) -> None:
         """Local file:// image paths with spaces and '#' are decoded."""
         image_bytes = b"spaced-name-bytes"
@@ -563,6 +601,70 @@ class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
             )
         ]
         self.assertListEqual(tool_result_roles, ["user"])
+
+    async def test_tool_result_error_state(self) -> None:
+        """Only ERROR gains a flag, including when the output is empty."""
+        for formatter_type in (
+            AnthropicChatFormatter,
+            AnthropicMultiAgentFormatter,
+        ):
+            for state in ToolResultState:
+                for output in ("failed", ""):
+                    with self.subTest(
+                        formatter=formatter_type.__name__,
+                        state=state,
+                        output=output,
+                    ):
+                        msgs = [
+                            AssistantMsg(
+                                name="assistant",
+                                content=[
+                                    ToolCallBlock(
+                                        id="call_1",
+                                        name="validate",
+                                        input="{}",
+                                    ),
+                                    ToolResultBlock(
+                                        id="call_1",
+                                        name="validate",
+                                        output=output,
+                                        state=state,
+                                    ),
+                                ],
+                            ),
+                        ]
+                        expected_result = {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": output or "(empty tool output)",
+                                },
+                            ],
+                        }
+                        if state == ToolResultState.ERROR:
+                            expected_result["is_error"] = True
+                        self.assertEqual(
+                            await formatter_type().format(msgs),
+                            [
+                                {
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "tool_use",
+                                            "id": "call_1",
+                                            "name": "validate",
+                                            "input": {},
+                                        },
+                                    ],
+                                },
+                                {
+                                    "role": "user",
+                                    "content": [expected_result],
+                                },
+                            ],
+                        )
 
     async def test_chat_formatter_tool_result_with_image(self) -> None:
         """Tool result containing an image DataBlock inlines the image in the
@@ -812,6 +914,23 @@ class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
             ],
             res,
         )
+
+    async def test_multiagent_formatter_drops_empty_system_message(
+        self,
+    ) -> None:
+        """An empty system prompt must not become an empty text block.
+
+        Anthropic rejects ``{"type": "text", "text": ""}`` with a 400, and
+        the chat formatter already drops such a system message.
+        """
+        fmt = AnthropicMultiAgentFormatter()
+        conversation = [UserMsg(name="user", content="hi")]
+
+        res = await fmt.format(
+            [SystemMsg(name="system", content=""), *conversation],
+        )
+
+        self.assertListEqual(await fmt.format(conversation), res)
 
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,

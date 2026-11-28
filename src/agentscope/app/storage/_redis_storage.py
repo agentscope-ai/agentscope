@@ -211,14 +211,8 @@ class RedisStorage(StorageBase):
         return template.format(**kwargs)
 
     async def _set_with_ttl(self, key: str, value: str) -> None:
-        """SET a key and optionally apply the sliding TTL."""
-        await self._client.set(key, value)
-        await self._refresh_key_ttl(key)
-
-    async def _refresh_key_ttl(self, key: str) -> None:
-        """Apply the sliding TTL to a key, if configured."""
-        if self.key_ttl is not None:
-            await self._client.expire(key, self.key_ttl)
+        """SET a key with the sliding TTL in one command, if configured."""
+        await self._client.set(key, value, ex=self.key_ttl)
 
     async def __aenter__(self) -> Self:
         """Create the connection pool and Redis client.
@@ -1033,7 +1027,11 @@ class RedisStorage(StorageBase):
             )
             if raw:
                 records.append(SessionRecord.model_validate_json(raw))
-        records.sort(key=lambda r: r.created_at, reverse=True)
+        # ``(created_at, id)`` mirrors the SQL backend: ties on the
+        # timestamp used to fall back to the index set's iteration
+        # order, which no caller can predict and which changes as the
+        # set is rewritten.
+        records.sort(key=lambda r: (r.created_at, r.id), reverse=True)
         return records
 
     async def get_session(
@@ -1171,7 +1169,11 @@ class RedisStorage(StorageBase):
             )
             if raw:
                 records.append(SessionRecord.model_validate_json(raw))
-        records.sort(key=lambda r: r.created_at, reverse=True)
+        # ``(created_at, id)`` mirrors the SQL backend: ties on the
+        # timestamp used to fall back to the index set's iteration
+        # order, which no caller can predict and which changes as the
+        # set is rewritten.
+        records.sort(key=lambda r: (r.created_at, r.id), reverse=True)
         return records
 
     async def list_sessions_by_channel(
@@ -1197,7 +1199,11 @@ class RedisStorage(StorageBase):
             )
             if raw:
                 records.append(SessionRecord.model_validate_json(raw))
-        records.sort(key=lambda r: r.created_at, reverse=True)
+        # ``(created_at, id)`` mirrors the SQL backend: ties on the
+        # timestamp used to fall back to the index set's iteration
+        # order, which no caller can predict and which changes as the
+        # set is rewritten.
+        records.sort(key=lambda r: (r.created_at, r.id), reverse=True)
         return records
 
     async def upsert_schedule(
@@ -1761,7 +1767,11 @@ class RedisStorage(StorageBase):
             record = await self.get_sop_run(user_id, run_id)
             if record is not None and phase in (None, record.state.phase):
                 records.append(record)
-        return sorted(records, key=lambda _: _.created_at, reverse=True)
+        return sorted(
+            records,
+            key=lambda _: (_.created_at, _.id),
+            reverse=True,
+        )
 
     async def update_sop_run(
         self,
@@ -2614,10 +2624,7 @@ class RedisStorage(StorageBase):
             self.key_config.voice_profile_index,
             user_id=user_id,
         )
-        await self._client.set(
-            key,
-            record.model_dump_json(),
-        )
+        await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
         return record.id
 

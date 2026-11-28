@@ -29,6 +29,8 @@ from ._session import (
     SessionKnowledgeConfig,
     ChatModelConfig,
     ASRModelConfig,
+    PipelineVoiceConfig,
+    ChatModelSnapshot,
     RealtimeModelConfig,
     TTSModelConfig,
     EmbeddingModelConfig,
@@ -40,6 +42,7 @@ from ._session import (
     TeamOrigin,
     SOPOrigin,
 )
+from ._session_list import SessionListItem
 from ._skill import SkillRecord
 from ._sop import (
     AgentVerifier,
@@ -84,6 +87,7 @@ __all__ = [
     "SessionNaming",
     "SessionKnowledgeConfig",
     "SessionRecord",
+    "SessionListItem",
     "SessionOrigin",
     "SessionSource",
     "UserOrigin",
@@ -103,6 +107,8 @@ __all__ = [
     "SOPWorkspaceGrain",
     "ChatModelConfig",
     "ASRModelConfig",
+    "PipelineVoiceConfig",
+    "ChatModelSnapshot",
     "RealtimeModelConfig",
     "TTSModelConfig",
     "EmbeddingModelConfig",

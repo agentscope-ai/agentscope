@@ -12,6 +12,7 @@ from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ..._utils._common import _generate_id
 from ...credential import AnthropicCredential
+from ...exception import ContentBlockedError, ContentBlockedPhase
 from ...formatter import FormatterBase, AnthropicChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
@@ -41,8 +42,26 @@ def _total_input_tokens(usage: Any) -> int:
     )
 
 
+def _build_chat_usage(usage: Any, start_datetime: datetime) -> ChatUsage:
+    """Convert Anthropic token counts and elapsed time to chat usage."""
+    return ChatUsage(
+        input_tokens=_total_input_tokens(usage),
+        output_tokens=getattr(usage, "output_tokens", 0) or 0,
+        time=(datetime.now() - start_datetime).total_seconds(),
+        cache_creation_input_tokens=getattr(
+            usage,
+            "cache_creation_input_tokens",
+            0,
+        )
+        or 0,
+        cache_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+    )
+
+
 class AnthropicChatModel(ChatModelBase):
     """The Anthropic chat model."""
+
+    _content_block_provider = "anthropic"
 
     type: Literal["anthropic_chat"] = "anthropic_chat"
     """The type of the chat model."""
@@ -128,6 +147,7 @@ class AnthropicChatModel(ChatModelBase):
         context_size: int = 200000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_refusal: bool = False,
     ) -> None:
         """Initialize the Anthropic chat model.
 
@@ -156,6 +176,9 @@ class AnthropicChatModel(ChatModelBase):
                 Extra keyword arguments forwarded to
                 ``anthropic.AsyncAnthropic`` (e.g. ``timeout``,
                 ``default_headers``, ``http_client``, ``auth_token``).
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether an explicit provider refusal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
         """
         super().__init__(
             credential=credential,
@@ -165,6 +188,7 @@ class AnthropicChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_refusal=raise_on_refusal,
         )
         self.formatter = formatter or AnthropicChatFormatter()
         self.client_kwargs = client_kwargs or {}
@@ -368,6 +392,21 @@ class AnthropicChatModel(ChatModelBase):
                 A single ``ChatResponse`` with ``is_last=True`` containing
                 the extracted content blocks and usage.
         """
+        if (
+            self.raise_on_refusal
+            and getattr(response, "stop_reason", None) == "refusal"
+        ):
+            stop_details = getattr(response, "stop_details", None)
+            explanation = getattr(stop_details, "explanation", None)
+            raise ContentBlockedError(
+                explanation
+                or f"{self._content_block_provider} refused the response.",
+                phase=ContentBlockedPhase.OUTPUT,
+                provider=self._content_block_provider,
+                original_code="refusal",
+                request_id=getattr(response, "id", None),
+            )
+
         content_blocks: List[ThinkingBlock | TextBlock | ToolCallBlock] = []
 
         if hasattr(response, "content") and response.content:
@@ -427,24 +466,7 @@ class AnthropicChatModel(ChatModelBase):
 
         usage = None
         if response.usage:
-            u = response.usage
-            usage = ChatUsage(
-                input_tokens=_total_input_tokens(u),
-                output_tokens=u.output_tokens or 0,
-                time=(datetime.now() - start_datetime).total_seconds(),
-                cache_creation_input_tokens=getattr(
-                    u,
-                    "cache_creation_input_tokens",
-                    0,
-                )
-                or 0,
-                cache_input_tokens=getattr(
-                    u,
-                    "cache_read_input_tokens",
-                    0,
-                )
-                or 0,
-            )
+            usage = _build_chat_usage(response.usage, start_datetime)
 
         resp_kwargs: dict[str, Any] = {
             "content": content_blocks,
@@ -487,6 +509,7 @@ class AnthropicChatModel(ChatModelBase):
         tool_call_mapping: dict = OrderedDict()
         # The indexes of the tool calls that received argument text
         tool_call_with_input: set[int] = set()
+        has_output = False
 
         async with response as stream:
             async for event in stream:
@@ -506,25 +529,7 @@ class AnthropicChatModel(ChatModelBase):
                     if message.usage:
                         u = message.usage
                         uncached_input_tokens = u.input_tokens or 0
-                        usage = ChatUsage(
-                            input_tokens=_total_input_tokens(u),
-                            output_tokens=getattr(u, "output_tokens", 0) or 0,
-                            time=(
-                                datetime.now() - start_datetime
-                            ).total_seconds(),
-                            cache_creation_input_tokens=getattr(
-                                u,
-                                "cache_creation_input_tokens",
-                                0,
-                            )
-                            or 0,
-                            cache_input_tokens=getattr(
-                                u,
-                                "cache_read_input_tokens",
-                                0,
-                            )
-                            or 0,
-                        )
+                        usage = _build_chat_usage(u, start_datetime)
 
                 elif event.type == "content_block_start":
                     if event.content_block.type in ("text", "thinking"):
@@ -611,7 +616,42 @@ class AnthropicChatModel(ChatModelBase):
                     )
 
                 elif event.type == "message_delta":
-                    if event.usage and usage:
+                    if (
+                        self.raise_on_refusal
+                        and getattr(event.delta, "stop_reason", None)
+                        == "refusal"
+                    ):
+                        stop_details = getattr(
+                            event.delta,
+                            "stop_details",
+                            None,
+                        )
+                        explanation = getattr(
+                            stop_details,
+                            "explanation",
+                            None,
+                        )
+                        raise ContentBlockedError(
+                            explanation
+                            or f"{self._content_block_provider} refused "
+                            f"the response.",
+                            phase=ContentBlockedPhase.OUTPUT,
+                            provider=self._content_block_provider,
+                            original_code="refusal",
+                            request_id=response_id,
+                            partial_output=has_output,
+                        )
+                    if event.usage and usage is None:
+                        u = event.usage
+                        uncached_input_tokens = (
+                            getattr(u, "input_tokens", 0) or 0
+                        )
+                        usage = _build_chat_usage(u, start_datetime)
+                        # Forward late usage through an empty chunk.
+                        delta_res.usage = usage
+                        yield delta_res
+
+                    elif event.usage:
                         usage.output_tokens = event.usage.output_tokens or 0
                         # Update cumulative counts before adding cache tokens.
                         value = getattr(event.usage, "input_tokens", None)
@@ -648,6 +688,7 @@ class AnthropicChatModel(ChatModelBase):
                         ).total_seconds()
 
                 if delta_res.content:
+                    has_output = True
                     delta_res.usage = usage
                     yield delta_res
 

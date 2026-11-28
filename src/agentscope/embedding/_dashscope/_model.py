@@ -60,8 +60,11 @@ _MODEL_LIMITS: dict[str, _MultimodalLimits] = {
         max_videos=1,
     ),
     "qwen2.5-vl-embedding": _MultimodalLimits(
-        max_elements=20,
-        max_images=5,
+        # The API always fuses all contents into one vector.  The
+        # EmbeddingModelBase contract needs one vector per input item,
+        # so each request may contain only one item.
+        max_elements=1,
+        max_images=1,
         max_videos=1,
     ),
     "tongyi-embedding-vision-plus": _MultimodalLimits(
@@ -228,11 +231,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 self._limits.max_videos,
             )
 
-        results: list[EmbeddingResponse] = await asyncio.gather(
-            *(self._call_with_retry(batch, **kwargs) for batch in batches),
-        )
-
-        return self._merge_responses(results)
+        return await self._call_batches(batches, **kwargs)
 
     def _split_multimodal_batches(
         self,

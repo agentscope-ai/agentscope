@@ -2,13 +2,16 @@
 """Bash tool test case."""
 
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agentscope.message import TextBlock
 from agentscope.permission import (
+    AdditionalWorkingDirectory,
     PermissionBehavior,
     PermissionContext,
     PermissionMode,
@@ -65,7 +68,10 @@ class BashCwdTest(IsolatedAsyncioTestCase):
         # cwd is forwarded, and the command line is wrapped in the
         # platform's native shell (the backend primitive runs an argv
         # without a shell): ``cmd /c`` on Windows, ``/bin/sh -c`` else.
-        self.assertEqual(create_process.call_args.kwargs["cwd"], "workspace")
+        self.assertEqual(
+            create_process.call_args.kwargs["cwd"],
+            os.path.abspath("workspace"),
+        )
         expected_argv = (
             ("cmd", "/c", "pwd")
             if os.name == "nt"
@@ -83,6 +89,11 @@ class _PosixSandboxBackend(BackendBase):
 
     def __init__(self) -> None:
         self.commands: list[list[str]] = []
+        self.cwd: str | None = None
+
+    async def getcwd(self) -> str:
+        """Return the sandbox's default directory."""
+        return "/workspace"
 
     async def exec_shell(
         self,
@@ -92,6 +103,7 @@ class _PosixSandboxBackend(BackendBase):
         timeout: float | None = None,
     ) -> ExecResult:
         self.commands.append(command)
+        self.cwd = cwd
         return ExecResult(0, b"ok\n", b"")
 
     async def read_file(self, path: str) -> bytes:
@@ -99,6 +111,132 @@ class _PosixSandboxBackend(BackendBase):
 
     async def write_file(self, path: str, data: bytes) -> None:
         raise NotImplementedError
+
+
+class BashEffectiveCwdTest(IsolatedAsyncioTestCase):
+    """Permissions and execution must use the same working directory."""
+
+    async def asyncSetUp(self) -> None:
+        """Build independent launcher, backend, and explicit directories."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        launcher = os.path.join(root, "launcher")
+        workspace = os.path.join(root, "workspace with spaces")
+        backend_dir = os.path.join(root, "backend")
+        for directory in (launcher, workspace, backend_dir):
+            os.makedirs(directory)
+        previous = os.getcwd()
+        os.chdir(launcher)
+        self.addCleanup(os.chdir, previous)
+        self.outside = os.path.join(root, "outside")
+        os.makedirs(os.path.join(self.outside, ".ssh"))
+        self.cases = (
+            ("default", Bash(), launcher),
+            ("explicit", Bash(cwd=workspace), workspace),
+            (
+                "backend",
+                Bash(backend=LocalBackend(workdir=workspace)),
+                workspace,
+            ),
+            (
+                "matching",
+                Bash(cwd=workspace, backend=LocalBackend(workdir=workspace)),
+                workspace,
+            ),
+            (
+                "conflicting",
+                Bash(cwd=workspace, backend=LocalBackend(workdir=backend_dir)),
+                workspace,
+            ),
+            (
+                "relative",
+                Bash(
+                    cwd="workspace with spaces",
+                    backend=LocalBackend(workdir=root),
+                ),
+                workspace,
+            ),
+        )
+
+    async def test_allowed_command_runs_in_checked_directory(self) -> None:
+        """Check authorization and the actual command output path."""
+        for name, bash, expected in self.cases:
+            with self.subTest(configuration=name):
+                for mode in (
+                    PermissionMode.ACCEPT_EDITS,
+                    PermissionMode.DONT_ASK,
+                ):
+                    decision = await bash.check_permissions(
+                        {"command": "mkdir created_directory"},
+                        PermissionContext(mode=mode),
+                    )
+                    self.assertEqual(
+                        (decision.behavior, decision.bypass_immune),
+                        (PermissionBehavior.ALLOW, False),
+                    )
+                    launcher_decision = await bash.check_permissions(
+                        {"command": "touch ../launcher/probe"},
+                        PermissionContext(mode=mode),
+                    )
+                    expected_behavior = (
+                        PermissionBehavior.ALLOW
+                        if name == "default"
+                        else PermissionBehavior.PASSTHROUGH
+                    )
+                    self.assertEqual(
+                        launcher_decision.behavior,
+                        expected_behavior,
+                    )
+                chunks = [
+                    chunk
+                    async for chunk in bash.call(
+                        command="mkdir created_directory",
+                    )
+                ]
+                created = os.path.join(expected, "created_directory")
+                self.assertEqual(
+                    (chunks[-1].state, os.path.isdir(created)),
+                    ("running", True),
+                )
+                os.rmdir(created)
+
+    async def test_symlinks_checked_at_execution_directory(self) -> None:
+        """Only links at the actual execution directory affect permission."""
+        for name, bash, expected in self.cases:
+            for target, behavior, immune in (
+                (self.outside, PermissionBehavior.PASSTHROUGH, False),
+                (
+                    os.path.join(self.outside, ".ssh"),
+                    PermissionBehavior.ASK,
+                    True,
+                ),
+            ):
+                link = os.path.join(expected, "alias")
+                try:
+                    os.symlink(target, link, target_is_directory=True)
+                except OSError as exc:
+                    self.skipTest(f"symlink unavailable: {exc}")
+                try:
+                    for mode in (
+                        PermissionMode.DEFAULT,
+                        PermissionMode.ACCEPT_EDITS,
+                        PermissionMode.DONT_ASK,
+                    ):
+                        with self.subTest(
+                            configuration=name,
+                            target=target,
+                            mode=mode,
+                        ):
+                            decision = await bash.check_permissions(
+                                {"command": "touch alias/probe"},
+                                PermissionContext(mode=mode),
+                            )
+                            self.assertEqual(
+                                (decision.behavior, decision.bypass_immune),
+                                (behavior, immune),
+                            )
+                finally:
+                    os.unlink(link)
 
 
 class BashShellSelectionTest(IsolatedAsyncioTestCase):
@@ -109,16 +247,42 @@ class BashShellSelectionTest(IsolatedAsyncioTestCase):
         backend = _PosixSandboxBackend()
         with patch("agentscope.tool._builtin._backend.os.name", "nt"):
             chunks = []
-            async for chunk in await Bash(backend=backend)(command="pwd"):
+            async for chunk in await Bash(cwd="child", backend=backend)(
+                command="pwd",
+            ):
                 chunks.append(chunk)
 
-        self.assertEqual(backend.commands, [["/bin/sh", "-c", "pwd"]])
-        self.assertEqual(chunks[-1].content[0].text, "ok\n")
+        self.assertEqual(
+            (backend.commands, backend.cwd, chunks[-1].content[0].text),
+            ([["/bin/sh", "-c", "pwd"]], "/workspace/child", "ok\n"),
+        )
 
     def test_local_backend_os_name_follows_host(self) -> None:
         """LocalBackend reports the host OS; the base default is posix."""
         self.assertEqual(LocalBackend().os_name, os.name)
         self.assertEqual(_PosixSandboxBackend().os_name, "posix")
+
+    async def test_explicit_cwd_controls_relative_removal_check(self) -> None:
+        """Check relative removal using backend paths and the Bash cwd."""
+        backend = _PosixSandboxBackend()
+        backend.getcwd = AsyncMock(return_value="/srv/backend/deep")
+        backend.expanduser = AsyncMock(side_effect=lambda path: path)
+        for cwd, dangerous in (("/srv/project", True), ("/srv/a/b", False)):
+            with self.subTest(cwd=cwd):
+                bash = Bash(cwd=cwd, backend=backend)
+                decision = await bash.check_permissions(
+                    {"command": "rmdir .."},
+                    PermissionContext(),
+                )
+                expected = (
+                    (PermissionBehavior.ASK, True)
+                    if dangerous
+                    else (PermissionBehavior.PASSTHROUGH, False)
+                )
+                self.assertEqual(
+                    (decision.behavior, decision.bypass_immune),
+                    expected,
+                )
 
 
 @unittest.skipIf(
@@ -177,6 +341,168 @@ class BashToolTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
+    async def test_symlinked_target_outside_workspace_not_auto_allowed(
+        self,
+    ) -> None:
+        """A relative target that leaves the workspace through a symlink
+        must not be auto-allowed, even when the launcher cwd is elsewhere."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        workdir = os.path.join(root, "ws")
+        outside = os.path.join(root, "outside")
+        launcher = os.path.join(root, "launcher")
+        for directory in (workdir, outside, launcher):
+            os.makedirs(directory)
+        try:
+            os.symlink(outside, os.path.join(workdir, "link"))
+        except OSError as exc:
+            self.skipTest(f"symlink unavailable: {exc}")
+
+        previous = os.getcwd()
+        os.chdir(launcher)
+        self.addCleanup(os.chdir, previous)
+
+        bash = Bash(cwd=workdir, backend=LocalBackend(workdir=workdir))
+        for mode in (PermissionMode.ACCEPT_EDITS, PermissionMode.DONT_ASK):
+            decision = await bash.check_permissions(
+                {"command": "touch link/boom.txt"},
+                PermissionContext(
+                    mode=mode,
+                    working_directories={
+                        workdir: AdditionalWorkingDirectory(
+                            path=workdir,
+                            source="session",
+                        ),
+                    },
+                ),
+            )
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.PASSTHROUGH,
+            )
+
+    async def test_relative_target_inside_workspace_auto_allowed(
+        self,
+    ) -> None:
+        """A relative target that stays inside the workspace is still
+        auto-allowed when the launcher cwd differs from the workspace."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        workdir = os.path.join(root, "ws")
+        launcher = os.path.join(root, "launcher")
+        for directory in (workdir, launcher):
+            os.makedirs(directory)
+
+        previous = os.getcwd()
+        os.chdir(launcher)
+        self.addCleanup(os.chdir, previous)
+
+        bash = Bash(cwd=workdir, backend=LocalBackend(workdir=workdir))
+        decision = await bash.check_permissions(
+            {"command": "touch inside.txt"},
+            PermissionContext(
+                mode=PermissionMode.ACCEPT_EDITS,
+                working_directories={
+                    workdir: AdditionalWorkingDirectory(
+                        path=workdir,
+                        source="session",
+                    ),
+                },
+            ),
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+    async def test_launcher_cwd_not_auto_allowed_for_workspace_bash(
+        self,
+    ) -> None:
+        """The launcher cwd is not a working directory of a workspace Bash:
+        a target there is not auto-allowed, while one in the backend cwd is,
+        even without an explicit working directory."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        workdir = os.path.join(root, "ws")
+        launcher = os.path.join(root, "launcher")
+        for directory in (workdir, launcher):
+            os.makedirs(directory)
+
+        previous = os.getcwd()
+        os.chdir(launcher)
+        self.addCleanup(os.chdir, previous)
+
+        bash = Bash(cwd=workdir, backend=LocalBackend(workdir=workdir))
+        context = PermissionContext(mode=PermissionMode.ACCEPT_EDITS)
+        for command in (
+            "touch ../launcher/escape.txt",
+            f"touch {os.path.join(launcher, 'escape.txt')}",
+        ):
+            decision = await bash.check_permissions(
+                {"command": command},
+                context,
+            )
+            self.assertNotEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+            )
+
+        decision = await bash.check_permissions(
+            {"command": "touch inside.txt"},
+            context,
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+    async def test_dangerous_path_resolved_from_workspace_cwd(
+        self,
+    ) -> None:
+        """A relative target that resolves into a sensitive directory through
+        a workspace symlink must be reported as dangerous."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        workdir = os.path.join(root, "ws")
+        outside = os.path.join(root, "outside")
+        launcher = os.path.join(root, "launcher")
+        for directory in (workdir, outside, launcher):
+            os.makedirs(directory)
+        os.makedirs(os.path.join(outside, ".ssh"))
+        try:
+            os.symlink(
+                os.path.join(outside, ".ssh"),
+                os.path.join(workdir, "alias"),
+            )
+        except OSError as exc:
+            self.skipTest(f"symlink unavailable: {exc}")
+
+        previous = os.getcwd()
+        os.chdir(launcher)
+        self.addCleanup(os.chdir, previous)
+
+        bash = Bash(cwd=workdir, backend=LocalBackend(workdir=workdir))
+        decision = await bash.check_permissions(
+            {"command": "touch alias/config"},
+            PermissionContext(mode=PermissionMode.DEFAULT),
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertTrue(decision.bypass_immune)
+
+    async def test_unicode_copy_permissions(self) -> None:
+        """Check each copy target under the same working-directory policy."""
+        bash = Bash(dangerous_files=["protected.txt"])
+        context = PermissionContext(mode=PermissionMode.ACCEPT_EDITS)
+        cases = [
+            ("cp 中文 copy.txt", PermissionBehavior.ALLOW, False),
+            ("cp 中文 protected.txt", PermissionBehavior.ASK, True),
+            ("cp 中文 ../copy.txt", PermissionBehavior.PASSTHROUGH, False),
+        ]
+        for command, behavior, bypass_immune in cases:
+            with self.subTest(command=command):
+                decision = await bash.check_permissions(
+                    {"command": command},
+                    context,
+                )
+                self.assertEqual(
+                    (decision.behavior, decision.bypass_immune),
+                    (behavior, bypass_immune),
+                )
+
     async def test_simple_command(self) -> None:
         """Test executing a simple bash command."""
         chunks = []
@@ -217,6 +543,52 @@ class BashToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(chunks), 1)
         self.assertEqual(chunks[0].state, "error")
         self.assertIn("timed out", chunks[0].content[0].text.lower())
+
+    async def test_invalid_timeout_rejected(self) -> None:
+        """Reject nonpositive timeouts without calling the backend."""
+        for timeout in (0, -1):
+            with self.subTest(timeout=timeout):
+                backend = AsyncMock()
+                tool = Bash(backend=backend)
+                chunks = [
+                    chunk.model_dump(
+                        exclude={
+                            "id": True,
+                            "content": {"__all__": {"id", "created_at"}},
+                        },
+                    )
+                    async for chunk in tool.call(
+                        command='echo "hello world"',
+                        timeout=timeout,
+                    )
+                ]
+
+                self.assertEqual(
+                    chunks,
+                    [
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "Error: timeout must be at least "
+                                        f"1ms, got: {timeout}."
+                                    ),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": "error",
+                            "is_last": True,
+                            "metadata": {},
+                        },
+                    ],
+                )
+                backend.exec_shell.assert_not_awaited()
+
+    async def test_timeout_schema_minimum_is_one(self) -> None:
+        """JSON schema minimum for timeout is 1ms (#3307)."""
+        timeout_schema = self.bash_tool.input_schema["properties"]["timeout"]
+        self.assertEqual(timeout_schema["minimum"], 1)
 
 
 @unittest.skipIf(
@@ -651,3 +1023,75 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
         """Clean up test fixtures."""
         self.bash_tool = None
         self.context = None
+
+
+class BashOutputLimitTest(IsolatedAsyncioTestCase):
+    """Test how the bash tool limits long output."""
+
+    @staticmethod
+    def _backend(exit_code: int, stdout: bytes) -> AsyncMock:
+        backend = AsyncMock()
+        backend.os_name = "posix"
+        backend.exec_shell.return_value = ExecResult(exit_code, stdout, b"")
+        return backend
+
+    async def _text(self, tool: Bash) -> tuple[str, str]:
+        chunks = [chunk async for chunk in await tool(command="long")]
+        return chunks[0].content[0].text, chunks[0].state
+
+    async def test_cut_output_reports_original_length(self) -> None:
+        """A cut output starts by saying how long it was."""
+        tool = Bash(backend=self._backend(0, b"x" * 100), max_output_chars=10)
+
+        text, state = await self._text(tool)
+
+        notice, output = text.split("\n", 1)
+        self.assertEqual(state, "running")
+        self.assertIn("the first 10 of 100 characters", notice)
+        self.assertEqual(output, "x" * 10)
+
+    async def test_failed_command_output_is_cut_the_same_way(self) -> None:
+        """A failed command's output gets the same limit and notice."""
+        tool = Bash(backend=self._backend(1, b"x" * 30001))
+
+        text, state = await self._text(tool)
+
+        notice, output = text.split("\n", 1)
+        self.assertEqual(state, "error")
+        message = "Command failed: long\n\nStdout:\n" + "x" * 30001
+        self.assertEqual(
+            notice,
+            "[Failure message truncated: showing the first 30000 of "
+            f"{len(message)} characters. To see the rest of the command "
+            "output, write it to a file and read the part you need.]",
+        )
+        self.assertEqual(output, message[:30000])
+
+    async def test_silent_failure_truncates_only_the_message(self) -> None:
+        """A silent failure has no command output to redirect."""
+        tool = Bash(backend=self._backend(1, b""), max_output_chars=10)
+
+        self.assertEqual(
+            await self._text(tool),
+            (
+                "[Failure message truncated: showing the first 10 of 21 "
+                "characters.]\nCommand fa",
+                "error",
+            ),
+        )
+
+    async def test_no_limit_returns_whole_output(self) -> None:
+        """``max_output_chars=None`` leaves the limit to the agent."""
+        tool = Bash(
+            backend=self._backend(0, b"x" * 100000),
+            max_output_chars=None,
+        )
+
+        text, _ = await self._text(tool)
+
+        self.assertEqual(text, "x" * 100000)
+
+    def test_rejects_non_positive_limit(self) -> None:
+        """A limit of zero or less is a configuration error."""
+        with self.assertRaises(ValueError):
+            Bash(max_output_chars=0)

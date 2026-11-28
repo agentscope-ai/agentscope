@@ -1,11 +1,22 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { asrModelApi, credentialApi } from '@/api';
-import type { ASRModelCard, CredentialView } from '@/api';
+import type { ASRModelCard, ASRModelConfig, CredentialView } from '@/api';
 
 export interface CredentialWithASRModels {
 	credential: CredentialView;
 	models: ASRModelCard[];
+}
+
+export function findASRModelCard(
+	groups: Record<string, CredentialWithASRModels[]>,
+	config: ASRModelConfig | null,
+): ASRModelCard | null {
+	if (!config) return null;
+	const item = groups[config.type]?.find(
+		({ credential }) => credential.id === config.credential_id,
+	);
+	return item?.models.find((model) => model.name === config.model) ?? null;
 }
 
 async function fetchGroups(): Promise<Record<string, CredentialWithASRModels[]>> {

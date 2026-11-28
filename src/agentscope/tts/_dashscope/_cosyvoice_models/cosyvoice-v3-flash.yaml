@@ -1,6 +1,8 @@
 name: cosyvoice-v3-flash
 label: CosyVoice-v3-Flash
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2025-11-17
 voice_cloning: true
 
 input_types:

@@ -221,8 +221,10 @@ class ToolBase(ABC):
                 return self.call(**kwargs)
             return await self.call(**kwargs)
 
+        # Keep the private cursor separate from tool arguments named "index".
         async def execute_chain(
             index: int = 0,
+            /,
             **chain_kwargs: Any,
         ) -> AsyncGenerator[ToolChunk, None]:
             """Execute the tool middleware chain."""
@@ -404,6 +406,7 @@ class ToolBase(ABC):
         self,
         file_path: str,
         context: PermissionContext,
+        base_dir: str | None = None,
     ) -> bool:
         """Check if a file path is within any allowed working directory.
 
@@ -422,37 +425,55 @@ class ToolBase(ABC):
                 The file path to check.
             context (`PermissionContext`):
                 The permission context containing the working directories.
+            base_dir (`str | None`, optional):
+                Directory a relative ``file_path`` is resolved against.
+                Defaults to the process's current directory, which is
+                what in-process tools such as Write and Edit use.
 
         Returns:
             `bool`:
                 True if ``file_path`` is within any allowed working
                 directory.
         """
-        current_dir = os.getcwd()
+        # A tool that runs in its own directory (e.g. Bash on a backend)
+        # works there, so that directory replaces the process cwd.
+        current_dir = base_dir if base_dir is not None else os.getcwd()
         additional_dirs = list(context.working_directories.keys())
         all_working_dirs = [current_dir] + additional_dirs
 
-        abs_file_path = os.path.realpath(os.path.expanduser(file_path))
+        expanded_path = os.path.expanduser(file_path)
+        if base_dir is not None and not os.path.isabs(expanded_path):
+            expanded_path = os.path.join(base_dir, expanded_path)
+        abs_file_path = os.path.realpath(expanded_path)
 
         for working_dir in all_working_dirs:
             abs_working_dir = os.path.realpath(
                 os.path.expanduser(working_dir),
             )
             try:
-                os.path.relpath(abs_file_path, abs_working_dir)
-                if (
-                    abs_file_path.startswith(abs_working_dir + os.sep)
-                    or abs_file_path == abs_working_dir
-                ):
-                    return True
+                relative = os.path.relpath(abs_file_path, abs_working_dir)
             except ValueError:
                 # On Windows, relpath raises ValueError if paths are on
                 # different drives.
                 continue
+            # A plain prefix test misses every filesystem root: for
+            # ``/`` it builds ``"//"`` and for ``D:\`` it builds
+            # ``"D:\\"``, neither of which a real path starts with. The
+            # relative path is ``"."`` for the directory itself and
+            # otherwise only escapes upwards when it begins with
+            # ``".."``.
+            if relative != os.pardir and not relative.startswith(
+                os.pardir + os.sep,
+            ):
+                return True
 
         return False
 
-    def _is_dangerous_path(self, file_path: str) -> bool:
+    def _is_dangerous_path(
+        self,
+        file_path: str,
+        base_dir: str | None = None,
+    ) -> bool:
         """Check if a file path is dangerous (sensitive file or directory).
 
         A path is considered dangerous if:
@@ -465,6 +486,9 @@ class ToolBase(ABC):
         Args:
             file_path (`str`):
                 The file path to check
+            base_dir (`str | None`, optional):
+                Directory a relative ``file_path`` is resolved against.
+                Defaults to the process's current directory.
 
         Returns:
             `bool`:
@@ -481,7 +505,10 @@ class ToolBase(ABC):
         """
 
         # Resolve symlinks so an alias is judged by its target
-        abs_path = os.path.realpath(os.path.expanduser(file_path))
+        expanded_path = os.path.expanduser(file_path)
+        if base_dir is not None and not os.path.isabs(expanded_path):
+            expanded_path = os.path.join(base_dir, expanded_path)
+        abs_path = os.path.realpath(expanded_path)
 
         # Split path into segments
         path_parts = Path(abs_path).parts

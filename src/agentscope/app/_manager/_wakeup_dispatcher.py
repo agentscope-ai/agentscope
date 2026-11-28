@@ -44,6 +44,11 @@ from ...event import (
 )
 from ...message import Msg
 from ...types import ErrorInfo, ErrorType, ReplyFinishedReason
+from .._client_external_tool import (
+    ClientBuiltinToolName,
+    ClientExternalToolDefinition,
+    parse_client_tool_capabilities,
+)
 from ..message_bus import MessageBusKeys
 from ._chat_input_queue import ChatInputQueue
 
@@ -128,7 +133,12 @@ class WakeupDispatcher:
         # that a subscription that ends is a startup failure; after it,
         # it is a dropped connection that must be re-established.
         self._serving = False
-        self._chat_queue = ChatInputQueue(message_bus, storage, chat_service)
+        self._chat_queue = ChatInputQueue(
+            message_bus,
+            storage,
+            chat_service,
+            chat_run_registry,
+        )
         # Detached resume timers. Held
         # so they are not garbage-collected mid-await and can be cancelled
         # on shutdown.
@@ -145,14 +155,33 @@ class WakeupDispatcher:
 
         Returns:
             `Self`: This dispatcher instance.
+
+        Raises:
+            `Exception`:
+                The subscription's error if it fails before it is live,
+                or `RuntimeError` if it ends cleanly before then.
+                Started tasks are cleaned up, as on a cancelled startup.
         """
         ready = asyncio.Event()
-        self._task = asyncio.create_task(
+        loop_task = asyncio.create_task(
             self._loop(ready),
             name="wakeup-dispatcher",
         )
-        await ready.wait()
+        self._task = loop_task
+        ready_waiter = asyncio.create_task(ready.wait())
         try:
+            await asyncio.wait(
+                {loop_task, ready_waiter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            ready_waiter.cancel()
+            await asyncio.gather(ready_waiter, return_exceptions=True)
+            if not ready.is_set():
+                await loop_task
+                raise RuntimeError(
+                    "WakeupDispatcher subscription ended before it was "
+                    "ready.",
+                )
             if self._task.done():
                 raise RuntimeError("Wakeup subscription ended during startup")
             self._fallback_task = asyncio.create_task(
@@ -170,6 +199,7 @@ class WakeupDispatcher:
             tasks = [
                 task
                 for task in (
+                    ready_waiter,
                     self._task,
                     self._fallback_task,
                     *self._retry_tasks,
@@ -319,6 +349,10 @@ class WakeupDispatcher:
                 agent_id=agent_id,
                 kind=kind,
                 raw_input=payload.get("input"),
+                raw_client_external_tools=payload.get(
+                    "client_external_tools",
+                ),
+                raw_client_builtin_tools=payload.get("client_builtin_tools"),
             )
 
     async def _dispatch_one(
@@ -328,6 +362,8 @@ class WakeupDispatcher:
         agent_id: str,
         kind: str,
         raw_input: dict | list[dict] | None,
+        raw_client_external_tools: list[dict] | None = None,
+        raw_client_builtin_tools: list[str] | None = None,
     ) -> None:
         """Dispatch a single trigger entry by its ``kind``.
 
@@ -344,6 +380,10 @@ class WakeupDispatcher:
             raw_input (`dict | list[dict] | None`):
                 Serialised input event for ``resume`` triggers, else
                 ``None``.
+            raw_client_external_tools (`list[dict] | None`):
+                Serialised client tool definitions for this run.
+            raw_client_builtin_tools (`list[str] | None`):
+                Native external tool names supported by this run's client.
         """
         is_resume = kind == MessageBusKeys.WAKEUP_KIND_RESUME
         is_message = kind == MessageBusKeys.WAKEUP_KIND_MESSAGE
@@ -380,6 +420,14 @@ class WakeupDispatcher:
             | Msg
             | None
         ) = None
+        (
+            client_external_tools,
+            client_builtin_tools,
+        ) = parse_client_tool_capabilities(
+            raw_client_external_tools,
+            raw_client_builtin_tools,
+        )
+
         if carries_input:
             if raw_input is None:
                 logger.warning(
@@ -419,6 +467,8 @@ class WakeupDispatcher:
                     agent_id,
                     kind,
                     input_msg,
+                    client_external_tools,
+                    client_builtin_tools,
                 )
             return
 
@@ -473,6 +523,8 @@ class WakeupDispatcher:
                     session_id=session_id,
                     agent_id=agent_id,
                     input_msg=input_msg,
+                    client_external_tools=client_external_tools or None,
+                    client_builtin_tools=client_builtin_tools or None,
                 )
                 if is_resume
                 else self._chat_service.run(
@@ -480,6 +532,8 @@ class WakeupDispatcher:
                     session_id=session_id,
                     agent_id=agent_id,
                     input_msg=input_msg,
+                    client_external_tools=client_external_tools or None,
+                    client_builtin_tools=client_builtin_tools or None,
                 )
             )
             task = self._registry.spawn(
@@ -520,6 +574,8 @@ class WakeupDispatcher:
                     agent_id,
                     kind,
                     input_msg,
+                    client_external_tools,
+                    client_builtin_tools,
                 )
 
     def _schedule_retry(
@@ -533,6 +589,8 @@ class WakeupDispatcher:
         | UserInterruptEvent
         | Msg
         | None,
+        client_external_tools: list[ClientExternalToolDefinition],
+        client_builtin_tools: list[ClientBuiltinToolName],
     ) -> None:
         """Re-enqueue an input-carrying (``resume``/``message``) trigger
         after a short backoff.
@@ -553,6 +611,10 @@ class WakeupDispatcher:
                 The trigger kind to re-enqueue (``resume`` / ``message``).
             input_msg:
                 The parsed input to redeliver.
+            client_external_tools:
+                Client tool definitions to preserve across a retry.
+            client_builtin_tools:
+                Native tool names to preserve across a retry.
         """
 
         async def _retry() -> None:
@@ -565,6 +627,8 @@ class WakeupDispatcher:
                     agent_id=agent_id,
                     kind=kind,  # type: ignore[arg-type]
                     inputs=input_msg,
+                    client_external_tools=client_external_tools,
+                    client_builtin_tools=client_builtin_tools,
                 )
             except asyncio.CancelledError:
                 pass

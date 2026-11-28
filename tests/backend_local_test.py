@@ -20,6 +20,7 @@ import tempfile
 import unittest
 from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.tool import ExecResult, LocalBackend
 from agentscope.tool._builtin._backend import _normalize_newlines
@@ -131,6 +132,37 @@ class TestLocalBackendExec(IsolatedAsyncioTestCase):
         self.assertEqual(result.stdout, b"")
         self.assertNotEqual(result.stderr, b"")
 
+    async def test_exec_default_and_explicit_workdirs(self) -> None:
+        """Only an explicit cwd changes the subprocess working directory."""
+        with tempfile.TemporaryDirectory() as root:
+            configured = os.path.join(root, "configured directory")
+            override = os.path.join(root, "explicit directory")
+            os.makedirs(configured)
+            os.makedirs(override)
+            cases = (
+                (LocalBackend(), None, os.getcwd()),
+                (LocalBackend(workdir=configured), None, os.getcwd()),
+                (LocalBackend(workdir=configured), override, override),
+            )
+            for backend, cwd, expected in cases:
+                with self.subTest(cwd=cwd, expected=expected):
+                    result = await backend.exec_shell(
+                        [
+                            sys.executable,
+                            "-c",
+                            "import os; print(os.path.realpath(os.getcwd()))",
+                        ],
+                        cwd=cwd,
+                    )
+                    self.assertEqual(
+                        (
+                            result.exit_code,
+                            result.stdout.decode().strip(),
+                            result.stderr,
+                        ),
+                        (0, os.path.realpath(expected), b""),
+                    )
+
     async def test_timeout_returns_minus_one(self) -> None:
         """A command exceeding ``timeout`` is killed and reports -1.
 
@@ -202,6 +234,19 @@ class TestLocalBackendFileIO(IsolatedAsyncioTestCase):
 
 class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
     """Test cases for the derived filesystem helpers (native ``os.*``)."""
+
+    async def test_getcwd_defaults_to_process_directory(self) -> None:
+        """An unconfigured backend follows the process cwd at call time."""
+        backend = LocalBackend()
+        with patch("os.getcwd", return_value=self.temp_dir.name):
+            self.assertEqual(await backend.getcwd(), self.temp_dir.name)
+
+    async def test_getcwd_keeps_configured_workdir(self) -> None:
+        """Resolve a relative workdir once, regardless of later cwd changes."""
+        expected = os.path.abspath("workspace")
+        backend = LocalBackend(workdir="workspace")
+        with patch("os.getcwd", return_value=self.temp_dir.name):
+            self.assertEqual(await backend.getcwd(), expected)
 
     async def asyncSetUp(self) -> None:
         """Build a backend and a temp dir per test."""
