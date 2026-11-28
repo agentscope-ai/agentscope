@@ -41,6 +41,7 @@ class _FakeIndices:
         self.exists = AsyncMock(return_value=False)
         self.create = AsyncMock()
         self.delete = AsyncMock()
+        self.refresh = AsyncMock(return_value={"_shards": {"failed": 0}})
 
 
 class _FakeClient:
@@ -65,6 +66,8 @@ class _FakeClient:
 
 class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
     """Elasticsearch vector-store contract tests."""
+
+    # pylint: disable=too-many-public-methods
 
     async def asyncSetUp(self) -> None:
         self.client = _FakeClient()
@@ -142,6 +145,19 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
             self.client.delete_by_query.await_args.kwargs["refresh"],
             False,
         )
+
+        self.client.indices.refresh.assert_not_awaited()
+
+    async def test_empty_publication_refreshes_deletions(self) -> None:
+        store = ElasticsearchStore("http://localhost:9200", refresh=False)
+        await store.delete("versions", "doc")
+        await store.insert_for_publication("versions", "doc", [], None)
+        self.client.bulk.assert_not_awaited()
+        self.client.indices.refresh.assert_awaited_once_with(index="versions")
+
+        self.client.indices.refresh.return_value = {"_shards": {"failed": 1}}
+        with self.assertRaisesRegex(RuntimeError, "refresh"):
+            await store.insert_for_publication("versions", "doc", [], None)
 
     async def test_insert_surfaces_bulk_item_failures(self) -> None:
         self.client.bulk.return_value = {
@@ -291,6 +307,23 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
         # Elasticsearch maps cosine to (1 + cosine) / 2.  The store
         # normalizes it back to the raw cosine used by other backends.
         self.assertAlmostEqual(results[0].score, 0.9)
+
+    async def test_search_excludes_staging_before_knn_ranking(self) -> None:
+        self.client.search.return_value = {"hits": {"hits": []}}
+        await self.store.search_excluding(
+            "kb",
+            [1.0],
+            1,
+            {"tenant": "a"},
+            exclude_document_ids={"~doc"},
+        )
+        self.assertEqual(
+            self.client.search.await_args.kwargs["knn"]["filter"],
+            [
+                {"term": {"metadata.tenant": "a"}},
+                {"bool": {"must_not": [{"terms": {"document_id": ["~doc"]}}]}},
+            ],
+        )
 
     async def test_search_rejects_top_k_above_elasticsearch_limit(
         self,

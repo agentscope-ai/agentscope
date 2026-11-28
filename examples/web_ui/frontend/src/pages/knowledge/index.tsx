@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 
-import type { KnowledgeBaseView } from '@/api';
+import type { KnowledgeBaseView, KnowledgeDocumentView } from '@/api';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog.tsx';
 import { CreateKnowledgeBaseDialog } from '@/components/dialog/CreateKnowledgeBaseDialog.tsx';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
@@ -42,14 +42,17 @@ import {
 	SidebarMenuItem,
 } from '@/components/ui/sidebar.tsx';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases.ts';
+import { useKnowledgeDocuments } from '@/hooks/useKnowledgeDocuments.ts';
 
 interface DetailPanelProps {
 	knowledgeBase?: KnowledgeBaseView;
 	onTest?: () => void;
+	onEdit?: () => void;
 }
 
-function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
+function DetailPanel({ knowledgeBase, onTest, onEdit }: DetailPanelProps) {
 	const { t } = useTranslation();
+	const documentState = useKnowledgeDocuments(knowledgeBase?.id ?? null);
 
 	if (!knowledgeBase) {
 		return (
@@ -96,10 +99,15 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 			{/* Configuration + documents */}
 			<div className="min-h-0 flex-1 overflow-y-auto p-[20px_18px_24px]">
 				<div className="flex flex-col gap-y-6">
-					<ConfigCard knowledgeBase={knowledgeBase} />
+					<ConfigCard
+						knowledgeBase={knowledgeBase}
+						documents={documentState.documents}
+						onEdit={onEdit}
+					/>
 					<KnowledgeDocumentsPanel
-						key={knowledgeBase.id}
+						documentState={documentState}
 						knowledgeBaseId={knowledgeBase.id}
+						editable={knowledgeBase.editable}
 					/>
 				</div>
 			</div>
@@ -119,18 +127,34 @@ function ConfigItem({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * Read-only card surfacing the full configuration pinned at creation
- * time — embedding model, chunker, credential — plus the aggregated
- * counts the list endpoint now serves (#2360).
+ * Configuration card surfacing the embedding model, current chunker,
+ * credential, plus aggregated counts derived from the knowledge base.
  */
-function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
+function ConfigCard({
+	knowledgeBase,
+	documents,
+	onEdit,
+}: {
+	knowledgeBase: KnowledgeBaseView;
+	documents: KnowledgeDocumentView[] | null;
+	onEdit?: () => void;
+}) {
 	const { t } = useTranslation();
 	const embedding = knowledgeBase.embedding_model_config;
 	const chunker = knowledgeBase.chunker_config;
 
 	// Only worth showing when something is not ready — a KB where every
 	// document indexed cleanly says nothing extra beyond the totals.
-	const counts = knowledgeBase.status_counts;
+	let counts = knowledgeBase.status_counts;
+	let chunks = knowledgeBase.chunk_count;
+	if (documents !== null) {
+		counts = { pending: 0, parsing: 0, chunking: 0, indexing: 0, ready: 0, error: 0 };
+		chunks = 0;
+		for (const doc of documents) {
+			counts[doc.status]++;
+			chunks += doc.chunk_count;
+		}
+	}
 	const unfinished = counts.pending + counts.parsing + counts.chunking + counts.indexing;
 	const statusValue =
 		counts.error > 0 || unfinished > 0
@@ -151,9 +175,17 @@ function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
 
 	return (
 		<div className="flex flex-col gap-y-3">
-			<h3 className="text-[13.5px] font-medium text-foreground">
-				{t('knowledge.config.title')}
-			</h3>
+			<div className="flex min-h-6 items-center justify-between gap-x-3">
+				<h3 className="text-[13.5px] font-medium text-foreground">
+					{t('knowledge.config.title')}
+				</h3>
+				{knowledgeBase.editable && onEdit && (
+					<Button variant="ghost" size="xs" onClick={onEdit}>
+						<Pencil />
+						{t('common.edit')}
+					</Button>
+				)}
+			</div>
 			<div className="border-border bg-card grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border p-3 sm:grid-cols-3">
 				<ConfigItem label={t('knowledge.config.embeddingModel')} value={embedding.model} />
 				<ConfigItem
@@ -168,8 +200,8 @@ function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
 				<ConfigItem
 					label={t('knowledge.config.counts')}
 					value={t('knowledge.config.countsValue', {
-						documents: knowledgeBase.document_count,
-						chunks: knowledgeBase.chunk_count,
+						documents: documents?.length ?? knowledgeBase.document_count,
+						chunks,
 					})}
 				/>
 				{statusValue && (
@@ -198,6 +230,7 @@ export const KnowledgePage = () => {
 	const [editTarget, setEditTarget] = useState<KnowledgeBaseView | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<KnowledgeBaseView | null>(null);
 	const [testOpen, setTestOpen] = useState(false);
+	const [documentRefreshKey, setDocumentRefreshKey] = useState(0);
 
 	const selectedKb = knowledgeBases.find((kb) => kb.id === selectedKbId);
 
@@ -340,7 +373,12 @@ export const KnowledgePage = () => {
 				<SidebarFooter />
 			</Sidebar>
 			<main className="flex-1 min-h-0 overflow-hidden rounded-[22px] bg-card shadow-panel">
-				<DetailPanel knowledgeBase={selectedKb} onTest={() => setTestOpen(true)} />
+				<DetailPanel
+					key={`${selectedKb?.id}:${documentRefreshKey}`}
+					knowledgeBase={selectedKb}
+					onTest={() => setTestOpen(true)}
+					onEdit={selectedKb ? () => setEditTarget(selectedKb) : undefined}
+				/>
 			</main>
 			<CreateKnowledgeBaseDialog
 				open={createDialogOpen}
@@ -360,7 +398,10 @@ export const KnowledgePage = () => {
 					if (!open) setEditTarget(null);
 				}}
 				knowledgeBase={editTarget}
-				onUpdated={() => refetch()}
+				onUpdated={() => {
+					setDocumentRefreshKey((key) => key + 1);
+					void refetch();
+				}}
 			/>
 			<DeleteDialog
 				open={deleteTarget !== null}

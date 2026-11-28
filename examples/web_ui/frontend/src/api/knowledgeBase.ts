@@ -5,6 +5,7 @@ import type {
 	DocumentDownloadTokenResponse,
 	KbMiddlewareParametersSchemaResponse,
 	KnowledgeBaseView,
+	KnowledgeDocumentView,
 	ListChunkersResponse,
 	ListDocumentChunksResponse,
 	ListKbEmbeddingModelsResponse,
@@ -192,7 +193,9 @@ export const knowledgeBaseApi = {
 		client.post<CreateKnowledgeBaseResponse>('/knowledge_bases/', body),
 
 	update: (knowledgeBaseId: string, body: UpdateKnowledgeBaseRequest) =>
-		client.patch<KnowledgeBaseView>(`/knowledge_bases/${knowledgeBaseId}`, body),
+		client.patch<KnowledgeBaseView>(`/knowledge_bases/${knowledgeBaseId}`, body, undefined, {
+			silent: true,
+		}),
 
 	delete: (knowledgeBaseId: string) => client.delete(`/knowledge_bases/${knowledgeBaseId}`),
 
@@ -294,6 +297,11 @@ export const knowledgeBaseApi = {
 
 	uploadDocument: (knowledgeBaseId: string, file: File, options?: UploadDocumentOptions) =>
 		uploadDocumentXhr(knowledgeBaseId, file, options),
+
+	retryDocument: (knowledgeBaseId: string, documentId: string) =>
+		client.post<KnowledgeDocumentView>(
+			`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}/retry`,
+		),
 
 	deleteDocument: (knowledgeBaseId: string, documentId: string) =>
 		client.delete(`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}`),

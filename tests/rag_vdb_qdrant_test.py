@@ -10,6 +10,13 @@ from unittest.mock import AsyncMock, patch
 
 from utils import AnyString
 
+from agentscope.app.rag.knowledge_base_manager._published_knowledge import (
+    PublishedKnowledge,
+)
+from agentscope.app.rag.knowledge_base_manager._vector_slots import (
+    version_knowledge,
+)
+from agentscope.app.storage import KnowledgeDocumentData
 from agentscope.message import TextBlock
 from agentscope.rag import (
     Chunk,
@@ -109,6 +116,25 @@ class QdrantMetricTest(IsolatedAsyncioTestCase):
         """Close the store after each test."""
         await self._exit_stack.aclose()
 
+    async def test_unpublished_documents_do_not_consume_top_k(self) -> None:
+        """A lower-ranked published hit survives filtering before ranking."""
+        await self.store.create_collection("kb", dimensions=2)
+        await self.store.insert(
+            "kb",
+            [
+                _make_record("old", [0.9, 0.1], "doc"),
+                _make_record("new", [1.0, 0.0], "~doc"),
+            ],
+        )
+        hits = await self.store.search_excluding(
+            "kb",
+            [1.0, 0.0],
+            1,
+            None,
+            exclude_document_ids={"~doc"},
+        )
+        self.assertEqual([hit.document_id for hit in hits], ["doc"])
+
     async def test_existing_collection_metric_controls_ranking(self) -> None:
         """Reopened collections retain distance ranking and thresholds."""
 
@@ -161,6 +187,71 @@ class QdrantMetricTest(IsolatedAsyncioTestCase):
                         [hit.document_id for hit in filtered],
                         ["exact", "near"],
                     )
+                    versions = version_knowledge(kb)
+                    await versions.write_document_records(
+                        [
+                            VectorRecord(
+                                vector=[11.0, 0.0, 0.0],
+                                document_id="far",
+                                chunk=hits[-1].chunk,
+                            ),
+                        ],
+                    )
+                    far = SimpleNamespace(
+                        id="far",
+                        data=KnowledgeDocumentData(
+                            filename="far",
+                            size=1,
+                            blob_uri="local://far",
+                            slot_layout="isolated",
+                            alternate_index=True,
+                        ),
+                    )
+                    storage = AsyncMock()
+                    storage.get_knowledge_vector_ownership.return_value = (
+                        set(),
+                        set(),
+                    )
+                    storage.get_knowledge_documents.side_effect = (
+                        lambda _owner, _kb, ids, row=far: (
+                            [row] if row.id in ids else []
+                        )
+                    )
+                    published = PublishedKnowledge(kb, storage, "user", "kb")
+                    self.assertEqual(
+                        await published.search(["query"], top_k=3),
+                        hits,
+                    )
+                    # Recreate the companion with the opener's default.
+                    await reader.delete_collection(versions.collection)
+                    await reader.create_collection(versions.collection, 3)
+                    original = _make_record("SDK", [1.0, 0.0, 0.0], "SDK")
+                    await reader.insert(versions.collection, [original])
+                    with self.assertRaisesRegex(ValueError, "incompatible"):
+                        await published.search(["query"])
+                    with self.assertRaisesRegex(ValueError, "incompatible"):
+                        await versions.delete_document("SDK")
+                    self.assertEqual(
+                        await reader.list_chunks(versions.collection, "SDK"),
+                        [original.chunk],
+                    )
+
+    async def test_companion_dimension_mismatch_preserves_records(
+        self,
+    ) -> None:
+        """An existing companion with the wrong dimension stays intact."""
+        primary = _knowledge_base(self.store, None)
+        companion = version_knowledge(primary)
+        await self.store.create_collection(primary.collection, dimensions=3)
+        await self.store.create_collection(companion.collection, dimensions=2)
+        record = _make_record("saved", [1.0, 0.0], "saved")
+        await self.store.insert(companion.collection, [record])
+        with self.assertRaisesRegex(ValueError, "incompatible"):
+            await companion.ensure_collection()
+        self.assertEqual(
+            await self.store.list_chunks(companion.collection, "saved"),
+            [record.chunk],
+        )
 
     async def test_metric_tracks_external_collection_recreation(self) -> None:
         """A live store does not retain a deleted collection's old metric."""

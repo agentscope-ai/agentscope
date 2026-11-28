@@ -396,9 +396,9 @@ async def update_knowledge_base(
 ) -> KnowledgeBaseView:
     """Update mutable fields on a knowledge base.
 
-    Only ``name`` and ``description`` can be updated.  The embedding
-    model configuration is pinned at creation time and cannot be
-    changed.
+    ``name``, ``description``, and ``chunker_config`` can be updated.
+    Changing the chunker configuration reindexes every existing
+    document. The embedding model configuration remains pinned.
 
     Args:
         body (`UpdateKnowledgeBaseRequest`):
@@ -419,6 +419,7 @@ async def update_knowledge_base(
         knowledge_base_id=knowledge_base_id,
         name=body.name,
         description=body.description,
+        chunker_config=body.chunker_config,
     )
     # Only reachable via ``_require_edit`` inside the service, so the
     # caller definitionally has edit permission.
@@ -652,6 +653,26 @@ async def upload_knowledge_document(
         filename=record.data.filename,
         status=record.status,
     )
+
+
+@knowledge_base_router.post(
+    "/{knowledge_base_id}/documents/{document_id}/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=KnowledgeDocumentView,
+)
+async def retry_knowledge_document(
+    knowledge_base_id: str = Path(description="The knowledge base id."),
+    document_id: str = Path(description="The failed document id."),
+    user_id: str = Depends(get_current_user_id),
+    service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
+) -> KnowledgeDocumentView:
+    """Retry one failed document with its knowledge base's current chunker."""
+    record = await service.retry_document(
+        user_id,
+        knowledge_base_id,
+        document_id,
+    )
+    return KnowledgeDocumentView.from_record(record)
 
 
 @knowledge_base_router.delete(

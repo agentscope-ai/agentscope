@@ -7,7 +7,7 @@ moving when something goes wrong:
 - a *lease* per in-flight document — its ``lease_expires_at`` is the
   upper bound on how long a worker may sit on the document before
   another worker is allowed to take over;
-- a *creation timestamp* on every ``pending`` record — used to catch
+- a *pending timestamp* on every ``pending`` record — used to catch
   documents that were never picked up by a worker (e.g. process died
   right after the upload endpoint persisted the record).
 
@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING
 
 from ..._logging import logger
 from .._bus_ops import enqueue_index_task
+from ..message_bus import MessageBusKeys
+from ._knowledge_reindex import resume_knowledge_base_reindex
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -65,6 +67,7 @@ class IndexSweeper:
                 A record may legitimately sit in ``pending`` while the
                 bus push is still queued; only after this grace period
                 do we treat the record as orphaned.
+                Reindexing starts a new grace period.
         """
         self._storage = storage
         self._bus = message_bus
@@ -117,6 +120,7 @@ class IndexSweeper:
         never picked up and whose lease pre-dates the grace period)
         is enqueued only once per sweep, by record id.
         """
+        resumed = await self._resume_reindexes()
         now = datetime.now()
         pending_threshold = now - self._pending_grace
 
@@ -129,6 +133,13 @@ class IndexSweeper:
         orphans = await self._storage.list_knowledge_documents_pending_since(
             threshold=pending_threshold,
         )
+        # A resumed batch already enqueued its pending documents, even
+        # when their original upload timestamp predates the grace period.
+        orphans = [
+            record
+            for record in orphans
+            if (record.user_id, record.knowledge_base_id) not in resumed
+        ]
         for record in (*stuck, *orphans):
             if record.id in seen:
                 continue
@@ -148,3 +159,36 @@ class IndexSweeper:
 
         if seen:
             logger.info("Re-enqueued %d stuck document(s)", len(seen))
+
+    async def _resume_reindexes(self) -> set[tuple[str, str]]:
+        """Resume incomplete batches without overwriting newer KB state."""
+        resumed: set[tuple[str, str]] = set()
+        try:
+            records = (
+                await self._storage.list_pending_knowledge_base_reindexes()
+            )
+        except NotImplementedError:
+            # Older custom storage backends still get document recovery.
+            return resumed
+        for record in records:
+            try:
+                async with self._bus.acquire_lock(
+                    MessageBusKeys.knowledge_base_mutation_lock(
+                        record.user_id,
+                        record.id,
+                    ),
+                ):
+                    current = await self._storage.get_knowledge_base(
+                        record.user_id,
+                        record.id,
+                    )
+                    if current is not None and current.data.reindex_pending:
+                        await resume_knowledge_base_reindex(
+                            self._storage,
+                            self._bus,
+                            current,
+                        )
+                        resumed.add((current.user_id, current.id))
+            except Exception:
+                logger.exception("Failed to resume KB reindex %s", record.id)
+        return resumed

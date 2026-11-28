@@ -18,6 +18,8 @@ import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
 from ._vector_store import (
+    _PublishPoints,
+    _ReadHits,
     DocumentSummary,
     VectorRecord,
     VectorSearchResult,
@@ -27,6 +29,7 @@ from .._document import Chunk
 
 if TYPE_CHECKING:
     from qdrant_client import AsyncQdrantClient
+    from qdrant_client.models import Distance, VectorParams
 
 
 class QdrantStore(VectorStoreBase):
@@ -101,9 +104,9 @@ class QdrantStore(VectorStoreBase):
                 The shared async client instance.
         """
         if self._client is None:
-            from qdrant_client import AsyncQdrantClient
+            from ._qdrant_client import _QdrantClient
 
-            self._client = AsyncQdrantClient(
+            self._client = _QdrantClient(
                 location=self._location,
                 url=self._url,
                 path=self._path,
@@ -111,6 +114,17 @@ class QdrantStore(VectorStoreBase):
                 **self._client_kwargs,
             )
         return self._client
+
+    async def _read_published_points(
+        self,
+        collection: str,
+        read: _ReadHits,
+        publish: _PublishPoints,
+    ) -> tuple[list[VectorSearchResult], bool]:
+        """Supply published candidates to a custom backend's native query."""
+        from ._qdrant_client import read_published_points
+
+        return await read_published_points(self, collection, read, publish)
 
     async def __aexit__(
         self,
@@ -154,6 +168,61 @@ class QdrantStore(VectorStoreBase):
                 distance=models.Distance(self._distance),
             ),
         )
+
+    async def _vector_params(self, name: str) -> "VectorParams":
+        """Read the actual unnamed dense vector configuration."""
+        from qdrant_client import models
+
+        info = await self.get_client().get_collection(name)
+        vectors = info.config.params.vectors
+        if isinstance(vectors, dict):
+            vectors = vectors.get("")
+        if not isinstance(vectors, models.VectorParams):
+            raise ValueError(
+                f"Collection {name!r} requires an unnamed dense vector.",
+            )
+        return vectors
+
+    @staticmethod
+    def _score_sign(distance: "Distance") -> int:
+        """Normalize scores using the actual collection distance metric."""
+        from qdrant_client import models
+
+        return (
+            -1
+            if distance in (models.Distance.EUCLID, models.Distance.MANHATTAN)
+            else 1
+        )
+
+    async def ensure_compatible_collection(
+        self,
+        name: str,
+        source: str,
+        dimensions: int,
+    ) -> None:
+        """Create or validate a companion using the source's actual schema."""
+        params = await self._vector_params(source)
+        if params.size != dimensions:
+            raise ValueError(
+                f"Collection {source!r} has {params.size} dimensions, "
+                f"incompatible with the embedding size {dimensions}.",
+            )
+        client = self.get_client()
+        if not await client.collection_exists(name):
+            try:
+                await client.create_collection(name, vectors_config=params)
+                return
+            except Exception:
+                # Another handle may have won creation. Validate its schema.
+                if not await client.collection_exists(name):
+                    raise
+        other = await self._vector_params(name)
+        if (params.size, params.distance) != (other.size, other.distance):
+            raise ValueError(
+                f"Qdrant collection {name!r} has incompatible vector "
+                f"configuration ({other.size}, {other.distance.value}) for "
+                f"{source!r} ({params.size}, {params.distance.value}).",
+            )
 
     async def delete_collection(self, name: str) -> None:
         """Delete a collection and all its data.
@@ -293,6 +362,8 @@ class QdrantStore(VectorStoreBase):
         query_vector: list[float],
         top_k: int = 5,
         metadata_filter: dict[str, Any] | None = None,
+        *,
+        exclude_document_ids: set[str] | None = None,
     ) -> list[VectorSearchResult]:
         """Find the most similar records to a query vector.
 
@@ -316,30 +387,24 @@ class QdrantStore(VectorStoreBase):
         from qdrant_client import models
 
         client = self.get_client()
-        collection_info = await client.get_collection(collection)
-        vectors = collection_info.config.params.vectors
-        if isinstance(vectors, dict):
-            vectors = vectors.get("")
-        if not isinstance(vectors, models.VectorParams):
-            raise ValueError(
-                "QdrantStore.search requires an unnamed dense vector.",
-            )
-        # The constructor's metric only applies to newly created collections.
-        # Read the actual schema, including after an external recreation.
-        distance = vectors.distance
+        sign = self._score_sign(
+            (await self._vector_params(collection)).distance,
+        )
+        query_filter = self._build_metadata_filter(metadata_filter)
+        if exclude_document_ids:
+            query_filter = query_filter or models.Filter()
+            query_filter.must_not = [
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchAny(any=sorted(exclude_document_ids)),
+                ),
+            ]
         response = await client.query_points(
             collection_name=collection,
             query=query_vector,
             limit=top_k,
             with_payload=True,
-            query_filter=self._build_metadata_filter(metadata_filter),
-        )
-        # ``Euclid`` / ``Manhattan`` are distances, so negate them to
-        # keep ``score`` higher-is-better like ``Cosine`` / ``Dot``.
-        sign = (
-            -1
-            if distance in (models.Distance.EUCLID, models.Distance.MANHATTAN)
-            else 1
+            query_filter=query_filter,
         )
         return [
             VectorSearchResult(
@@ -349,6 +414,8 @@ class QdrantStore(VectorStoreBase):
             )
             for point in response.points
         ]
+
+    search_excluding = search
 
     # ------------------------------------------------------------------
     # Document listing

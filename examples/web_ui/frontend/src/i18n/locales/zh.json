@@ -501,7 +501,7 @@
 	},
 	"dialog-knowledge-base-edit": {
 		"title": "编辑知识库",
-		"description": "修改知识库的名称与描述。",
+		"description": "修改知识库信息与分块配置。",
 		"name": {
 			"label": "名称",
 			"placeholder": "我的知识库"
@@ -516,8 +516,14 @@
 		"chunker": {
 			"label": "分块策略"
 		},
+		"reindex": {
+			"title": "将重建知识库索引",
+			"description": "保存后会重新处理库中已有的全部文档，可能产生新的 Embedding 调用费用。",
+			"submit": "保存并重建索引"
+		},
 		"errors": {
-			"nameRequired": "请填写知识库名称。"
+			"nameRequired": "请填写知识库名称。",
+			"chunkerRequired": "请选择分块策略。"
 		}
 	},
 	"dialog-knowledge-base-delete": {
@@ -584,6 +590,7 @@
 				"cancel": "取消",
 				"dismiss": "关闭",
 				"remove": "删除",
+				"retry": "重试",
 				"clearFinished": "清除已完成"
 			},
 			"title": "文档"

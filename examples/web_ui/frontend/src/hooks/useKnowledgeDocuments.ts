@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { knowledgeBaseApi } from '@/api';
 import type { KnowledgeDocumentView } from '@/api';
+import { useDocumentStatusPolling } from '@/hooks/useDocumentStatusPolling';
+
+const emptyDocuments: KnowledgeDocumentView[] = [];
 
 /**
  * Owns the document list for a single knowledge base.
@@ -14,7 +17,19 @@ import type { KnowledgeDocumentView } from '@/api';
  * commit.
  */
 export function useKnowledgeDocuments(knowledgeBaseId: string | null) {
-	const [documents, setDocuments] = useState<KnowledgeDocumentView[]>([]);
+	const [listed, setDocuments] = useState<KnowledgeDocumentView[] | null>(null);
+	const { statuses, setStatus } = useDocumentStatusPolling({
+		knowledgeBaseId,
+		documents: listed ?? emptyDocuments,
+	});
+	const documents = useMemo(
+		() =>
+			listed?.map((doc) => {
+				const polled = statuses[doc.id];
+				return polled && polled.updated_at > doc.updated_at ? polled : doc;
+			}) ?? null,
+		[listed, statuses],
+	);
 	// Starts true when there is something to fetch, so the first render
 	// already says "loading" instead of "no documents".
 	const [loading, setLoading] = useState(knowledgeBaseId !== null);
@@ -50,5 +65,5 @@ export function useKnowledgeDocuments(knowledgeBaseId: string | null) {
 		void refetch();
 	}, [refetch]);
 
-	return { documents, loading, error, refetch, setDocuments };
+	return { documents, loading, error, refetch, statuses, setStatus };
 }

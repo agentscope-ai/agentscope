@@ -18,6 +18,7 @@ from rag_parser_test import (
 from utils import AnyString
 
 from agentscope.app._service._index_worker import IndexWorker
+from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.rag import (
     Chunk,
     ExcelParser,
@@ -68,6 +69,7 @@ class _Storage:
         self.record = SimpleNamespace(
             status="pending",
             data=SimpleNamespace(
+                reindex_id=None,
                 content_type=content_type,
                 filename=filename,
                 blob_uri=f"blob://{filename}",
@@ -75,6 +77,11 @@ class _Storage:
             ),
         )
         self.statuses: list[str] = []
+
+    async def renew_knowledge_document_lease(self, **kwargs: object) -> bool:
+        """Keep this isolated pipeline's lease valid."""
+        del kwargs
+        return True
 
     async def get_knowledge_document(self, *args: str) -> object:
         """Return the document carrying the parameterised content type."""
@@ -106,17 +113,21 @@ class _Knowledge:
         """Accept the worker's cleanup call."""
         del document_id
 
-    async def insert_document(
+    async def prepare_document(
         self,
         *,
         chunks: list[Chunk],
         document_id: str,
         document_metadata: dict[str, object],
-    ) -> None:
-        """Record the chunks and metadata produced for the document."""
+    ) -> list[Chunk]:
+        """Record the metadata passed to the embedding stage."""
         del document_id
-        self.inserted_chunks = chunks
         self.inserted_metadata = document_metadata
+        return chunks
+
+    async def write_document_records(self, chunks: list[Chunk]) -> None:
+        """Record the chunks committed by the worker."""
+        self.inserted_chunks = chunks
 
 
 class _Manager:
@@ -133,7 +144,7 @@ class _Manager:
             data=SimpleNamespace(chunker_config=None),
         )
 
-    async def get_knowledge(self, *args: str) -> _Knowledge:
+    async def get_write_knowledge(self, *args: str) -> _Knowledge:
         """Return the vector-store facade."""
         del args
         return self.knowledge
@@ -146,7 +157,7 @@ class _TestIndexWorker(IndexWorker):
 
     async def run_pipeline(self) -> None:
         """Expose the pipeline entry point for the regression test."""
-        await self._run_pipeline("user-1", "kb-1", "doc-1")
+        await self._run_pipeline("user-1", "kb-1", "doc-1", "test-lease")
 
     async def _read_blob(self, blob_uri: str) -> bytes:
         """Return the in-memory payload used by the test."""
@@ -170,6 +181,7 @@ class IndexWorkerContentTypeTest(IsolatedAsyncioTestCase):
                 manager = _Manager()
                 parser = _Parser()
                 worker = _TestIndexWorker(
+                    message_bus=InMemoryMessageBus(),
                     storage=storage,  # type: ignore[arg-type]
                     blob_store=object(),  # type: ignore[arg-type]
                     knowledge_base_manager=manager,  # type: ignore[arg-type]
@@ -216,6 +228,7 @@ class IndexWorkerContentTypeTest(IsolatedAsyncioTestCase):
                 )
                 manager = _Manager()
                 worker = _TestIndexWorker(
+                    message_bus=InMemoryMessageBus(),
                     storage=storage,  # type: ignore[arg-type]
                     blob_store=object(),  # type: ignore[arg-type]
                     knowledge_base_manager=manager,  # type: ignore[arg-type]
@@ -294,6 +307,7 @@ def _worker(
     """Build a worker over the given storage and parser registry."""
     manager = _Manager()
     worker = _TestIndexWorker(
+        message_bus=InMemoryMessageBus(),
         storage=storage,  # type: ignore[arg-type]
         blob_store=object(),  # type: ignore[arg-type]
         knowledge_base_manager=manager,  # type: ignore[arg-type]
@@ -327,7 +341,7 @@ class IndexWorkerSearchableContentTest(IsolatedAsyncioTestCase):
                         release_knowledge_document_lease=AsyncMock(),
                         create=True,
                     ),
-                    patch.object(manager, "get_knowledge") as get_knowledge,
+                    patch.object(manager, "get_write_knowledge") as get_writer,
                 ):
                     await worker.process("user-1", "kb-1", "doc-1")
 
@@ -339,7 +353,7 @@ class IndexWorkerSearchableContentTest(IsolatedAsyncioTestCase):
                     "no indexable content",
                     update.await_args.kwargs["error"],
                 )
-                get_knowledge.assert_not_awaited()
+                get_writer.assert_not_awaited()
 
     async def test_index_status_reflects_searchable_pdf_content(self) -> None:
         """A scan needs OCR, while a mixed file indexes its text page."""

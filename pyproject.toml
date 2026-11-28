@@ -127,7 +127,7 @@ a2a = [
     "a2a-sdk>=1.1.1",
 ]
 # ------------ Vector stores ------------
-vdb-qdrant = ["qdrant-client"]
+vdb-qdrant = ["qdrant-client", "packaging"]
 vdb-milvus = [
     "pymilvus>=2.4.0",
     "milvus-lite>=3.1.0",

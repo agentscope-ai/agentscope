@@ -18,6 +18,19 @@ Lifecycle is managed via the async context manager protocol
 automatically.
 """
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from functools import partial, wraps
+from inspect import (
+    BoundArguments,
+    Parameter,
+    Signature,
+    iscoroutinefunction,
+    isfunction,
+    signature,
+)
 from typing import Any, Self
 
 from pydantic import BaseModel, Field
@@ -101,6 +114,257 @@ class DocumentSummary(BaseModel):
     encountered."""
 
 
+_ReadHits = Callable[[], Awaitable[list[VectorSearchResult]]]
+_ReadWindow = Callable[
+    [str, int, dict | None, set[str]],
+    Awaitable[list[VectorSearchResult]],
+]
+_PublishWindow = Callable[
+    [int, _ReadWindow],
+    Awaitable[list[VectorSearchResult]],
+]
+_RankStages = Callable[[_PublishWindow], Awaitable[list[VectorSearchResult]]]
+_PublishPoints = Callable[
+    [_RankStages, bool],
+    Awaitable[list[VectorSearchResult]],
+]
+_SEARCH_FIELDS = {"collection", "query_vector", "top_k", "metadata_filter"}
+
+
+def _forwarded_search_signature(
+    backend: Signature,
+    public: Signature,
+    positional_count: int,
+) -> Signature:
+    """Expose public window arguments carried by a store's variadics."""
+    receiver, *fields = backend.parameters.values()
+    public_receiver, *standard = public.parameters.values()
+    if receiver.kind == Parameter.VAR_POSITIONAL:
+        fields.insert(0, receiver)
+        receiver = public_receiver.replace(kind=Parameter.POSITIONAL_ONLY)
+
+    declared = backend.parameters
+    accepts_keywords = any(p.kind == Parameter.VAR_KEYWORD for p in fields)
+    effective = [receiver]
+    for field in fields:
+        if field.kind == Parameter.VAR_POSITIONAL:
+            # Only consume positional slots following the public prefix.
+            prefix = effective[1:]
+            if [p.name for p in prefix] == [
+                p.name for p in standard[: len(prefix)]
+            ]:
+                for index, param in enumerate(
+                    standard[len(prefix) :],
+                    len(prefix),
+                ):
+                    if param.name in declared or (
+                        accepts_keywords and index >= positional_count
+                    ):
+                        break
+                    effective.append(param)
+        elif field.kind == Parameter.VAR_KEYWORD:
+            present = {p.name for p in effective}
+            effective.extend(
+                p.replace(kind=Parameter.KEYWORD_ONLY)
+                for p in standard
+                if p.name not in present
+            )
+        effective.append(field)
+    return backend.replace(parameters=effective)
+
+
+async def _eligible_window(
+    read: Callable[[int], Awaitable[list[VectorSearchResult]]],
+    top_k: int,
+    excluded: set[str],
+    max_limit: int | None,
+    metadata_filter: dict | None = None,
+    first_hits: list[VectorSearchResult] | None = None,
+) -> tuple[list[VectorSearchResult], int]:
+    """Grow the caller's ranked window until enough eligible hits remain."""
+    limit = top_k
+    while True:
+        hits = first_hits if first_hits is not None else await read(limit)
+        first_hits = None
+        visible = [
+            hit
+            for hit in hits
+            if hit.document_id not in excluded
+            and (
+                not metadata_filter
+                or metadata_filter.items() <= hit.chunk.metadata.items()
+            )
+        ]
+        if len(visible) >= top_k or len(hits) < limit or limit == max_limit:
+            return visible[:top_k], len(hits)
+        limit *= 2
+        if max_limit is not None:
+            limit = min(limit, max_limit)
+
+
+@dataclass
+class _StoreQuery:
+    """A backend call with the arguments actually supplied by its caller."""
+
+    store: "VectorStoreBase"
+    implementation: Callable[..., Awaitable[list[VectorSearchResult]]]
+    bound: BoundArguments
+    read: _ReadHits
+    forwards_filter: bool
+    forwards_omitted_limit: bool
+
+    @property
+    def is_vector_search(self) -> bool:
+        """Whether this backend call exposes the standard window parameters."""
+        return _SEARCH_FIELDS <= self.bound.signature.parameters.keys()
+
+    def argument(self, name: str) -> Any:
+        """Resolve a window parameter without adding it to the replay."""
+        return self.bound.arguments.get(
+            name,
+            self.bound.signature.parameters[name].default,
+        )
+
+    async def window(
+        self,
+        collection: str,
+        limit: int,
+        metadata_filter: dict | None,
+        omit: set[str],
+    ) -> list[VectorSearchResult]:
+        """Replay the same query in a published slot with its exclusions."""
+        call = self.bound.signature.bind(*self.bound.args, **self.bound.kwargs)
+        call.arguments["collection"] = collection
+        if self.forwards_omitted_limit:
+            return await self._forwarded_window(
+                call,
+                collection,
+                limit,
+                metadata_filter,
+                omit,
+            )
+        call.arguments["top_k"] = limit
+        extra_filter = bool(metadata_filter) and (
+            metadata_filter != self.argument("metadata_filter")
+        )
+        if self.forwards_filter and (extra_filter or omit):
+            return await self._forwarded_window(
+                call,
+                collection,
+                limit,
+                metadata_filter,
+                omit,
+            )
+        if extra_filter:
+            call.arguments["metadata_filter"] = metadata_filter
+
+        if not omit or "exclude_document_ids" in call.signature.parameters:
+            if omit:
+                call.arguments["exclude_document_ids"] = (
+                    self.argument("exclude_document_ids") or set()
+                ) | omit
+            return await self.implementation(*call.args, **call.kwargs)
+        receiver = next(iter(call.signature.parameters))
+        if (
+            call.signature.parameters.keys() == _SEARCH_FIELDS | {receiver}
+            and "metadata_filter" in call.arguments
+            and type(self.store).search_excluding
+            is not VectorStoreBase.search_excluding
+        ):
+            return await self.store.search_excluding(
+                collection,
+                call.arguments["query_vector"],
+                limit,
+                call.arguments["metadata_filter"],
+                exclude_document_ids=omit,
+            )
+
+        # Refill with the same backend-specific options on every read.
+        async def read_window(size: int) -> list[VectorSearchResult]:
+            call.arguments["top_k"] = size
+            return await self.implementation(*call.args, **call.kwargs)
+
+        hits, _ = await _eligible_window(
+            read_window,
+            limit,
+            omit,
+            # pylint: disable-next=protected-access
+            self.store._max_search_limit,
+        )
+        return hits
+
+    async def _forwarded_window(
+        self,
+        call: BoundArguments,
+        collection: str,
+        limit: int,
+        scope: dict | None,
+        omit: set[str],
+    ) -> list[VectorSearchResult]:
+        """Apply slot constraints after the forwarder resolves its defaults."""
+
+        async def read_window(size: int | None) -> list[VectorSearchResult]:
+            async def constrain(
+                target: str,
+                query: "_StoreQuery",
+            ) -> list[VectorSearchResult]:
+                if target != collection or not query.is_vector_search:
+                    return await query.read()
+                resolved = query.argument("metadata_filter") or {}
+                merged = {**resolved, **(scope or {})}
+                if not resolved.items() <= merged.items():
+                    return []
+                return await query.window(
+                    target,
+                    query.argument("top_k"),
+                    merged or None,
+                    omit,
+                )
+
+            if size is not None:
+                call.arguments["top_k"] = size
+            with _observe_store_searches((self.store, constrain)):
+                return await self.implementation(*call.args, **call.kwargs)
+
+        first_hits = None
+        if self.forwards_omitted_limit:
+            first_hits = await read_window(None)
+            limit = len(first_hits)
+        # A forwarder may also use its client directly. Enforce the same
+        # constraints on its results and refill past ineligible hits.
+        hits, _ = await _eligible_window(
+            read_window,
+            limit,
+            omit,
+            # pylint: disable-next=protected-access
+            self.store._max_search_limit,
+            scope,
+            first_hits,
+        )
+        return hits
+
+
+_ObserveSearch = Callable[
+    [str, _StoreQuery],
+    Awaitable[list[VectorSearchResult]],
+]
+_store_search_observer: ContextVar[
+    tuple["VectorStoreBase | None", _ObserveSearch] | None
+] = ContextVar("store_search_observer", default=None)
+
+
+@contextmanager
+def _observe_store_searches(
+    binding: tuple["VectorStoreBase | None", _ObserveSearch] | None,
+) -> Iterator[None]:
+    """Observe only searches made within the current async read."""
+    token = _store_search_observer.set(binding)
+    try:
+        yield
+    finally:
+        _store_search_observer.reset(token)
+
+
 class VectorStoreBase(ABC):
     """Abstract base class for vector store backends.
 
@@ -111,6 +375,86 @@ class VectorStoreBase(ABC):
     underlying client SDK is expected to handle connection pooling and
     thread safety internally.
     """
+
+    _max_search_limit: int | None = None
+    """Largest result window the backend accepts for a single search."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Expose physical searches to the current hosted read, if any."""
+        super().__init_subclass__(**kwargs)
+        implementation = cls.__dict__.get("search")
+        if not isfunction(implementation) or not iscoroutinefunction(
+            implementation,
+        ):
+            return
+        # Forwarders decorated with wraps still receive their actual *args
+        # and **kwargs, even when they advertise the delegated signature.
+        parameters = signature(implementation, follow_wrapped=False)
+        public = signature(VectorStoreBase.search)
+        if hasattr(implementation, "__wrapped__"):
+            declared = signature(implementation).parameters
+            if "top_k" in declared:
+                public = public.replace(
+                    parameters=[
+                        p.replace(default=declared["top_k"].default)
+                        if p.name == "top_k"
+                        else p
+                        for p in public.parameters.values()
+                    ],
+                )
+        forwards_window = (
+            not _SEARCH_FIELDS <= parameters.parameters.keys()
+            and any(
+                p.kind in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD)
+                for p in parameters.parameters.values()
+            )
+        )
+
+        @wraps(implementation)
+        async def search(
+            self: "VectorStoreBase",
+            *args: Any,
+            **options: Any,
+        ) -> list[VectorSearchResult]:
+            observer = _store_search_observer.get()
+            if observer is None or (
+                observer[0] is not None and observer[0] is not self
+            ):
+                return await implementation(self, *args, **options)
+            collection = args[0] if args else options.get("collection")
+            if collection is None:
+                return await implementation(self, *args, **options)
+
+            # A store may delegate to its parent or another physical search.
+            # Observe the result of the outer call, including its own ranking.
+            with _observe_store_searches(None):
+                bound = parameters.bind(self, *args, **options)
+                if forwards_window:
+                    # A backend can also accept a non-vector overload.
+                    # Keep its native binding if it lacks the public inputs.
+                    try:
+                        binding = _forwarded_search_signature(
+                            parameters,
+                            public,
+                            len(args),
+                        )
+                        bound = binding.bind(self, *args, **options)
+                    except (TypeError, ValueError):
+                        pass
+                return await observer[1](
+                    collection,
+                    _StoreQuery(
+                        self,
+                        implementation,
+                        bound,
+                        partial(implementation, self, *args, **options),
+                        "metadata_filter" not in parameters.parameters,
+                        "top_k" not in parameters.parameters
+                        and "top_k" not in bound.arguments,
+                    ),
+                )
+
+        cls.search = search
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -161,6 +505,26 @@ class VectorStoreBase(ABC):
                 All vectors inserted later must have this many elements.
         """
 
+    async def ensure_compatible_collection(
+        self,
+        name: str,
+        source: str,
+        dimensions: int,
+    ) -> None:
+        """Ensure a companion whose search scores compare with the source.
+
+        Stores supporting per-collection metrics can inspect the source and
+        validate an existing companion before their results are merged.
+        """
+        del source  # Stores with a fixed metric only need the dimension.
+        if not await self.has_collection(name):
+            await self.create_collection(name, dimensions)
+
+    async def is_search_index_ready(self, collection: str) -> bool:
+        """Check an existing collection without waiting for an index build."""
+        del collection  # Most stores make new collections searchable at once.
+        return True
+
     @abstractmethod
     async def delete_collection(self, name: str) -> None:
         """Delete a collection and all its data.
@@ -201,6 +565,32 @@ class VectorStoreBase(ABC):
                 The records to insert (each carrying a
                 :class:`Chunk` and its embedding vector).
         """
+
+    async def prepare_for_replacement(self, collection: str) -> None:
+        """Make earlier writes visible to deletion in the inactive slot.
+
+        The target collection may not exist on its first use. Stores whose
+        deletions already see pending writes need no preparation.
+        """
+
+    async def refresh_search(self, collection: str) -> None:
+        """Flush deferred search updates on backends with explicit refresh."""
+
+    async def insert_for_publication(
+        self,
+        collection: str,
+        document_id: str,
+        records: list[VectorRecord],
+        metadata_filter: dict[str, Any] | None,
+    ) -> None:
+        """Write one replacement before switching the published document.
+
+        Backends with asynchronous search indexing can wait for the exact
+        write attempt here. Other stores retain their usual insert behavior.
+        """
+        del document_id, metadata_filter
+        if records:
+            await self.insert(collection, records)
 
     @abstractmethod
     async def delete(
@@ -266,6 +656,50 @@ class VectorStoreBase(ABC):
                 normalize a distance metric into that higher-is-better
                 score, e.g. by negating it.
         """
+
+    async def search_excluding(
+        self,
+        collection: str,
+        query_vector: list[float],
+        top_k: int,
+        metadata_filter: dict[str, Any] | None,
+        *,
+        exclude_document_ids: set[str],
+    ) -> list[VectorSearchResult]:
+        """Find the top eligible hits with legacy vector-store interfaces."""
+        visible, _ = await self._search_excluding_window(
+            collection,
+            query_vector,
+            top_k,
+            metadata_filter,
+            exclude_document_ids,
+        )
+        return visible
+
+    async def _search_excluding_window(
+        self,
+        collection: str,
+        query_vector: list[float],
+        top_k: int,
+        metadata_filter: dict[str, Any] | None,
+        exclude_document_ids: set[str],
+    ) -> tuple[list[VectorSearchResult], int]:
+        """Return eligible hits and the final unfiltered result count."""
+
+        async def read(limit: int) -> list[VectorSearchResult]:
+            return await self.search(
+                collection,
+                query_vector,
+                limit,
+                metadata_filter,
+            )
+
+        return await _eligible_window(
+            read,
+            top_k,
+            exclude_document_ids,
+            self._max_search_limit,
+        )
 
     # ------------------------------------------------------------------
     # Document listing

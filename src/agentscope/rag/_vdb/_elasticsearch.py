@@ -160,6 +160,38 @@ class ElasticsearchStore(VectorStoreBase):
                 "record(s)",
             )
 
+    async def refresh_search(self, collection: str) -> None:
+        """Require a successful refresh on all target shards."""
+        result = await self.get_client().indices.refresh(index=collection)
+        if result["_shards"]["failed"]:
+            raise RuntimeError(
+                f"Elasticsearch refresh failed on index {collection!r}.",
+            )
+
+    async def prepare_for_replacement(self, collection: str) -> None:
+        """Expose pending writes before delete-by-query takes its snapshot."""
+        if self._refresh is False and await self.has_collection(collection):
+            await self.refresh_search(collection)
+
+    async def insert_for_publication(
+        self,
+        collection: str,
+        document_id: str,
+        records: list[VectorRecord],
+        metadata_filter: dict[str, Any] | None,
+    ) -> None:
+        """Make the replacement and any preceding deletions searchable."""
+        await super().insert_for_publication(
+            collection,
+            document_id,
+            records,
+            metadata_filter,
+        )
+        if self._refresh is False:
+            # Refresh the target even for an empty replacement or shards
+            # that only held deleted chunks. A bulk write skips those shards.
+            await self.refresh_search(collection)
+
     async def delete(
         self,
         collection: str,
@@ -208,6 +240,8 @@ class ElasticsearchStore(VectorStoreBase):
         query_vector: list[float],
         top_k: int = 5,
         metadata_filter: dict[str, Any] | None = None,
+        *,
+        exclude_document_ids: set[str] | None = None,
     ) -> list[VectorSearchResult]:
         """Run an approximate cosine kNN search."""
         if top_k <= 0:
@@ -225,6 +259,22 @@ class ElasticsearchStore(VectorStoreBase):
             "num_candidates": num_candidates,
         }
         filters = self._metadata_filters(metadata_filter)
+        if exclude_document_ids:
+            filters.append(
+                {
+                    "bool": {
+                        "must_not": [
+                            {
+                                "terms": {
+                                    "document_id": sorted(
+                                        exclude_document_ids,
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                },
+            )
         if filters:
             knn["filter"] = filters
 
@@ -242,6 +292,8 @@ class ElasticsearchStore(VectorStoreBase):
             )
             for hit in response["hits"]["hits"]
         ]
+
+    search_excluding = search
 
     async def list_documents(
         self,

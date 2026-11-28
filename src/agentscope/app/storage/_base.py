@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-public-methods
 """The storage base class."""
+import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Any, Self
@@ -1166,6 +1167,45 @@ class StorageBase(ABC):
                 All knowledge base records belonging to the user.
         """
 
+    async def get_knowledge_publication_revision(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        live_ids: set[str] | None,
+    ) -> str | None:
+        """Return a catalog revision, or None to require a full reread.
+
+        Return None if any previously observed live row has since expired.
+        Backends providing this shortcut must invalidate the revision when
+        upload ownership, publication routing or retired KB aliases change.
+        """
+        del user_id, knowledge_base_id, live_ids
+        return None
+
+    async def get_knowledge_vector_ownership(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        ids: set[str] | None,
+    ) -> tuple[set[str], set[str]]:
+        """Return upload IDs and reserved primary aliases retained after TTL.
+
+        Restrict both sets to the physical IDs requested, or return all
+        for a bulk exclusion. Stores without expiring rows need no markers.
+        """
+        del user_id, knowledge_base_id, ids
+        return set(), set()
+
+    async def list_pending_knowledge_base_reindexes(
+        self,
+    ) -> list[KnowledgeBaseRecord]:
+        """Return knowledge bases with unfinished reindex dispatch.
+
+        Backends supporting chunker updates must implement this scan
+        so the index sweeper can resume dispatch after a process crash.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     async def delete_knowledge_base(
         self,
@@ -1241,6 +1281,21 @@ class StorageBase(ABC):
                 The record, or ``None`` if not found.
         """
 
+    async def get_knowledge_documents(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        ids: set[str],
+    ) -> list[KnowledgeDocumentRecord]:
+        """Fetch selected uploads, honoring legacy single-record lookups."""
+        rows = await asyncio.gather(
+            *(
+                self.get_knowledge_document(user_id, knowledge_base_id, key)
+                for key in ids
+            ),
+        )
+        return [row for row in rows if row is not None]
+
     @abstractmethod
     async def list_knowledge_documents(
         self,
@@ -1296,6 +1351,10 @@ class StorageBase(ABC):
         status: KnowledgeDocumentStatus,
         error: str | None = None,
         chunk_count: int | None = None,
+        *,
+        expected_lease_token: str | None = None,
+        alternate_index: bool | None = None,
+        migrate_vector_slot: bool = False,
     ) -> None:
         """Update only the status-related fields of a document record.
 
@@ -1304,6 +1363,10 @@ class StorageBase(ABC):
         ``ready`` / ``error``).  Cheaper than a full upsert and avoids
         races with concurrent lease writes by touching only the status
         / error / chunk_count fields.
+
+        To support reindexing, declare both ``expected_lease_token`` and
+        ``alternate_index`` in the backend method signature and apply them
+        atomically. Backends with the original signature support uploads.
 
         Args:
             user_id (`str`):
@@ -1321,6 +1384,15 @@ class StorageBase(ABC):
             chunk_count (`int | None`, optional):
                 The final chunk count, set when ``status == 'ready'``.
                 ``None`` leaves the existing value unchanged.
+            alternate_index (`bool | None`, optional):
+                Publish this vector slot atomically with the ready status.
+            migrate_vector_slot (`bool`, optional):
+                Switch a legacy record to the isolated alternate collection
+                atomically with publication.
+            expected_lease_token (`str | None`, optional):
+                Atomically update only if ``processing_node`` matches
+                this token. A missing record or mismatched token is a
+                no-op. ``None`` omits the ownership condition.
         """
 
     @abstractmethod
@@ -1335,7 +1407,9 @@ class StorageBase(ABC):
     ) -> bool:
         """Compare-and-swap acquisition of the document processing lease.
 
-        Succeeds only if no other worker currently holds a live lease —
+        Terminal documents (``ready`` / ``error``) cannot be acquired.
+        A retry must first reset them to ``pending``. Otherwise succeeds
+        only if no other worker currently holds a live lease —
         i.e. ``processing_node`` is unset or ``lease_expires_at`` is in
         the past relative to ``now``.  On success the record's
         ``processing_node`` and ``data.lease_expires_at`` fields are
@@ -1351,9 +1425,9 @@ class StorageBase(ABC):
             document_id (`str`):
                 The document whose lease is being acquired.
             processing_node (`str`):
-                Stable identifier of the calling worker (e.g.
-                ``hostname:pid:uuid``).  Persisted as
-                ``processing_node`` on success.
+                Unique token for this processing attempt. Persisted as
+                ``processing_node`` on success; never reuse it for a
+                later attempt, even on the same worker.
             lease_ttl (`timedelta`):
                 How long the lease should live from ``now``.
             now (`datetime | None`, optional):
@@ -1363,7 +1437,7 @@ class StorageBase(ABC):
         Returns:
             `bool`:
                 ``True`` when the lease was acquired by this caller,
-                ``False`` when another worker already holds it.
+                ``False`` when absent, terminal, or already leased.
         """
 
     @abstractmethod
@@ -1393,7 +1467,7 @@ class StorageBase(ABC):
             document_id (`str`):
                 The document being renewed.
             processing_node (`str`):
-                The caller's processing node id; must match the
+                This attempt's lease token; must match the
                 record's current ``processing_node`` for renewal to
                 succeed.
             lease_ttl (`timedelta`):
@@ -1430,7 +1504,7 @@ class StorageBase(ABC):
             document_id (`str`):
                 The document whose lease is being released.
             processing_node (`str`):
-                The caller's processing node id; must match the
+                This attempt's lease token; must match the
                 record's current holder.
         """
 
@@ -1471,8 +1545,9 @@ class StorageBase(ABC):
 
         Args:
             threshold (`datetime`):
-                Cut-off creation time; only ``pending`` records
-                ``created_at < threshold`` are returned.
+                Cut-off for the current pending pass. Compare against
+                ``data.pending_since``, falling back to ``created_at``
+                for legacy records without a pending timestamp.
 
         Returns:
             `list[KnowledgeDocumentRecord]`:

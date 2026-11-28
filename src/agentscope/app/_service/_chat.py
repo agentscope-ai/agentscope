@@ -1607,9 +1607,11 @@ class ChatService:
                                 )
                             )
                             kb_manager = self._knowledge_base_manager
-                            knowledge = await kb_manager.get_knowledge(
-                                kb_record.user_id,
-                                kb_id,
+                            knowledge = (
+                                await kb_manager.get_published_knowledge(
+                                    kb_record.user_id,
+                                    kb_id,
+                                )
                             )
                         except Exception:  # pylint: disable=broad-except
                             # A KB the session referenced was deleted, its

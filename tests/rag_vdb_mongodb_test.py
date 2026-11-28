@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+import re
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
 from typing import Any
@@ -15,6 +16,7 @@ from utils import AnyString
 from agentscope.message import TextBlock
 from agentscope.rag import (
     Chunk,
+    KnowledgeBase,
     MongoDBStore,
     VectorRecord,
     VectorSearchResult,
@@ -147,7 +149,10 @@ class _FakeMongoCollection:
         self._database = database
         self._name = name
         self._docs: dict[str, dict[str, Any]] = {}
+        # A snapshot models mongot lag independently of mongod writes.
+        self.search_snapshot: dict[str, dict] | None = None
         self._index_queryable = False
+        self.indexes: dict[str, dict] = {}
 
     def find(
         self,
@@ -159,15 +164,7 @@ class _FakeMongoCollection:
         matched = [
             doc
             for doc in self._docs.values()
-            if all(
-                _read_dotted(doc, key)
-                == (
-                    value["$eq"]
-                    if isinstance(value, dict) and "$eq" in value
-                    else value
-                )
-                for key, value in filter_doc.items()
-            )
+            if self._matches_match_stage(doc, filter_doc)
         ]
         return _FakeFindCursor(matched)
 
@@ -178,7 +175,20 @@ class _FakeMongoCollection:
     ) -> None:
         del ordered
         for operation in operations:
-            self._docs[operation._doc["_id"]] = dict(operation._doc)
+            selector = operation._filter["_id"]
+            row_id = operation._doc["$setOnInsert"]["_id"]
+            if isinstance(selector, re.Pattern):
+                row_id = next(
+                    (key for key in self._docs if selector.fullmatch(key)),
+                    row_id,
+                )
+            self._docs[row_id] = {"_id": row_id, **operation._doc["$set"]}
+
+    async def count_documents(self, query: dict) -> int:
+        return sum(
+            self._matches_match_stage(row, query)
+            for row in self._docs.values()
+        )
 
     async def delete_many(self, filter_doc: dict[str, Any]) -> None:
         document_id = filter_doc["document_id"]
@@ -191,12 +201,21 @@ class _FakeMongoCollection:
             del self._docs[doc_id]
 
     async def create_search_index(self, model: Any) -> None:
-        del model
+        self.indexes[model.document["name"]] = model.document["definition"]
         self._index_queryable = True
 
     async def list_search_indexes(self, name: str) -> _FakeAsyncIterator:
-        del name
-        return _FakeAsyncIterator([{"queryable": self._index_queryable}])
+        if name not in self.indexes:
+            return _FakeAsyncIterator([])
+        return _FakeAsyncIterator(
+            [
+                {
+                    "name": name,
+                    "queryable": self._index_queryable,
+                    "latestDefinition": self.indexes[name],
+                },
+            ],
+        )
 
     async def aggregate(
         self,
@@ -212,23 +231,49 @@ class _FakeMongoCollection:
         pipeline: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         if pipeline and "$vectorSearch" in pipeline[0]:
-            return self._vector_search(pipeline[0]["$vectorSearch"])
+            hits = self._vector_search(pipeline[0]["$vectorSearch"])
+            for stage in pipeline[1:]:
+                if "$match" in stage:
+                    hits = [
+                        h
+                        for h in hits
+                        if self._matches_match_stage(h, stage["$match"])
+                    ]
+            return hits
         return self._list_documents(pipeline)
 
     def _vector_search(self, stage: dict[str, Any]) -> list[dict[str, Any]]:
         query_vector = stage["queryVector"]
         top_k = stage["limit"]
         metadata_filter = stage.get("filter")
+        vector_field = next(
+            f
+            for f in self.indexes[stage["index"]]["fields"]
+            if f["type"] == "vector"
+        )
 
         scored: list[dict[str, Any]] = []
-        for doc in self._docs.values():
-            if not self._matches_metadata_filter(doc, metadata_filter):
+        indexed = (
+            self._docs
+            if self.search_snapshot is None
+            else self.search_snapshot
+        )
+        for doc in indexed.values():
+            if not self._matches_match_stage(doc, metadata_filter or {}):
                 continue
+            score = _cosine_similarity(query_vector, doc["vector"])
+            if vector_field["similarity"] == "euclidean":
+                score = 1 / (1 + math.dist(query_vector, doc["vector"]))
+            elif vector_field["similarity"] == "dotProduct":
+                score = (
+                    1 + sum(x * y for x, y in zip(query_vector, doc["vector"]))
+                ) / 2
             scored.append(
                 {
+                    "_id": doc["_id"],
                     "document_id": doc["document_id"],
                     "chunk": doc["chunk"],
-                    "score": _cosine_similarity(query_vector, doc["vector"]),
+                    "score": score,
                 },
             )
 
@@ -257,31 +302,22 @@ class _FakeMongoCollection:
         match: dict[str, Any],
     ) -> bool:
         for key, expected in match.items():
+            if key == "$and":
+                if not all(
+                    _FakeMongoCollection._matches_match_stage(doc, clause)
+                    for clause in expected
+                ):
+                    return False
+                continue
+            value = _read_dotted(doc, key)
+            if isinstance(expected, dict) and "$nin" in expected:
+                if value in expected["$nin"]:
+                    return False
+                continue
             if isinstance(expected, dict) and "$eq" in expected:
                 expected = expected["$eq"]
-            value = doc
-            for part in key.split("."):
-                value = value[part]
             if value != expected:
                 return False
-        return True
-
-    @staticmethod
-    def _matches_metadata_filter(
-        doc: dict[str, Any],
-        metadata_filter: dict[str, Any] | None,
-    ) -> bool:
-        if not metadata_filter:
-            return True
-
-        for clause in metadata_filter.get("$and", []):
-            for key, condition in clause.items():
-                expected = condition["$eq"]
-                value = doc
-                for part in key.split("."):
-                    value = value[part]
-                if value != expected:
-                    return False
         return True
 
     @staticmethod
@@ -343,6 +379,8 @@ class _FakeMongoClient:
 class MongoDBStoreTest(IsolatedAsyncioTestCase):
     """The test cases for the MongoDBStore class."""
 
+    # pylint: disable=too-many-public-methods
+
     async def asyncSetUp(self) -> None:
         """Create a MongoDB store with a mocked pymongo client."""
         self._fake_client = _FakeMongoClient("test-db")
@@ -375,6 +413,131 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
 
         await self.store.delete_collection("kb-1")
         self.assertEqual(await self.store.has_collection("kb-1"), False)
+
+    async def test_companion_recovers_missing_index(self) -> None:
+        """Retry a partial creation and wait for the named index to serve."""
+        await self.store.create_collection("kb", 2)
+        db = self._fake_client["test-db"]
+        companion = await db.create_collection("versions")
+        companion.indexes["unrelated"] = {"fields": []}
+        with patch.object(
+            companion,
+            "create_search_index",
+            side_effect=RuntimeError("failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "failed"):
+                await self.store.ensure_compatible_collection(
+                    "versions",
+                    "kb",
+                    2,
+                )
+        self.assertEqual(companion.indexes, {"unrelated": {"fields": []}})
+        with patch.object(
+            companion,
+            "create_search_index",
+            wraps=companion.create_search_index,
+        ) as create:
+            await self.store.ensure_compatible_collection("versions", "kb", 2)
+            companion._index_queryable = False
+
+            async def finish_build(_delay: float) -> None:
+                companion._index_queryable = True
+
+            with patch("asyncio.sleep", side_effect=finish_build) as wait:
+                await self.store.ensure_compatible_collection(
+                    "versions",
+                    "kb",
+                    2,
+                )
+            self.assertEqual((create.await_count, wait.await_count), (1, 1))
+
+    async def test_primary_handle_resumes_partial_creation(self) -> None:
+        """A physical collection may exist after its index creation failed."""
+        kb = KnowledgeBase(
+            name="kb",
+            description="",
+            embedding_model=SimpleNamespace(dimensions=2),
+            vector_store=self.store,
+            collection="kb",
+        )
+        with patch.object(
+            _FakeMongoCollection,
+            "create_search_index",
+            side_effect=RuntimeError("failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "failed"):
+                await kb.ensure_collection()
+        await kb.ensure_collection()
+        self.assertTrue(await self.store.is_search_index_ready("kb"))
+
+    async def test_companion_uses_persisted_similarity(self) -> None:
+        """Reopening a Euclidean index must preserve comparable scores."""
+        original = MongoDBStore(
+            "mongodb://mock",
+            "test-db",
+            distance="euclidean",
+        )
+        await original.create_collection("kb", 2)
+        await self.store.ensure_compatible_collection("versions", "kb", 2)
+        db = self._fake_client["test-db"]
+        self.assertEqual(db["versions"].indexes, db["kb"].indexes)
+        exact = _make_record("exact", [1.0, 0.0], "exact")
+        far = _make_record("far", [100.0, 0.0], "far")
+        await self.store.insert("kb", [exact, far])
+        before = await self.store.search("kb", exact.vector)
+        await self.store.insert("versions", [far])
+        primary = await self.store.search(
+            "kb",
+            exact.vector,
+            exclude_document_ids={"far"},
+        )
+        alternate = await self.store.search("versions", exact.vector)
+        self.assertEqual(
+            sorted(
+                primary + alternate,
+                key=lambda hit: hit.score,
+                reverse=True,
+            ),
+            before,
+        )
+        self.assertEqual(
+            [(h.document_id, h.score) for h in before],
+            [("exact", 1.0), ("far", 0.01)],
+        )
+        await self.store.create_collection("wrong", 2)
+        await self.store.insert("wrong", [far])
+        with self.assertRaisesRegex(ValueError, "incompatible"):
+            await self.store.ensure_compatible_collection("wrong", "kb", 2)
+        self.assertEqual(
+            db["wrong"].indexes["vector_index"]["fields"][0]["similarity"],
+            "cosine",
+        )
+        self.assertEqual(
+            await self.store.list_chunks("wrong", "far"),
+            [far.chunk],
+        )
+        with self.assertRaisesRegex(ValueError, "incompatible"):
+            await self.store.ensure_compatible_collection("unused", "kb", 3)
+        self.assertFalse(await self.store.has_collection("unused"))
+
+        # During an online edit, latestDefinition describes the staged index.
+        active = db["kb"].indexes["vector_index"]
+        staged = db["wrong"].indexes["vector_index"]
+        view = {
+            "status": "BUILDING",
+            "queryable": True,
+            "latestDefinition": staged,
+            "statusDetail": [
+                {"mainIndex": {"queryable": True, "definition": active}},
+            ],
+        }
+        with patch.object(
+            db["kb"],
+            "list_search_indexes",
+            side_effect=lambda _name: _FakeAsyncIterator([view]),
+        ):
+            await self.store.ensure_compatible_collection("reopened", "kb", 2)
+        self.assertEqual(db["reopened"].indexes, {"vector_index": active})
 
     async def test_insert_and_search(self) -> None:
         """Inserted records are searchable, ordered by similarity."""
@@ -605,6 +768,195 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                 "chunk.metadata.label": {"$eq": {"$regex": "^private"}},
             },
         )
+
+    async def test_search_excludes_staging_within_scope(self) -> None:
+        collection = SimpleNamespace(
+            aggregate=AsyncMock(return_value=_FakeAsyncIterator([])),
+        )
+        with (
+            patch.object(
+                self.store,
+                "_ensure_index_ready",
+                return_value={
+                    "fields": [{"type": "filter", "path": "document_id"}],
+                },
+            ),
+            patch.object(self.store, "_col", return_value=collection),
+        ):
+            await self.store.search_excluding(
+                "kb",
+                [1.0],
+                1,
+                {"tenant": "a"},
+                exclude_document_ids={"~doc"},
+            )
+        pipeline = collection.aggregate.await_args.args[0]
+        self.assertEqual(
+            pipeline[0]["$vectorSearch"]["filter"],
+            {
+                "$and": [
+                    {"chunk.metadata.tenant": {"$eq": "a"}},
+                    {"document_id": {"$nin": ["~doc"]}},
+                ],
+            },
+        )
+
+    async def test_legacy_publication_probe_and_sdk_upsert(self) -> None:
+        """Post-filter legacy indexes and preserve logical chunk IDs."""
+        store = MongoDBStore(
+            "mongodb://mock",
+            "test-db",
+            filter_fields=["chunk.metadata.tenant"],
+        )
+        await store.create_collection("kb", dimensions=2)
+        col = store._col("kb")
+        doc_id = "~doc.[1]"
+        scope = {"tenant": "A"}
+        other = _make_record("other tenant", [1, 0], doc_id, chunk_index=1)
+        other.chunk.metadata.update({"tenant": "B"})
+        await store.insert("kb", [other, _make_record("other", [1, 0], "x")])
+        record = _make_record("rebuild", [0, 1], doc_id)
+        record.chunk.metadata.update(scope)
+        with (
+            patch.object(store, "_max_search_limit", 2),
+            patch.object(col, "aggregate", wraps=col.aggregate) as probe,
+        ):
+            await store.insert_for_publication("kb", doc_id, [record], scope)
+        self.assertEqual(
+            probe.await_args.args[0],
+            [
+                {
+                    "$vectorSearch": {
+                        "index": "vector_index",
+                        "path": "vector",
+                        "queryVector": [1.0, 0.0],
+                        "limit": 4,
+                        "exact": True,
+                    },
+                },
+                {
+                    "$match": {
+                        "$and": [
+                            {"document_id": doc_id},
+                            {"chunk.metadata.tenant": {"$eq": "A"}},
+                        ],
+                    },
+                },
+                {"$project": {"_id": 1}},
+            ],
+        )
+        row_ids = set(col._docs)
+        edit = _make_record("updated", [1, 0], doc_id)
+        edit.chunk.metadata.update(scope)
+        await store.insert("kb", [edit])
+        self.assertEqual(set(col._docs), row_ids)
+        self.assertEqual(
+            await store.list_chunks("kb", doc_id, metadata_filter=scope),
+            [edit.chunk],
+        )
+
+    async def test_legacy_index_search_finds_published_chunks(self) -> None:
+        store = MongoDBStore(
+            uri="mongodb://mock",
+            database="test-db",
+            filter_fields=["chunk.metadata.tenant"],
+        )
+        await store.create_collection("kb", dimensions=2)
+        collection = self._fake_client["test-db"]["kb"]
+
+        def search(stage: dict) -> list[dict]:
+            limit = stage["limit"]
+            self.assertGreater(limit, limits[-1] if limits else 0)
+            limits.append(limit)
+            return ranked[:limit]
+
+        hidden = _make_record("staged", [1.0, 0.0], "~doc")
+        staged = {"score": 1.0, "document_id": "~doc", "chunk": hidden.chunk}
+        for staged_count, visible_count in [
+            (5_120, 5),
+            (9_998, 5),
+            (10_000, 5),
+            (10_000, 2),
+            (10_000, 0),
+        ]:
+            with self.subTest(staged=staged_count, visible=visible_count):
+                scope = {"tenant": f"{staged_count}-{visible_count}"}
+                hidden.chunk.metadata.update(scope)
+                records = [
+                    _make_record("live", [0.8, 0.6], f"live-{i}")
+                    for i in range(visible_count)
+                ]
+                for record in records:
+                    record.chunk.metadata.update(scope)
+                await store.insert("kb", [hidden, *records])
+                published = [
+                    {
+                        "score": 0.9,
+                        "document_id": record.document_id,
+                        "chunk": record.chunk.model_dump(),
+                    }
+                    for record in records
+                ]
+                ranked = [staged] * staged_count + published
+                limits: list[int] = []
+
+                with patch.object(collection, "_vector_search", search):
+                    results = await store.search_excluding(
+                        "kb",
+                        [1.0, 0.0],
+                        5,
+                        scope,
+                        exclude_document_ids={"~doc"},
+                    )
+                self.assertEqual(limits[-1], 10_000)
+                self.assertEqual(
+                    _dump_results(results),
+                    published,
+                )
+
+    async def test_legacy_index_exact_search_scores(self) -> None:
+        for metric, middle, far, expected in [
+            ("cosine", [3.0, 4.0], [-1.0, 0.0], 0.8),
+            ("dotProduct", [0.6, 0.8], [-1.0, 0.0], 0.8),
+            ("euclidean", [4.0, 4.0], [-10.0, 0.0], 1 / 6),
+        ]:
+            with self.subTest(metric=metric):
+                store = MongoDBStore(
+                    uri="mongodb://mock",
+                    database="test-db",
+                    distance=metric,
+                    filter_fields=["chunk.metadata.tenant"],
+                )
+                await store.create_collection(metric, dimensions=2)
+                query = [1.0, 0.0]
+                records = [
+                    _make_record("staged", query, "~doc", i, 2)
+                    for i in range(2)
+                ]
+                lowest = _make_record("far", far, "far")
+                second = _make_record("mid", middle, "middle")
+                first = _make_record("near", query, "nearest")
+                await store.insert(metric, [*records, lowest, second, first])
+                # Reopen with defaults, including a different filter schema.
+                with patch.object(self.store, "_max_search_limit", 2):
+                    results = await self.store.search_excluding(
+                        metric,
+                        query,
+                        2,
+                        None,
+                        exclude_document_ids={"~doc"},
+                    )
+                self.assertEqual(
+                    results,
+                    [
+                        VectorSearchResult(
+                            score=score,
+                            document_id=record.document_id,
+                            chunk=record.chunk,
+                        )
+                        for record, score in [(first, 1.0), (second, expected)]
+                    ],
+                )
 
     async def test_search_candidate_limits(self) -> None:
         """Search caps candidates while preserving the requested limit."""

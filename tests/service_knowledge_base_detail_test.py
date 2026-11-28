@@ -291,8 +291,14 @@ class DocumentDeletionTest(_KnowledgeBaseDetailTestBase):
 
     def test_incomplete_elasticsearch_delete_can_be_retried(self) -> None:
         """A version conflict preserves the record and the original file."""
+        collection = f"kb_{self._kb_id}"
         elasticsearch = SimpleNamespace(
-            indices=SimpleNamespace(exists=AsyncMock(return_value=True)),
+            indices=SimpleNamespace(
+                exists=AsyncMock(
+                    side_effect=lambda index: index == collection,
+                ),
+                refresh=AsyncMock(return_value={"_shards": {"failed": 0}}),
+            ),
             delete_by_query=AsyncMock(
                 side_effect=[
                     {"deleted": 4, "version_conflicts": 1},
@@ -306,7 +312,7 @@ class DocumentDeletionTest(_KnowledgeBaseDetailTestBase):
             description="",
             embedding_model=AsyncMock(spec=EmbeddingModelBase),
             vector_store=store,
-            collection=f"kb_{self._kb_id}",
+            collection=collection,
         )
         state = self._app.state
         path = f"/knowledge_bases/{self._kb_id}/documents/doc-1"
@@ -329,6 +335,7 @@ class DocumentDeletionTest(_KnowledgeBaseDetailTestBase):
 
             response = client.delete(path, headers=headers)
             self.assertEqual(response.status_code, 500)
+            self.assertEqual(elasticsearch.delete_by_query.await_count, 1)
             response = client.get(path, headers=headers)
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.content, self._file_bytes)
