@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import json
 from collections import OrderedDict
+from datetime import timezone
 from typing import AsyncGenerator, Awaitable, Callable
 from uuid import uuid4
 
@@ -66,6 +67,25 @@ from ...message import ToolCallState
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...event import CustomEvent
 from ..workspace_manager import WorkspaceManagerBase
+
+
+def _session_for_response(
+    session: SessionRecord,
+    storage: StorageBase,
+) -> SessionRecord:
+    """Include known UTC offsets in HTTP session records."""
+    if getattr(storage, "session_timestamps_are_utc", False) is not True:
+        return session
+
+    timestamps = {
+        field: value.replace(tzinfo=timezone.utc)
+        for field, value in (
+            ("created_at", session.created_at),
+            ("updated_at", session.updated_at),
+        )
+        if value.tzinfo is None
+    }
+    return session.model_copy(update=timestamps) if timestamps else session
 
 
 async def _validate_pipeline_voice(
@@ -355,7 +375,7 @@ async def list_sessions(
         )
         views.append(
             SessionView(
-                session=session,
+                session=_session_for_response(session, storage),
                 is_running=is_running,
                 status=session_status,
                 team=team_detail,
@@ -693,13 +713,14 @@ async def _patch_session_config(
             detail=exc.errors(),
         ) from exc
 
-    return await storage.upsert_session(
+    updated_session = await storage.upsert_session(
         user_id=user_id,
         agent_id=agent_id,
         config=updated_config,
         state=updated_state,
         session_id=session_id,
     )
+    return _session_for_response(updated_session, storage)
 
 
 # ----------------------------------------------------------------------

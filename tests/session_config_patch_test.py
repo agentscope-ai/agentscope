@@ -12,19 +12,25 @@ follow, and both are asserted here:
   never land on top of what the run has persisted since.
 """
 import tempfile
+from datetime import datetime, timezone
 from typing import Any
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app import create_app
-from agentscope.app.message_bus import MessageBusKeys, RedisMessageBus
+from agentscope.app.message_bus import (
+    InMemoryMessageBus,
+    MessageBusKeys,
+    RedisMessageBus,
+)
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
     ASRModelConfig,
+    AsyncSQLAlchemyStorage,
     RealtimeModelConfig,
     RedisStorage,
     VoiceProfileData,
@@ -38,6 +44,63 @@ from agentscope.state import Task
 from agentscope.state._state import ReadCacheEntry
 
 HEADERS = {"X-User-ID": "alice"}
+
+
+class SqlSessionTimestampTest(TestCase):
+    """Check that SQL session dates carry UTC on the wire."""
+
+    def test_session_dates_are_utc_in_list_and_patch(self) -> None:
+        """Keep stored datetimes naive while serializing a known offset."""
+        with tempfile.TemporaryDirectory() as workdir:
+            storage = AsyncSQLAlchemyStorage(
+                "sqlite+aiosqlite:///:memory:",
+                create_tables=True,
+            )
+            app = create_app(
+                storage=storage,
+                message_bus=InMemoryMessageBus(),
+                workspace_manager=LocalWorkspaceManager(workdir),
+                enable_index_worker=False,
+            )
+            with TestClient(app, headers=HEADERS) as client:
+                agent = client.post(
+                    "/agent/",
+                    json={"name": "tester", "system_prompt": "hi"},
+                )
+                agent.raise_for_status()
+                agent_id = agent.json()["agent_id"]
+                ses = client.post("/sessions/", json={"agent_id": agent_id})
+                ses.raise_for_status()
+                session_id = ses.json()["session_id"]
+                params = {"agent_id": agent_id}
+                listed = client.get("/sessions/", params=params)
+                listed.raise_for_status()
+                patched = client.patch(
+                    f"/sessions/{session_id}",
+                    params=params,
+                    json={"name": "renamed"},
+                )
+                patched.raise_for_status()
+                assert client.portal is not None
+                stored = client.portal.call(
+                    storage.get_session,
+                    HEADERS["X-User-ID"],
+                    agent_id,
+                    session_id,
+                )
+                assert stored is not None
+
+        listed_session = listed.json()["sessions"][0]["session"]
+        updated_session = patched.json()
+        for field in ("created_at", "updated_at"):
+            with self.subTest(field=field):
+                self.assertIsNone(getattr(stored, field).tzinfo)
+                self.assertTrue(listed_session[field].endswith("Z"))
+                self.assertTrue(updated_session[field].endswith("Z"))
+                self.assertEqual(
+                    datetime.fromisoformat(updated_session[field]),
+                    getattr(stored, field).replace(tzinfo=timezone.utc),
+                )
 
 
 class SessionConfigPatchTest(IsolatedAsyncioTestCase):
@@ -396,6 +459,12 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
             headers=HEADERS,
             params={"agent_id": self.agent_id},
         ).json()["sessions"][0]
+
+    def test_redis_session_timestamps_keep_their_original_format(self) -> None:
+        """Legacy Redis timestamps do not identify themselves as UTC."""
+        session = self._listed()["session"]
+        for field in ("created_at", "updated_at"):
+            self.assertIsNone(datetime.fromisoformat(session[field]).tzinfo)
 
     def test_idle_session_reports_idle(self) -> None:
         """A session nobody is running reports ``idle``."""
