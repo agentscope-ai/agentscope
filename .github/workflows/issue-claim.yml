@@ -176,37 +176,37 @@ jobs:
               }
             }
 
-            if (holders.length > 0) {
-              // A claim the maintainers hold is theirs for as long as they
-              // want it.
-              if (holders.some((h) => maintainers.includes(h))) {
-                await say(
-                  `This one is with ${holders.map((h) => '@' + h).join(', ')}.`,
-                );
-                return;
-              }
+            // A claim the maintainers hold is theirs for as long as they
+            // want it.
+            if (holders.some((h) => maintainers.includes(h))) {
+              await say(
+                `This one is with ${holders.map((h) => '@' + h).join(', ')}.`,
+              );
+              return;
+            }
 
-              // Is the standing claim stale? The same rule as
-              // claim-expiry.yml — keep the two in step if either changes.
-              // `issue.updated_at` is useless here: the claiming comment just
-              // bumped it. And a cross-reference is only a mention, so each
-              // candidate is asked what it really closes, or any pull request
-              // naming the issue would keep a dead claim alive.
-              const { repository } = await github.graphql(`
-                query($owner: String!, $repo: String!, $number: Int!) {
-                  repository(owner: $owner, name: $repo) {
-                    issue(number: $number) {
-                      timelineItems(
-                        first: 100, itemTypes: [CROSS_REFERENCED_EVENT]
-                      ) {
-                        nodes {
-                          ... on CrossReferencedEvent {
-                            source {
-                              ... on PullRequest {
-                                state
-                                closingIssuesReferences(first: 10) {
-                                  nodes { number }
-                                }
+            // An open pull request that closes this issue answers both
+            // questions below: it keeps a standing claim alive, and it means
+            // the work has started even when nobody holds the issue. A
+            // cross-reference is only a mention, so each candidate is asked
+            // what it really closes, or any pull request naming the issue
+            // would count.
+            const { repository } = await github.graphql(`
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    timelineItems(
+                      first: 100, itemTypes: [CROSS_REFERENCED_EVENT]
+                    ) {
+                      nodes {
+                        ... on CrossReferencedEvent {
+                          source {
+                            ... on PullRequest {
+                              number
+                              state
+                              author { login }
+                              closingIssuesReferences(first: 10) {
+                                nodes { number }
                               }
                             }
                           }
@@ -214,15 +214,23 @@ jobs:
                       }
                     }
                   }
-                }`, { owner, repo, number: issue_number });
-              const working = repository.issue.timelineItems.nodes.some((n) => {
-                const s = n.source;
-                return s && s.state === 'OPEN' &&
-                  s.closingIssuesReferences.nodes.some(
-                    (i) => i.number === issue_number,
-                  );
-              });
+                }
+              }`, { owner, repo, number: issue_number });
+            const openPullRequests = repository.issue.timelineItems.nodes
+              .map((n) => n.source)
+              .filter((s) => (
+                s && s.state === 'OPEN' &&
+                s.closingIssuesReferences.nodes.some(
+                  (i) => i.number === issue_number,
+                )
+              ));
+            const working = openPullRequests.length > 0;
 
+            if (holders.length > 0) {
+              // Is the standing claim stale? The same rule as
+              // claim-expiry.yml — keep the two in step if either changes.
+              // `issue.updated_at` is useless here: the claiming comment just
+              // bumped it.
               const timeline = await github.paginate(
                 github.rest.issues.listEventsForTimeline,
                 { owner, repo, issue_number, per_page: 100 },
@@ -259,12 +267,37 @@ jobs:
               return;
             }
 
+            // Nobody holds it, but a pull request may still be fixing it.
+            // Assigning that pull request's own author keeps the bookkeeping
+            // honest and protects the claim from expiry while the review
+            // runs; assigning anyone else would start the same fix twice.
+            const authored = openPullRequests.filter(
+              (s) => s.author && s.author.login === who,
+            );
+            if (working && authored.length === 0) {
+              await say(
+                'A pull request already closes this: ' +
+                openPullRequests.map((s) => `#${s.number}`).join(', ') +
+                '. The issue is open again if that pull request goes stale ' +
+                'or is closed.',
+              );
+              return;
+            }
+
             await github.rest.issues.addAssignees({
               owner, repo, issue_number, assignees: [who],
             });
             const until = new Date(Date.now() + days * 86400000)
               .toISOString()
               .slice(0, 10);
+            if (authored.length > 0) {
+              await say(
+                `It's yours, @${who}. Your pull request ` +
+                `${authored.map((s) => `#${s.number}`).join(', ')} already ` +
+                'targets this, so the claim stands while it is reviewed.',
+              );
+              return;
+            }
             await say(
               `It's yours, @${who}. If there is no pull request and no word ` +
               `from you by ${until} the claim is released so nobody is ` +
