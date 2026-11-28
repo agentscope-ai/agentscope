@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the index worker entry point."""
 import logging
-import os
 import unittest
-from unittest.mock import patch
+
+from pytest import MonkeyPatch
 
 from agentscope.app.rag.index_worker.__main__ import main
 
@@ -17,7 +17,9 @@ class IndexWorkerMainTest(unittest.TestCase):
         handlers, level = logging.root.handlers[:], logging.root.level
         logging.root.handlers.clear()
         try:
-            with patch.dict(os.environ, {"LOG_LEVEL": "debug"}, clear=True):
+            with MonkeyPatch.context() as env:
+                env.setenv("LOG_LEVEL", "debug")
+                env.delenv("AGENTSCOPE_WORKER_BOOTSTRAP", raising=False)
                 with self.assertRaises(SystemExit) as ctx:
                     main()
             self.assertListEqual(
