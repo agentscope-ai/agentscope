@@ -403,8 +403,34 @@ class _FakeDashScopeWebSocket:
         await self.events.put(None)
 
 
-class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
+class DashScopeRealtimeASRModelTest(  # pylint: disable=protected-access
+    IsolatedAsyncioTestCase,
+):
     """Verify the native streaming protocol and failure mapping."""
+
+    async def test_websocket_url_overrides_the_resolved_endpoint(self) -> None:
+        """The credential's gateway WebSocket endpoint wins."""
+        model = DashScopeRealtimeASRModel(
+            credential=DashScopeCredential(
+                api_key="test-key",
+                base_url="https://gw.example.com/dashscope/compatible-mode/v1",
+                websocket_url="wss://gw.example.com/voice/asr",
+            ),
+        )
+        self.assertEqual(model._url, "wss://gw.example.com/voice/asr")
+
+    async def test_realtime_url_keeps_a_gateway_path_prefix(self) -> None:
+        """A gateway prefix survives the API-suffix replacement."""
+        model = DashScopeRealtimeASRModel(
+            credential=DashScopeCredential(
+                api_key="test-key",
+                base_url="https://gw.example.com/dashscope/compatible-mode/v1",
+            ),
+        )
+        self.assertEqual(
+            model._url,
+            "wss://gw.example.com/dashscope/api-ws/v1/inference",
+        )
 
     async def test_connect_sends_headers_with_real_client(self) -> None:
         """Exercise the installed client API against a local WebSocket."""

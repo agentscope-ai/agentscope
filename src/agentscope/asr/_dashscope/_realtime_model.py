@@ -21,12 +21,21 @@ _REALTIME_PATH = "/api-ws/v1/inference"
 
 
 def _realtime_url(base_url: str) -> str:
-    """Build the native DashScope inference WebSocket endpoint."""
+    """Build the native DashScope inference WebSocket endpoint.
+
+    The API suffix of a compatible endpoint is replaced while a gateway's
+    path prefix is kept, as the batch ASR and TTS resolution do.
+    """
     parsed = urlsplit(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError(f"Invalid DashScope base_url: {base_url!r}.")
+    prefix = parsed.path.rstrip("/")
+    for suffix in ("/compatible-mode/v1", "/api/v1"):
+        if prefix.endswith(suffix):
+            prefix = prefix[: -len(suffix)]
+            break
     scheme = "wss" if parsed.scheme == "https" else "ws"
-    return f"{scheme}://{parsed.netloc}{_REALTIME_PATH}"
+    return f"{scheme}://{parsed.netloc}{prefix}{_REALTIME_PATH}"
 
 
 class DashScopeRealtimeASRModel(ASRModelBase):
@@ -97,7 +106,9 @@ class DashScopeRealtimeASRModel(ASRModelBase):
                 rate. Default parameters are used when omitted.
         """
         super().__init__(credential, model, parameters)
-        self._url = _realtime_url(credential.base_url)
+        self._url = credential.websocket_url or _realtime_url(
+            credential.base_url,
+        )
         self._api_key = credential.api_key.get_secret_value()
         self._websocket: Any = None
         self._reader: asyncio.Task | None = None
